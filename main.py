@@ -152,6 +152,11 @@ def _mapear_nivel(valor: str) -> str:
     return mapa.get(normalizado, "")
 
 
+def _codigo_nivel(nivel_legible: str) -> str:
+    """Devuelve el código de nivel usado en el nombre de clase (P o S)."""
+    return {"Primaria": "P", "Secundaria": "S"}.get(nivel_legible, "")
+
+
 def _mapear_grado(valor: str) -> Tuple[str, int]:
     """Devuelve (texto_grado, numero) o ('', 0) si no coincide."""
     limpio = valor.replace("°", "º").replace("�", "º")
@@ -275,11 +280,19 @@ def transformar(df: pd.DataFrame) -> pd.DataFrame:
         nivel_legible = _mapear_nivel(fila["NivelEducativo"])
         grado_legible, grado_num = _mapear_grado(fila["GradoVal"])
         materia_legible, sufijo = _mapear_materia(fila["AsignaturaProducto"])
+        nivel_codigo = _codigo_nivel(nivel_legible)
 
-        if not (nivel_legible and grado_legible and grado_num and materia_legible and sufijo):
+        if not (
+            nivel_legible
+            and grado_legible
+            and grado_num
+            and materia_legible
+            and sufijo
+            and nivel_codigo
+        ):
             continue
 
-        nombre_clase = f"{materia_legible} {grado_num}{sufijo}"
+        nombre_clase = f"{materia_legible} {grado_num}{nivel_codigo}A"
         registros.append(
             {
                 "Nivel": nivel_legible,

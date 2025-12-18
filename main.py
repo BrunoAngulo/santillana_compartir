@@ -200,10 +200,11 @@ def _mapear_materia(valor: str) -> Tuple[str, str]:
         "CIUDADANIA Y CIVICA": ("Ciudadanía y Cívica", "CC"),
         "COMUNICACION": ("Comunicación", "CO"),
         "DESARROLLO PERSONAL": ("Desarrollo Personal", "DP"),
-        "INFORMATICA": ("Informática", "IN"),
+        "TECNOLOGIA": ("Tecnología", "TE"),
+        "INFORMATICA": ("Tecnología", "TE"),
         "INGLES": ("Inglés", "IG"),
         "LECTURAS": ("Lecturas", "LE"),
-        "MATEMATICAS": ("Matemáticas", "MA"),
+        "MATEMATICAS": ("Matemática", "MA"),
         "PERSONAL SOCIAL": ("Personal Social", "PS"),
         "PLAN LECTOR": ("Plan Lector", "PL"),
         "PREESCOLAR": ("Preescolar", "PE"),
@@ -219,23 +220,24 @@ def _mapear_materia(valor: str) -> Tuple[str, str]:
 def _orden_materia(materia: str) -> int:
     orden = {
         "Ciencia y Tecnología": 0,
-        "Ciencias Integradas": 1,
-        "Ciencias Sociales": 2,
-        "Comunicación": 3,
-        "Desarrollo Personal": 4,
-        "Ciudadanía y Cívica": 5,
-        "Informática": 6,
-        "Inglés": 7,
-        "Lecturas": 8,
-        "Matemáticas": 9,
-        "Personal Social": 10,
-        "Plan Lector": 11,
-        "Preescolar": 12,
-        "Razonamiento Matemático": 13,
-        "Razonamiento Verbal": 14,
-        "Religión": 15,
-        "Tutoría y Orientación Educativa": 16,
-        "Caligrafía": 17,
+        "Ciencia y Tecnología - Personal Social": 1,
+        "Ciencias Integradas": 2,
+        "Ciencias Sociales": 3,
+        "Comunicación": 4,
+        "Desarrollo Personal": 5,
+        "Ciudadanía y Cívica": 6,
+        "Tecnología": 7,
+        "Inglés": 8,
+        "Lecturas": 9,
+        "Matemática": 10,
+        "Personal Social": 11,
+        "Plan Lector": 12,
+        "Preescolar": 13,
+        "Razonamiento Matemático": 14,
+        "Razonamiento Verbal": 15,
+        "Religión": 16,
+        "Tutoría y Orientación Educativa": 17,
+        "Caligrafía": 18,
     }
     return orden.get(materia, len(orden))
 
@@ -253,16 +255,15 @@ def transformar(df: pd.DataFrame) -> pd.DataFrame:
         AsignaturaProducto=trabajo["Asignatura Producto"].astype(str).str.strip(),
         NivelEducativo=trabajo["Nivel Educativo"].astype(str).str.strip(),
         GradoVal=trabajo["Grado"].astype(str).str.strip(),
+        ProductoVal=trabajo["Producto"].astype(str).str.strip(),
     )
     if "Razon Estado" in trabajo.columns:
         trabajo["RazonEstado"] = trabajo["Razon Estado"].astype(str).str.strip()
     else:
         trabajo["RazonEstado"] = ""
 
-    trabajo["NivelEducativoNorm"] = trabajo["NivelEducativo"].apply(_normalize_key)
-    trabajo["AsignaturaProductoNorm"] = trabajo["AsignaturaProducto"].apply(_normalize_key)
+    trabajo["PlataformaNorm"] = trabajo["Plataforma"].apply(_normalize_key)
 
-    trabajo = trabajo[trabajo["Plataforma"] == "Compartir Aprendizajes"]
     trabajo = trabajo[
         (trabajo["RazonEstado"] == "Validado") | (trabajo["RazonEstado"] == "")
     ]
@@ -270,17 +271,47 @@ def transformar(df: pd.DataFrame) -> pd.DataFrame:
     if trabajo.empty:
         return pd.DataFrame()
 
-    trabajo = trabajo[
-        (trabajo["AsignaturaProductoNorm"] != "NO APLICA")
-        & (trabajo["NivelEducativoNorm"] != "EDUCACION INICIAL")
-    ]
-
     registros: List[Dict[str, str]] = []
     for _, fila in trabajo.iterrows():
         nivel_legible = _mapear_nivel(fila["NivelEducativo"])
         grado_legible, grado_num = _mapear_grado(fila["GradoVal"])
         materia_legible, sufijo = _mapear_materia(fila["AsignaturaProducto"])
         nivel_codigo = _codigo_nivel(nivel_legible)
+        plataforma_norm = fila["PlataformaNorm"]
+        producto_val = fila["ProductoVal"]
+
+        if "RLP" == plataforma_norm:
+            continue
+
+        es_richmond = "RICHMOND" in plataforma_norm
+        if es_richmond:
+            if not producto_val.upper().startswith("CODIGO DE ACCESO AL SISTEMA"):
+                continue
+
+        if (
+            materia_legible == "Ciencias Integradas"
+            and nivel_legible == "Primaria"
+            and grado_num in {1, 2}
+        ):
+            materia_legible = "Ciencia y Tecnología - Personal Social"
+
+        if materia_legible == "Preescolar":
+            if not producto_val.upper().startswith("CODIGO DE ACCESO AL SISTEMA"):
+                continue
+            if not grado_num:
+                grado_num = 1
+            if not grado_legible:
+                grado_legible = "Primer grado de primaria"
+            if not nivel_legible:
+                nivel_legible = "Primaria"
+                nivel_codigo = _codigo_nivel(nivel_legible)
+
+        if materia_legible == "Preescolar":
+            nombre_clase = "Kurmi (1PA)"
+        elif materia_legible == "Tecnología" and producto_val:
+            nombre_clase = producto_val
+        else:
+            nombre_clase = f"{materia_legible} {grado_num}{nivel_codigo}A"
 
         if not (
             nivel_legible
@@ -292,7 +323,6 @@ def transformar(df: pd.DataFrame) -> pd.DataFrame:
         ):
             continue
 
-        nombre_clase = f"{materia_legible} {grado_num}{nivel_codigo}A"
         registros.append(
             {
                 "Nivel": nivel_legible,
@@ -401,9 +431,7 @@ def main(argv: List[str]) -> int:
 
         df_transformado = transformar(df_filtrado)
         if df_transformado.empty:
-            print(
-                "No hay filas que cumplan con los filtros de 'Compartir Aprendizajes' y reglas de transformación."
-            )
+            print("No hay filas que cumplan con las reglas de transformación.")
             return 0
 
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

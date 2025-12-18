@@ -188,12 +188,51 @@ def _mapear_materia(valor: str) -> Tuple[str, str]:
     """Devuelve (materia_legible, sufijo) o ('', '') si no coincide."""
     normalizado = _normalize_key(valor)
     mapa: Dict[str, Tuple[str, str]] = {
+        "CALIGRAFIA": ("Caligrafía", "CA"),
+        "CIENCIA Y TECNOLOGIA": ("Ciencia y Tecnología", "CT"),
+        "CIENCIAS INTEGRADAS": ("Ciencias Integradas", "CI"),
+        "CIENCIAS SOCIALES": ("Ciencias Sociales", "CS"),
+        "CIUDADANIA Y CIVICA": ("Ciudadanía y Cívica", "CC"),
         "COMUNICACION": ("Comunicación", "CO"),
-        "MATEMATICAS": ("Matemática", "MA"),
-        "MATEMATICAS": ("Informática", "IN"),
+        "DESARROLLO PERSONAL": ("Desarrollo Personal", "DP"),
+        "INFORMATICA": ("Informática", "IN"),
+        "INGLES": ("Inglés", "IG"),
+        "LECTURAS": ("Lecturas", "LE"),
+        "MATEMATICAS": ("Matemáticas", "MA"),
+        "PERSONAL SOCIAL": ("Personal Social", "PS"),
+        "PLAN LECTOR": ("Plan Lector", "PL"),
+        "PREESCOLAR": ("Preescolar", "PE"),
+        "RAZONAMIENTO MATEMATICO": ("Razonamiento Matemático", "RM"),
+        "RAZONAMIENTO VERBAL": ("Razonamiento Verbal", "RV"),
+        "RELIGION": ("Religión", "RE"),
+        "TUTORIA Y ORIENTACION EDUCATIVA": ("Tutoría y Orientación Educativa", "TO"),
     }
     materia = mapa.get(normalizado)
     return materia if materia else ("", "")
+
+
+def _orden_materia(materia: str) -> int:
+    orden = {
+        "Ciencia y Tecnología": 0,
+        "Ciencias Integradas": 1,
+        "Ciencias Sociales": 2,
+        "Comunicación": 3,
+        "Desarrollo Personal": 4,
+        "Ciudadanía y Cívica": 5,
+        "Informática": 6,
+        "Inglés": 7,
+        "Lecturas": 8,
+        "Matemáticas": 9,
+        "Personal Social": 10,
+        "Plan Lector": 11,
+        "Preescolar": 12,
+        "Razonamiento Matemático": 13,
+        "Razonamiento Verbal": 14,
+        "Religión": 15,
+        "Tutoría y Orientación Educativa": 16,
+        "Caligrafía": 17,
+    }
+    return orden.get(materia, len(orden))
 
 
 def transformar(df: pd.DataFrame) -> pd.DataFrame:
@@ -252,7 +291,7 @@ def transformar(df: pd.DataFrame) -> pd.DataFrame:
                 "Materias": materia_legible,
                 "_orden_nivel": 0 if nivel_legible == "Primaria" else 1,
                 "_orden_grado": grado_num,
-                "_orden_materia": 0 if materia_legible == "Comunicación" else 1,
+                "_orden_materia": _orden_materia(materia_legible),
             }
         )
 

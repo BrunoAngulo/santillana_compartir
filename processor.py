@@ -133,6 +133,11 @@ def _mapear_nivel(valor: str) -> str:
     return mapa.get(normalizado, "")
 
 
+def _codigo_nivel(nivel_legible: str) -> str:
+    """Devuelve el código de nivel usado en el nombre de clase (P o S)."""
+    return {"Primaria": "P", "Secundaria": "S"}.get(nivel_legible, "")
+
+
 def _mapear_grado(valor: str) -> Tuple[str, int]:
     """Devuelve (texto_grado, numero) o ('', 0) si no coincide."""
     limpio = valor.replace("°", "º").replace("�", "º")
@@ -169,11 +174,51 @@ def _mapear_materia(valor: str) -> Tuple[str, str]:
     """Devuelve (materia_legible, sufijo) o ('', '') si no coincide."""
     normalizado = _normalize_key(valor)
     mapa: Dict[str, Tuple[str, str]] = {
+        "CALIGRAFIA": ("Caligrafía", "CA"),
+        "CIENCIA Y TECNOLOGIA": ("Ciencia y Tecnología", "CT"),
+        "CIENCIAS INTEGRADAS": ("Ciencias Integradas", "CI"),
+        "CIENCIAS SOCIALES": ("Ciencias Sociales", "CS"),
+        "CIUDADANIA Y CIVICA": ("Ciudadanía y Cívica", "CC"),
         "COMUNICACION": ("Comunicación", "CO"),
-        "MATEMATICAS": ("Matemática", "MA"),
+        "DESARROLLO PERSONAL": ("Desarrollo Personal", "DP"),
+        "INFORMATICA": ("Informática", "IN"),
+        "INGLES": ("Inglés", "IG"),
+        "LECTURAS": ("Lecturas", "LE"),
+        "MATEMATICAS": ("Matemáticas", "MA"),
+        "PERSONAL SOCIAL": ("Personal Social", "PS"),
+        "PLAN LECTOR": ("Plan Lector", "PL"),
+        "PREESCOLAR": ("Preescolar", "PE"),
+        "RAZONAMIENTO MATEMATICO": ("Razonamiento Matemático", "RM"),
+        "RAZONAMIENTO VERBAL": ("Razonamiento Verbal", "RV"),
+        "RELIGION": ("Religión", "RE"),
+        "TUTORIA Y ORIENTACION EDUCATIVA": ("Tutoría y Orientación Educativa", "TO"),
     }
     materia = mapa.get(normalizado)
     return materia if materia else ("", "")
+
+
+def _orden_materia(materia: str) -> int:
+    orden = {
+        "Ciencia y Tecnología": 0,
+        "Ciencias Integradas": 1,
+        "Ciencias Sociales": 2,
+        "Comunicación": 3,
+        "Desarrollo Personal": 4,
+        "Ciudadanía y Cívica": 5,
+        "Informática": 6,
+        "Inglés": 7,
+        "Lecturas": 8,
+        "Matemáticas": 9,
+        "Personal Social": 10,
+        "Plan Lector": 11,
+        "Preescolar": 12,
+        "Razonamiento Matemático": 13,
+        "Razonamiento Verbal": 14,
+        "Religión": 15,
+        "Tutoría y Orientación Educativa": 16,
+        "Caligrafía": 17,
+    }
+    return orden.get(materia, len(orden))
 
 
 def transformar(df: pd.DataFrame) -> pd.DataFrame:
@@ -216,11 +261,19 @@ def transformar(df: pd.DataFrame) -> pd.DataFrame:
         nivel_legible = _mapear_nivel(fila["NivelEducativo"])
         grado_legible, grado_num = _mapear_grado(fila["GradoVal"])
         materia_legible, sufijo = _mapear_materia(fila["AsignaturaProducto"])
+        nivel_codigo = _codigo_nivel(nivel_legible)
 
-        if not (nivel_legible and grado_legible and grado_num and materia_legible and sufijo):
+        if not (
+            nivel_legible
+            and grado_legible
+            and grado_num
+            and materia_legible
+            and sufijo
+            and nivel_codigo
+        ):
             continue
 
-        nombre_clase = f"{materia_legible} {grado_num}{sufijo}"
+        nombre_clase = f"{materia_legible} {grado_num}{nivel_codigo}A"
         registros.append(
             {
                 "Nivel": nivel_legible,
@@ -232,7 +285,7 @@ def transformar(df: pd.DataFrame) -> pd.DataFrame:
                 "Materias": materia_legible,
                 "_orden_nivel": 0 if nivel_legible == "Primaria" else 1,
                 "_orden_grado": grado_num,
-                "_orden_materia": 0 if materia_legible == "Comunicación" else 1,
+                "_orden_materia": _orden_materia(materia_legible),
             }
         )
 

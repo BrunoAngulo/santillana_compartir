@@ -190,6 +190,7 @@ def _mapear_materia(valor: str) -> Tuple[str, str]:
     mapa: Dict[str, Tuple[str, str]] = {
         "COMUNICACION": ("Comunicación", "CO"),
         "MATEMATICAS": ("Matemática", "MA"),
+        "MATEMATICAS": ("Informática", "IN"),
     }
     materia = mapa.get(normalizado)
     return materia if materia else ("", "")

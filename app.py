@@ -168,13 +168,6 @@ with tab_clases:
         )
         hoja = col1.text_input("Hoja a leer", value=SHEET_NAME, help="Nombre de la hoja")
 
-    with st.expander("Plantilla (opcional)", expanded=False):
-        uploaded_template = st.file_uploader(
-            "PlantillaClases.xlsx (opcional)",
-            type=["xlsx"],
-            help="Si no subes nada, se usara la plantilla local si existe.",
-        )
-
     if st.button("Generar", type="primary"):
         if not uploaded_excel:
             st.error("Sube un Excel de entrada.")
@@ -184,17 +177,7 @@ with tab_clases:
             st.stop()
 
         excel_bytes = uploaded_excel.read()
-        plantilla_bytes = uploaded_template.read() if uploaded_template else None
-        plantilla_path = (
-            Path(OUTPUT_FILENAME)
-            if not plantilla_bytes and Path(OUTPUT_FILENAME).exists()
-            else None
-        )
-
-        if not plantilla_bytes and plantilla_path is None:
-            st.warning(
-                "No se encontro PlantillaClases.xlsx local ni se subio una plantilla. Se creara un archivo nuevo sin formato."
-            )
+        plantilla_path = Path(OUTPUT_FILENAME) if Path(OUTPUT_FILENAME).exists() else None
 
         try:
             with st.spinner("Procesando..."):
@@ -203,7 +186,6 @@ with tab_clases:
                     codigo=codigo,
                     columna_codigo=columna_codigo,
                     hoja=hoja,
-                    plantilla_bytes=plantilla_bytes,
                     plantilla_path=plantilla_path,
                 )
             st.success(
@@ -314,15 +296,11 @@ with tab_depurar:
 
 
 with tab_clases_api:
-    st.subheader("Clases API")
+    st.subheader("Listar y eliminar clases")
     st.write("Lista y elimina clases del API de gestion escolar.")
     token_input = st.text_input("Token (Bearer)", type="password")
     colegio_id = st.number_input("Colegio ID", min_value=1, step=1, format="%d")
     with st.expander("Opciones avanzadas", expanded=False):
-        token_env = st.text_input("Token env", value="PEGASUS_TOKEN")
-        empresa_id = st.number_input(
-            "Empresa ID", min_value=1, step=1, value=DEFAULT_EMPRESA_ID, format="%d"
-        )
         ciclo_id = st.number_input(
             "Ciclo ID",
             min_value=1,
@@ -330,13 +308,12 @@ with tab_clases_api:
             value=GESTION_ESCOLAR_CICLO_ID_DEFAULT,
             format="%d",
         )
-        timeout = st.number_input(
-            "Timeout (segundos)", min_value=1, step=1, value=30, format="%d"
-        )
 
     token = _clean_token(token_input)
     if not token:
-        token = _clean_token(os.environ.get(token_env, ""))
+        token = _clean_token(os.environ.get("PEGASUS_TOKEN", ""))
+    empresa_id = DEFAULT_EMPRESA_ID
+    timeout = 30
 
     col_list, col_delete = st.columns(2)
     if col_list.button("Listar clases"):

@@ -299,7 +299,7 @@ with tab_clases_api:
     st.subheader("Listar y eliminar clases")
     st.write("Lista y elimina clases del API de gestion escolar.")
     token_input = st.text_input("Token (Bearer)", type="password")
-    colegio_id = st.number_input("Colegio ID", min_value=1, step=1, format="%d")
+    colegio_id = st.number_input("Colegio Clave", min_value=1, step=1, format="%d")
     with st.expander("Opciones avanzadas", expanded=False):
         ciclo_id = st.number_input(
             "Ciclo ID",

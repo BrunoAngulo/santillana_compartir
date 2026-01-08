@@ -2,7 +2,7 @@ import re
 import unicodedata
 from io import BytesIO
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 import pandas as pd
 from openpyxl import Workbook, load_workbook
@@ -24,6 +24,99 @@ EXPECTED_HEADERS: Set[str] = {
     "Razon Estado",
 }
 
+# Reglas de materias para configuracion Compartir.
+MATERIA_KEY_ALIASES = {
+    "CIENCIA Y TECNOLOGIA - PERSONAL SOCIAL": "CIENCIAS INTEGRADAS",
+    "CIENCIA Y TECNOLOGIA PERSONAL SOCIAL": "CIENCIAS INTEGRADAS",
+    "CIENCIA TECNOLOGIA - PERSONAL SOCIAL": "CIENCIAS INTEGRADAS",
+    "CIENCIA TECNOLOGIA PERSONAL SOCIAL": "CIENCIAS INTEGRADAS",
+    "INFORMATICA": "TECNOLOGIA",
+    "MATEMATICA": "MATEMATICAS",
+    "DESARROLLO PERSONAL": "DPCC",
+    "CIUDADANIA Y CIVICA": "DPCC",
+    "CUIDADANIA Y CIVICA": "DPCC",
+    "DESARROLLO PERSONAL CIUDADANIA Y CIVICA": "DPCC",
+    "DESARROLLO PERSONAL CUIDADANIA Y CIVICA": "DPCC",
+    "DPCC": "DPCC",
+    "BIOLOGIA": "BIOLOGIA-FISICA-QUIMICA",
+    "FISICA": "BIOLOGIA-FISICA-QUIMICA",
+    "QUIMICA": "BIOLOGIA-FISICA-QUIMICA",
+    "BIOLOGIA-FISICA-QUIMICA": "BIOLOGIA-FISICA-QUIMICA",
+}
+
+MATERIAS_COMPARTIR = {
+    "Inicial": {"PREESCOLAR", "INGLES", "TECNOLOGIA"},
+    "Primaria": {
+        "MATEMATICAS",
+        "COMUNICACION",
+        "PERSONAL SOCIAL",
+        "CIENCIAS SOCIALES",
+        "CIENCIA Y TECNOLOGIA",
+        "CIENCIAS INTEGRADAS",
+        "RAZONAMIENTO MATEMATICO",
+        "RAZONAMIENTO VERBAL",
+        "RELIGION",
+        "INGLES",
+        "TECNOLOGIA",
+    },
+    "Secundaria": {
+        "MATEMATICAS",
+        "COMUNICACION",
+        "CIENCIAS SOCIALES",
+        "CIENCIA Y TECNOLOGIA",
+        "RAZONAMIENTO MATEMATICO",
+        "RAZONAMIENTO VERBAL",
+        "RELIGION",
+        "INGLES",
+        "TECNOLOGIA",
+        "DPCC",
+        "BIOLOGIA-FISICA-QUIMICA",
+    },
+}
+
+
+def _normalize_grupos(grupos: Optional[Sequence[str]]) -> List[str]:
+    if not grupos:
+        return ["A"]
+    if isinstance(grupos, str):
+        grupos_iter = re.split(r"[\s,]+", grupos.strip())
+    else:
+        grupos_iter = grupos
+    letras: List[str] = []
+    invalid: List[str] = []
+    for grupo in grupos_iter:
+        if grupo is None:
+            continue
+        upper = str(grupo).strip().upper()
+        if not upper:
+            continue
+        if len(upper) != 1 or not upper.isalpha():
+            invalid.append(str(grupo))
+            continue
+        if upper not in letras:
+            letras.append(upper)
+    if invalid:
+        raise ValueError(f"Grupo invalido: {', '.join(invalid)}")
+    return letras or ["A"]
+
+
+def _apply_grupo(
+    nombre_clase: str,
+    grupo: str,
+    grado_num: int,
+    nivel_codigo: str,
+    multi_grupo: bool,
+) -> str:
+    if grupo == "A":
+        return nombre_clase
+    if grado_num and nivel_codigo:
+        suffix = f"{grado_num}{nivel_codigo}A"
+        if nombre_clase.endswith(suffix):
+            return f"{nombre_clase[:-len(suffix)]}{grado_num}{nivel_codigo}{grupo}"
+    if multi_grupo:
+        return f"{nombre_clase} {grupo}"
+    return nombre_clase
+
 
 def _normalize_key(valor: str) -> str:
     """Normaliza texto: sin tildes, mayúsculas y sin espacios extremos."""
@@ -32,6 +125,27 @@ def _normalize_key(valor: str) -> str:
     texto = unicodedata.normalize("NFD", valor)
     texto = "".join(ch for ch in texto if unicodedata.category(ch) != "Mn")
     return texto.strip().upper()
+
+
+def _canonical_materia_key(valor: str) -> str:
+    limpio = re.sub(r"\s*\([^)]*\)", "", valor or "").strip()
+    key = _normalize_key(limpio)
+    if "INGLES" in key:
+        return "INGLES"
+    return MATERIA_KEY_ALIASES.get(key, key)
+
+
+def _materia_permitida(nivel_legible: str, materia_key: str, grado_num: int) -> bool:
+    permitidas = MATERIAS_COMPARTIR.get(nivel_legible, set())
+    if materia_key not in permitidas:
+        return False
+    if materia_key == "CIENCIAS INTEGRADAS" and not (
+        nivel_legible == "Primaria" and grado_num in {1, 2}
+    ):
+        return False
+    if materia_key == "CIENCIAS SOCIALES" and nivel_legible == "Primaria" and grado_num != 6:
+        return False
+    return True
 
 
 def _detectar_fila_encabezado(
@@ -153,11 +267,21 @@ def _mapear_grado(valor: str) -> Tuple[str, int]:
     limpio = valor.replace("°", "º").replace("�", "º")
     normalizado = _normalize_key(limpio)
     match = re.match(r"^(\d+)\s*º?\s*(PRIMARIA|SECUNDARIA)$", normalizado)
-    if not match:
-        return ("", 0)
-
-    numero = int(match.group(1))
-    nivel = match.group(2)
+    if match:
+        numero = int(match.group(1))
+        nivel = match.group(2)
+    else:
+        nivel = ""
+        if "PRIMARIA" in normalizado:
+            nivel = "PRIMARIA"
+        elif "SECUNDARIA" in normalizado:
+            nivel = "SECUNDARIA"
+        if not nivel:
+            return ("", 0)
+        num_match = re.search(r"\d+", normalizado)
+        if not num_match:
+            return ("", 0)
+        numero = int(num_match.group(0))
 
     grados_primaria: Dict[int, str] = {
         1: "Primer grado de primaria",
@@ -182,20 +306,30 @@ def _mapear_grado(valor: str) -> Tuple[str, int]:
 
 def _mapear_materia(valor: str) -> Tuple[str, str]:
     """Devuelve (materia_legible, sufijo) o ('', '') si no coincide."""
-    normalizado = _normalize_key(valor)
+    normalizado = _canonical_materia_key(valor)
     mapa: Dict[str, Tuple[str, str]] = {
         "CALIGRAFIA": ("Caligrafía", "CA"),
         "CIENCIA Y TECNOLOGIA": ("Ciencia y Tecnología", "CT"),
         "CIENCIAS INTEGRADAS": ("Ciencias Integradas", "CI"),
         "CIENCIAS SOCIALES": ("Ciencias Sociales", "CS"),
-        "CIUDADANIA Y CIVICA": ("Ciudadanía y Cívica", "CC"),
+        "CIUDADANIA Y CIVICA": ("Desarrollo Personal Ciudadanía y Cívica", "DPCC"),
         "COMUNICACION": ("Comunicación", "CO"),
-        "DESARROLLO PERSONAL": ("Desarrollo Personal", "DP"),
+        "DESARROLLO PERSONAL": ("Desarrollo Personal Ciudadanía y Cívica", "DPCC"),
+        "DESARROLLO PERSONAL CIUDADANIA Y CIVICA": (
+            "Desarrollo Personal Ciudadanía y Cívica",
+            "DPCC",
+        ),
+        "DPCC": ("Desarrollo Personal Ciudadanía y Cívica", "DPCC"),
         "TECNOLOGIA": ("Tecnología", "TE"),
         "INFORMATICA": ("Tecnología", "TE"),
         "INGLES": ("Inglés", "IG"),
+        "BIOLOGIA": ("Biología-Física-Química", "BFQ"),
+        "FISICA": ("Biología-Física-Química", "BFQ"),
+        "QUIMICA": ("Biología-Física-Química", "BFQ"),
+        "BIOLOGIA-FISICA-QUIMICA": ("Biología-Física-Química", "BFQ"),
         "LECTURAS": ("Lecturas", "LE"),
         "MATEMATICAS": ("Matemática", "MA"),
+        "MATEMATICA": ("Matemática", "MA"),
         "PERSONAL SOCIAL": ("Personal Social", "PS"),
         "PLAN LECTOR": ("Plan Lector", "PL"),
         "PREESCOLAR": ("Preescolar", "PE"),
@@ -214,9 +348,9 @@ def _orden_materia(materia: str) -> int:
         "Ciencia y Tecnología - Personal Social": 1,
         "Ciencias Integradas": 2,
         "Ciencias Sociales": 3,
-        "Comunicación": 4,
-        "Desarrollo Personal": 5,
-        "Ciudadanía y Cívica": 6,
+        "Biología-Física-Química": 4,
+        "Comunicación": 5,
+        "Desarrollo Personal Ciudadanía y Cívica": 6,
         "Tecnología": 7,
         "Inglés": 8,
         "Lecturas": 9,
@@ -233,7 +367,7 @@ def _orden_materia(materia: str) -> int:
     return orden.get(materia, len(orden))
 
 
-def transformar(df: pd.DataFrame) -> pd.DataFrame:
+def transformar(df: pd.DataFrame, grupos: Optional[Sequence[str]] = None) -> pd.DataFrame:
     """Aplica filtros y transforma los datos para la exportación."""
     columnas_necesarias = {
         "Plataforma",
@@ -247,6 +381,15 @@ def transformar(df: pd.DataFrame) -> pd.DataFrame:
         raise KeyError(f"Faltan columnas necesarias para transformar: {', '.join(faltantes)}")
 
     trabajo = df.copy().fillna("")
+    for col in (
+        "Institucion",
+        "Nivel Educativo",
+        "Grado",
+        "Asignatura Producto",
+        "Plataforma",
+    ):
+        if col in trabajo.columns:
+            trabajo[col] = trabajo[col].replace("", pd.NA).ffill().fillna("")
     trabajo = trabajo.assign(
         Plataforma=trabajo["Plataforma"].astype(str).str.strip(),
         AsignaturaProducto=trabajo["Asignatura Producto"].astype(str).str.strip(),
@@ -264,20 +407,26 @@ def transformar(df: pd.DataFrame) -> pd.DataFrame:
     if trabajo.empty:
         return pd.DataFrame()
 
+    grupos = _normalize_grupos(grupos)
+    multi_grupo = len(grupos) > 1
+    grupo_order = {grupo: idx for idx, grupo in enumerate(grupos, start=1)}
+
     registros: List[Dict[str, str]] = []
     for _, fila in trabajo.iterrows():
         nivel_legible = _mapear_nivel(fila["NivelEducativo"])
         grado_legible, grado_num = _mapear_grado(fila["GradoVal"])
         materia_legible, sufijo = _mapear_materia(fila["AsignaturaProducto"])
+        materia_key = _canonical_materia_key(fila["AsignaturaProducto"])
         nivel_codigo = _codigo_nivel(nivel_legible)
         plataforma_norm = fila["PlataformaNorm"]
         producto_val = fila["ProductoVal"]
+        prod_upper = producto_val.upper()
 
         if (fila["RazonEstado"] not in {"Validado", ""}) or (plataforma_norm == "RLP"):
             continue
 
         es_richmond = "RICHMOND" in plataforma_norm
-        if es_richmond:
+        if es_richmond and materia_key != "INGLES":
             if not producto_val.upper().startswith("CODIGO DE ACCESO AL SISTEMA"):
                 continue
 
@@ -296,7 +445,6 @@ def transformar(df: pd.DataFrame) -> pd.DataFrame:
             materia_legible = "Ciencia y Tecnología - Personal Social"
 
         if materia_legible == "Preescolar":
-            prod_upper = producto_val.upper()
             if not (
                 prod_upper.startswith("CODIGO DE ACCESO AL SISTEMA")
                 or "KURMI" in prod_upper
@@ -319,6 +467,9 @@ def transformar(df: pd.DataFrame) -> pd.DataFrame:
                 nivel_legible = "Inicial"
                 nivel_codigo = _codigo_nivel(nivel_legible)
 
+        if not _materia_permitida(nivel_legible, materia_key, grado_num):
+            continue
+
         if materia_legible == "Preescolar":
             nombre_clase = producto_val if producto_val else "Kurmi (1IA)"
             if "KURMI" in prod_upper:
@@ -331,7 +482,7 @@ def transformar(df: pd.DataFrame) -> pd.DataFrame:
             materia_legible == "Plan Lector"
             and grado_num
             and nivel_codigo
-            and ("LQL" in producto_val.upper() or "LOQUELEO" in producto_val.upper())
+            and ("LQL" in prod_upper or "LOQUELEO" in prod_upper)
         ):
             nombre_clase = f"Loqueleo {grado_num}{nivel_codigo}A"
         elif materia_legible == "Tecnología" and producto_val:
@@ -349,29 +500,40 @@ def transformar(df: pd.DataFrame) -> pd.DataFrame:
         ):
             continue
 
-        registros.append(
-            {
-                "Nivel": nivel_legible,
-                "Grado": grado_legible,
-                "Grupo": "Grupo A",
-                "Nombre de Clase": nombre_clase,
-                "Clase Clave": nombre_clase,
-                "Alias Clase": "",
-                "Materias": materia_legible,
-                "_orden_nivel": 0 if nivel_legible == "Inicial" else (1 if nivel_legible == "Primaria" else 2),
-                "_orden_grado": grado_num,
-                "_orden_materia": _orden_materia(materia_legible),
-            }
-        )
+        for grupo in grupos:
+            nombre_grupo = _apply_grupo(
+                nombre_clase, grupo, grado_num, nivel_codigo, multi_grupo
+            )
+            registros.append(
+                {
+                    "Nivel": nivel_legible,
+                    "Grado": grado_legible,
+                    "Grupo": f"Grupo {grupo}",
+                    "Nombre de Clase": nombre_grupo,
+                    "Clase Clave": nombre_grupo,
+                    "Alias Clase": "",
+                    "Materias": materia_legible,
+                    "_orden_nivel": 0
+                    if nivel_legible == "Inicial"
+                    else (1 if nivel_legible == "Primaria" else 2),
+                    "_orden_grado": grado_num,
+                    "_orden_materia": _orden_materia(materia_legible),
+                    "_orden_grupo": grupo_order.get(grupo, 0),
+                }
+            )
 
     if not registros:
         return pd.DataFrame()
 
     salida = pd.DataFrame(registros)
+    salida = salida.drop_duplicates(
+        subset=["Nivel", "Grado", "Grupo", "Nombre de Clase", "Clase Clave", "Materias"],
+        keep="first",
+    )
     salida = salida.sort_values(
-        by=["_orden_nivel", "_orden_grado", "_orden_materia", "Materias"],
-        ascending=[True, True, True, True],
-    ).drop(columns=["_orden_nivel", "_orden_grado", "_orden_materia"])
+        by=["_orden_nivel", "_orden_grado", "_orden_materia", "Materias", "_orden_grupo"],
+        ascending=[True, True, True, True, True],
+    ).drop(columns=["_orden_nivel", "_orden_grado", "_orden_materia", "_orden_grupo"])
 
     return salida.reset_index(drop=True)
 
@@ -429,6 +591,7 @@ def process_excel(
     hoja: str = SHEET_NAME,
     plantilla_bytes: Optional[bytes] = None,
     plantilla_path: Optional[Path] = None,
+    grupos: Optional[Sequence[str]] = None,
 ) -> Tuple[bytes, Dict[str, int]]:
     """
     Flujo completo: carga, filtra, transforma y devuelve los bytes del Excel final.
@@ -439,7 +602,7 @@ def process_excel(
     if df_filtrado.empty:
         raise ValueError(f"No se encontraron filas para el código {codigo}.")
 
-    df_transformado = transformar(df_filtrado)
+    df_transformado = transformar(df_filtrado, grupos=grupos)
     if df_transformado.empty:
         raise ValueError(
             "No hay filas que cumplan con 'Compartir Aprendizajes' y reglas de transformación."

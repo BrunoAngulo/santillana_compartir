@@ -9,7 +9,7 @@ Santillana_format/
 |- main.py                   # CLI (wrapper)
 |- santillana_format/
 |  |- processor.py           # Logica de carga/filtrado/transformacion/exportacion
-|  |- alumnos.py             # Listado de alumnos desde Pegasus
+|  |- alumnos.py             # Helpers Pegasus
 |  |- cli.py                 # CLI real
 |  |- __init__.py
 |- requirements.txt
@@ -29,21 +29,39 @@ python -m venv .venv
 pip install -r requirements.txt
 streamlit run app.py
 ```
-En la web puedes elegir entre crear clases o listar alumnos (requiere token Bearer).
+En la web puedes elegir entre crear clases o depurar alumnos.
 
 ## Ejecutar CLI
 ```bash
 python main.py ruta_al_excel.xlsx 00001053
 ```
+Opcional, grupos por letra (A,B,C,D):
+```bash
+python main.py ruta_al_excel.xlsx 00001053 A,B,C,D
+```
 Alternativa:
 ```bash
 python -m santillana_format.cli ruta_al_excel.xlsx 00001053
 ```
-Listar alumnos (Pegasus):
+Listar/eliminar clases (Pegasus gestion escolar):
 ```bash
 set PEGASUS_TOKEN=tu_token
-python main.py alumnos --colegios 25947 --niveles Secundaria --grupos A,B
+python main.py clases-api --colegio-id 4230 --ciclo-id 207
+python main.py clases-api --colegio-id 4230 --ciclo-id 207 --confirm-delete
 ```
+
+Depurar alumnos (duplicados):
+```bash
+python main.py depurar ruta_base.xlsx ruta_nuevo.xlsx
+```
+Atajo (detecta dos rutas de archivo):
+```bash
+python main.py ruta_base.xlsx ruta_nuevo.xlsx
+```
+Por defecto busca:
+- base en `alumnos_oldList/`
+- nuevo en `alumnos_newList/`
+Y genera en `alumnos_registerList/`.
 
 ## Flujo de procesamiento
 - Carga la hoja `Export` por defecto y detecta encabezados si hace falta.

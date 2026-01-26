@@ -335,7 +335,7 @@ def _mapear_materia(valor: str) -> Tuple[str, str]:
         "PREESCOLAR": ("Preescolar", "PE"),
         "RAZONAMIENTO MATEMATICO": ("Razonamiento Matemático", "RM"),
         "RAZONAMIENTO VERBAL": ("Razonamiento Verbal", "RV"),
-        "RELIGION": ("Religión", "RE"),
+        "RELIGION": ("Educación Religiosa", "RE"),
         "TUTORIA Y ORIENTACION EDUCATIVA": ("Tutoría y Orientación Educativa", "TO"),
     }
     materia = mapa.get(normalizado)
@@ -360,7 +360,7 @@ def _orden_materia(materia: str) -> int:
         "Preescolar": 13,
         "Razonamiento Matemático": 14,
         "Razonamiento Verbal": 15,
-        "Religión": 16,
+        "Educación Religiosa": 16,
         "Tutoría y Orientación Educativa": 17,
         "Caligrafía": 18,
     }
@@ -453,15 +453,29 @@ def transformar(df: pd.DataFrame, grupos: Optional[Sequence[str]] = None) -> pd.
             grado_norm = _normalize_key(fila["GradoVal"])
             mapa_inicial = {
                 "DOS": 2,
+                "2": 2,
                 "TRES": 3,
+                "3": 3,
                 "CUATRO": 4,
+                "4": 4,
                 "CINCO": 5,
+                "5": 5,
                 "UNO": 1,
+                "1": 1,
             }
             if not grado_num:
                 clave = grado_norm.split()[0] if grado_norm else ""
                 grado_num = mapa_inicial.get(clave, 1)
-            if not grado_legible:
+            nombres_inicial = {
+                1: "1 año",
+                2: "2 años",
+                3: "3 años",
+                4: "4 años",
+                5: "5 años",
+            }
+            if grado_num in nombres_inicial:
+                grado_legible = nombres_inicial[grado_num]
+            elif not grado_legible:
                 grado_legible = fila["GradoVal"] or "Inicial"
             if not nivel_legible:
                 nivel_legible = "Inicial"

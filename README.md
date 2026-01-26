@@ -43,12 +43,48 @@ Alternativa:
 ```bash
 python -m santillana_format.cli ruta_al_excel.xlsx 00001053
 ```
+Salida por defecto: `salidas/Clases/`.
 Listar/eliminar clases (Pegasus gestion escolar):
 ```bash
 set PEGASUS_TOKEN=tu_token
 python main.py clases-api --colegio-id 4230 --ciclo-id 207
 python main.py clases-api --colegio-id 4230 --ciclo-id 207 --confirm-delete
 ```
+
+Listar profesores (Pegasus censo) y generar Excel:
+```bash
+set PEGASUS_TOKEN=tu_token
+python main.py profesores --colegio-id 4230 --ciclo-id 207
+```
+Opcional, filtrar niveles:
+```bash
+python main.py profesores --colegio-id 4230 --niveles Inicial,Primaria
+python main.py profesores --colegio-id 4230 --niveles 38,39
+```
+Salida por defecto: `salidas/Profesores/`.
+
+Sincronizar profesores desde un Excel (activar/inactivar y asignar niveles):
+```bash
+python main.py profesores-sync ruta.xlsx --colegio-id 4230 --token 'tu_token'
+```
+Opcional, hoja y modo prueba:
+```bash
+python main.py profesores-sync ruta.xlsx --colegio-id 4230 --sheet Profesores --dry-run
+```
+
+Asignar profesores a clases desde un Excel (modo simulacion por defecto):
+```bash
+python main.py profesores-clases ruta.xlsx --colegio-id 4230 --token 'tu_token'
+```
+Para aplicar cambios:
+```bash
+python main.py profesores-clases ruta.xlsx --colegio-id 4230 --token 'tu_token' --apply
+```
+Para eliminar del staff a profesores que no estan en el Excel (solo clases evaluadas):
+```bash
+python main.py profesores-clases ruta.xlsx --colegio-id 4230 --token 'tu_token' --apply --remove-missing
+```
+El Excel puede usar la columna `Clases` o `CURSO`; si hay multiples cursos, separamos por coma.
 
 Depurar alumnos (duplicados):
 ```bash

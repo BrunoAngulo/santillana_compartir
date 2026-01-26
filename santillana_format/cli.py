@@ -29,8 +29,17 @@ from .processor import (
     filtrar_codigo,
     transformar,
 )
+from .profesores import (
+    DEFAULT_CICLO_ID as PROFESORES_CICLO_ID_DEFAULT,
+    NIVEL_MAP as PROFESORES_NIVEL_MAP,
+    build_profesores_filename,
+    listar_profesores,
+)
+from .profesores_sync import sync_profesores
+from .profesores_clases import asignar_profesores_clases
 
-OUTPUT_DIR = Path("salidas")
+OUTPUT_DIR_CLASES = Path("salidas") / "Clases"
+OUTPUT_DIR_PROFESORES = Path("salidas") / "Profesores"
 NEWLIST_DIR = Path("alumnos_newList")
 OLDLIST_DIR = Path("alumnos_oldList")
 REGISTERLIST_DIR = Path("alumnos_registerList")
@@ -135,6 +144,170 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Timeout HTTP en segundos (default: 30).",
     )
 
+    parser_profesores = subparsers.add_parser(
+        "profesores", help="Listar profesores y generar Excel."
+    )
+    parser_profesores.add_argument(
+        "--token",
+        default="",
+        help="Bearer token (sin el prefijo 'Bearer').",
+    )
+    parser_profesores.add_argument(
+        "--token-env",
+        default="PEGASUS_TOKEN",
+        help="Nombre de la variable de entorno con el token.",
+    )
+    parser_profesores.add_argument(
+        "--colegio-id",
+        type=int,
+        required=True,
+        help="ID del colegio.",
+    )
+    parser_profesores.add_argument(
+        "--empresa-id",
+        type=int,
+        default=DEFAULT_EMPRESA_ID,
+        help="Empresa ID (default: 11).",
+    )
+    parser_profesores.add_argument(
+        "--ciclo-id",
+        type=int,
+        default=PROFESORES_CICLO_ID_DEFAULT,
+        help="Ciclo ID (default: 207).",
+    )
+    parser_profesores.add_argument(
+        "--niveles",
+        default="",
+        help="Niveles a consultar (Inicial,Primaria,Secundaria o IDs).",
+    )
+    parser_profesores.add_argument(
+        "--output",
+        default="",
+        help="Ruta del Excel de salida (default: salidas/profesores_<colegio_id>.xlsx).",
+    )
+    parser_profesores.add_argument(
+        "--timeout",
+        type=int,
+        default=30,
+        help="Timeout HTTP en segundos (default: 30).",
+    )
+
+    parser_profesores_sync = subparsers.add_parser(
+        "profesores-sync",
+        help="Sincronizar profesores con un Excel (activar/inactivar y asignar niveles).",
+    )
+    parser_profesores_sync.add_argument(
+        "ruta_excel",
+        help="Ruta del archivo Excel con profesores activos.",
+    )
+    parser_profesores_sync.add_argument(
+        "--sheet",
+        default="",
+        help="Hoja del Excel (default: primera hoja).",
+    )
+    parser_profesores_sync.add_argument(
+        "--token",
+        default="",
+        help="Bearer token (sin el prefijo 'Bearer').",
+    )
+    parser_profesores_sync.add_argument(
+        "--token-env",
+        default="PEGASUS_TOKEN",
+        help="Nombre de la variable de entorno con el token.",
+    )
+    parser_profesores_sync.add_argument(
+        "--colegio-id",
+        type=int,
+        required=True,
+        help="ID del colegio.",
+    )
+    parser_profesores_sync.add_argument(
+        "--empresa-id",
+        type=int,
+        default=DEFAULT_EMPRESA_ID,
+        help="Empresa ID (default: 11).",
+    )
+    parser_profesores_sync.add_argument(
+        "--ciclo-id",
+        type=int,
+        default=PROFESORES_CICLO_ID_DEFAULT,
+        help="Ciclo ID (default: 207).",
+    )
+    parser_profesores_sync.add_argument(
+        "--niveles",
+        default="",
+        help="Niveles a consultar (Inicial,Primaria,Secundaria o IDs).",
+    )
+    parser_profesores_sync.add_argument(
+        "--timeout",
+        type=int,
+        default=30,
+        help="Timeout HTTP en segundos (default: 30).",
+    )
+    parser_profesores_sync.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Solo muestra el resumen; no aplica cambios en API.",
+    )
+
+    parser_profesores_clases = subparsers.add_parser(
+        "profesores-clases",
+        help="Asignar profesores a clases segun un Excel (modo simulacion por defecto).",
+    )
+    parser_profesores_clases.add_argument(
+        "ruta_excel",
+        help="Ruta del archivo Excel con docentes.",
+    )
+    parser_profesores_clases.add_argument(
+        "--sheet",
+        default="",
+        help="Hoja del Excel (default: primera hoja).",
+    )
+    parser_profesores_clases.add_argument(
+        "--token",
+        default="",
+        help="Bearer token (sin el prefijo 'Bearer').",
+    )
+    parser_profesores_clases.add_argument(
+        "--token-env",
+        default="PEGASUS_TOKEN",
+        help="Nombre de la variable de entorno con el token.",
+    )
+    parser_profesores_clases.add_argument(
+        "--colegio-id",
+        type=int,
+        required=True,
+        help="ID del colegio.",
+    )
+    parser_profesores_clases.add_argument(
+        "--empresa-id",
+        type=int,
+        default=DEFAULT_EMPRESA_ID,
+        help="Empresa ID (default: 11).",
+    )
+    parser_profesores_clases.add_argument(
+        "--ciclo-id",
+        type=int,
+        default=GESTION_ESCOLAR_CICLO_ID_DEFAULT,
+        help="Ciclo ID (default: 207).",
+    )
+    parser_profesores_clases.add_argument(
+        "--timeout",
+        type=int,
+        default=30,
+        help="Timeout HTTP en segundos (default: 30).",
+    )
+    parser_profesores_clases.add_argument(
+        "--apply",
+        action="store_true",
+        help="Aplica los cambios (por defecto es simulacion).",
+    )
+    parser_profesores_clases.add_argument(
+        "--remove-missing",
+        action="store_true",
+        help="Elimina del staff a profesores que no estan en el Excel (solo clases evaluadas).",
+    )
+
     parser_depurar = subparsers.add_parser(
         "depurar", help="Comparar alumnos y quitar repetidos."
     )
@@ -178,6 +351,32 @@ def _parse_grupo_letras(value: str) -> List[str]:
     if invalid:
         raise ValueError(f"Grupos invalidos: {', '.join(invalid)}")
     return letras
+
+
+def _parse_niveles(value: str) -> List[int]:
+    if not value:
+        return list(PROFESORES_NIVEL_MAP.values())
+    ids: List[int] = []
+    invalid: List[str] = []
+    niveles_lookup = {key.lower(): val for key, val in PROFESORES_NIVEL_MAP.items()}
+    for token in re.split(r"[\s,]+", value.strip()):
+        if not token:
+            continue
+        lower = token.strip().lower()
+        if lower.isdigit():
+            level_id = int(lower)
+            if level_id not in ids:
+                ids.append(level_id)
+            continue
+        if lower in niveles_lookup:
+            level_id = niveles_lookup[lower]
+            if level_id not in ids:
+                ids.append(level_id)
+            continue
+        invalid.append(token)
+    if invalid:
+        raise ValueError(f"Niveles invalidos: {', '.join(invalid)}")
+    return ids
 
 
 def _build_gestion_escolar_url(
@@ -289,6 +488,15 @@ def _resolve_output_path_depurar(output: str, nuevo_path: Path) -> Path:
     return REGISTERLIST_DIR / f"{nuevo_path.stem}_sin_repetidos.xlsx"
 
 
+def _resolve_output_path_profesores(output: str, colegio_id: int) -> Path:
+    if output:
+        path = Path(output)
+        if path.is_dir():
+            return path / build_profesores_filename(colegio_id)
+        return path
+    return OUTPUT_DIR_PROFESORES / build_profesores_filename(colegio_id)
+
+
 def _looks_like_file_path(value: str) -> bool:
     if not value:
         return False
@@ -347,8 +555,8 @@ def _run_clases(args: argparse.Namespace) -> int:
             plantilla_path=plantilla_path,
         )
 
-        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-        output_path = OUTPUT_DIR / f"{Path(OUTPUT_FILENAME).stem}_{args.codigo}.xlsx"
+        OUTPUT_DIR_CLASES.mkdir(parents=True, exist_ok=True)
+        output_path = OUTPUT_DIR_CLASES / f"{Path(OUTPUT_FILENAME).stem}_{args.codigo}.xlsx"
         output_path.write_bytes(output_bytes)
         print(f"\nArchivo generado: {output_path.resolve()}")
         return 0
@@ -433,6 +641,212 @@ def _run_clases_api(args: argparse.Namespace) -> int:
         for item in errors:
             print(f"- {item}", file=sys.stderr)
         return 1
+
+    return 0
+
+
+def _run_profesores(args: argparse.Namespace) -> int:
+    token = args.token.strip()
+    if not token:
+        token = os.environ.get(args.token_env, "").strip()
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    if not token:
+        print("Error: falta el token. Usa --token o la variable de entorno.", file=sys.stderr)
+        return 1
+
+    try:
+        nivel_ids = _parse_niveles(args.niveles)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        output_bytes, summary, errores = listar_profesores(
+            token=token,
+            colegio_id=int(args.colegio_id),
+            nivel_ids=nivel_ids,
+            empresa_id=int(args.empresa_id),
+            ciclo_id=int(args.ciclo_id),
+            timeout=int(args.timeout),
+        )
+    except Exception as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    output_path = _resolve_output_path_profesores(args.output, int(args.colegio_id))
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(output_bytes)
+    except Exception as exc:
+        print(f"Error al escribir salida: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"Archivo generado: {output_path.resolve()}")
+    print(f"Profesores encontrados: {summary['profesores_total']}")
+    if summary["niveles_error"] or summary["detalle_error"]:
+        print(
+            f"Errores listado: {summary['niveles_error']}, detalle: {summary['detalle_error']}",
+            file=sys.stderr,
+        )
+        max_errors = 10
+        for error in errores[:max_errors]:
+            tipo = error.get("tipo", "")
+            nivel_id = error.get("nivel_id", "")
+            persona_id = error.get("persona_id", "")
+            mensaje = error.get("error", "")
+            print(
+                f"- {tipo} nivel={nivel_id} persona={persona_id}: {mensaje}",
+                file=sys.stderr,
+            )
+        restantes = len(errores) - max_errors
+        if restantes > 0:
+            print(f"... y {restantes} errores mas.", file=sys.stderr)
+
+    return 0
+
+
+def _run_profesores_sync(args: argparse.Namespace) -> int:
+    token = args.token.strip()
+    if not token:
+        token = os.environ.get(args.token_env, "").strip()
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    if not token:
+        print("Error: falta el token. Usa --token o la variable de entorno.", file=sys.stderr)
+        return 1
+
+    excel_path = Path(args.ruta_excel)
+    if not excel_path.exists():
+        print(f"Error: no existe el archivo: {excel_path}", file=sys.stderr)
+        return 1
+
+    try:
+        nivel_ids = _parse_niveles(args.niveles)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    try:
+        summary, warnings, errors = sync_profesores(
+            token=token,
+            colegio_id=int(args.colegio_id),
+            excel_path=excel_path,
+            sheet_name=args.sheet or None,
+            nivel_ids=nivel_ids,
+            empresa_id=int(args.empresa_id),
+            ciclo_id=int(args.ciclo_id),
+            timeout=int(args.timeout),
+            dry_run=bool(args.dry_run),
+        )
+    except Exception as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    if args.dry_run:
+        print("Modo dry-run: no se aplicaron cambios.")
+
+    print(
+        "Excel grupos: {excel_grupos}, API profesores: {api_profesores}, "
+        "Activar: {activar}, Inactivar: {inactivar}, Asignar nivel: {asignar_nivel}.".format(
+            **summary
+        )
+    )
+    if summary.get("excel_no_en_api"):
+        print(f"Excel sin match en API: {summary['excel_no_en_api']}", file=sys.stderr)
+
+    if warnings:
+        print("Avisos:", file=sys.stderr)
+        for warn in warnings[:10]:
+            print(f"- {warn}", file=sys.stderr)
+        restantes = len(warnings) - 10
+        if restantes > 0:
+            print(f"... y {restantes} mas.", file=sys.stderr)
+
+    if errors:
+        print("Errores API:", file=sys.stderr)
+        for err in errors[:10]:
+            tipo = err.get("tipo", "")
+            persona = err.get("persona_id", "")
+            nivel = err.get("nivel_id", "")
+            mensaje = err.get("error", "")
+            print(f"- {tipo} persona={persona} nivel={nivel}: {mensaje}", file=sys.stderr)
+        restantes = len(errors) - 10
+        if restantes > 0:
+            print(f"... y {restantes} mas.", file=sys.stderr)
+
+    return 0
+
+
+def _run_profesores_clases(args: argparse.Namespace) -> int:
+    token = args.token.strip()
+    if not token:
+        token = os.environ.get(args.token_env, "").strip()
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    if not token:
+        print("Error: falta el token. Usa --token o la variable de entorno.", file=sys.stderr)
+        return 1
+
+    excel_path = Path(args.ruta_excel)
+    if not excel_path.exists():
+        print(f"Error: no existe el archivo: {excel_path}", file=sys.stderr)
+        return 1
+
+    dry_run = not bool(args.apply)
+    if dry_run:
+        print("Modo simulacion: no se aplican POST.")
+
+    try:
+        summary, warnings, errors = asignar_profesores_clases(
+            token=token,
+            empresa_id=int(args.empresa_id),
+            ciclo_id=int(args.ciclo_id),
+            colegio_id=int(args.colegio_id),
+            excel_path=excel_path,
+            sheet_name=args.sheet or None,
+            timeout=int(args.timeout),
+            dry_run=dry_run,
+            remove_missing=bool(args.remove_missing),
+            on_log=print,
+        )
+    except Exception as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    print("")
+    print(
+        "Docentes procesados: {docentes_procesados}, "
+        "Clases encontradas: {clases_encontradas}, "
+        "Asignaciones nuevas: {asignaciones_nuevas}, "
+        "Asignaciones omitidas: {asignaciones_omitidas}, "
+        "Docentes sin match: {docentes_sin_match}, "
+        "Eliminaciones: {eliminaciones}.".format(**summary)
+    )
+    if summary.get("docentes_invalidos"):
+        print(f"Docentes invalidos: {summary['docentes_invalidos']}", file=sys.stderr)
+    if warnings:
+        print("Avisos:", file=sys.stderr)
+        for warn in warnings[:10]:
+            print(f"- {warn}", file=sys.stderr)
+        restantes = len(warnings) - 10
+        if restantes > 0:
+            print(f"... y {restantes} mas.", file=sys.stderr)
+    if errors:
+        print("Errores API:", file=sys.stderr)
+        for err in errors[:10]:
+            tipo = err.get("tipo", "")
+            persona = err.get("persona_id", "")
+            clase_id = err.get("clase_id", "")
+            clase = err.get("clase", "")
+            mensaje = err.get("error", "")
+            print(
+                f"- {tipo} persona={persona} clase={clase_id} {clase}: {mensaje}",
+                file=sys.stderr,
+            )
+        restantes = len(errors) - 10
+        if restantes > 0:
+            print(f"... y {restantes} mas.", file=sys.stderr)
 
     return 0
 
@@ -525,7 +939,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         argv = sys.argv[1:]
     if (
         argv
-        and argv[0] not in {"clases", "depurar", "clases-api"}
+        and argv[0]
+        not in {
+            "clases",
+            "depurar",
+            "clases-api",
+            "profesores",
+            "profesores-sync",
+            "profesores-clases",
+        }
         and not argv[0].startswith("-")
     ):
         if len(argv) >= 2 and _looks_like_file_path(argv[0]) and _looks_like_file_path(argv[1]):
@@ -543,6 +965,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _run_clases(args)
     if args.command == "clases-api":
         return _run_clases_api(args)
+    if args.command == "profesores":
+        return _run_profesores(args)
+    if args.command == "profesores-sync":
+        return _run_profesores_sync(args)
+    if args.command == "profesores-clases":
+        return _run_profesores_clases(args)
     if args.command == "depurar":
         return _run_depurar(args)
 

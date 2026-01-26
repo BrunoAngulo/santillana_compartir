@@ -1,4 +1,5 @@
 import os
+import re
 import tempfile
 from pathlib import Path
 from typing import Dict, List
@@ -13,7 +14,11 @@ from santillana_format.processor import (
     SHEET_NAME,
     process_excel,
 )
-from santillana_format.profesores import DEFAULT_CICLO_ID as PROFESORES_CICLO_ID_DEFAULT
+from santillana_format.profesores import (
+    DEFAULT_CICLO_ID as PROFESORES_CICLO_ID_DEFAULT,
+    export_profesores_excel,
+    listar_profesores_data,
+)
 from santillana_format.profesores_clases import asignar_profesores_clases
 
 
@@ -40,6 +45,31 @@ def _clean_token(token: str) -> str:
     if token.lower().startswith("bearer "):
         token = token[7:].strip()
     return token
+
+
+def _parse_persona_ids(raw: str) -> List[int]:
+    if not raw:
+        return []
+    tokens = re.split(r"[,\s;]+", raw.strip())
+    ids: List[int] = []
+    invalid: List[str] = []
+    for token in tokens:
+        if not token:
+            continue
+        try:
+            ids.append(int(token))
+        except ValueError:
+            invalid.append(token)
+    if invalid:
+        raise ValueError(f"IDs invalidos: {', '.join(invalid)}")
+    unique: List[int] = []
+    seen = set()
+    for value in ids:
+        if value in seen:
+            continue
+        seen.add(value)
+        unique.append(value)
+    return unique
 
 
 def _fetch_clases_gestion_escolar(
@@ -180,28 +210,8 @@ with tab_clases:
 
 
 with tab_profesores_clases:
-    st.subheader("Asignar profesores a clases")
-    st.write(
-        "Sube un Excel con columnas persona_id y CURSO, más niveles/grados "
-        "(Inicial/Primaria/Secundaria o I3, P1, S2...)."
-    )
-    st.caption(
-        "Proceso: 1) sube el Excel, 2) simula para revisar el log, "
-        "3) activa 'Aplicar cambios' para ejecutar, 4) opcionalmente elimina "
-        "profesores que no estén en el Excel."
-    )
-    st.info(
-        "Necesitas un Excel ya listo con profesores activos. "
-        "Puedes generarlo con el comando: python main.py profesores --colegio-id ... --ciclo-id ..."
-    )
-    uploaded_profesores = st.file_uploader(
-        "Excel de profesores",
-        type=["xlsx", "csv", "txt"],
-        key="profesores_excel",
-    )
-    sheet_name = st.text_input(
-        "Hoja (opcional)", value="", help="Nombre de la hoja si el Excel tiene varias."
-    )
+    st.subheader("Profesores con clases")
+    st.write("Genera el Excel base de profesores activos y luego asignalos a clases.")
 
     col1, col2 = st.columns(2)
     token_input = col1.text_input(
@@ -228,18 +238,137 @@ with tab_profesores_clases:
             format="%d",
             key="profesores_timeout",
         )
-        aplicar_cambios = st.checkbox(
-            "Aplicar cambios (desactiva modo simulación)",
-            value=False,
-            key="profesores_apply",
-        )
-        remove_missing = st.checkbox(
-            "Eliminar profesores que no están en el Excel (solo clases evaluadas)",
-            value=False,
-            key="profesores_remove",
+
+    st.subheader("Generar Excel base de profesores activos")
+    st.write(
+        "Crea un Excel listo con columnas Id, Nombre, Apellido, Sexo, DNI, E-mail, Login y Password."
+    )
+    persona_ids_raw = st.text_input(
+        "Filtrar por personaId (opcional, separado por coma)",
+        key="profesores_ids",
+    )
+    if st.button("Generar Excel base", type="primary", key="profesores_generar"):
+        token = _clean_token(token_input)
+        if not token:
+            token = _clean_token(os.environ.get("PEGASUS_TOKEN", ""))
+        if not token:
+            st.error("Falta el token. Usa el input o la variable de entorno.")
+            st.stop()
+        try:
+            persona_ids = _parse_persona_ids(persona_ids_raw)
+        except ValueError as exc:
+            st.error(f"Error: {exc}")
+            st.stop()
+        try:
+            data, summary, errores = listar_profesores_data(
+                token=token,
+                colegio_id=int(colegio_id),
+                empresa_id=DEFAULT_EMPRESA_ID,
+                ciclo_id=int(ciclo_id),
+                timeout=int(timeout),
+            )
+        except Exception as exc:  # pragma: no cover - UI
+            st.error(f"Error: {exc}")
+            st.stop()
+
+        if persona_ids:
+            data = [
+                item for item in data if int(item.get("persona_id", 0)) in persona_ids
+            ]
+
+        filas: List[Dict[str, object]] = []
+        for entry in data:
+            dni = entry.get("dni", "") or ""
+            email = entry.get("email", "") or ""
+            login = entry.get("login", "") or email
+            filas.append(
+                {
+                    "Id": entry.get("persona_id", ""),
+                    "Nombre": entry.get("nombre", ""),
+                    "Apellido Paterno": entry.get("apellido_paterno", ""),
+                    "Apellido Materno": entry.get("apellido_materno", ""),
+                    "Sexo": entry.get("sexo", ""),
+                    "DNI": dni,
+                    "E-mail": email,
+                    "Login": login,
+                    "Password": dni,
+                    "Inicial": "",
+                    "Primaria": "",
+                    "Secundaria": "",
+                    "I3": "",
+                    "I4": "",
+                    "I5": "",
+                    "P1": "",
+                    "P2": "",
+                    "P3": "",
+                    "P4": "",
+                    "P5": "",
+                    "P6": "",
+                    "S1": "",
+                    "S2": "",
+                    "S3": "",
+                    "S4": "",
+                    "S5": "",
+                    "Clases": "",
+                    "Secciones": "",
+                }
+            )
+
+        if not filas:
+            st.warning("No se encontraron profesores para generar el Excel.")
+        else:
+            output_bytes = export_profesores_excel(filas)
+            file_name = f"profesores_base_{int(colegio_id)}.xlsx"
+            st.session_state["profesores_excel_base"] = output_bytes
+            st.session_state["profesores_excel_base_name"] = file_name
+            st.success(
+                "Excel base listo. Profesores: {profesores_total}, Errores detalle: {detalle_error}.".format(
+                    **summary
+                )
+            )
+            if errores:
+                st.error("Errores al obtener profesores:")
+                st.dataframe(errores, use_container_width=True)
+
+    if st.session_state.get("profesores_excel_base"):
+        st.download_button(
+            label="Descargar Excel base",
+            data=st.session_state["profesores_excel_base"],
+            file_name=st.session_state["profesores_excel_base_name"],
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
-    if st.button("Procesar profesores con clases", type="primary"):
+    st.subheader("Asignar profesores a clases")
+    st.write(
+        "Sube un Excel con columnas persona_id y CURSO, mas niveles/grados "
+        "(Inicial/Primaria/Secundaria o I3, P1, S2...)."
+    )
+    uploaded_profesores = st.file_uploader(
+        "Excel de profesores",
+        type=["xlsx", "csv", "txt"],
+        key="profesores_excel",
+    )
+    sheet_name = st.text_input(
+        "Hoja (opcional)", value="", help="Nombre de la hoja si el Excel tiene varias."
+    )
+    remove_missing = st.checkbox(
+        "Eliminar profesores que no estan en el Excel (solo clases evaluadas)",
+        value=False,
+        key="profesores_remove",
+    )
+    confirm_apply = st.checkbox(
+        "Confirmo aplicar cambios",
+        value=False,
+        key="profesores_confirm_apply",
+    )
+
+    col_run, col_apply = st.columns(2)
+    run_sim = col_run.button("Simular", type="primary", key="profesores_simular")
+    run_apply = col_apply.button(
+        "Aplicar cambios", type="secondary", key="profesores_apply"
+    )
+
+    if run_sim or run_apply:
         if not uploaded_profesores:
             st.error("Sube un Excel de profesores.")
             st.stop()
@@ -249,6 +378,9 @@ with tab_profesores_clases:
             token = _clean_token(os.environ.get("PEGASUS_TOKEN", ""))
         if not token:
             st.error("Falta el token. Usa el input o la variable de entorno.")
+            st.stop()
+        if run_apply and not confirm_apply:
+            st.error("Debes confirmar antes de aplicar cambios.")
             st.stop()
 
         suffix = Path(uploaded_profesores.name).suffix or ".xlsx"
@@ -271,7 +403,7 @@ with tab_profesores_clases:
                 excel_path=tmp_path,
                 sheet_name=sheet_name.strip() or None,
                 timeout=int(timeout),
-                dry_run=not aplicar_cambios,
+                dry_run=not run_apply,
                 remove_missing=remove_missing,
                 on_log=_on_log,
             )
@@ -296,13 +428,12 @@ with tab_profesores_clases:
         )
         if warnings:
             st.warning("Advertencias:")
-            st.write("\n".join(f"- {item}" for item in warnings))
+            st.write("\\n".join(f"- {item}" for item in warnings))
         if errors:
             st.error("Errores al asignar profesores:")
             st.dataframe(errors, use_container_width=True)
         if logs:
-            st.text_area("Log de ejecución", value="\n".join(logs), height=300)
-
+            st.text_area("Log de ejecucion", value="\\n".join(logs), height=300)
 
 with tab_clases_api:
     st.subheader("Listar y eliminar clases")

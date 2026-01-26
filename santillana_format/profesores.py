@@ -48,6 +48,7 @@ PROFESOR_COLUMNS = [
     "S4",
     "S5",
     "Clases",
+    "Secciones",
 ]
 
 ERROR_COLUMNS = [
@@ -457,6 +458,7 @@ def listar_profesores(
                 "S4": "",
                 "S5": "",
                 "Clases": "",
+                "Secciones": "",
             }
         )
 

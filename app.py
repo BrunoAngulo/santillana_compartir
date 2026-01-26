@@ -1,4 +1,5 @@
 import os
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -26,6 +27,8 @@ from santillana_format.processor import (
     SHEET_NAME,
     process_excel,
 )
+from santillana_format.profesores import DEFAULT_CICLO_ID as PROFESORES_CICLO_ID_DEFAULT
+from santillana_format.profesores_clases import asignar_profesores_clases
 
 
 GESTION_ESCOLAR_URL = (
@@ -63,10 +66,18 @@ COMPARTIR_PERIOD_KEY_DEFAULT = "annual"
 
 st.set_page_config(page_title="Generador de Plantilla", layout="centered")
 st.title("Generar Plantilla de Clases")
-st.write("Elige si quieres crear clases, depurar alumnos o gestionar clases.")
+st.write(
+    "Elige si quieres crear clases, depurar alumnos, asignar profesores a clases o gestionar clases."
+)
 
-tab_clases, tab_depurar, tab_clases_api, tab_compartir = st.tabs(
-    ["Crear clases", "Depurar alumnos", "Clases API", "Escala Compartir"]
+tab_clases, tab_depurar, tab_profesores_clases, tab_clases_api, tab_compartir = st.tabs(
+    [
+        "Crear clases",
+        "Depurar alumnos",
+        "Profesores con clases",
+        "Clases API",
+        "Escala Compartir",
+    ]
 )
 
 
@@ -505,6 +516,11 @@ with tab_clases:
             help="Nombre de la columna donde buscar el codigo",
         )
         hoja = col1.text_input("Hoja a leer", value=SHEET_NAME, help="Nombre de la hoja")
+        grupos = col2.text_input(
+            "Secciones (A,B,C,D)",
+            value="A",
+            help="Letras separadas por coma para crear secciones.",
+        )
 
     if st.button("Generar", type="primary"):
         if not uploaded_excel:
@@ -512,6 +528,9 @@ with tab_clases:
             st.stop()
         if not codigo.strip():
             st.error("Ingresa un codigo.")
+            st.stop()
+        if not grupos.strip():
+            st.error("Ingresa las secciones (A,B,C,D).")
             st.stop()
 
         excel_bytes = uploaded_excel.read()
@@ -525,6 +544,7 @@ with tab_clases:
                     columna_codigo=columna_codigo,
                     hoja=hoja,
                     plantilla_path=plantilla_path,
+                    grupos=grupos,
                 )
             st.success(
                 f"Listo. Filtradas: {summary['filas_filtradas']}, Salida: {summary['filas_salida']} filas."
@@ -631,6 +651,127 @@ with tab_depurar:
             file_name=output_name,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
+
+
+with tab_profesores_clases:
+    st.subheader("Asignar profesores a clases")
+    st.write(
+        "Sube un Excel con columnas persona_id y CURSO, más niveles/grados "
+        "(Inicial/Primaria/Secundaria o I3, P1, S2...)."
+    )
+    st.caption(
+        "Proceso: 1) sube el Excel, 2) simula para revisar el log, "
+        "3) activa 'Aplicar cambios' para ejecutar, 4) opcionalmente elimina "
+        "profesores que no estén en el Excel."
+    )
+    uploaded_profesores = st.file_uploader(
+        "Excel de profesores",
+        type=["xlsx", "csv", "txt"],
+        key="profesores_excel",
+    )
+    sheet_name = st.text_input(
+        "Hoja (opcional)", value="", help="Nombre de la hoja si el Excel tiene varias."
+    )
+
+    col1, col2 = st.columns(2)
+    token_input = col1.text_input(
+        "Token (Bearer)", type="password", key="profesores_token"
+    )
+    colegio_id = col2.number_input(
+        "Colegio Clave", min_value=1, step=1, format="%d", key="profesores_colegio"
+    )
+
+    with st.expander("Opciones avanzadas", expanded=False):
+        ciclo_id = st.number_input(
+            "Ciclo ID",
+            min_value=1,
+            step=1,
+            value=PROFESORES_CICLO_ID_DEFAULT,
+            format="%d",
+            key="profesores_ciclo",
+        )
+        timeout = st.number_input(
+            "Timeout (seg)",
+            min_value=5,
+            step=5,
+            value=30,
+            format="%d",
+            key="profesores_timeout",
+        )
+        aplicar_cambios = st.checkbox(
+            "Aplicar cambios (desactiva modo simulación)",
+            value=False,
+            key="profesores_apply",
+        )
+        remove_missing = st.checkbox(
+            "Eliminar profesores que no están en el Excel (solo clases evaluadas)",
+            value=False,
+            key="profesores_remove",
+        )
+
+    if st.button("Procesar profesores con clases", type="primary"):
+        if not uploaded_profesores:
+            st.error("Sube un Excel de profesores.")
+            st.stop()
+
+        token = _clean_token(token_input)
+        if not token:
+            token = _clean_token(os.environ.get("PEGASUS_TOKEN", ""))
+        if not token:
+            st.error("Falta el token. Usa el input o la variable de entorno.")
+            st.stop()
+
+        suffix = Path(uploaded_profesores.name).suffix or ".xlsx"
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                tmp.write(uploaded_profesores.read())
+                tmp_path = Path(tmp.name)
+
+            logs: List[str] = []
+
+            def _on_log(line: str) -> None:
+                logs.append(line)
+
+            summary, warnings, errors = asignar_profesores_clases(
+                token=token,
+                empresa_id=DEFAULT_EMPRESA_ID,
+                ciclo_id=int(ciclo_id),
+                colegio_id=int(colegio_id),
+                excel_path=tmp_path,
+                sheet_name=sheet_name.strip() or None,
+                timeout=int(timeout),
+                dry_run=not aplicar_cambios,
+                remove_missing=remove_missing,
+                on_log=_on_log,
+            )
+        except Exception as exc:  # pragma: no cover - UI
+            st.error(f"Error: {exc}")
+            st.stop()
+        finally:
+            if tmp_path:
+                try:
+                    tmp_path.unlink()
+                except OSError:
+                    pass
+
+        st.success(
+            "Listo. Docentes: {docentes_procesados}, "
+            "Sin match: {docentes_sin_match}, "
+            "Clases: {clases_encontradas}, "
+            "Asignaciones nuevas: {asignaciones_nuevas}, "
+            "Omitidas: {asignaciones_omitidas}, "
+            "Eliminaciones: {eliminaciones}, "
+            "Errores API: {errores_api}.".format(**summary)
+        )
+        if warnings:
+            st.warning("Advertencias:")
+            st.write("\n".join(f"- {item}" for item in warnings))
+        if errors:
+            st.error("Errores al asignar profesores:")
+            st.dataframe(errors, use_container_width=True)
+        if logs:
+            st.text_area("Log de ejecución", value="\n".join(logs), height=300)
 
 
 with tab_clases_api:

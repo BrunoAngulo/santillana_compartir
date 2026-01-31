@@ -21,6 +21,7 @@ from santillana_format.profesores import (
     listar_profesores_data,
 )
 from santillana_format.profesores_clases import asignar_profesores_clases
+from santillana_format.profesores_password import actualizar_passwords_docentes
 from santillana_format.richmond_groups import process_rs_groups
 
 
@@ -213,11 +214,16 @@ with tab_clases:
 
 with tab_profesores_clases:
     st.subheader("Profesores con clases")
-    st.write("Genera el Excel base de profesores activos y luego asignalos a clases.")
+    st.write(
+        "Genera el Excel base de profesores (activos e inactivos) y luego asignalos a clases."
+    )
 
     col1, col2 = st.columns(2)
     token_input = col1.text_input(
-        "Token (Bearer)", type="password", key="profesores_token"
+        "Token (sin Bearer)",
+        type="password",
+        key="profesores_token",
+        help="Pega el token JWT sin el prefijo 'Bearer '.",
     )
     colegio_id = col2.number_input(
         "Colegio Clave", min_value=1, step=1, format="%d", key="profesores_colegio"
@@ -241,9 +247,10 @@ with tab_profesores_clases:
             key="profesores_timeout",
         )
 
-    st.subheader("Generar Excel base de profesores activos")
+    st.subheader("Generar Excel base de profesores (activos e inactivos)")
     st.write(
-        "Crea un Excel listo con columnas Id, Nombre, Apellido, Sexo, DNI, E-mail, Login y Password."
+        "Crea un Excel listo con columnas Id, Nombre, Apellido, Estado, Sexo, DNI, "
+        "E-mail, Login y Password."
     )
     persona_ids_raw = st.text_input(
         "Filtrar por personaId (opcional, separado por coma)",
@@ -289,6 +296,7 @@ with tab_profesores_clases:
                     "Nombre": entry.get("nombre", ""),
                     "Apellido Paterno": entry.get("apellido_paterno", ""),
                     "Apellido Materno": entry.get("apellido_materno", ""),
+                    "Estado": entry.get("estado", ""),
                     "Sexo": entry.get("sexo", ""),
                     "DNI": dni,
                     "E-mail": email,
@@ -343,7 +351,21 @@ with tab_profesores_clases:
     st.subheader("Asignar profesores a clases")
     st.write(
         "Sube un Excel con columnas persona_id y CURSO, mas niveles/grados "
-        "(Inicial/Primaria/Secundaria o I3, P1, S2...)."
+        "(Inicial/Primaria/Secundaria o I3, P1, S2...). "
+        "Opcional: columna Secciones con valores como 1PA,2PB,3SB para asignar solo esas secciones. "
+        "Si incluyes la columna Estado (Activo/Inactivo), se sincroniza por nivel al aplicar."
+    )
+    st.markdown("**Procesos a ejecutar**")
+    col_proc1, col_proc2 = st.columns(2)
+    do_password = col_proc1.checkbox("Actualizar login/password", value=True)
+    do_niveles = col_proc1.checkbox("Asignar niveles (asignarNivel)", value=True)
+    do_estado = col_proc1.checkbox("Activar/Inactivar (Estado)", value=True)
+    do_clases = col_proc2.checkbox("Asignar clases y secciones", value=True)
+    remove_missing = col_proc2.checkbox(
+        "Eliminar profesores que no estan en el Excel (solo clases evaluadas)",
+        value=False,
+        key="profesores_remove",
+        disabled=not do_clases,
     )
     uploaded_profesores = st.file_uploader(
         "Excel de profesores",
@@ -351,12 +373,9 @@ with tab_profesores_clases:
         key="profesores_excel",
     )
     sheet_name = st.text_input(
-        "Hoja (opcional)", value="", help="Nombre de la hoja si el Excel tiene varias."
-    )
-    remove_missing = st.checkbox(
-        "Eliminar profesores que no estan en el Excel (solo clases evaluadas)",
-        value=False,
-        key="profesores_remove",
+        "Hoja (opcional)",
+        value="Profesores_clases",
+        help="Nombre de la hoja. Si lo dejas en blanco se intentara usar Profesores_clases.",
     )
     confirm_apply = st.checkbox(
         "Confirmo aplicar cambios",
@@ -384,6 +403,9 @@ with tab_profesores_clases:
         if run_apply and not confirm_apply:
             st.error("Debes confirmar antes de aplicar cambios.")
             st.stop()
+        if not any([do_password, do_niveles, do_estado, do_clases]):
+            st.error("Selecciona al menos un proceso.")
+            st.stop()
 
         suffix = Path(uploaded_profesores.name).suffix or ".xlsx"
         tmp_path = None
@@ -397,18 +419,61 @@ with tab_profesores_clases:
             def _on_log(line: str) -> None:
                 logs.append(line)
 
-            summary, warnings, errors = asignar_profesores_clases(
-                token=token,
-                empresa_id=DEFAULT_EMPRESA_ID,
-                ciclo_id=int(ciclo_id),
-                colegio_id=int(colegio_id),
-                excel_path=tmp_path,
-                sheet_name=sheet_name.strip() or None,
-                timeout=int(timeout),
-                dry_run=not run_apply,
-                remove_missing=remove_missing,
-                on_log=_on_log,
-            )
+            progress = st.progress(0)
+            status = st.empty()
+
+            def _on_progress(phase: str, current: int, total: int, message: str) -> None:
+                percent = int((current / total) * 100) if total else 0
+                progress.progress(percent)
+                status.write(f"{phase}: {message} ({current}/{total})")
+
+            if do_password:
+                pwd_summary, pwd_warnings, pwd_errors = actualizar_passwords_docentes(
+                    token=token,
+                    colegio_id=int(colegio_id),
+                    excel_path=tmp_path,
+                    sheet_name=sheet_name.strip() or None,
+                    empresa_id=DEFAULT_EMPRESA_ID,
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                    dry_run=not run_apply,
+                    on_progress=lambda current, total, msg: _on_progress(
+                        "passwords", current, total, msg
+                    ),
+                )
+                st.info(
+                    "Passwords -> Docentes: {docentes_total}, Niveles: {niveles_total}, "
+                    "Actualizaciones: {actualizaciones}, Errores API: {errores_api}.".format(
+                        **pwd_summary
+                    )
+                )
+                if pwd_warnings:
+                    st.warning("Warnings passwords:")
+                    st.write("\\n".join(f"- {item}" for item in pwd_warnings))
+                if pwd_errors:
+                    st.error("Errores passwords:")
+                    st.dataframe(pwd_errors, use_container_width=True)
+
+            run_asignacion = any([do_niveles, do_estado, do_clases])
+            if run_asignacion:
+                summary, warnings, errors = asignar_profesores_clases(
+                    token=token,
+                    empresa_id=DEFAULT_EMPRESA_ID,
+                    ciclo_id=int(ciclo_id),
+                    colegio_id=int(colegio_id),
+                    excel_path=tmp_path,
+                    sheet_name=sheet_name.strip() or None,
+                    timeout=int(timeout),
+                    dry_run=not run_apply,
+                    remove_missing=remove_missing if do_clases else False,
+                    on_log=_on_log,
+                    on_progress=_on_progress,
+                    do_niveles=do_niveles,
+                    do_estado=do_estado,
+                    do_clases=do_clases,
+                )
+            else:
+                summary, warnings, errors = {}, [], []
         except Exception as exc:  # pragma: no cover - UI
             st.error(f"Error: {exc}")
             st.stop()
@@ -419,28 +484,38 @@ with tab_profesores_clases:
                 except OSError:
                     pass
 
-        st.success(
-            "Listo. Docentes: {docentes_procesados}, "
-            "Sin match: {docentes_sin_match}, "
-            "Clases: {clases_encontradas}, "
-            "Asignaciones nuevas: {asignaciones_nuevas}, "
-            "Omitidas: {asignaciones_omitidas}, "
-            "Eliminaciones: {eliminaciones}, "
-            "Errores API: {errores_api}.".format(**summary)
-        )
-        if warnings:
-            st.warning("Advertencias:")
-            st.write("\\n".join(f"- {item}" for item in warnings))
-        if errors:
-            st.error("Errores al asignar profesores:")
-            st.dataframe(errors, use_container_width=True)
-        if logs:
-            st.text_area("Log de ejecucion", value="\\n".join(logs), height=300)
+        if summary:
+            st.success(
+                "Listo. Docentes: {docentes_procesados}, "
+                "Sin match: {docentes_sin_match}, "
+                "Clases: {clases_encontradas}, "
+                "Asignaciones nuevas: {asignaciones_nuevas}, "
+                "Omitidas: {asignaciones_omitidas}, "
+                "Eliminaciones: {eliminaciones}, "
+                "Estado activaciones: {estado_activaciones}, "
+                "Estado inactivaciones: {estado_inactivaciones}, "
+                "Estado omitidas: {estado_omitidas}, "
+                "Errores API: {errores_api}.".format(**summary)
+            )
+            if warnings:
+                st.warning("Advertencias:")
+                st.write("\\n".join(f"- {item}" for item in warnings))
+            if errors:
+                st.error("Errores al asignar profesores:")
+                st.dataframe(errors, use_container_width=True)
+            if logs:
+                st.text_area("Log de ejecucion", value="\\n".join(logs), height=300)
+        else:
+            st.success("Listo. Solo se procesaron passwords.")
 
 with tab_clases_api:
     st.subheader("Listar y eliminar clases")
     st.write("Lista y elimina clases del API de gestion escolar.")
-    token_input = st.text_input("Token (Bearer)", type="password")
+    token_input = st.text_input(
+        "Token (sin Bearer)",
+        type="password",
+        help="Pega el token JWT sin el prefijo 'Bearer '.",
+    )
     colegio_id = st.number_input("Colegio Clave", min_value=1, step=1, format="%d")
     with st.expander("Opciones avanzadas", expanded=False):
         ciclo_id = st.number_input(
@@ -551,7 +626,7 @@ with tab_rs:
         "Institution UUID (ID del colegio)", key="rs_institution"
     )
     token_input = st.text_input(
-        "Bearer Token", type="password", key="rs_token"
+        "Token (sin Bearer)", type="password", key="rs_token"
     )
     uploaded_rs = st.file_uploader(
         "Excel (.xlsx)",

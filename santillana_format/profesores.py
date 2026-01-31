@@ -4,6 +4,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 import pandas as pd
 import requests
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.datavalidation import DataValidation
 
 DEFAULT_EMPRESA_ID = 11
 DEFAULT_CICLO_ID = 207
@@ -11,6 +12,10 @@ DEFAULT_CICLO_ID = 207
 BASE_URL = (
     "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
     "/ciclos/{ciclo_id}/colegios/{colegio_id}/niveles/{nivel_id}/profesores"
+)
+FILTERS_URL = (
+    "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
+    "/ciclos/{ciclo_id}/colegios/{colegio_id}/profesoresByFilters"
 )
 
 NIVEL_MAP = {
@@ -25,6 +30,7 @@ PROFESOR_COLUMNS = [
     "Nombre",
     "Apellido Paterno",
     "Apellido Materno",
+    "Estado",
     "Sexo",
     "DNI",
     "E-mail",
@@ -86,6 +92,48 @@ def _fetch_profesores_list(
     timeout: int = 30,
 ) -> Tuple[List[Dict[str, object]], Optional[str], Optional[int], str]:
     url = _build_url(context)
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+    }
+    try:
+        response = session.get(url, headers=headers, timeout=timeout)
+    except requests.RequestException as exc:
+        return [], str(exc), None, url
+
+    status_code = response.status_code
+    try:
+        payload = response.json()
+    except ValueError:
+        return [], f"Respuesta no JSON (status {status_code})", status_code, url
+
+    if not response.ok:
+        message = payload.get("message") if isinstance(payload, dict) else ""
+        return [], message or f"HTTP {status_code}", status_code, url
+
+    if not isinstance(payload, dict) or not payload.get("success", False):
+        message = payload.get("message") if isinstance(payload, dict) else "Respuesta invalida"
+        return [], message or "Respuesta invalida", status_code, url
+
+    data = payload.get("data") or []
+    if not isinstance(data, list):
+        return [], "Campo data no es lista", status_code, url
+    return data, None, status_code, url
+
+
+def _fetch_profesores_by_filters(
+    session: requests.Session,
+    token: str,
+    empresa_id: int,
+    ciclo_id: int,
+    colegio_id: int,
+    timeout: int = 30,
+) -> Tuple[List[Dict[str, object]], Optional[str], Optional[int], str]:
+    url = FILTERS_URL.format(
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        colegio_id=int(colegio_id),
+    )
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
@@ -193,6 +241,58 @@ def _extract_niveles(detail: Dict[str, object], only_activos: bool = True) -> Se
     return niveles
 
 
+def _extract_niveles_activos_map(detail: Dict[str, object]) -> Dict[int, bool]:
+    activos: Dict[int, bool] = {}
+    for entry in detail.get("niveles") or []:
+        if not isinstance(entry, dict):
+            continue
+        nivel = entry.get("nivel") if isinstance(entry.get("nivel"), dict) else {}
+        nivel_id = nivel.get("nivelId") or entry.get("nivelId")
+        if nivel_id is None:
+            continue
+        activo_value = entry.get("activo")
+        if activo_value is None:
+            continue
+        try:
+            nivel_id_int = int(nivel_id)
+            activo = _parse_activo(activo_value)
+            if nivel_id_int in activos:
+                activos[nivel_id_int] = activos[nivel_id_int] or activo
+            else:
+                activos[nivel_id_int] = activo
+        except (TypeError, ValueError):
+            continue
+
+    for entry in detail.get("personaRoles") or []:
+        if not isinstance(entry, dict):
+            continue
+        nivel = entry.get("nivel") if isinstance(entry.get("nivel"), dict) else {}
+        nivel_id = nivel.get("nivelId") or entry.get("nivelId")
+        if nivel_id is None:
+            continue
+        activo_value = entry.get("activo")
+        if activo_value is None:
+            continue
+        try:
+            nivel_id_int = int(nivel_id)
+            activo = _parse_activo(activo_value)
+            if nivel_id_int in activos:
+                activos[nivel_id_int] = activos[nivel_id_int] or activo
+            else:
+                activos[nivel_id_int] = activo
+        except (TypeError, ValueError):
+            continue
+    return activos
+
+
+def _derive_estado(activos: Dict[int, bool]) -> str:
+    if not activos:
+        return ""
+    if any(activos.values()):
+        return "Activo"
+    return "Inactivo"
+
+
 def _pick_value(detail: Optional[Dict[str, object]], persona: Dict[str, object], key: str) -> object:
     if detail:
         value = detail.get(key)
@@ -220,6 +320,7 @@ def export_profesores_excel(profesores: List[Dict[str, object]]) -> bytes:
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df_profesores.to_excel(writer, index=False, sheet_name="Profesores")
+        df_profesores.head(0).to_excel(writer, index=False, sheet_name="Profesores_clases")
         ws = writer.book["Profesores"]
         ws.freeze_panes = "A2"
         ws.auto_filter.ref = ws.dimensions
@@ -227,6 +328,42 @@ def export_profesores_excel(profesores: List[Dict[str, object]]) -> bytes:
             sample = df_profesores[col].astype(str).head(200).tolist()
             max_len = max([len(str(col))] + [len(val) for val in sample])
             ws.column_dimensions[get_column_letter(idx)].width = min(max_len + 2, 60)
+
+        ws_clases = writer.book["Profesores_clases"]
+        ws_clases.freeze_panes = "A2"
+        ws_clases.auto_filter.ref = ws_clases.dimensions
+        for idx, col in enumerate(df_profesores.columns, start=1):
+            max_len = len(str(col))
+            ws_clases.column_dimensions[get_column_letter(idx)].width = min(max_len + 2, 60)
+
+        estado_col_index = None
+        try:
+            estado_col_index = PROFESOR_COLUMNS.index("Estado") + 1
+        except ValueError:
+            estado_col_index = None
+
+        if estado_col_index is not None:
+            catalog_sheet = "Catalogos"
+            if catalog_sheet in writer.book.sheetnames:
+                writer.book.remove(writer.book[catalog_sheet])
+            catalog_ws = writer.book.create_sheet(catalog_sheet)
+            catalog_ws["A1"] = "Activo"
+            catalog_ws["A2"] = "Inactivo"
+            catalog_ws.sheet_state = "hidden"
+
+            estado_col_letter = get_column_letter(estado_col_index)
+            dv = DataValidation(
+                type="list",
+                formula1=f"={catalog_sheet}!$A$1:$A$2",
+                allow_blank=True,
+            )
+            max_row = max(ws.max_row, 2000)
+            ws.add_data_validation(dv)
+            dv.add(f"{estado_col_letter}2:{estado_col_letter}{max_row}")
+
+            max_row_clases = max(ws_clases.max_row, 2000)
+            ws_clases.add_data_validation(dv)
+            dv.add(f"{estado_col_letter}2:{estado_col_letter}{max_row_clases}")
 
     output.seek(0)
     return output.getvalue()
@@ -254,6 +391,7 @@ def listar_profesores_data(
 
     profesores: Dict[int, Dict[str, object]] = {}
     errores: List[Dict[str, object]] = []
+    seen_roles: Set[int] = set()
 
     with requests.Session() as session:
         for index, context in enumerate(contexts, start=1):
@@ -279,6 +417,19 @@ def listar_profesores_data(
                 continue
 
             for item in data:
+                if not isinstance(item, dict):
+                    continue
+                persona_rol_id = item.get("personaRolId")
+                if persona_rol_id is not None:
+                    try:
+                        persona_rol_id = int(persona_rol_id)
+                    except (TypeError, ValueError):
+                        persona_rol_id = None
+                if persona_rol_id is not None:
+                    if persona_rol_id in seen_roles:
+                        continue
+                    seen_roles.add(persona_rol_id)
+
                 persona = item.get("persona") if isinstance(item, dict) else {}
                 if not isinstance(persona, dict):
                     persona = {}
@@ -321,6 +472,7 @@ def listar_profesores_data(
                         "login": "",
                         "niveles_detalle": set(),
                         "niveles_detalle_activos": set(),
+                        "estado": "",
                     }
                     profesores[persona_id_int] = entry
                 else:
@@ -373,6 +525,13 @@ def listar_profesores_data(
                 entry["login"] = persona_login.get("login") or ""
             entry["niveles_detalle"] = _extract_niveles(detail, only_activos=False)
             entry["niveles_detalle_activos"] = _extract_niveles(detail, only_activos=True)
+            activos_map = _extract_niveles_activos_map(detail)
+            for nivel_id, activo in activos_map.items():
+                if activo:
+                    entry["niveles_activos"][nivel_id] = True
+                else:
+                    entry["niveles_activos"].setdefault(nivel_id, False)
+            entry["estado"] = _derive_estado(entry.get("niveles_activos", {}))
 
     resultados: List[Dict[str, object]] = []
     for persona_id, entry in profesores.items():
@@ -388,6 +547,7 @@ def listar_profesores_data(
                 "dni": _pick_value(detail, persona, "idOficial"),
                 "email": _pick_value(detail, persona, "email"),
                 "login": entry.get("login", ""),
+                "estado": entry.get("estado", ""),
                 "niveles_presentes": set(entry.get("niveles", set())),
                 "niveles_activos": dict(entry.get("niveles_activos", {})),
                 "niveles_detalle": set(entry.get("niveles_detalle", set())),
@@ -435,6 +595,7 @@ def listar_profesores(
                 "Nombre": entry.get("nombre", ""),
                 "Apellido Paterno": entry.get("apellido_paterno", ""),
                 "Apellido Materno": entry.get("apellido_materno", ""),
+                "Estado": entry.get("estado", ""),
                 "Sexo": entry.get("sexo", ""),
                 "DNI": entry.get("dni", ""),
                 "E-mail": entry.get("email", ""),

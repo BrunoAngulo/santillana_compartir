@@ -2,6 +2,7 @@ import argparse
 import os
 import re
 import sys
+import warnings as warnings_module
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -35,6 +36,7 @@ from .profesores import (
     build_profesores_filename,
     listar_profesores,
 )
+from .profesores_password import actualizar_passwords_docentes
 from .profesores_sync import sync_profesores
 from .profesores_clases import asignar_profesores_clases
 
@@ -67,6 +69,20 @@ def _print_summary(df) -> None:
     resumen = df[columns_present]
     print("\nResumen filtrado por codigo:\n")
     print(resumen.to_string(index=False))
+
+
+def _print_progress(current: int, total: int, message: str) -> None:
+    if total <= 0:
+        return
+    width = 26
+    ratio = min(max(current / total, 0), 1)
+    filled = int(width * ratio)
+    bar = "#" * filled + "-" * (width - filled)
+    percent = int(ratio * 100)
+    sys.stderr.write(f"\r[{bar}] {percent:3d}% {message}")
+    sys.stderr.flush()
+    if current >= total:
+        sys.stderr.write("\n")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -306,6 +322,69 @@ def _build_parser() -> argparse.ArgumentParser:
         "--remove-missing",
         action="store_true",
         help="Elimina del staff a profesores que no estan en el Excel (solo clases evaluadas).",
+    )
+    parser_profesores_clases.add_argument(
+        "--solo-estado",
+        action="store_true",
+        help="Muestra solo los profesores con cambio de Estado (sin otros logs).",
+    )
+    parser_profesores_clases.add_argument(
+        "--compact",
+        action="store_true",
+        help="Muestra un listado compacto de acciones en una sola linea por categoria.",
+    )
+
+    parser_profesores_password = subparsers.add_parser(
+        "profesores-password",
+        help="Actualizar login/password de profesores segun un Excel.",
+    )
+    parser_profesores_password.add_argument(
+        "ruta_excel",
+        help="Ruta del archivo Excel con docentes.",
+    )
+    parser_profesores_password.add_argument(
+        "--sheet",
+        default="",
+        help="Hoja del Excel (default: primera hoja).",
+    )
+    parser_profesores_password.add_argument(
+        "--token",
+        default="",
+        help="Bearer token (sin el prefijo 'Bearer').",
+    )
+    parser_profesores_password.add_argument(
+        "--token-env",
+        default="PEGASUS_TOKEN",
+        help="Nombre de la variable de entorno con el token.",
+    )
+    parser_profesores_password.add_argument(
+        "--colegio-id",
+        type=int,
+        required=True,
+        help="ID del colegio.",
+    )
+    parser_profesores_password.add_argument(
+        "--empresa-id",
+        type=int,
+        default=DEFAULT_EMPRESA_ID,
+        help="Empresa ID (default: 11).",
+    )
+    parser_profesores_password.add_argument(
+        "--ciclo-id",
+        type=int,
+        default=PROFESORES_CICLO_ID_DEFAULT,
+        help="Ciclo ID (default: 207).",
+    )
+    parser_profesores_password.add_argument(
+        "--timeout",
+        type=int,
+        default=30,
+        help="Timeout HTTP en segundos (default: 30).",
+    )
+    parser_profesores_password.add_argument(
+        "--apply",
+        action="store_true",
+        help="Aplica los cambios (por defecto es simulacion).",
     )
 
     parser_depurar = subparsers.add_parser(
@@ -794,8 +873,59 @@ def _run_profesores_clases(args: argparse.Namespace) -> int:
         return 1
 
     dry_run = not bool(args.apply)
-    if dry_run:
-        print("Modo simulacion: no se aplican POST.")
+    if dry_run and not args.solo_estado and not args.compact:
+        print("Modo simulacion: no se aplican cambios.")
+
+    if args.solo_estado:
+        warnings_module.filterwarnings(
+            "ignore",
+            message="Data Validation extension is not supported and will be removed",
+            category=UserWarning,
+        )
+        ids: List[int] = []
+        seen: set = set()
+
+        def _on_estado_change(
+            persona_id: int,
+            nivel_id: int,
+            desired_active: bool,
+            current_active: Optional[bool],
+        ) -> None:
+            if persona_id in seen:
+                return
+            seen.add(persona_id)
+            ids.append(int(persona_id))
+
+        try:
+            asignar_profesores_clases(
+                token=token,
+                empresa_id=int(args.empresa_id),
+                ciclo_id=int(args.ciclo_id),
+                colegio_id=int(args.colegio_id),
+                excel_path=excel_path,
+                sheet_name=args.sheet or None,
+                timeout=int(args.timeout),
+                dry_run=not bool(args.apply),
+                remove_missing=False,
+                on_log=None,
+                list_estado_only=True,
+                on_estado_change=_on_estado_change,
+            )
+        except Exception as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+
+        ids_text = ",".join(str(pid) for pid in ids)
+        print(f"Total a actualizar: {len(ids)}")
+        print(f"IDs: ({ids_text})")
+        return 0
+
+    if args.compact:
+        warnings_module.filterwarnings(
+            "ignore",
+            message="Data Validation extension is not supported and will be removed",
+            category=UserWarning,
+        )
 
     try:
         summary, warnings, errors = asignar_profesores_clases(
@@ -808,11 +938,67 @@ def _run_profesores_clases(args: argparse.Namespace) -> int:
             timeout=int(args.timeout),
             dry_run=dry_run,
             remove_missing=bool(args.remove_missing),
-            on_log=print,
+            on_log=None if args.compact else print,
+            collect_compact=bool(args.compact),
+            on_progress=lambda phase, current, total, msg: _print_progress(
+                current, total, f"{phase}: {msg}"
+            ),
         )
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
+
+    if args.compact:
+        listado = summary.get("listado_compacto") or {}
+
+        def _join_ids(values) -> str:
+            if not values:
+                return "()"
+            ordered = sorted(int(v) for v in values)
+            return "(" + ",".join(str(v) for v in ordered) + ")"
+
+        def _join_clases(mapping) -> str:
+            if not mapping:
+                return "()"
+            parts = []
+            for key in sorted(mapping.keys()):
+                ids_text = _join_ids(mapping[key])
+                parts.append(f"{key}={ids_text}")
+            return "; ".join(parts)
+
+        asignar = listado.get("asignar") or {}
+        eliminar = listado.get("eliminar") or {}
+        activar = listado.get("activar") or set()
+        inactivar = listado.get("inactivar") or set()
+        niveles = listado.get("niveles") or set()
+
+        print(f"Niveles: {_join_ids(niveles)}")
+        print(f"Activar: {_join_ids(activar)}")
+        print(f"Inactivar: {_join_ids(inactivar)}")
+        print(f"Asignar: {_join_clases(asignar)}")
+        print(f"Eliminar: {_join_clases(eliminar)}")
+        if errors:
+            print("Errores API:")
+            for err in errors:
+                tipo = err.get("tipo", "")
+                persona = err.get("persona_id", "")
+                clase_id = err.get("clase_id", "")
+                clase = err.get("clase", "")
+                nivel = err.get("nivel_id", "")
+                mensaje = err.get("error", "")
+                detail_parts = [f"tipo={tipo}"]
+                if persona:
+                    detail_parts.append(f"persona={persona}")
+                if nivel:
+                    detail_parts.append(f"nivel={nivel}")
+                if clase_id:
+                    detail_parts.append(f"clase={clase_id}")
+                if clase:
+                    detail_parts.append(str(clase))
+                if mensaje:
+                    detail_parts.append(str(mensaje))
+                print("- " + " ".join(detail_parts))
+        return 0
 
     print("")
     print(
@@ -821,7 +1007,10 @@ def _run_profesores_clases(args: argparse.Namespace) -> int:
         "Asignaciones nuevas: {asignaciones_nuevas}, "
         "Asignaciones omitidas: {asignaciones_omitidas}, "
         "Docentes sin match: {docentes_sin_match}, "
-        "Eliminaciones: {eliminaciones}.".format(**summary)
+        "Eliminaciones: {eliminaciones}, "
+        "Estado activaciones: {estado_activaciones}, "
+        "Estado inactivaciones: {estado_inactivaciones}, "
+        "Estado omitidas: {estado_omitidas}.".format(**summary)
     )
     if summary.get("docentes_invalidos"):
         print(f"Docentes invalidos: {summary['docentes_invalidos']}", file=sys.stderr)
@@ -834,19 +1023,93 @@ def _run_profesores_clases(args: argparse.Namespace) -> int:
             print(f"... y {restantes} mas.", file=sys.stderr)
     if errors:
         print("Errores API:", file=sys.stderr)
-        for err in errors[:10]:
+        for err in errors:
             tipo = err.get("tipo", "")
             persona = err.get("persona_id", "")
             clase_id = err.get("clase_id", "")
             clase = err.get("clase", "")
+            nivel = err.get("nivel_id", "")
             mensaje = err.get("error", "")
-            print(
-                f"- {tipo} persona={persona} clase={clase_id} {clase}: {mensaje}",
-                file=sys.stderr,
-            )
-        restantes = len(errors) - 10
+            detail_parts = [f"tipo={tipo}"]
+            if persona:
+                detail_parts.append(f"persona={persona}")
+            if nivel:
+                detail_parts.append(f"nivel={nivel}")
+            if clase_id:
+                detail_parts.append(f"clase={clase_id}")
+            if clase:
+                detail_parts.append(str(clase))
+            if mensaje:
+                detail_parts.append(str(mensaje))
+            print("- " + " ".join(detail_parts), file=sys.stderr)
+
+    return 0
+
+
+def _run_profesores_password(args: argparse.Namespace) -> int:
+    token = args.token.strip()
+    if not token:
+        token = os.environ.get(args.token_env, "").strip()
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    if not token:
+        print("Error: falta el token. Usa --token o la variable de entorno.", file=sys.stderr)
+        return 1
+
+    excel_path = Path(args.ruta_excel)
+    if not excel_path.exists():
+        print(f"Error: no existe el archivo: {excel_path}", file=sys.stderr)
+        return 1
+
+    dry_run = not bool(args.apply)
+    if dry_run:
+        print("Modo simulacion: no se aplican cambios.")
+
+    try:
+        summary, warnings, errors = actualizar_passwords_docentes(
+            token=token,
+            colegio_id=int(args.colegio_id),
+            excel_path=excel_path,
+            sheet_name=args.sheet or None,
+            empresa_id=int(args.empresa_id),
+            ciclo_id=int(args.ciclo_id),
+            timeout=int(args.timeout),
+            dry_run=dry_run,
+            on_progress=lambda current, total, msg: _print_progress(
+                current, total, f"Passwords: {msg}"
+            ),
+        )
+    except Exception as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    print(
+        "Docentes: {docentes_total}, "
+        "Niveles: {niveles_total}, "
+        "Actualizaciones: {actualizaciones}, "
+        "Errores API: {errores_api}.".format(**summary)
+    )
+    if warnings:
+        print("Avisos:", file=sys.stderr)
+        for warn in warnings[:10]:
+            print(f"- {warn}", file=sys.stderr)
+        restantes = len(warnings) - 10
         if restantes > 0:
             print(f"... y {restantes} mas.", file=sys.stderr)
+    if errors:
+        print("Errores API:", file=sys.stderr)
+        for err in errors:
+            persona = err.get("persona_id", "")
+            nivel = err.get("nivel_id", "")
+            mensaje = err.get("error", "")
+            detail_parts = []
+            if persona:
+                detail_parts.append(f"persona={persona}")
+            if nivel:
+                detail_parts.append(f"nivel={nivel}")
+            if mensaje:
+                detail_parts.append(str(mensaje))
+            print("- " + " ".join(detail_parts), file=sys.stderr)
 
     return 0
 
@@ -947,6 +1210,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             "profesores",
             "profesores-sync",
             "profesores-clases",
+            "profesores-password",
         }
         and not argv[0].startswith("-")
     ):
@@ -971,6 +1235,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _run_profesores_sync(args)
     if args.command == "profesores-clases":
         return _run_profesores_clases(args)
+    if args.command == "profesores-password":
+        return _run_profesores_password(args)
     if args.command == "depurar":
         return _run_depurar(args)
 

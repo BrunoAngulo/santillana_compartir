@@ -8,7 +8,16 @@ from typing import Dict, List, Optional
 
 import requests
 
-from .alumnos import DEFAULT_EMPRESA_ID
+from .alumnos import (
+    DEFAULT_CICLO_ID as ALUMNOS_CICLO_ID_DEFAULT,
+    DEFAULT_EMPRESA_ID,
+    descargar_plantilla_edicion_masiva,
+)
+from .alumnos_compare import (
+    DEFAULT_SHEET_ACTUALIZADA as ALUMNOS_SHEET_ACTUALIZADA,
+    DEFAULT_SHEET_BD as ALUMNOS_SHEET_BD,
+    comparar_plantillas,
+)
 from .duplicados import (
     BASE_SHEET_NAME,
     NUEVO_SHEET_NAME,
@@ -42,6 +51,7 @@ from .profesores_clases import asignar_profesores_clases
 
 OUTPUT_DIR_CLASES = Path("salidas") / "Clases"
 OUTPUT_DIR_PROFESORES = Path("salidas") / "Profesores"
+OUTPUT_DIR_ALUMNOS = Path("salidas") / "Alumnos"
 NEWLIST_DIR = Path("alumnos_newList")
 OLDLIST_DIR = Path("alumnos_oldList")
 REGISTERLIST_DIR = Path("alumnos_registerList")
@@ -206,6 +216,74 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=30,
         help="Timeout HTTP en segundos (default: 30).",
+    )
+
+    parser_alumnos = subparsers.add_parser(
+        "alumnos-plantilla",
+        help="Descargar plantilla de edicion masiva de alumnos registrados.",
+    )
+    parser_alumnos.add_argument(
+        "--token",
+        default="",
+        help="Bearer token (sin el prefijo 'Bearer').",
+    )
+    parser_alumnos.add_argument(
+        "--token-env",
+        default="PEGASUS_TOKEN",
+        help="Nombre de la variable de entorno con el token.",
+    )
+    parser_alumnos.add_argument(
+        "--colegio-id",
+        type=int,
+        required=True,
+        help="ID del colegio.",
+    )
+    parser_alumnos.add_argument(
+        "--empresa-id",
+        type=int,
+        default=DEFAULT_EMPRESA_ID,
+        help="Empresa ID (default: 11).",
+    )
+    parser_alumnos.add_argument(
+        "--ciclo-id",
+        type=int,
+        default=ALUMNOS_CICLO_ID_DEFAULT,
+        help=f"Ciclo ID (default: {ALUMNOS_CICLO_ID_DEFAULT}).",
+    )
+    parser_alumnos.add_argument(
+        "--timeout",
+        type=int,
+        default=30,
+        help="Timeout HTTP en segundos (default: 30).",
+    )
+    parser_alumnos.add_argument(
+        "--output",
+        default="",
+        help="Ruta del Excel de salida (default: salidas/Alumnos/plantilla_edicion_alumnos_<colegio>.xlsx).",
+    )
+
+    parser_alumnos_cmp = subparsers.add_parser(
+        "alumnos-comparar",
+        help="Comparar Plantilla_BD vs Plantilla_Actualizada y generar filtros.",
+    )
+    parser_alumnos_cmp.add_argument(
+        "ruta_excel",
+        help="Ruta del Excel con Plantilla_BD y Plantilla_Actualizada.",
+    )
+    parser_alumnos_cmp.add_argument(
+        "--sheet-bd",
+        default=ALUMNOS_SHEET_BD,
+        help=f"Hoja base (default: {ALUMNOS_SHEET_BD}).",
+    )
+    parser_alumnos_cmp.add_argument(
+        "--sheet-actualizada",
+        default=ALUMNOS_SHEET_ACTUALIZADA,
+        help=f"Hoja actualizada (default: {ALUMNOS_SHEET_ACTUALIZADA}).",
+    )
+    parser_alumnos_cmp.add_argument(
+        "--output",
+        default="",
+        help="Ruta del Excel de salida (default: salidas/Alumnos/comparacion_<archivo>.xlsx).",
     )
 
     parser_profesores_sync = subparsers.add_parser(
@@ -761,7 +839,7 @@ def _run_profesores(args: argparse.Namespace) -> int:
         print(f"Error al escribir salida: {exc}", file=sys.stderr)
         return 1
 
-    print(f"Archivo generado: {output_path.resolve()}")
+    print(f"Archivo generado: {output_path.resolve()} (hoja Plantilla alta de alumnos)")
     print(f"Profesores encontrados: {summary['profesores_total']}")
     if summary["niveles_error"] or summary["detalle_error"]:
         print(
@@ -782,6 +860,86 @@ def _run_profesores(args: argparse.Namespace) -> int:
         if restantes > 0:
             print(f"... y {restantes} errores mas.", file=sys.stderr)
 
+    return 0
+
+
+def _run_alumnos_plantilla(args: argparse.Namespace) -> int:
+    token = args.token.strip()
+    if not token:
+        token = os.environ.get(args.token_env, "").strip()
+    if token.lower().startswith("bearer "):
+        token = token[7:].strip()
+    if not token:
+        print("Error: falta el token. Usa --token o la variable de entorno.", file=sys.stderr)
+        return 1
+
+    try:
+        output_bytes, summary = descargar_plantilla_edicion_masiva(
+            token=token,
+            colegio_id=int(args.colegio_id),
+            empresa_id=int(args.empresa_id),
+            ciclo_id=int(args.ciclo_id),
+            timeout=int(args.timeout),
+        )
+    except Exception as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    if args.output:
+        output_path = Path(args.output)
+    else:
+        OUTPUT_DIR_ALUMNOS.mkdir(parents=True, exist_ok=True)
+        output_path = OUTPUT_DIR_ALUMNOS / f"plantilla_edicion_alumnos_{int(args.colegio_id)}.xlsx"
+
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(output_bytes)
+    except Exception as exc:
+        print(f"Error al escribir salida: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"Archivo generado: {output_path.resolve()}")
+    print(f"Alumnos encontrados: {summary['alumnos_total']}")
+    return 0
+
+
+def _run_alumnos_comparar(args: argparse.Namespace) -> int:
+    excel_path = Path(args.ruta_excel)
+    if not excel_path.exists():
+        print(f"Error: no existe el archivo: {excel_path}", file=sys.stderr)
+        return 1
+
+    try:
+        output_bytes, summary = comparar_plantillas(
+            excel_path=excel_path,
+            sheet_bd=args.sheet_bd,
+            sheet_actualizada=args.sheet_actualizada,
+        )
+    except Exception as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    if args.output:
+        output_path = Path(args.output)
+    else:
+        OUTPUT_DIR_ALUMNOS.mkdir(parents=True, exist_ok=True)
+        output_path = OUTPUT_DIR_ALUMNOS / f"comparacion_{excel_path.stem}.xlsx"
+
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(output_bytes)
+    except Exception as exc:
+        print(f"Error al escribir salida: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"Archivo generado: {output_path.resolve()}")
+    print(
+        "Base: {base_total}, Actualizada: {actualizados_total}, "
+        "Logins BD: {login_bd_total}, Logins Actualizada: {login_actualizada_total}, "
+        "Match login: {login_match}, Sin BD: {login_sin_bd}, Sin Actualizada: {login_sin_actualizada}.".format(
+            **summary
+        )
+    )
     return 0
 
 
@@ -1207,6 +1365,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             "clases",
             "depurar",
             "clases-api",
+            "alumnos-plantilla",
+            "alumnos-comparar",
             "profesores",
             "profesores-sync",
             "profesores-clases",
@@ -1231,6 +1391,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _run_clases_api(args)
     if args.command == "profesores":
         return _run_profesores(args)
+    if args.command == "alumnos-plantilla":
+        return _run_alumnos_plantilla(args)
+    if args.command == "alumnos-comparar":
+        return _run_alumnos_comparar(args)
     if args.command == "profesores-sync":
         return _run_profesores_sync(args)
     if args.command == "profesores-clases":

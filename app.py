@@ -8,7 +8,12 @@ from typing import Dict, List
 import requests
 import streamlit as st
 
-from santillana_format.alumnos import DEFAULT_EMPRESA_ID
+from santillana_format.alumnos import (
+    DEFAULT_CICLO_ID as ALUMNOS_CICLO_ID_DEFAULT,
+    DEFAULT_EMPRESA_ID,
+    descargar_plantilla_edicion_masiva,
+)
+from santillana_format.alumnos_compare import comparar_plantillas
 from santillana_format.processor import (
     CODE_COLUMN_NAME,
     OUTPUT_FILENAME,
@@ -38,8 +43,14 @@ st.write(
     "Elige si quieres crear clases, asignar profesores a clases o gestionar clases."
 )
 
-tab_clases, tab_profesores_clases, tab_clases_api, tab_rs = st.tabs(
-    ["Crear clases", "Profesores con clases", "Clases API", "Clases RS (Standalone)"]
+tab_clases, tab_profesores_clases, tab_alumnos, tab_clases_api, tab_rs = st.tabs(
+    [
+        "Crear clases",
+        "Profesores con clases",
+        "Alumnos registrados",
+        "Clases API",
+        "Clases RS (Standalone)",
+    ]
 )
 
 
@@ -507,6 +518,125 @@ with tab_profesores_clases:
                 st.text_area("Log de ejecucion", value="\\n".join(logs), height=300)
         else:
             st.success("Listo. Solo se procesaron passwords.")
+
+with tab_alumnos:
+    st.subheader("Plantilla de alumnos registrados")
+    st.write(
+        "Descarga la plantilla de edicion masiva con alumnos ya registrados, "
+        "ordenada por nivel (Inicial, Primaria, Secundaria), grado y grupo (A,B,C...)."
+    )
+    col1, col2 = st.columns(2)
+    token_input = col1.text_input(
+        "Token (sin Bearer)",
+        type="password",
+        key="alumnos_token",
+        help="Pega el token JWT sin el prefijo 'Bearer '.",
+    )
+    colegio_id = col2.number_input(
+        "Colegio Clave",
+        min_value=1,
+        step=1,
+        format="%d",
+        key="alumnos_colegio",
+    )
+    with st.expander("Opciones avanzadas", expanded=False):
+        ciclo_id = st.number_input(
+            "Ciclo ID",
+            min_value=1,
+            step=1,
+            value=ALUMNOS_CICLO_ID_DEFAULT,
+            format="%d",
+            key="alumnos_ciclo",
+        )
+        empresa_id = st.number_input(
+            "Empresa ID",
+            min_value=1,
+            step=1,
+            value=DEFAULT_EMPRESA_ID,
+            format="%d",
+            key="alumnos_empresa",
+        )
+        timeout = st.number_input(
+            "Timeout (seg)",
+            min_value=5,
+            step=5,
+            value=30,
+            format="%d",
+            key="alumnos_timeout",
+        )
+
+    if st.button("Descargar plantilla", type="primary", key="alumnos_descargar"):
+        token = _clean_token(token_input)
+        if not token:
+            token = _clean_token(os.environ.get("PEGASUS_TOKEN", ""))
+        if not token:
+            st.error("Falta el token. Usa el input o la variable de entorno.")
+            st.stop()
+        try:
+            with st.spinner("Descargando plantilla..."):
+                output_bytes, summary = descargar_plantilla_edicion_masiva(
+                    token=token,
+                    colegio_id=int(colegio_id),
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                )
+        except Exception as exc:  # pragma: no cover - UI
+            st.error(f"Error: {exc}")
+            st.stop()
+
+        file_name = f"plantilla_edicion_alumnos_{int(colegio_id)}.xlsx"
+        st.success(f"Listo. Alumnos: {summary['alumnos_total']}.")
+        st.download_button(
+            label="Descargar plantilla",
+            data=output_bytes,
+            file_name=file_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
+    st.divider()
+    st.subheader("Comparar Plantilla_BD vs Plantilla_Actualizada")
+    st.write(
+        "Sube el Excel descargado (con hojas Plantilla_BD y Plantilla_Actualizada) "
+        "y se genera la hoja 'Plantilla edición masiva' con los cambios."
+    )
+    uploaded_compare = st.file_uploader(
+        "Excel con Plantilla_BD y Plantilla_Actualizada",
+        type=["xlsx"],
+        key="alumnos_compare_excel",
+    )
+    if st.button("Generar Plantilla edición masiva", type="primary", key="alumnos_compare"):
+        if not uploaded_compare:
+            st.error("Sube un Excel .xlsx con Plantilla_BD y Plantilla_Actualizada.")
+            st.stop()
+        suffix = Path(uploaded_compare.name).suffix or ".xlsx"
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                tmp.write(uploaded_compare.read())
+                tmp_path = Path(tmp.name)
+            output_bytes, summary = comparar_plantillas(excel_path=tmp_path)
+        except Exception as exc:  # pragma: no cover - UI
+            st.error(f"Error: {exc}")
+            st.stop()
+        finally:
+            if tmp_path:
+                try:
+                    tmp_path.unlink()
+                except OSError:
+                    pass
+
+        st.success(
+            "Listo. Base: {base_total}, Actualizada: {actualizados_total}, "
+            "Match login: {login_match}.".format(**summary)
+        )
+        download_name = f"plantilla_edicion_masiva_{Path(uploaded_compare.name).stem}.xlsx"
+        st.download_button(
+            label="Descargar Plantilla edición masiva",
+            data=output_bytes,
+            file_name=download_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
 with tab_clases_api:
     st.subheader("Listar y eliminar clases")

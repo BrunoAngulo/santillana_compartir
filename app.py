@@ -1,7 +1,6 @@
 import os
 import re
 import tempfile
-from datetime import date
 from pathlib import Path
 from typing import Dict, List
 
@@ -27,7 +26,6 @@ from santillana_format.profesores import (
 )
 from santillana_format.profesores_clases import asignar_profesores_clases
 from santillana_format.profesores_password import actualizar_passwords_docentes
-from santillana_format.richmond_groups import process_rs_groups
 
 
 GESTION_ESCOLAR_URL = (
@@ -43,13 +41,12 @@ st.write(
     "Elige si quieres crear clases, asignar profesores a clases o gestionar clases."
 )
 
-tab_clases, tab_profesores_clases, tab_alumnos, tab_clases_api, tab_rs = st.tabs(
+tab_clases, tab_profesores_clases, tab_alumnos, tab_clases_api = st.tabs(
     [
         "Crear clases",
         "Profesores con clases",
         "Alumnos registrados",
         "Clases API",
-        "Clases RS (Standalone)",
     ]
 )
 
@@ -165,6 +162,10 @@ def _collect_colegios(clases: List[Dict[str, object]]) -> List[Dict[str, object]
 
 
 with tab_clases:
+    st.info(
+        "Flujo sugerido: 1) Sube el Excel de detalle, 2) Ingresa el codigo CRM "
+        "exacto (respeta ceros), 3) Define secciones (A,B,C...)."
+    )
     with st.expander("Opciones de entrada", expanded=True):
         uploaded_excel = st.file_uploader(
             "Excel de entrada",
@@ -227,6 +228,10 @@ with tab_profesores_clases:
     st.subheader("Profesores con clases")
     st.write(
         "Genera el Excel base de profesores (activos e inactivos) y luego asignalos a clases."
+    )
+    st.warning(
+        "Recomendacion: primero usa 'Simular' para revisar el resumen antes de aplicar "
+        "cambios reales."
     )
 
     col1, col2 = st.columns(2)
@@ -378,6 +383,11 @@ with tab_profesores_clases:
         key="profesores_remove",
         disabled=not do_clases,
     )
+    if remove_missing and do_clases:
+        st.warning(
+            "Eliminar profesores quita asignaciones en las clases evaluadas. "
+            "Revisa el Excel antes de aplicar."
+        )
     uploaded_profesores = st.file_uploader(
         "Excel de profesores",
         type=["xlsx", "csv", "txt"],
@@ -398,6 +408,10 @@ with tab_profesores_clases:
     run_sim = col_run.button("Simular", type="primary", key="profesores_simular")
     run_apply = col_apply.button(
         "Aplicar cambios", type="secondary", key="profesores_apply"
+    )
+    st.info(
+        "Para aplicar cambios debes marcar 'Confirmo aplicar cambios'. "
+        "Si no confirmas, se ejecuta en modo simulacion."
     )
 
     if run_sim or run_apply:
@@ -525,6 +539,7 @@ with tab_alumnos:
         "Descarga la plantilla de edicion masiva con alumnos ya registrados, "
         "ordenada por nivel (Inicial, Primaria, Secundaria), grado y grupo (A,B,C...)."
     )
+    st.info("Usa esta plantilla como base oficial de alumnos registrados.")
     col1, col2 = st.columns(2)
     token_input = col1.text_input(
         "Token (sin Bearer)",
@@ -600,6 +615,10 @@ with tab_alumnos:
         "Sube el Excel descargado (con hojas Plantilla_BD y Plantilla_Actualizada) "
         "y se genera la hoja 'Plantilla edición masiva' con los cambios."
     )
+    st.warning(
+        "Asegurate de que el archivo tenga ambas hojas con nombres exactos: "
+        "Plantilla_BD y Plantilla_Actualizada."
+    )
     uploaded_compare = st.file_uploader(
         "Excel con Plantilla_BD y Plantilla_Actualizada",
         type=["xlsx"],
@@ -641,6 +660,9 @@ with tab_alumnos:
 with tab_clases_api:
     st.subheader("Listar y eliminar clases")
     st.write("Lista y elimina clases del API de gestion escolar.")
+    st.warning(
+        "Eliminar clases es irreversible. Revisa el listado antes de confirmar."
+    )
     token_input = st.text_input(
         "Token (sin Bearer)",
         type="password",
@@ -744,73 +766,3 @@ with tab_clases_api:
         if errores:
             st.error("Errores al eliminar:")
             st.write("\n".join(f"- {item}" for item in errores))
-
-with tab_rs:
-    st.subheader("Clases RS (Standalone)")
-    st.write(
-        "Sube un Excel (.xlsx) con columnas: Grado, Nivel, Producto, Secciones. "
-        "El nombre de la clase se genera como 'Ingl\u00E9s {grado}{P/S}{secci\u00F3n}'. "
-        "El proceso cambia la institucion, lista grupos existentes y crea solo los nuevos."
-    )
-    institution_id = st.text_input(
-        "Institution UUID (ID del colegio)", key="rs_institution"
-    )
-    token_input = st.text_input(
-        "Token (sin Bearer)", type="password", key="rs_token"
-    )
-    uploaded_rs = st.file_uploader(
-        "Excel (.xlsx)",
-        type=["xlsx"],
-        key="rs_excel",
-    )
-    timeout = st.number_input(
-        "Timeout (seg)",
-        min_value=5,
-        step=5,
-        value=30,
-        format="%d",
-        key="rs_timeout",
-    )
-
-    if st.button("Procesar", type="primary", key="rs_procesar"):
-        if not institution_id.strip():
-            st.error("Ingresa el Institution UUID.")
-            st.stop()
-        if not token_input.strip():
-            st.error("Ingresa el Bearer Token.")
-            st.stop()
-        if not uploaded_rs:
-            st.error("Sube un Excel .xlsx.")
-            st.stop()
-
-        token = _clean_token(token_input)
-
-        start_date = date.today()
-        end_date = date(start_date.year, 12, 31)
-
-        progress = st.progress(0)
-
-        def _on_progress(current: int, total: int) -> None:
-            percent = int((current / total) * 100) if total else 0
-            progress.progress(percent)
-
-        try:
-            summary, results = process_rs_groups(
-                token=token,
-                institution_id=institution_id.strip(),
-                excel_input=uploaded_rs,
-                filename=uploaded_rs.name,
-                start_date=start_date,
-                end_date=end_date,
-                timeout=int(timeout),
-                on_progress=_on_progress,
-            )
-        except Exception as exc:  # pragma: no cover - UI
-            st.error(f"Error: {exc}")
-            st.stop()
-
-        st.success(
-            "Listo. Procesados: {procesados}, Creados: {creados}, "
-            "Omitidos: {omitidos}, Errores: {errores}.".format(**summary)
-        )
-        st.dataframe(results, use_container_width=True)

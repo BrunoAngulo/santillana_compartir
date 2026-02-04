@@ -1,6 +1,7 @@
 # Santillana_format
 
-Genera la hoja "Plantilla alta de clases" a partir del Excel de detalle.
+Genera la hoja "Plantilla alta de clases" a partir del Excel de detalle y gestiona
+profesores/alumnos con Pegasus.
 
 ## Estructura
 ```
@@ -29,7 +30,12 @@ python -m venv .venv
 pip install -r requirements.txt
 streamlit run app.py
 ```
-En la web puedes elegir entre crear clases o depurar alumnos.
+En la web puedes:
+- Crear clases desde un Excel.
+- Listar profesores y generar Excel base.
+- Asignar profesores a clases (con opcion de simular o aplicar).
+- Descargar plantilla de alumnos registrados y comparar Plantilla_BD vs Plantilla_Actualizada.
+- Listar y eliminar clases desde el API de gestion escolar.
 
 ## Ejecutar CLI
 ```bash
@@ -63,15 +69,6 @@ python main.py profesores --colegio-id 4230 --niveles 38,39
 ```
 Salida por defecto: `salidas/Profesores/`.
 
-Sincronizar profesores desde un Excel (activar/inactivar y asignar niveles):
-```bash
-python main.py profesores-sync ruta.xlsx --colegio-id 4230 --token 'tu_token'
-```
-Opcional, hoja y modo prueba:
-```bash
-python main.py profesores-sync ruta.xlsx --colegio-id 4230 --sheet Profesores --dry-run
-```
-
 Asignar profesores a clases desde un Excel (modo simulacion por defecto):
 ```bash
 python main.py profesores-clases ruta.xlsx --colegio-id 4230 --token 'tu_token'
@@ -86,18 +83,14 @@ python main.py profesores-clases ruta.xlsx --colegio-id 4230 --token 'tu_token' 
 ```
 El Excel puede usar la columna `Clases` o `CURSO`; si hay multiples cursos, separamos por coma.
 
-Depurar alumnos (duplicados):
+Descargar plantilla de alumnos registrados:
 ```bash
-python main.py depurar ruta_base.xlsx ruta_nuevo.xlsx
+python main.py alumnos-plantilla --colegio-id 4230 --token 'tu_token'
 ```
-Atajo (detecta dos rutas de archivo):
+Comparar Plantilla_BD vs Plantilla_Actualizada:
 ```bash
-python main.py ruta_base.xlsx ruta_nuevo.xlsx
+python main.py alumnos-comparar ruta.xlsx
 ```
-Por defecto busca:
-- base en `alumnos_oldList/`
-- nuevo en `alumnos_newList/`
-Y genera en `alumnos_registerList/`.
 
 ## Flujo de procesamiento
 - Carga la hoja `Export` por defecto y detecta encabezados si hace falta.

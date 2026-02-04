@@ -38,7 +38,8 @@ GESTION_ESCOLAR_CICLO_ID_DEFAULT = 207
 st.set_page_config(page_title="Generador de Plantilla", layout="centered")
 st.title("Generar Plantilla de Clases")
 st.write(
-    "Elige si quieres crear clases, asignar profesores a clases o gestionar clases."
+    "Elige si quieres crear clases, asignar profesores a clases o gestionar clases. "
+    "El maravilloso mundo de TED :0 automatiza tu chamba por un buenos dias al dia ;)"
 )
 
 tab_clases, tab_profesores_clases, tab_alumnos, tab_clases_api = st.tabs(

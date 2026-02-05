@@ -36,11 +36,8 @@ GESTION_ESCOLAR_CICLO_ID_DEFAULT = 207
 
 
 st.set_page_config(page_title="Generador de Plantilla", layout="centered")
-st.title("Generar Plantilla de Clases")
-st.write(
-    "Elige si quieres crear clases, asignar profesores a clases o gestionar clases. "
-    "El maravilloso mundo de TED :0 automatiza tu chamba por un buenos dias al dia ;)"
-)
+st.title("Si estas aca es porque eres flojo")
+st.write("El maravilloso mundo de TED :0 automatiza tu chamba por un buenos dias al dia ;)")
 
 tab_clases, tab_profesores_clases, tab_alumnos, tab_clases_api = st.tabs(
     [
@@ -373,6 +370,10 @@ with tab_profesores_clases:
         "Si incluyes la columna Estado (Activo/Inactivo), se sincroniza por nivel al aplicar."
     )
     st.markdown("**Procesos a ejecutar**")
+    st.caption(
+        "Niveles = acceso por nivel (Inicial/Primaria/Secundaria). "
+        "Clases/Secciones = asignacion directa a clases especificas."
+    )
     col_proc1, col_proc2 = st.columns(2)
     do_password = col_proc1.checkbox("Actualizar login/password", value=True)
     do_niveles = col_proc1.checkbox("Asignar niveles (asignarNivel)", value=True)
@@ -614,7 +615,7 @@ with tab_alumnos:
     st.subheader("Comparar Plantilla_BD vs Plantilla_Actualizada")
     st.write(
         "Sube el Excel descargado (con hojas Plantilla_BD y Plantilla_Actualizada) "
-        "y se genera la hoja 'Plantilla edición masiva' con los cambios."
+        "y se generan dos hojas: 'Plantilla alta de alumnos' y 'Plantilla edición masiva'."
     )
     st.warning(
         "Asegurate de que el archivo tenga ambas hojas con nombres exactos: "
@@ -625,7 +626,7 @@ with tab_alumnos:
         type=["xlsx"],
         key="alumnos_compare_excel",
     )
-    if st.button("Generar Plantilla edición masiva", type="primary", key="alumnos_compare"):
+    if st.button("Generar alumnos_resultados", type="primary", key="alumnos_compare"):
         if not uploaded_compare:
             st.error("Sube un Excel .xlsx con Plantilla_BD y Plantilla_Actualizada.")
             st.stop()
@@ -648,11 +649,11 @@ with tab_alumnos:
 
         st.success(
             "Listo. Base: {base_total}, Actualizada: {actualizados_total}, "
-            "Match login: {login_match}.".format(**summary)
+            "Match login: {login_match}, Nuevos: {nuevos_total}.".format(**summary)
         )
-        download_name = f"plantilla_edicion_masiva_{Path(uploaded_compare.name).stem}.xlsx"
+        download_name = f"alumnos_resultados_{Path(uploaded_compare.name).stem}.xlsx"
         st.download_button(
-            label="Descargar Plantilla edición masiva",
+            label="Descargar alumnos_resultados",
             data=output_bytes,
             file_name=download_name,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

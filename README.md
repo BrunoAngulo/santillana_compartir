@@ -91,6 +91,8 @@ Comparar Plantilla_BD vs Plantilla_Actualizada:
 ```bash
 python main.py alumnos-comparar ruta.xlsx
 ```
+Salida por defecto: `salidas/Alumnos/alumnos_resultados_<archivo>.xlsx` con hojas
+`Plantilla alta de alumnos` y `Plantilla edición masiva`.
 
 ## Flujo de procesamiento
 - Carga la hoja `Export` por defecto y detecta encabezados si hace falta.

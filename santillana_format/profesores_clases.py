@@ -85,9 +85,24 @@ def asignar_profesores_clases(
     docentes, warnings, invalidos, excel_rows = _load_docentes(
         excel_path, sheet_name=sheet_name, require_curso=require_curso
     )
-    estado_by_persona, estado_warnings = _collect_estado(docentes)
-    warnings.extend(estado_warnings)
     niveles_by_persona = _collect_niveles_por_persona(docentes)
+
+    estado_by_persona: Dict[int, bool] = {}
+    estado_niveles_by_persona: Dict[int, Set[int]] = {}
+    if do_estado:
+        try:
+            docentes_estado, warnings_estado, _invalidos_estado, _excel_rows_estado = _load_docentes(
+                excel_path, sheet_name="Profesores", require_curso=False
+            )
+        except Exception as exc:
+            warnings.append(
+                f"No se pudo leer la hoja 'Profesores' para Estado: {exc}"
+            )
+        else:
+            warnings.extend(warnings_estado)
+            estado_by_persona, estado_warnings = _collect_estado(docentes_estado)
+            warnings.extend(estado_warnings)
+            estado_niveles_by_persona = _collect_niveles_por_persona(docentes_estado)
 
     summary = {
         "docentes_procesados": 0,
@@ -189,7 +204,11 @@ def asignar_profesores_clases(
     estado_changes: List[Tuple[int, int, bool, Optional[bool]]] = []
     if do_estado and estado_by_persona:
         nivel_ids_needed = sorted(
-            {nivel_id for niveles in niveles_by_persona.values() for nivel_id in niveles}
+            {
+                nivel_id
+                for niveles in estado_niveles_by_persona.values()
+                for nivel_id in niveles
+            }
         )
         activos_por_nivel, nivel_errors = _fetch_activos_por_nivel(
             token=token,
@@ -203,7 +222,7 @@ def asignar_profesores_clases(
         summary["errores_api"] += len(nivel_errors)
 
         for persona_id, desired_active in estado_by_persona.items():
-            level_ids = niveles_by_persona.get(persona_id, set())
+            level_ids = estado_niveles_by_persona.get(persona_id, set())
             if not level_ids:
                 warnings.append(
                     f"persona {persona_id} con Estado en Excel pero sin niveles/grados marcados."
@@ -297,6 +316,7 @@ def asignar_profesores_clases(
         colegio_id=colegio_id,
         timeout=timeout,
     )
+    clases = sorted(clases, key=lambda c: (c.get("name", ""), c.get("id", 0)))
     _log_line(on_log, "Cursos disponibles (id, nombre):")
     for clase in clases:
         _log_line(on_log, f"{clase['id']}\t{clase['name']}")
@@ -341,7 +361,11 @@ def asignar_profesores_clases(
     if match_groups:
         _log_line(on_log, "")
         _log_line(on_log, "Match por curso/grado (sin seccion):")
-        for group in match_groups.values():
+        ordered_groups = sorted(
+            match_groups.values(),
+            key=lambda g: (str(g.get("curso", "")), g.get("level", ""), g.get("grade", 0)),
+        )
+        for group in ordered_groups:
             nivel_grado = f"{group['level']}{group['grade']}"
             personas = ", ".join(
                 str(pid) for pid in sorted(group["personas"])
@@ -588,6 +612,8 @@ def _load_docentes(
 
     for idx, row in df.iterrows():
         row_num = int(idx) + 2
+        if _row_is_empty(row, grade_cols_present, level_cols_present):
+            break
         persona_id = _parse_persona_id(row.get("persona_id"))
         curso_raw = str(row.get("curso", "")).strip()
         cursos = _split_courses(curso_raw)
@@ -848,6 +874,28 @@ def _normalize_value(value: object) -> str:
     return text.strip().upper()
 
 
+def _row_is_empty(
+    row: pd.Series,
+    grade_cols: Sequence[str],
+    level_cols: Sequence[str],
+) -> bool:
+    if _parse_persona_id(row.get("persona_id")):
+        return False
+    if _normalize_value(row.get("curso", "")):
+        return False
+    if _normalize_value(row.get("Estado", "")):
+        return False
+    if _normalize_value(row.get("Secciones", "")):
+        return False
+    for col in grade_cols:
+        if _is_truthy(row.get(col, "")):
+            return False
+    for col in level_cols:
+        if _is_truthy(row.get(col, "")):
+            return False
+    return True
+
+
 def _parse_estado(value: object) -> Optional[bool]:
     if value is None:
         return None
@@ -1027,11 +1075,16 @@ def _fetch_clases(
             ignored += 1
             continue
         grade, level_letter, section = parsed
+        base_name = name
+        parts = name.strip().rsplit(" ", 1)
+        if len(parts) == 2 and _parse_class_suffix(parts[1]):
+            base_name = parts[0].strip()
         clases.append(
             {
                 "id": int(clase_id),
                 "name": str(name),
                 "norm": _normalize_course_text(name),
+                "base_norm": _normalize_course_text(base_name),
                 "grade": grade,
                 "level": level_letter,
                 "section": section,
@@ -1132,7 +1185,7 @@ def _match_clases(docente: Dict[str, object], clases: List[Dict[str, object]]) -
     section_filter: Set[Tuple[str, int, str]] = docente.get("section_filter") or set()
     matches: List[Dict[str, object]] = []
     for clase in clases:
-        if not clase["norm"].startswith(course_norm):
+        if clase.get("base_norm") != course_norm:
             continue
         level = clase["level"]
         grade = clase["grade"]

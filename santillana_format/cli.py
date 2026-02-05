@@ -227,9 +227,9 @@ def _resolve_output_path_comparar(output: str, excel_path: Path) -> Path:
     if output:
         path = Path(output)
         if path.is_dir():
-            return path / f"comparacion_{excel_path.stem}.xlsx"
+            return path / f"alumnos_resultados_{excel_path.stem}.xlsx"
         return path
-    return OUTPUT_DIR_ALUMNOS / f"comparacion_{excel_path.stem}.xlsx"
+    return OUTPUT_DIR_ALUMNOS / f"alumnos_resultados_{excel_path.stem}.xlsx"
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -782,7 +782,7 @@ def _run_alumnos_comparar(args: argparse.Namespace) -> int:
     print(f"Archivo generado: {output_path.resolve()}")
     print(
         "Base: {base_total}, Actualizada: {actualizados_total}, "
-        "Match login: {login_match}.".format(**summary)
+        "Match login: {login_match}, Nuevos: {nuevos_total}.".format(**summary)
     )
     return 0
 

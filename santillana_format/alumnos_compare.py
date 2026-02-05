@@ -117,15 +117,16 @@ def comparar_plantillas(
     df_act = _canonicalize_columns(df_act)
 
     summary = _build_login_summary(df_bd, df_act)
-    comparacion = _build_comparacion_bd(df_bd, df_act)
+    comparacion, nuevos = _build_comparacion_bd(df_bd, df_act)
 
     output = Path(excel_path).name
-    output_bytes = _export_comparacion(comparacion)
+    output_bytes = _export_comparacion(comparacion, nuevos)
     summary.update(
         {
             "actualizados_total": len(df_act),
             "base_total": len(df_bd),
             "archivo_base": output,
+            "nuevos_total": len(nuevos),
         }
     )
     return output_bytes, summary
@@ -363,11 +364,12 @@ def _match_field(
     return False
 
 
-def _export_comparacion(comparacion: pd.DataFrame) -> bytes:
+def _export_comparacion(comparacion: pd.DataFrame, nuevos: pd.DataFrame) -> bytes:
     from io import BytesIO
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        _write_sheet(writer, "Plantilla alta de alumnos", nuevos)
         _write_sheet(writer, "Plantilla edición masiva", comparacion)
     output.seek(0)
     return output.getvalue()
@@ -469,6 +471,18 @@ def _build_login_index(df: pd.DataFrame) -> Dict[str, int]:
     return index
 
 
+def _build_apellidos_index(df: pd.DataFrame) -> Dict[str, List[int]]:
+    index: Dict[str, List[int]] = {}
+    for idx, row in df.iterrows():
+        ap_pat = _normalize_text(row.get("apellido_paterno"))
+        ap_mat = _normalize_text(row.get("apellido_materno"))
+        if not (ap_pat and ap_mat):
+            continue
+        key = f"{ap_pat}|{ap_mat}"
+        index.setdefault(key, []).append(idx)
+    return index
+
+
 def _build_login_summary(df_bd: pd.DataFrame, df_act: pd.DataFrame) -> Dict[str, int]:
     bd_logins = set()
     for _idx, row in df_bd.iterrows():
@@ -531,18 +545,33 @@ def _pick_best_match(
     return best_idx
 
 
-def _build_comparacion_bd(df_bd: pd.DataFrame, df_act: pd.DataFrame) -> pd.DataFrame:
+def _build_comparacion_bd(
+    df_bd: pd.DataFrame, df_act: pd.DataFrame
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
     if df_bd.empty or df_act.empty:
-        return pd.DataFrame(columns=ALUMNOS_COMPARACION_COLUMNS)
+        return (
+            pd.DataFrame(columns=ALUMNOS_COMPARACION_COLUMNS),
+            pd.DataFrame(columns=ALUMNOS_CREAR_COLUMNS),
+        )
     bd_index = _build_login_index(df_bd)
+    apellidos_index = _build_apellidos_index(df_bd)
     rows: List[Dict[str, object]] = []
+    nuevos_rows: List[pd.Series] = []
 
     for _idx, act_row in df_act.iterrows():
         login_norm = _normalize_login(act_row.get("login"))
-        if not login_norm:
-            continue
-        bd_idx = bd_index.get(login_norm)
+        bd_idx: Optional[int] = None
+        if login_norm:
+            bd_idx = bd_index.get(login_norm)
         if bd_idx is None:
+            ap_pat = _normalize_text(act_row.get("apellido_paterno"))
+            ap_mat = _normalize_text(act_row.get("apellido_materno"))
+            if ap_pat and ap_mat:
+                key = f"{ap_pat}|{ap_mat}"
+                indices = apellidos_index.get(key, [])
+                bd_idx = _pick_best_match(act_row, df_bd, indices)
+        if bd_idx is None:
+            nuevos_rows.append(act_row)
             continue
         bd_row = df_bd.loc[bd_idx]
 
@@ -585,7 +614,8 @@ def _build_comparacion_bd(df_bd: pd.DataFrame, df_act: pd.DataFrame) -> pd.DataF
         df_out["Fecha de Nacimiento"] = df_out["Fecha de Nacimiento"].apply(
             _parse_fecha_excel
         )
-    return df_out
+    nuevos_df = _build_alumnos_crear(pd.DataFrame(nuevos_rows))
+    return df_out, nuevos_df
 
 
 def _parse_fecha_excel(value: object):

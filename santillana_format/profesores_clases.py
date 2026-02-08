@@ -127,6 +127,7 @@ def asignar_profesores_clases(
     errors: List[Dict[str, object]] = []
 
     personas_validas: Optional[Set[int]] = None
+    niveles_actuales_por_persona: Dict[int, Set[int]] = {}
     if docentes:
         niveles_to_check: Set[int] = set(LEVEL_ID_BY_LETTER.values())
         personas_validas = set()
@@ -152,7 +153,10 @@ def asignar_profesores_clases(
                 )
                 summary["errores_api"] += 1
                 continue
-            personas_validas.update(_extract_persona_ids(data))
+            personas_nivel = _extract_persona_ids(data)
+            personas_validas.update(personas_nivel)
+            for pid in personas_nivel:
+                niveles_actuales_por_persona.setdefault(int(pid), set()).add(int(nivel_id))
 
         if personas_validas or errores_validacion == 0:
             before = len(docentes)
@@ -195,6 +199,39 @@ def asignar_profesores_clases(
             warnings.append(
                 "No se pudo validar docentes por colegio; se continua sin filtrar IDs."
             )
+
+    if not do_niveles and personas_validas:
+        missing_levels_personas: Set[int] = set()
+        for docente in docentes:
+            persona_id = int(docente.get("persona_id", 0))
+            actuales = niveles_actuales_por_persona.get(persona_id, set())
+            desired = docente.get("desired_by_level", {}) or {}
+            if not actuales:
+                if desired:
+                    missing_levels_personas.add(persona_id)
+                docente["desired_by_level"] = {}
+                docente["nivel_desc"] = _format_levels({}, docente.get("grade_specific", False))
+                continue
+            filtered: Dict[str, Set[int]] = {}
+            for level_letter, grades in desired.items():
+                nivel_id = LEVEL_ID_BY_LETTER.get(level_letter)
+                if nivel_id and int(nivel_id) in actuales:
+                    filtered[level_letter] = grades
+                else:
+                    missing_levels_personas.add(persona_id)
+            docente["desired_by_level"] = filtered
+            docente["nivel_desc"] = _format_levels(filtered, docente.get("grade_specific", False))
+
+        if missing_levels_personas:
+            ids = sorted(missing_levels_personas)
+            sample = ", ".join(str(pid) for pid in ids[:10])
+            extra = max(0, len(ids) - 10)
+            extra_txt = f" (+{extra} mas)" if extra > 0 else ""
+            warnings.append(
+                "Docentes sin nivel asociado al colegio para los niveles del Excel; "
+                f"no se asignan clases/grupos en esos niveles. IDs: {sample}{extra_txt}"
+            )
+        niveles_by_persona = _collect_niveles_por_persona(docentes)
 
     estado_by_persona: Dict[int, bool] = {}
     estado_niveles_by_persona: Dict[int, Set[int]] = {}

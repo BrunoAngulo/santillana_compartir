@@ -262,6 +262,21 @@ def _letra_tecpro(grado_num: int, nivel_legible: str) -> str:
     return ""
 
 
+def _termina_con_seccion(nombre: str) -> bool:
+    """Detecta sufijos tipo 1PA o P1A al final del nombre."""
+    if not nombre:
+        return False
+    token = nombre.strip().split()[-1]
+    token = re.sub(r"[^A-Za-z0-9]+", "", token).upper()
+    if not token:
+        return False
+    if re.match(r"^(\d{1,2})([IPS])([A-Z])$", token):
+        return True
+    if re.match(r"^([IPS])(\d{1,2})([A-Z])$", token):
+        return True
+    return False
+
+
 def _mapear_grado(valor: str) -> Tuple[str, int]:
     """Devuelve (texto_grado, numero) o ('', 0) si no coincide."""
     limpio = valor.replace("°", "º").replace("�", "º")
@@ -501,6 +516,9 @@ def transformar(df: pd.DataFrame, grupos: Optional[Sequence[str]] = None) -> pd.
             nombre_clase = f"Loqueleo {grado_num}{nivel_codigo}A"
         elif materia_legible == "Tecnología" and producto_val:
             nombre_clase = producto_val
+            if "TECPRO" in prod_upper and grado_num and nivel_codigo:
+                if not _termina_con_seccion(nombre_clase):
+                    nombre_clase = f"{nombre_clase} {grado_num}{nivel_codigo}A"
         else:
             nombre_clase = f"{materia_legible} {grado_num}{nivel_codigo}A"
 

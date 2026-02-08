@@ -55,6 +55,14 @@ ASIGNAR_NIVEL_URL = (
     "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
     "/ciclos/{ciclo_id}/colegios/{colegio_id}/profesores/{persona_id}/asignarNivel"
 )
+COLEGIO_GRADO_GRUPOS_URL = (
+    "https://www.uno-internacional.com/pegasus-api/dashboard/empresas/{empresa_id}"
+    "/ciclos/{ciclo_id}/colegios/{colegio_id}/niveles/{nivel_id}/colegioGradoGrupos"
+)
+ASIGNAR_GRUPOS_URL = (
+    "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
+    "/ciclos/{ciclo_id}/colegios/{colegio_id}/profesores/{persona_id}/asignarColegioGradoGrupo"
+)
 
 ESTADO_ACTIVE_VALUES = {"ACTIVO", "ACTIVA", "1", "SI", "TRUE", "YES"}
 ESTADO_INACTIVE_VALUES = {"INACTIVO", "INACTIVA", "0", "NO", "FALSE"}
@@ -78,11 +86,12 @@ def asignar_profesores_clases(
     do_niveles: bool = True,
     do_estado: bool = True,
     do_clases: bool = True,
+    do_grupos: bool = True,
     require_curso: Optional[bool] = None,
 ) -> Tuple[Dict[str, int], List[str], List[Dict[str, object]]]:
     if require_curso is None:
         require_curso = do_clases and not list_estado_only
-    docentes, warnings, invalidos, excel_rows = _load_docentes(
+    docentes, warnings, invalidos, excel_rows, secciones_col_present = _load_docentes(
         excel_path, sheet_name=sheet_name, require_curso=require_curso
     )
     niveles_by_persona = _collect_niveles_por_persona(docentes)
@@ -91,7 +100,7 @@ def asignar_profesores_clases(
     estado_niveles_by_persona: Dict[int, Set[int]] = {}
     if do_estado:
         try:
-            docentes_estado, warnings_estado, _invalidos_estado, _excel_rows_estado = _load_docentes(
+            docentes_estado, warnings_estado, _invalidos_estado, _excel_rows_estado, _secciones_col_present_estado = _load_docentes(
                 excel_path, sheet_name="Profesores", require_curso=False
             )
         except Exception as exc:
@@ -117,6 +126,8 @@ def asignar_profesores_clases(
         "estado_omitidas": 0,
         "niveles_asignados": 0,
         "niveles_omitidos": 0,
+        "grupos_asignados": 0,
+        "grupos_omitidos": 0,
         "errores_api": 0,
     }
     compact: Dict[str, object] = {}
@@ -139,6 +150,7 @@ def asignar_profesores_clases(
     progress_counts: Dict[str, int] = {
         "niveles": 0,
         "estado": 0,
+        "grupos": 0,
         "asignar": 0,
         "eliminar": 0,
     }
@@ -306,6 +318,147 @@ def asignar_profesores_clases(
     if list_estado_only:
         return summary, warnings, errors
 
+    if do_grupos and secciones_col_present:
+        secciones_por_persona = _collect_secciones_por_persona(docentes)
+        if niveles_by_persona:
+            niveles_needed: Set[int] = set()
+            for secciones in secciones_por_persona.values():
+                for level_letter, _grade, _section in secciones:
+                    nivel_id = LEVEL_ID_BY_LETTER.get(level_letter)
+                    if nivel_id:
+                        niveles_needed.add(int(nivel_id))
+
+            grupos_por_nivel: Dict[int, Dict[Tuple[int, str], int]] = {}
+            for nivel_id in sorted(niveles_needed):
+                data, err = _fetch_colegio_grado_grupos(
+                    token=token,
+                    empresa_id=empresa_id,
+                    ciclo_id=ciclo_id,
+                    colegio_id=colegio_id,
+                    nivel_id=nivel_id,
+                    timeout=timeout,
+                )
+                if err:
+                    errors.append(
+                        {
+                            "tipo": "listar_colegio_grado_grupos",
+                            "persona_id": "",
+                            "nivel_id": nivel_id,
+                            "error": err,
+                        }
+                    )
+                    summary["errores_api"] += 1
+                    continue
+                grupos_por_nivel[nivel_id] = _build_colegio_grado_grupos_map(data)
+
+            _log_line(on_log, "")
+            _log_line(on_log, "Asignacion de grupos por seccion (segun Excel):")
+
+            personas_ids = sorted(niveles_by_persona.keys())
+            total_grupos = len(personas_ids)
+            for persona_id in personas_ids:
+                progress_counts["grupos"] += 1
+                if on_progress:
+                    on_progress(
+                        "grupos",
+                        progress_counts["grupos"],
+                        total_grupos,
+                        f"persona {persona_id}",
+                    )
+
+                secciones = secciones_por_persona.get(persona_id, set())
+                niveles_persona = sorted(niveles_by_persona.get(persona_id, set()))
+                if not niveles_persona:
+                    summary["grupos_omitidos"] += 1
+                    _log_line(
+                        on_log,
+                        f"- persona {persona_id} sin niveles para grupos.",
+                    )
+                    continue
+
+                grupos_by_nivel: Dict[int, Set[int]] = {
+                    int(nivel_id): set() for nivel_id in niveles_persona
+                }
+                missing_tokens: List[str] = []
+                for level_letter, grade, section in sorted(secciones):
+                    nivel_id = LEVEL_ID_BY_LETTER.get(level_letter)
+                    if not nivel_id:
+                        missing_tokens.append(f"{grade}{level_letter}{section}")
+                        continue
+                    mapping = grupos_por_nivel.get(int(nivel_id), {})
+                    colegio_grupo_id = mapping.get((int(grade), section))
+                    if not colegio_grupo_id:
+                        missing_tokens.append(f"{grade}{level_letter}{section}")
+                        continue
+                    grupos_by_nivel.setdefault(int(nivel_id), set()).add(
+                        int(colegio_grupo_id)
+                    )
+
+                if missing_tokens:
+                    missing_text = ", ".join(sorted(set(missing_tokens)))
+                    warnings.append(
+                        f"persona {persona_id}: secciones sin mapeo en colegio-grado-grupo: {missing_text}."
+                    )
+
+                niveles_payload: List[Dict[str, object]] = []
+                for nivel_id in niveles_persona:
+                    grupos_ids = sorted(grupos_by_nivel.get(int(nivel_id), set()))
+                    niveles_payload.append(
+                        {
+                            "nivel": {"nivelId": int(nivel_id)},
+                            "colegioGradoGrupos": [
+                                {
+                                    "colegioGradoGrupo": {
+                                        "colegioGradoGrupoId": int(grupo_id)
+                                    }
+                                }
+                                for grupo_id in grupos_ids
+                            ],
+                        }
+                    )
+
+                if dry_run:
+                    summary["grupos_asignados"] += 1
+                    secciones_txt = _format_section_tokens(secciones)
+                    niveles_txt = ",".join(str(n) for n in niveles_persona)
+                    _log_line(
+                        on_log,
+                        f"- persona {persona_id} secciones={secciones_txt} niveles={niveles_txt} (dry-run)",
+                    )
+                    continue
+
+                ok, err = _assign_colegio_grado_grupos(
+                    token=token,
+                    empresa_id=empresa_id,
+                    ciclo_id=ciclo_id,
+                    colegio_id=colegio_id,
+                    persona_id=int(persona_id),
+                    niveles_payload=niveles_payload,
+                    timeout=timeout,
+                )
+                if not ok:
+                    errors.append(
+                        {
+                            "tipo": "asignar_colegio_grado_grupo",
+                            "persona_id": persona_id,
+                            "nivel_id": "",
+                            "error": err,
+                        }
+                    )
+                    summary["errores_api"] += 1
+                    _log_line(
+                        on_log,
+                        f"- persona {persona_id} => error asignar grupos: {err}",
+                    )
+                    continue
+
+                summary["grupos_asignados"] += 1
+                if show_details:
+                    _log_line(
+                        on_log,
+                        f"- persona {persona_id} => grupos asignados",
+                    )
+
     if not do_clases:
         return summary, warnings, errors
 
@@ -317,23 +470,27 @@ def asignar_profesores_clases(
         timeout=timeout,
     )
     clases = sorted(clases, key=lambda c: (c.get("name", ""), c.get("id", 0)))
-    _log_line(on_log, "Cursos disponibles (id, nombre):")
-    for clase in clases:
-        _log_line(on_log, f"{clase['id']}\t{clase['name']}")
+    if show_details:
+        _log_line(on_log, "Clases disponibles (id, nombre):")
+        for clase in clases:
+            _log_line(on_log, f"{clase['id']}\t{clase['name']}")
+    else:
+        _log_line(on_log, f"Clases disponibles: {len(clases)}")
     if ignored:
         warnings.append(f"Clases ignoradas por sufijo no reconocido: {ignored}.")
     clases_by_id = {clase["id"]: clase for clase in clases}
 
     if excel_rows:
-        _log_line(on_log, "")
-        _log_line(on_log, "Profesores del Excel:")
-        for item in excel_rows:
-            _log_line(
-                on_log,
-                "fila {fila} personaId={persona_id} nombre='{nombre}' cursos='{curso}' niveles={niveles}".format(
-                    **item
-                ),
-            )
+        if show_details:
+            _log_line(on_log, "")
+            _log_line(on_log, "Profesores del Excel:")
+            for item in excel_rows:
+                _log_line(
+                    on_log,
+                    "fila {fila} personaId={persona_id} nombre='{nombre}' cursos='{curso}' niveles={niveles}".format(
+                        **item
+                    ),
+                )
 
     docente_matches: List[Tuple[Dict[str, object], List[Dict[str, object]]]] = []
     match_groups: Dict[Tuple[str, str, int], Dict[str, object]] = {}
@@ -359,18 +516,41 @@ def asignar_profesores_clases(
             group["personas"].add(docente["persona_id"])
 
     if match_groups:
-        _log_line(on_log, "")
-        _log_line(on_log, "Match por curso/grado (sin seccion):")
-        ordered_groups = sorted(
-            match_groups.values(),
-            key=lambda g: (str(g.get("curso", "")), g.get("level", ""), g.get("grade", 0)),
-        )
-        for group in ordered_groups:
-            nivel_grado = f"{group['level']}{group['grade']}"
-            personas = ", ".join(
-                str(pid) for pid in sorted(group["personas"])
+        if show_details:
+            _log_line(on_log, "")
+            _log_line(on_log, "Match por curso/grado (sin seccion):")
+            ordered_groups = sorted(
+                match_groups.values(),
+                key=lambda g: (str(g.get("curso", "")), g.get("level", ""), g.get("grade", 0)),
             )
-            _log_line(on_log, f"{group['curso']} {nivel_grado} => [{personas}]")
+            for group in ordered_groups:
+                nivel_grado = f"{group['level']}{group['grade']}"
+                personas = ", ".join(
+                    str(pid) for pid in sorted(group["personas"])
+                )
+                _log_line(on_log, f"{group['curso']} {nivel_grado} => [{personas}]")
+
+    if dry_run:
+        _log_line(on_log, "")
+        _log_line(on_log, "Vista previa (simulacion): profesor -> clases")
+        preview: Dict[int, Dict[str, object]] = {}
+        for docente, matches in docente_matches:
+            persona_id = docente.get("persona_id")
+            if persona_id is None:
+                continue
+            entry = preview.setdefault(
+                int(persona_id),
+                {"nombre": docente.get("nombre", ""), "clases": set()},
+            )
+            for clase in matches:
+                name = clase.get("name", "")
+                if name:
+                    entry["clases"].add(name)
+        for persona_id in sorted(preview.keys()):
+            entry = preview[persona_id]
+            nombre = entry.get("nombre") or f"persona {persona_id}"
+            clases_txt = _format_class_names(entry.get("clases", set()))
+            _log_line(on_log, f"- {nombre} ({persona_id}): {clases_txt}")
 
     total_asignaciones = sum(len(matches) for _docente, matches in docente_matches)
     for docente, matches in docente_matches:
@@ -599,8 +779,9 @@ def _load_docentes(
     excel_path: Path,
     sheet_name: Optional[str] = None,
     require_curso: bool = True,
-) -> Tuple[List[Dict[str, object]], List[str], int, List[Dict[str, object]]]:
+) -> Tuple[List[Dict[str, object]], List[str], int, List[Dict[str, object]], bool]:
     df = _read_docentes_file(excel_path, sheet_name=sheet_name)
+    secciones_col_present = "Secciones" in df.columns
     warnings: List[str] = []
     docentes: List[Dict[str, object]] = []
     invalidos = 0
@@ -615,6 +796,7 @@ def _load_docentes(
         if _row_is_empty(row, grade_cols_present, level_cols_present):
             break
         persona_id = _parse_persona_id(row.get("persona_id"))
+        nombre = _compose_nombre(row)
         curso_raw = str(row.get("curso", "")).strip()
         cursos = _split_courses(curso_raw)
         estado = _parse_estado(row.get("Estado"))
@@ -651,6 +833,7 @@ def _load_docentes(
                 {
                     "row": row_num,
                     "persona_id": persona_id,
+                    "nombre": nombre,
                     "curso": curso,
                     "curso_norm": _normalize_course_text(curso),
                     "desired_by_level": desired_by_level,
@@ -661,7 +844,7 @@ def _load_docentes(
                 }
             )
 
-    return docentes, warnings, invalidos, preview_rows
+    return docentes, warnings, invalidos, preview_rows, secciones_col_present
 
 
 def _read_docentes_file(
@@ -780,6 +963,25 @@ def _preview_levels(
     return ",".join(flags) if flags else "-"
 
 
+def _format_class_names(names: Sequence[str], max_items: int = 12) -> str:
+    if not names:
+        return "(sin clases)"
+    unique = sorted(set(name for name in names if name))
+    if not unique:
+        return "(sin clases)"
+    if len(unique) <= max_items:
+        return ", ".join(unique)
+    extra = len(unique) - max_items
+    return ", ".join(unique[:max_items]) + f" (+{extra} mas)"
+
+
+def _format_section_tokens(secciones: Set[Tuple[str, int, str]]) -> str:
+    if not secciones:
+        return "(sin secciones)"
+    tokens = sorted({f"{grade}{level}{section}" for level, grade, section in secciones})
+    return ",".join(tokens)
+
+
 def _normalize_header(value: object) -> str:
     if value is None:
         return ""
@@ -874,6 +1076,61 @@ def _normalize_value(value: object) -> str:
     return text.strip().upper()
 
 
+def _parse_grade_number(value: object) -> int:
+    text = _normalize_value(value)
+    if not text:
+        return 0
+    match = re.search(r"\d+", text)
+    if match:
+        try:
+            return int(match.group(0))
+        except ValueError:
+            return 0
+    mapping = {
+        "PRIMER": 1,
+        "PRIMERO": 1,
+        "PRIMERA": 1,
+        "SEGUNDO": 2,
+        "SEGUNDA": 2,
+        "TERCER": 3,
+        "TERCERO": 3,
+        "TERCERA": 3,
+        "CUARTO": 4,
+        "CUARTA": 4,
+        "QUINTO": 5,
+        "QUINTA": 5,
+        "SEXTO": 6,
+        "SEXTA": 6,
+        "SEPTIMO": 7,
+        "SEPTIMA": 7,
+        "OCTAVO": 8,
+        "OCTAVA": 8,
+        "NOVENO": 9,
+        "NOVENA": 9,
+        "DECIMO": 10,
+        "DECIMA": 10,
+        "UNO": 1,
+        "DOS": 2,
+        "TRES": 3,
+        "CUATRO": 4,
+        "CINCO": 5,
+    }
+    for key, number in mapping.items():
+        if key in text:
+            return number
+    return 0
+
+
+def _parse_group_letter(value: object) -> str:
+    text = _normalize_value(value)
+    if not text:
+        return ""
+    match = re.search(r"([A-Z])$", text)
+    if match:
+        return match.group(1)
+    return ""
+
+
 def _row_is_empty(
     row: pd.Series,
     grade_cols: Sequence[str],
@@ -958,6 +1215,21 @@ def _collect_niveles_por_persona(
                 continue
             niveles.setdefault(persona_id, set()).add(nivel_id)
     return niveles
+
+
+def _collect_secciones_por_persona(
+    docentes: List[Dict[str, object]],
+) -> Dict[int, Set[Tuple[str, int, str]]]:
+    secciones: Dict[int, Set[Tuple[str, int, str]]] = {}
+    for docente in docentes:
+        persona_id = docente.get("persona_id")
+        if persona_id is None:
+            continue
+        filtros = docente.get("section_filter") or set()
+        if not filtros:
+            continue
+        secciones.setdefault(int(persona_id), set()).update(filtros)
+    return secciones
 
 
 def _set_profesor_activo(
@@ -1133,6 +1405,71 @@ def _fetch_profesores_nivel(
     return data, None
 
 
+def _fetch_colegio_grado_grupos(
+    token: str,
+    empresa_id: int,
+    ciclo_id: int,
+    colegio_id: int,
+    nivel_id: int,
+    timeout: int,
+) -> Tuple[List[Dict[str, object]], Optional[str]]:
+    url = COLEGIO_GRADO_GRUPOS_URL.format(
+        empresa_id=empresa_id,
+        ciclo_id=ciclo_id,
+        colegio_id=colegio_id,
+        nivel_id=nivel_id,
+    )
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    try:
+        response = requests.get(url, headers=headers, timeout=timeout)
+    except requests.RequestException as exc:
+        return [], f"Error de red: {exc}"
+
+    status_code = response.status_code
+    try:
+        payload = response.json()
+    except ValueError:
+        return [], f"Respuesta no JSON (status {status_code})"
+
+    if not response.ok:
+        message = payload.get("message") if isinstance(payload, dict) else ""
+        return [], message or f"HTTP {status_code}"
+
+    if not isinstance(payload, dict) or not payload.get("success", False):
+        message = payload.get("message") if isinstance(payload, dict) else "Respuesta invalida"
+        return [], message or "Respuesta invalida"
+
+    data = payload.get("data") or []
+    if not isinstance(data, list):
+        return [], "Campo data no es lista"
+    return data, None
+
+
+def _build_colegio_grado_grupos_map(
+    items: List[Dict[str, object]],
+) -> Dict[Tuple[int, str], int]:
+    mapping: Dict[Tuple[int, str], int] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        colegio_grado_grupo_id = item.get("colegioGradoGrupoId")
+        if colegio_grado_grupo_id is None:
+            continue
+        grado = item.get("grado") if isinstance(item.get("grado"), dict) else {}
+        grupo = item.get("grupo") if isinstance(item.get("grupo"), dict) else {}
+        grado_name = grado.get("grado") if isinstance(grado, dict) else ""
+        grupo_name = grupo.get("grupo") if isinstance(grupo, dict) else ""
+        grade_num = _parse_grade_number(grado_name)
+        group_letter = _parse_group_letter(grupo_name)
+        if not grade_num or not group_letter:
+            continue
+        try:
+            mapping[(grade_num, group_letter)] = int(colegio_grado_grupo_id)
+        except (TypeError, ValueError):
+            continue
+    return mapping
+
+
 def _parse_class_suffix(name: str) -> Optional[Tuple[int, str, str]]:
     if not name:
         return None
@@ -1270,6 +1607,44 @@ def _fetch_staff(
         except (TypeError, ValueError):
             continue
     return personas, None
+
+
+def _assign_colegio_grado_grupos(
+    token: str,
+    empresa_id: int,
+    ciclo_id: int,
+    colegio_id: int,
+    persona_id: int,
+    niveles_payload: List[Dict[str, object]],
+    timeout: int,
+) -> Tuple[bool, Optional[str]]:
+    url = ASIGNAR_GRUPOS_URL.format(
+        empresa_id=empresa_id,
+        ciclo_id=ciclo_id,
+        colegio_id=colegio_id,
+        persona_id=persona_id,
+    )
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    payload = {"niveles": niveles_payload}
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=timeout)
+    except requests.RequestException as exc:
+        return False, f"Error de red: {exc}"
+
+    status_code = response.status_code
+    try:
+        data = response.json() if response.content else {}
+    except ValueError:
+        return False, f"Respuesta no JSON (status {status_code})"
+
+    if not response.ok:
+        message = data.get("message") if isinstance(data, dict) else ""
+        return False, message or f"HTTP {status_code}"
+
+    if isinstance(data, dict) and data.get("success") is False:
+        message = data.get("message") or "Respuesta invalida"
+        return False, message
+    return True, None
 
 
 def _assign_profesor(

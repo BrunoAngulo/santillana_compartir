@@ -485,6 +485,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Elimina del staff a profesores que no estan en el Excel (solo clases evaluadas).",
     )
     parser_profesores_clases.add_argument(
+        "--no-grupos",
+        action="store_true",
+        help="No asigna colegio-grado-grupo segun Secciones.",
+    )
+    parser_profesores_clases.add_argument(
         "--solo-estado",
         action="store_true",
         help="Muestra solo los profesores con cambio de Estado (sin otros logs).",
@@ -800,6 +805,7 @@ def _run_profesores_clases(args: argparse.Namespace) -> int:
         return 1
 
     dry_run = not bool(args.apply)
+    do_grupos = not bool(args.no_grupos)
     if dry_run and not args.solo_estado and not args.compact:
         print("Modo simulacion: no se aplican cambios.")
 
@@ -837,6 +843,7 @@ def _run_profesores_clases(args: argparse.Namespace) -> int:
                 on_log=None,
                 list_estado_only=True,
                 on_estado_change=_on_estado_change,
+                do_grupos=do_grupos,
             )
         except Exception as exc:
             print(f"Error: {exc}", file=sys.stderr)
@@ -870,6 +877,7 @@ def _run_profesores_clases(args: argparse.Namespace) -> int:
             on_progress=lambda phase, current, total, msg: _print_progress(
                 current, total, f"{phase}: {msg}"
             ),
+            do_grupos=do_grupos,
         )
     except Exception as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -933,6 +941,8 @@ def _run_profesores_clases(args: argparse.Namespace) -> int:
         "Clases encontradas: {clases_encontradas}, "
         "Asignaciones nuevas: {asignaciones_nuevas}, "
         "Asignaciones omitidas: {asignaciones_omitidas}, "
+        "Grupos asignados: {grupos_asignados}, "
+        "Grupos omitidos: {grupos_omitidos}, "
         "Docentes sin match: {docentes_sin_match}, "
         "Eliminaciones: {eliminaciones}, "
         "Estado activaciones: {estado_activaciones}, "

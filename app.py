@@ -264,7 +264,7 @@ with tab_profesores_clases:
     st.subheader("Generar Excel base de profesores (activos e inactivos)")
     st.write(
         "Crea un Excel listo con columnas Id, Nombre, Apellido, Estado, Sexo, DNI, "
-        "E-mail, Login y Password."
+        "E-mail, Login y Password (en blanco)."
     )
     persona_ids_raw = st.text_input(
         "Filtrar por personaId (opcional, separado por coma)",
@@ -315,7 +315,7 @@ with tab_profesores_clases:
                     "DNI": dni,
                     "E-mail": email,
                     "Login": login,
-                    "Password": dni,
+                    "Password": "",
                     "Inicial": "",
                     "Primaria": "",
                     "Secundaria": "",
@@ -372,7 +372,7 @@ with tab_profesores_clases:
     st.markdown("**Procesos a ejecutar**")
     st.caption(
         "Niveles = acceso por nivel (Inicial/Primaria/Secundaria). "
-        "Clases/Secciones = asignacion directa a clases especificas."
+        "Clases/Secciones = asignacion directa a clases especificas (incluye grupos)."
     )
     col_proc1, col_proc2 = st.columns(2)
     do_password = col_proc1.checkbox("Actualizar login/password", value=True)
@@ -498,6 +498,7 @@ with tab_profesores_clases:
                     do_niveles=do_niveles,
                     do_estado=do_estado,
                     do_clases=do_clases,
+                    do_grupos=do_clases,
                 )
             else:
                 summary, warnings, errors = {}, [], []
@@ -518,6 +519,8 @@ with tab_profesores_clases:
                 "Clases: {clases_encontradas}, "
                 "Asignaciones nuevas: {asignaciones_nuevas}, "
                 "Omitidas: {asignaciones_omitidas}, "
+                "Grupos asignados: {grupos_asignados}, "
+                "Grupos omitidos: {grupos_omitidos}, "
                 "Eliminaciones: {eliminaciones}, "
                 "Estado activaciones: {estado_activaciones}, "
                 "Estado inactivaciones: {estado_inactivaciones}, "

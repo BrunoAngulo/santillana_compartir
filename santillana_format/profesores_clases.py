@@ -629,6 +629,21 @@ def asignar_profesores_clases(
                 match_groups[key] = group
             group["personas"].add(docente["persona_id"])
 
+    sin_match = [docente for docente, matches in docente_matches if not matches]
+    if sin_match:
+        _log_line(on_log, "")
+        _log_line(on_log, f"Sin match ({len(sin_match)}):")
+        for docente in sin_match:
+            persona_id = docente.get("persona_id", "")
+            nombre = docente.get("nombre") or "sin nombre"
+            curso = docente.get("curso") or "-"
+            secciones_txt = _format_section_tokens(docente.get("section_filter") or set())
+            niveles_txt = docente.get("nivel_desc") or "-"
+            _log_line(
+                on_log,
+                f"- {persona_id} - {nombre} = {curso} | secciones={secciones_txt} | niveles={niveles_txt}",
+            )
+
     if match_groups:
         if show_details:
             _log_line(on_log, "")
@@ -1115,6 +1130,14 @@ def _normalize_course_text(value: object) -> str:
     text = re.sub(r"[^a-zA-Z0-9]+", " ", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip().upper()
+
+
+def _tecpro_letter(level_letter: str, grade: int) -> str:
+    if level_letter == "P":
+        return {1: "A", 2: "B", 3: "C", 4: "D", 5: "E", 6: "F"}.get(grade, "")
+    if level_letter == "S":
+        return {1: "G", 2: "H", 3: "I", 4: "J", 5: "K"}.get(grade, "")
+    return ""
 
 
 def _parse_persona_id(value: object) -> Optional[int]:
@@ -1654,8 +1677,18 @@ def _match_clases(docente: Dict[str, object], clases: List[Dict[str, object]]) -
     section_filter: Set[Tuple[str, int, str]] = docente.get("section_filter") or set()
     matches: List[Dict[str, object]] = []
     for clase in clases:
-        if clase.get("base_norm") != course_norm:
-            continue
+        base_norm = clase.get("base_norm")
+        if base_norm != course_norm:
+            if "NIVEL" not in course_norm and course_norm in {"TECPRO", "TECPRO MAX"}:
+                letter = _tecpro_letter(clase["level"], clase["grade"])
+                if not letter or base_norm != f"{course_norm} NIVEL {letter}":
+                    continue
+            elif course_norm.endswith("NIVEL") and course_norm.startswith("TECPRO"):
+                letter = _tecpro_letter(clase["level"], clase["grade"])
+                if not letter or base_norm != f"{course_norm} {letter}":
+                    continue
+            else:
+                continue
         level = clase["level"]
         grade = clase["grade"]
         if level not in desired_by_level:

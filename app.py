@@ -476,7 +476,7 @@ with tab_profesores_clases:
                 )
                 if pwd_warnings:
                     st.warning("Warnings passwords:")
-                    st.write("\\n".join(f"- {item}" for item in pwd_warnings))
+                    st.markdown("\n".join(f"- {item}" for item in pwd_warnings))
                 if pwd_errors:
                     st.error("Errores passwords:")
                     st.dataframe(pwd_errors, use_container_width=True)
@@ -513,29 +513,40 @@ with tab_profesores_clases:
                     pass
 
         if summary:
-            st.success(
-                "Listo. Docentes: {docentes_procesados}, "
-                "Omitidos (no colegio): {docentes_omitidos_no_colegio}, "
-                "Sin match: {docentes_sin_match}, "
-                "Clases: {clases_encontradas}, "
-                "Asignaciones nuevas: {asignaciones_nuevas}, "
-                "Omitidas: {asignaciones_omitidas}, "
-                "Grupos asignados: {grupos_asignados}, "
-                "Grupos omitidos: {grupos_omitidos}, "
-                "Eliminaciones: {eliminaciones}, "
-                "Estado activaciones: {estado_activaciones}, "
-                "Estado inactivaciones: {estado_inactivaciones}, "
-                "Estado omitidas: {estado_omitidas}, "
-                "Errores API: {errores_api}.".format(**summary)
-            )
+            resumen = [
+                f"Docentes: {summary.get('docentes_procesados', 0)}",
+                f"Omitidos (no colegio): {summary.get('docentes_omitidos_no_colegio', 0)}",
+                f"Sin match: {summary.get('docentes_sin_match', 0)}",
+                f"Clases: {summary.get('clases_encontradas', 0)}",
+                f"Asignaciones nuevas: {summary.get('asignaciones_nuevas', 0)}",
+                f"Asig. omitidas: {summary.get('asignaciones_omitidas', 0)}",
+                f"Grupos asignados: {summary.get('grupos_asignados', 0)}",
+                f"Grupos omitidos: {summary.get('grupos_omitidos', 0)}",
+                f"Eliminaciones: {summary.get('eliminaciones', 0)}",
+                f"Estado activaciones: {summary.get('estado_activaciones', 0)}",
+                f"Estado inactivaciones: {summary.get('estado_inactivaciones', 0)}",
+                f"Estado omitidas: {summary.get('estado_omitidas', 0)}",
+                f"Errores API: {summary.get('errores_api', 0)}",
+            ]
+            st.success("Resumen de ejecucion")
+            st.markdown("\n".join(f"- {item}" for item in resumen))
             if warnings:
                 st.warning("Advertencias:")
-                st.write("\\n".join(f"- {item}" for item in warnings))
+                st.markdown("\n".join(f"- {item}" for item in warnings))
             if errors:
                 st.error("Errores al asignar profesores:")
                 st.dataframe(errors, use_container_width=True)
             if logs:
-                st.text_area("Log de ejecucion", value="\\n".join(logs), height=300)
+                display_logs = [line for line in logs if line is not None]
+                while display_logs and not str(display_logs[0]).strip():
+                    display_logs.pop(0)
+                while display_logs and not str(display_logs[-1]).strip():
+                    display_logs.pop()
+                st.text_area(
+                    "Log de ejecucion",
+                    value="\n".join(display_logs),
+                    height=300,
+                )
         else:
             st.success("Listo. Solo se procesaron passwords.")
 

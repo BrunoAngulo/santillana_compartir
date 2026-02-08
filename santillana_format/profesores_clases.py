@@ -96,26 +96,10 @@ def asignar_profesores_clases(
     )
     niveles_by_persona = _collect_niveles_por_persona(docentes)
 
-    estado_by_persona: Dict[int, bool] = {}
-    estado_niveles_by_persona: Dict[int, Set[int]] = {}
-    if do_estado:
-        try:
-            docentes_estado, warnings_estado, _invalidos_estado, _excel_rows_estado, _secciones_col_present_estado = _load_docentes(
-                excel_path, sheet_name="Profesores", require_curso=False
-            )
-        except Exception as exc:
-            warnings.append(
-                f"No se pudo leer la hoja 'Profesores' para Estado: {exc}"
-            )
-        else:
-            warnings.extend(warnings_estado)
-            estado_by_persona, estado_warnings = _collect_estado(docentes_estado)
-            warnings.extend(estado_warnings)
-            estado_niveles_by_persona = _collect_niveles_por_persona(docentes_estado)
-
     summary = {
         "docentes_procesados": 0,
         "docentes_invalidos": invalidos,
+        "docentes_omitidos_no_colegio": 0,
         "docentes_sin_match": 0,
         "clases_encontradas": 0,
         "asignaciones_nuevas": 0,
@@ -141,6 +125,99 @@ def asignar_profesores_clases(
         }
         summary["listado_compacto"] = compact
     errors: List[Dict[str, object]] = []
+
+    personas_validas: Optional[Set[int]] = None
+    if docentes:
+        niveles_to_check: Set[int] = set(LEVEL_ID_BY_LETTER.values())
+        personas_validas = set()
+        errores_validacion = 0
+        for nivel_id in sorted(niveles_to_check):
+            data, err = _fetch_profesores_nivel(
+                token=token,
+                empresa_id=empresa_id,
+                ciclo_id=ciclo_id,
+                colegio_id=colegio_id,
+                nivel_id=nivel_id,
+                timeout=timeout,
+            )
+            if err:
+                errores_validacion += 1
+                errors.append(
+                    {
+                        "tipo": "validar_docentes",
+                        "persona_id": "",
+                        "nivel_id": nivel_id,
+                        "error": err,
+                    }
+                )
+                summary["errores_api"] += 1
+                continue
+            personas_validas.update(_extract_persona_ids(data))
+
+        if personas_validas or errores_validacion == 0:
+            before = len(docentes)
+            docentes = [
+                docente
+                for docente in docentes
+                if int(docente.get("persona_id", 0)) in personas_validas
+            ]
+            removed = before - len(docentes)
+            if removed:
+                summary["docentes_omitidos_no_colegio"] += removed
+                invalid_ids: List[int] = []
+                for item in excel_rows:
+                    pid = _parse_persona_id(item.get("persona_id"))
+                    if pid is None:
+                        continue
+                    if pid not in personas_validas:
+                        invalid_ids.append(pid)
+                invalid_ids = sorted(set(invalid_ids))
+                if invalid_ids:
+                    sample = ", ".join(str(pid) for pid in invalid_ids[:10])
+                    extra = max(0, len(invalid_ids) - 10)
+                    extra_txt = f" (+{extra} mas)" if extra > 0 else ""
+                    warnings.append(
+                        f"Se omitieron {removed} docentes no registrados en el colegio. IDs: {sample}{extra_txt}"
+                    )
+                else:
+                    warnings.append(
+                        f"Se omitieron {removed} docentes no registrados en el colegio."
+                    )
+
+            if excel_rows:
+                excel_rows = [
+                    item
+                    for item in excel_rows
+                    if _parse_persona_id(item.get("persona_id")) in personas_validas
+                ]
+            niveles_by_persona = _collect_niveles_por_persona(docentes)
+        elif errores_validacion > 0:
+            warnings.append(
+                "No se pudo validar docentes por colegio; se continua sin filtrar IDs."
+            )
+
+    estado_by_persona: Dict[int, bool] = {}
+    estado_niveles_by_persona: Dict[int, Set[int]] = {}
+    if do_estado:
+        try:
+            docentes_estado, warnings_estado, _invalidos_estado, _excel_rows_estado, _secciones_col_present_estado = _load_docentes(
+                excel_path, sheet_name="Profesores", require_curso=False
+            )
+        except Exception as exc:
+            warnings.append(
+                f"No se pudo leer la hoja 'Profesores' para Estado: {exc}"
+            )
+        else:
+            if personas_validas:
+                docentes_estado = [
+                    docente
+                    for docente in docentes_estado
+                    if int(docente.get("persona_id", 0)) in personas_validas
+                ]
+            warnings.extend(warnings_estado)
+            estado_by_persona, estado_warnings = _collect_estado(docentes_estado)
+            warnings.extend(estado_warnings)
+            estado_niveles_by_persona = _collect_niveles_por_persona(docentes_estado)
 
     staff_cache: Dict[int, Set[int]] = {}
     planned_by_class: Dict[int, Set[int]] = {}
@@ -532,7 +609,7 @@ def asignar_profesores_clases(
 
     if dry_run:
         _log_line(on_log, "")
-        _log_line(on_log, "Vista previa (simulacion): profesor -> clases")
+        _log_line(on_log, "Vista previa (simulacion) - asignacion de clases:")
         preview: Dict[int, Dict[str, object]] = {}
         for docente, matches in docente_matches:
             persona_id = docente.get("persona_id")
@@ -548,9 +625,9 @@ def asignar_profesores_clases(
                     entry["clases"].add(name)
         for persona_id in sorted(preview.keys()):
             entry = preview[persona_id]
-            nombre = entry.get("nombre") or f"persona {persona_id}"
+            nombre = entry.get("nombre") or "sin nombre"
             clases_txt = _format_class_names(entry.get("clases", set()))
-            _log_line(on_log, f"- {nombre} ({persona_id}): {clases_txt}")
+            _log_line(on_log, f"- {persona_id} - {nombre} = {clases_txt}")
 
     total_asignaciones = sum(len(matches) for _docente, matches in docente_matches)
     for docente, matches in docente_matches:
@@ -1403,6 +1480,24 @@ def _fetch_profesores_nivel(
     if not isinstance(data, list):
         return [], "Campo data no es lista"
     return data, None
+
+
+def _extract_persona_ids(data: List[Dict[str, object]]) -> Set[int]:
+    personas: Set[int] = set()
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        persona_id = item.get("personaId")
+        if persona_id is None:
+            persona = item.get("persona") if isinstance(item.get("persona"), dict) else {}
+            persona_id = persona.get("personaId")
+        if persona_id is None:
+            continue
+        try:
+            personas.add(int(persona_id))
+        except (TypeError, ValueError):
+            continue
+    return personas
 
 
 def _fetch_colegio_grado_grupos(

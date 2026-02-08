@@ -938,6 +938,7 @@ def _run_profesores_clases(args: argparse.Namespace) -> int:
     print("")
     print(
         "Docentes procesados: {docentes_procesados}, "
+        "Omitidos (no colegio): {docentes_omitidos_no_colegio}, "
         "Clases encontradas: {clases_encontradas}, "
         "Asignaciones nuevas: {asignaciones_nuevas}, "
         "Asignaciones omitidas: {asignaciones_omitidas}, "

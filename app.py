@@ -515,6 +515,7 @@ with tab_profesores_clases:
         if summary:
             st.success(
                 "Listo. Docentes: {docentes_procesados}, "
+                "Omitidos (no colegio): {docentes_omitidos_no_colegio}, "
                 "Sin match: {docentes_sin_match}, "
                 "Clases: {clases_encontradas}, "
                 "Asignaciones nuevas: {asignaciones_nuevas}, "

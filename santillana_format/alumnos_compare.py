@@ -488,6 +488,45 @@ def _build_nuip_index(df: pd.DataFrame) -> Dict[str, int]:
     return index
 
 
+def _build_nombre_ap_pat_index(df: pd.DataFrame) -> Dict[str, List[int]]:
+    index: Dict[str, List[int]] = {}
+    for idx, row in df.iterrows():
+        nombre = _normalize_text(row.get("nombre"))
+        ap_pat = _normalize_text(row.get("apellido_paterno"))
+        if not (nombre and ap_pat):
+            continue
+        key = f"{nombre}|{ap_pat}"
+        index.setdefault(key, []).append(idx)
+    return index
+
+
+def _resolve_nombre_ap_pat_match(
+    act_row: pd.Series,
+    df_bd: pd.DataFrame,
+    index: Dict[str, List[int]],
+) -> Optional[int]:
+    nombre = _normalize_text(act_row.get("nombre"))
+    ap_pat = _normalize_text(act_row.get("apellido_paterno"))
+    if not (nombre and ap_pat):
+        return None
+
+    key = f"{nombre}|{ap_pat}"
+    candidates = index.get(key) or []
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+
+    nuip_norm = _normalize_nuip(act_row.get("nuip"))
+    if nuip_norm:
+        for idx in candidates:
+            bd_nuip = _normalize_nuip(df_bd.loc[idx].get("nuip"))
+            if bd_nuip and bd_nuip == nuip_norm:
+                return idx
+
+    return _pick_best_match(act_row, df_bd, candidates)
+
+
 def _build_apellidos_index(df: pd.DataFrame) -> Dict[str, List[int]]:
     index: Dict[str, List[int]] = {}
     for idx, row in df.iterrows():
@@ -623,6 +662,7 @@ def _build_comparacion_bd(
             pd.DataFrame(columns=ALUMNOS_CREAR_COLUMNS),
         )
     nuip_index = _build_nuip_index(df_bd)
+    nombre_ap_pat_index = _build_nombre_ap_pat_index(df_bd)
     apellidos_cache = _build_apellidos_cache(df_bd)
     rows: List[Dict[str, object]] = []
     nuevos_rows: List[pd.Series] = []
@@ -634,6 +674,8 @@ def _build_comparacion_bd(
             nuip_norm = _normalize_nuip(act_row.get("nuip"))
             if nuip_norm:
                 bd_idx = nuip_index.get(nuip_norm)
+        if bd_idx is None:
+            bd_idx = _resolve_nombre_ap_pat_match(act_row, df_bd, nombre_ap_pat_index)
         if bd_idx is None:
             nuevos_rows.append(act_row)
             continue

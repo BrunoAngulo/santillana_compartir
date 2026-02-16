@@ -105,6 +105,7 @@ MATCH_TIPO_N2 = "N2_APELLIDOS"
 MATCH_TIPO_N3 = "N3_APELLIDOS_INICIAL"
 APELLIDO_MIN_SCORE = 0.85
 APELLIDO_SHORT_LEN = 4
+DEFAULT_BIRTHDATE = date(2000, 1, 1)
 
 
 def comparar_plantillas(
@@ -443,7 +444,9 @@ def _build_alumnos_crear(nuevos: pd.DataFrame) -> pd.DataFrame:
             df[col] = ""
     df = df.loc[:, ALUMNOS_CREAR_COLUMNS].copy()
     if "Fecha de Nacimiento" in df.columns:
-        df["Fecha de Nacimiento"] = df["Fecha de Nacimiento"].apply(_parse_fecha_excel)
+        df["Fecha de Nacimiento"] = df["Fecha de Nacimiento"].apply(
+            _parse_fecha_excel_with_default
+        )
     cleaned = df.astype(str).apply(lambda col: col.str.strip().replace("nan", ""))
     mask = (cleaned != "").any(axis=1)
     return df.loc[mask].reset_index(drop=True)
@@ -718,7 +721,7 @@ def _build_comparacion_bd(
     df_out = df_out.loc[mask].reset_index(drop=True)
     if "Fecha de Nacimiento" in df_out.columns:
         df_out["Fecha de Nacimiento"] = df_out["Fecha de Nacimiento"].apply(
-            _parse_fecha_excel
+            _parse_fecha_excel_with_default
         )
     nuevos_df = _build_alumnos_crear(pd.DataFrame(nuevos_rows))
     return df_out, nuevos_df
@@ -764,6 +767,13 @@ def _parse_fecha_excel(value: object):
         day, month, year = match.groups()
         return date(int(year), int(month), int(day))
     return text
+
+
+def _parse_fecha_excel_with_default(value: object):
+    parsed = _parse_fecha_excel(value)
+    if parsed is None or parsed == "":
+        return DEFAULT_BIRTHDATE
+    return parsed
 
 
 def _parse_numeric_string(text: str) -> Optional[float]:

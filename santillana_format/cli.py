@@ -787,7 +787,7 @@ def _run_alumnos_comparar(args: argparse.Namespace) -> int:
     print(f"Archivo generado: {output_path.resolve()}")
     print(
         "Base: {base_total}, Actualizada: {actualizados_total}, "
-        "Match login: {login_match}, Nuevos: {nuevos_total}.".format(**summary)
+        "Match NUIP: {nuip_match}, Nuevos: {nuevos_total}.".format(**summary)
     )
     return 0
 

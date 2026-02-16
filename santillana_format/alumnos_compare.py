@@ -15,7 +15,7 @@ ALUMNOS_CREAR_COLUMNS = [
     "Grupo",
     "Nombre",
     "Apellido Paterno",
-    "Apellido materno",
+    "Apellido Materno",
     "Sexo",
     "Fecha de Nacimiento",
     "NUIP",
@@ -118,7 +118,7 @@ def comparar_plantillas(
     df_bd = _canonicalize_columns(df_bd)
     df_act = _canonicalize_columns(df_act)
 
-    summary = _build_login_summary(df_bd, df_act)
+    summary = _build_nuip_summary(df_bd, df_act)
     comparacion, nuevos = _build_comparacion_bd(df_bd, df_act)
 
     output = Path(excel_path).name
@@ -430,7 +430,7 @@ def _build_alumnos_crear(nuevos: pd.DataFrame) -> pd.DataFrame:
         "grupo": "Grupo",
         "nombre": "Nombre",
         "apellido_paterno": "Apellido Paterno",
-        "apellido_materno": "Apellido materno",
+        "apellido_materno": "Apellido Materno",
         "sexo": "Sexo",
         "fecha_nacimiento": "Fecha de Nacimiento",
         "nuip": "NUIP",
@@ -477,20 +477,14 @@ def _normalize_grupo(value: object) -> str:
     return text
 
 
-def _normalize_login(value: object) -> str:
-    text = str(value or "").strip().lower()
-    text = re.sub(r"\s+", "", text)
-    return text
-
-
-def _build_login_index(df: pd.DataFrame) -> Dict[str, int]:
+def _build_nuip_index(df: pd.DataFrame) -> Dict[str, int]:
     index: Dict[str, int] = {}
     for idx, row in df.iterrows():
-        login = _normalize_login(row.get("login"))
-        if not login:
+        nuip = _normalize_nuip(row.get("nuip"))
+        if not nuip:
             continue
-        if login not in index:
-            index[login] = idx
+        if nuip not in index:
+            index[nuip] = idx
     return index
 
 
@@ -548,12 +542,6 @@ def _resolve_apellidos_match(
     if len(candidates) == 1:
         return candidates[0]
 
-    login_norm = _normalize_login(act_row.get("login"))
-    if login_norm:
-        for idx in candidates:
-            bd_login = _normalize_login(df_bd.loc[idx].get("login"))
-            if bd_login and bd_login == login_norm:
-                return idx
     nuip_norm = _normalize_nuip(act_row.get("nuip"))
     if nuip_norm:
         for idx in candidates:
@@ -564,26 +552,26 @@ def _resolve_apellidos_match(
     return _pick_best_match(act_row, df_bd, candidates)
 
 
-def _build_login_summary(df_bd: pd.DataFrame, df_act: pd.DataFrame) -> Dict[str, int]:
-    bd_logins = set()
+def _build_nuip_summary(df_bd: pd.DataFrame, df_act: pd.DataFrame) -> Dict[str, int]:
+    bd_nuips = set()
     for _idx, row in df_bd.iterrows():
-        login = _normalize_login(row.get("login"))
-        if login:
-            bd_logins.add(login)
+        nuip = _normalize_nuip(row.get("nuip"))
+        if nuip:
+            bd_nuips.add(nuip)
 
-    act_logins = set()
+    act_nuips = set()
     for _idx, row in df_act.iterrows():
-        login = _normalize_login(row.get("login"))
-        if login:
-            act_logins.add(login)
+        nuip = _normalize_nuip(row.get("nuip"))
+        if nuip:
+            act_nuips.add(nuip)
 
-    matched = bd_logins.intersection(act_logins)
+    matched = bd_nuips.intersection(act_nuips)
     return {
-        "login_bd_total": len(bd_logins),
-        "login_actualizada_total": len(act_logins),
-        "login_match": len(matched),
-        "login_sin_bd": len(act_logins - bd_logins),
-        "login_sin_actualizada": len(bd_logins - act_logins),
+        "nuip_bd_total": len(bd_nuips),
+        "nuip_actualizada_total": len(act_nuips),
+        "nuip_match": len(matched),
+        "nuip_sin_bd": len(act_nuips - bd_nuips),
+        "nuip_sin_actualizada": len(bd_nuips - act_nuips),
     }
 
 
@@ -634,7 +622,7 @@ def _build_comparacion_bd(
             pd.DataFrame(columns=ALUMNOS_COMPARACION_COLUMNS),
             pd.DataFrame(columns=ALUMNOS_CREAR_COLUMNS),
         )
-    bd_index = _build_login_index(df_bd)
+    nuip_index = _build_nuip_index(df_bd)
     apellidos_cache = _build_apellidos_cache(df_bd)
     rows: List[Dict[str, object]] = []
     nuevos_rows: List[pd.Series] = []
@@ -643,9 +631,9 @@ def _build_comparacion_bd(
         bd_idx: Optional[int] = None
         bd_idx = _resolve_apellidos_match(act_row, df_bd, apellidos_cache)
         if bd_idx is None:
-            login_norm = _normalize_login(act_row.get("login"))
-            if login_norm:
-                bd_idx = bd_index.get(login_norm)
+            nuip_norm = _normalize_nuip(act_row.get("nuip"))
+            if nuip_norm:
+                bd_idx = nuip_index.get(nuip_norm)
         if bd_idx is None:
             nuevos_rows.append(act_row)
             continue

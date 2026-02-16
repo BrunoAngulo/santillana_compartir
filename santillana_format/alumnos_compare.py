@@ -103,6 +103,8 @@ HEADER_ALIASES = {
 MATCH_TIPO_N1 = "N1_NUIP"
 MATCH_TIPO_N2 = "N2_APELLIDOS"
 MATCH_TIPO_N3 = "N3_APELLIDOS_INICIAL"
+APELLIDO_MIN_SCORE = 0.85
+APELLIDO_SHORT_LEN = 4
 
 
 def comparar_plantillas(
@@ -210,6 +212,27 @@ def _normalize_text(value: object) -> str:
     text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
     text = re.sub(r"[^a-z0-9]+", "", text)
     return text
+
+
+def _char_match_ratio(text_a: str, text_b: str) -> float:
+    if not text_a or not text_b:
+        return 0.0
+    if text_a == text_b:
+        return 1.0
+    max_len = max(len(text_a), len(text_b))
+    min_len = min(len(text_a), len(text_b))
+    matches = 0
+    for idx in range(min_len):
+        if text_a[idx] == text_b[idx]:
+            matches += 1
+    return matches / max_len
+
+
+def _apellido_match_ok(text_a: str, text_b: str, score: float) -> bool:
+    max_len = max(len(text_a), len(text_b))
+    if max_len <= APELLIDO_SHORT_LEN:
+        return score == 1.0
+    return score >= APELLIDO_MIN_SCORE
 
 
 def _normalize_date(value: object) -> str:
@@ -483,6 +506,64 @@ def _build_apellidos_index(df: pd.DataFrame) -> Dict[str, List[int]]:
     return index
 
 
+def _build_apellidos_cache(df: pd.DataFrame) -> List[Tuple[int, str, str]]:
+    cache: List[Tuple[int, str, str]] = []
+    for idx, row in df.iterrows():
+        ap_pat = _normalize_text(row.get("apellido_paterno"))
+        ap_mat = _normalize_text(row.get("apellido_materno"))
+        if not (ap_pat and ap_mat):
+            continue
+        cache.append((idx, ap_pat, ap_mat))
+    return cache
+
+
+def _resolve_apellidos_match(
+    act_row: pd.Series,
+    df_bd: pd.DataFrame,
+    cache: Sequence[Tuple[int, str, str]],
+) -> Optional[int]:
+    ap_pat = _normalize_text(act_row.get("apellido_paterno"))
+    ap_mat = _normalize_text(act_row.get("apellido_materno"))
+    if not (ap_pat and ap_mat):
+        return None
+
+    best_score = -1.0
+    candidates: List[int] = []
+    for idx, bd_ap_pat, bd_ap_mat in cache:
+        score_pat = _char_match_ratio(ap_pat, bd_ap_pat)
+        if not _apellido_match_ok(ap_pat, bd_ap_pat, score_pat):
+            continue
+        score_mat = _char_match_ratio(ap_mat, bd_ap_mat)
+        if not _apellido_match_ok(ap_mat, bd_ap_mat, score_mat):
+            continue
+        score = (score_pat + score_mat) / 2
+        if score > best_score + 1e-6:
+            best_score = score
+            candidates = [idx]
+        elif abs(score - best_score) <= 1e-6:
+            candidates.append(idx)
+
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+
+    login_norm = _normalize_login(act_row.get("login"))
+    if login_norm:
+        for idx in candidates:
+            bd_login = _normalize_login(df_bd.loc[idx].get("login"))
+            if bd_login and bd_login == login_norm:
+                return idx
+    nuip_norm = _normalize_nuip(act_row.get("nuip"))
+    if nuip_norm:
+        for idx in candidates:
+            bd_nuip = _normalize_nuip(df_bd.loc[idx].get("nuip"))
+            if bd_nuip and bd_nuip == nuip_norm:
+                return idx
+
+    return _pick_best_match(act_row, df_bd, candidates)
+
+
 def _build_login_summary(df_bd: pd.DataFrame, df_act: pd.DataFrame) -> Dict[str, int]:
     bd_logins = set()
     for _idx, row in df_bd.iterrows():
@@ -554,22 +635,17 @@ def _build_comparacion_bd(
             pd.DataFrame(columns=ALUMNOS_CREAR_COLUMNS),
         )
     bd_index = _build_login_index(df_bd)
-    apellidos_index = _build_apellidos_index(df_bd)
+    apellidos_cache = _build_apellidos_cache(df_bd)
     rows: List[Dict[str, object]] = []
     nuevos_rows: List[pd.Series] = []
 
     for _idx, act_row in df_act.iterrows():
-        login_norm = _normalize_login(act_row.get("login"))
         bd_idx: Optional[int] = None
-        if login_norm:
-            bd_idx = bd_index.get(login_norm)
+        bd_idx = _resolve_apellidos_match(act_row, df_bd, apellidos_cache)
         if bd_idx is None:
-            ap_pat = _normalize_text(act_row.get("apellido_paterno"))
-            ap_mat = _normalize_text(act_row.get("apellido_materno"))
-            if ap_pat and ap_mat:
-                key = f"{ap_pat}|{ap_mat}"
-                indices = apellidos_index.get(key, [])
-                bd_idx = _pick_best_match(act_row, df_bd, indices)
+            login_norm = _normalize_login(act_row.get("login"))
+            if login_norm:
+                bd_idx = bd_index.get(login_norm)
         if bd_idx is None:
             nuevos_rows.append(act_row)
             continue

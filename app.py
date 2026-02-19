@@ -36,7 +36,7 @@ GESTION_ESCOLAR_CICLO_ID_DEFAULT = 207
 
 
 st.set_page_config(page_title="Generador de Plantilla", layout="centered")
-st.title("Si estas aca es porque eres flojo")
+st.title("Si estas acá es porque eres flojo")
 st.write("El maravilloso mundo de TED :0 automatiza tu chamba por un buenos dias al dia ;)")
 
 tab_clases, tab_profesores_clases, tab_alumnos, tab_clases_api = st.tabs(

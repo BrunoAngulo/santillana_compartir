@@ -32,10 +32,6 @@ GESTION_ESCOLAR_URL = (
     "https://www.uno-internacional.com/pegasus-api/gestionEscolar/empresas/"
     "{empresa_id}/ciclos/{ciclo_id}/clases"
 )
-GESTION_ESCOLAR_ALUMNOS_CLASE_URL = (
-    "https://www.uno-internacional.com/pegasus-api/gestionEscolar/empresas/"
-    "{empresa_id}/ciclos/{ciclo_id}/clases/{clase_id}/alumnos"
-)
 GESTION_ESCOLAR_CICLO_ID_DEFAULT = 207
 
 
@@ -43,13 +39,12 @@ st.set_page_config(page_title="Generador de Plantilla", layout="centered")
 st.title("Si estas aca es porque eres flojo")
 st.write("El maravilloso mundo de TED :0 automatiza tu chamba por un buenos dias al dia ;)")
 
-tab_clases, tab_profesores_clases, tab_alumnos, tab_clases_api, tab_alumno_clases = st.tabs(
+tab_clases, tab_profesores_clases, tab_alumnos, tab_clases_api = st.tabs(
     [
         "Crear clases",
         "Profesores con clases",
         "Alumnos registrados",
         "Clases API",
-        "Alumno por login",
     ]
 )
 
@@ -118,40 +113,6 @@ def _fetch_clases_gestion_escolar(
     return data
 
 
-def _fetch_alumnos_clase_gestion_escolar(
-    token: str, clase_id: int, empresa_id: int, ciclo_id: int, timeout: int
-) -> Dict[str, object]:
-    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-    url = GESTION_ESCOLAR_ALUMNOS_CLASE_URL.format(
-        empresa_id=empresa_id,
-        ciclo_id=ciclo_id,
-        clase_id=clase_id,
-    )
-    try:
-        response = requests.get(url, headers=headers, timeout=timeout)
-    except requests.RequestException as exc:
-        raise RuntimeError(f"Error de red: {exc}") from exc
-
-    status_code = response.status_code
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        raise RuntimeError(f"Respuesta no JSON (status {status_code})") from exc
-
-    if not response.ok:
-        message = payload.get("message") if isinstance(payload, dict) else ""
-        raise RuntimeError(message or f"HTTP {status_code}")
-
-    if not isinstance(payload, dict) or not payload.get("success", False):
-        message = payload.get("message") if isinstance(payload, dict) else "Respuesta invalida"
-        raise RuntimeError(message or "Respuesta invalida")
-
-    data = payload.get("data") or {}
-    if not isinstance(data, dict):
-        raise RuntimeError("Campo data no es objeto")
-    return data
-
-
 def _delete_clase_gestion_escolar(
     token: str, clase_id: int, empresa_id: int, ciclo_id: int, timeout: int
 ) -> None:
@@ -196,6 +157,7 @@ def _collect_colegios(clases: List[Dict[str, object]]) -> List[Dict[str, object]
         {"colegioId": colegio_id, "colegio": nombre}
         for colegio_id, nombre in sorted(colegios.items())
     ]
+
 
 
 with tab_clases:
@@ -822,207 +784,3 @@ with tab_clases_api:
         if errores:
             st.error("Errores al eliminar:")
             st.write("\n".join(f"- {item}" for item in errores))
-
-with tab_alumno_clases:
-    st.subheader("Buscar clases por login de alumno")
-    st.write(
-        "Ingresa token, login y colegio clave. Se listan todas las clases del colegio "
-        "y luego se revisan sus alumnos para encontrar coincidencias."
-    )
-
-    col1, col2 = st.columns(2)
-    token_input = col1.text_input(
-        "Token (sin Bearer)",
-        type="password",
-        key="alumno_login_token",
-        help="Pega el token JWT sin el prefijo 'Bearer '.",
-    )
-    login_input = col2.text_input(
-        "Login del alumno",
-        key="alumno_login_login",
-        placeholder="per25-alumno01",
-    )
-    colegio_id = st.number_input(
-        "Colegio Clave",
-        min_value=1,
-        step=1,
-        format="%d",
-        key="alumno_login_colegio",
-    )
-
-    with st.expander("Opciones avanzadas", expanded=False):
-        ciclo_id = st.number_input(
-            "Ciclo ID",
-            min_value=1,
-            step=1,
-            value=GESTION_ESCOLAR_CICLO_ID_DEFAULT,
-            format="%d",
-            key="alumno_login_ciclo",
-        )
-        empresa_id = st.number_input(
-            "Empresa ID",
-            min_value=1,
-            step=1,
-            value=DEFAULT_EMPRESA_ID,
-            format="%d",
-            key="alumno_login_empresa",
-        )
-        timeout = st.number_input(
-            "Timeout (seg)",
-            min_value=5,
-            step=5,
-            value=30,
-            format="%d",
-            key="alumno_login_timeout",
-        )
-        solo_activos = st.checkbox(
-            "Solo activos (alumno activo en clase y en censo)",
-            value=False,
-            key="alumno_login_solo_activos",
-        )
-
-    if st.button("Buscar clases del alumno", type="primary", key="alumno_login_buscar"):
-        token = _clean_token(token_input)
-        if not token:
-            token = _clean_token(os.environ.get("PEGASUS_TOKEN", ""))
-        if not token:
-            st.error("Falta el token. Usa el input o la variable de entorno.")
-            st.stop()
-
-        login_target = str(login_input or "").strip()
-        if not login_target:
-            st.error("Ingresa el login del alumno.")
-            st.stop()
-        login_target_lower = login_target.lower()
-
-        try:
-            with st.spinner("Listando clases..."):
-                clases = _fetch_clases_gestion_escolar(
-                    token=token,
-                    colegio_id=int(colegio_id),
-                    empresa_id=int(empresa_id),
-                    ciclo_id=int(ciclo_id),
-                    timeout=int(timeout),
-                )
-        except Exception as exc:  # pragma: no cover - UI
-            st.error(f"Error: {exc}")
-            st.stop()
-
-        if not clases:
-            st.info("No se encontraron clases para ese colegio/ciclo.")
-            st.stop()
-
-        matches: List[Dict[str, object]] = []
-        errors: List[str] = []
-        total = len(clases)
-        progress = st.progress(0)
-        status = st.empty()
-
-        for index, item in enumerate(clases, start=1):
-            if total:
-                progress.progress(int((index / total) * 100))
-
-            if not isinstance(item, dict):
-                errors.append("Clase con formato invalido.")
-                continue
-
-            clase_id_raw = item.get("geClaseId")
-            if clase_id_raw is None:
-                errors.append("Clase sin geClaseId.")
-                continue
-            try:
-                clase_id = int(clase_id_raw)
-            except (TypeError, ValueError):
-                errors.append(f"Clase con geClaseId invalido: {clase_id_raw}")
-                continue
-
-            clase_name = str(item.get("geClase") or item.get("geClaseClave") or "")
-            status.write(f"Revisando {index}/{total}: {clase_id} {clase_name}".strip())
-
-            try:
-                clase_data = _fetch_alumnos_clase_gestion_escolar(
-                    token=token,
-                    clase_id=clase_id,
-                    empresa_id=int(empresa_id),
-                    ciclo_id=int(ciclo_id),
-                    timeout=int(timeout),
-                )
-            except Exception as exc:  # pragma: no cover - UI
-                errors.append(f"{clase_id}: {exc}")
-                continue
-
-            alumnos_data = clase_data.get("claseAlumnos") or []
-            if not isinstance(alumnos_data, list):
-                errors.append(f"{clase_id}: campo claseAlumnos no es lista")
-                continue
-
-            cgg = clase_data.get("colegioGradoGrupo") if isinstance(clase_data, dict) else None
-            grado_info = cgg.get("grado") if isinstance(cgg, dict) else None
-            grupo_info = cgg.get("grupo") if isinstance(cgg, dict) else None
-            grado = str(grado_info.get("grado") or "") if isinstance(grado_info, dict) else ""
-            grupo = str(grupo_info.get("grupo") or "") if isinstance(grupo_info, dict) else ""
-
-            for entry in alumnos_data:
-                if not isinstance(entry, dict):
-                    continue
-                alumno = entry.get("alumno")
-                if not isinstance(alumno, dict):
-                    continue
-                persona = alumno.get("persona")
-                if not isinstance(persona, dict):
-                    continue
-                persona_login = persona.get("personaLogin")
-                if not isinstance(persona_login, dict):
-                    continue
-
-                login_value = str(persona_login.get("login") or "").strip()
-                if login_value.lower() != login_target_lower:
-                    continue
-
-                activo_en_clase = bool(entry.get("activo", False))
-                activo_en_censo = bool(alumno.get("activo", False))
-                if solo_activos and (not activo_en_clase or not activo_en_censo):
-                    continue
-
-                matches.append(
-                    {
-                        "Clase ID": clase_id,
-                        "Clase": clase_name or str(clase_data.get("geClase") or ""),
-                        "Grado": grado,
-                        "Grupo": grupo,
-                        "Alumno ID": alumno.get("alumnoId", ""),
-                        "Persona ID": persona.get("personaId", ""),
-                        "Login": login_value,
-                        "Nombre completo": persona.get("nombreCompleto") or "",
-                        "Activo censo": activo_en_censo,
-                        "Activo clase": activo_en_clase,
-                    }
-                )
-
-        progress.progress(100)
-        status.empty()
-
-        st.success("Busqueda finalizada.")
-        st.markdown(f"- Login buscado: `{login_target}`")
-        st.markdown(f"- Clases evaluadas: `{total}`")
-        st.markdown(f"- Clases con error: `{len(errors)}`")
-        st.markdown(f"- Coincidencias encontradas: `{len(matches)}`")
-
-        if matches:
-            matches_sorted = sorted(
-                matches,
-                key=lambda row: (
-                    int(row.get("Clase ID", 0)),
-                    str(row.get("Nombre completo", "")),
-                ),
-            )
-            st.dataframe(matches_sorted, use_container_width=True)
-        else:
-            st.info("No se encontro ese login en las clases consultadas.")
-
-        if errors:
-            st.warning("Hubo errores en algunas clases.")
-            st.write("\n".join(f"- {item}" for item in errors[:20]))
-            restantes = len(errors) - 20
-            if restantes > 0:
-                st.caption(f"... y {restantes} errores mas.")

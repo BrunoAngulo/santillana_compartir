@@ -36,6 +36,7 @@ En la web puedes:
 - Asignar profesores a clases (con opcion de simular o aplicar).
 - Descargar plantilla de alumnos registrados y comparar Plantilla_BD vs Plantilla_Actualizada.
 - Listar y eliminar clases desde el API de gestion escolar.
+- Buscar clases asociadas a un alumno por login (token + login + colegio clave).
 
 ## Ejecutar CLI
 ```bash
@@ -86,6 +87,14 @@ El Excel puede usar la columna `Clases` o `CURSO`; si hay multiples cursos, sepa
 Descargar plantilla de alumnos registrados:
 ```bash
 python main.py alumnos-plantilla --colegio-id 4230 --token 'tu_token'
+```
+Buscar clases asociadas a un login de alumno:
+```bash
+python main.py alumno-clases per25-alumno01 --colegio-id 2326 --ciclo-id 207 --token 'tu_token'
+```
+Opcional, solo coincidencias activas:
+```bash
+python main.py alumno-clases per25-alumno01 --colegio-id 2326 --token 'tu_token' --solo-activos
 ```
 Comparar Plantilla_BD vs Plantilla_Actualizada:
 ```bash

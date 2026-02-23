@@ -40,6 +40,10 @@ GESTION_ESCOLAR_URL = (
     "https://www.uno-internacional.com/pegasus-api/gestionEscolar/empresas/"
     "{empresa_id}/ciclos/{ciclo_id}/clases"
 )
+GESTION_ESCOLAR_ALUMNOS_CLASE_URL = (
+    "https://www.uno-internacional.com/pegasus-api/gestionEscolar/empresas/"
+    "{empresa_id}/ciclos/{ciclo_id}/clases/{clase_id}/alumnos"
+)
 GESTION_ESCOLAR_CICLO_ID_DEFAULT = 207
 
 
@@ -142,6 +146,45 @@ def _fetch_clases_gestion_escolar(
     data = payload.get("data") or []
     if not isinstance(data, list):
         raise RuntimeError("Campo data no es lista")
+    return data
+
+
+def _fetch_alumnos_clase_gestion_escolar(
+    session: requests.Session,
+    token: str,
+    clase_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+) -> Dict[str, object]:
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    url = GESTION_ESCOLAR_ALUMNOS_CLASE_URL.format(
+        empresa_id=empresa_id,
+        ciclo_id=ciclo_id,
+        clase_id=clase_id,
+    )
+    try:
+        response = session.get(url, headers=headers, timeout=timeout)
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Error de red: {exc}") from exc
+
+    status_code = response.status_code
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError(f"Respuesta no JSON (status {status_code})") from exc
+
+    if not response.ok:
+        message = payload.get("message") if isinstance(payload, dict) else ""
+        raise RuntimeError(message or f"HTTP {status_code}")
+
+    if not isinstance(payload, dict) or not payload.get("success", False):
+        message = payload.get("message") if isinstance(payload, dict) else "Respuesta invalida"
+        raise RuntimeError(message or "Respuesta invalida")
+
+    data = payload.get("data") or {}
+    if not isinstance(data, dict):
+        raise RuntimeError("Campo data no es objeto")
     return data
 
 
@@ -401,6 +444,54 @@ def _build_parser() -> argparse.ArgumentParser:
         "--output",
         default="",
         help="Ruta del Excel de salida (default: salidas/Alumnos/).",
+    )
+
+    parser_alumno_clases = subparsers.add_parser(
+        "alumno-clases",
+        help="Buscar clases asociadas a un login de alumno.",
+    )
+    parser_alumno_clases.add_argument(
+        "login",
+        help="Login del alumno a buscar (coincidencia exacta, sin distincion de mayusculas).",
+    )
+    parser_alumno_clases.add_argument(
+        "--token",
+        default="",
+        help="Bearer token (sin el prefijo 'Bearer').",
+    )
+    parser_alumno_clases.add_argument(
+        "--token-env",
+        default="PEGASUS_TOKEN",
+        help="Nombre de la variable de entorno con el token.",
+    )
+    parser_alumno_clases.add_argument(
+        "--colegio-id",
+        type=int,
+        required=True,
+        help="ID del colegio.",
+    )
+    parser_alumno_clases.add_argument(
+        "--empresa-id",
+        type=int,
+        default=DEFAULT_EMPRESA_ID,
+        help="Empresa ID (default: 11).",
+    )
+    parser_alumno_clases.add_argument(
+        "--ciclo-id",
+        type=int,
+        default=GESTION_ESCOLAR_CICLO_ID_DEFAULT,
+        help="Ciclo ID (default: 207).",
+    )
+    parser_alumno_clases.add_argument(
+        "--timeout",
+        type=int,
+        default=30,
+        help="Timeout HTTP en segundos (default: 30).",
+    )
+    parser_alumno_clases.add_argument(
+        "--solo-activos",
+        action="store_true",
+        help="Solo muestra coincidencias con alumno activo en clase y en censo.",
     )
 
     parser_alumnos_cmp = subparsers.add_parser(
@@ -760,6 +851,155 @@ def _run_alumnos_plantilla(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_alumno_clases(args: argparse.Namespace) -> int:
+    token = _clean_token(args.token)
+    if not token:
+        token = _clean_token(os.environ.get(args.token_env, ""))
+    if not token:
+        print("Error: falta el token. Usa --token o la variable de entorno.", file=sys.stderr)
+        return 1
+
+    login_target = str(args.login or "").strip()
+    if not login_target:
+        print("Error: el login no puede estar vacio.", file=sys.stderr)
+        return 1
+    login_target_lower = login_target.lower()
+
+    try:
+        with requests.Session() as session:
+            clases = _fetch_clases_gestion_escolar(
+                session=session,
+                token=token,
+                colegio_id=int(args.colegio_id),
+                empresa_id=int(args.empresa_id),
+                ciclo_id=int(args.ciclo_id),
+                timeout=int(args.timeout),
+            )
+    except Exception as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    if not clases:
+        print("No se encontraron clases para ese colegio/ciclo.")
+        return 0
+
+    total = len(clases)
+    errors: List[str] = []
+    matches: List[Dict[str, object]] = []
+
+    with requests.Session() as session:
+        for index, item in enumerate(clases, start=1):
+            if not isinstance(item, dict):
+                errors.append("Clase con formato invalido.")
+                _print_progress(index, total, "Clase con formato invalido")
+                continue
+
+            clase_id_raw = item.get("geClaseId")
+            if clase_id_raw is None:
+                errors.append("Clase sin geClaseId.")
+                _print_progress(index, total, "Clase sin geClaseId")
+                continue
+            try:
+                clase_id = int(clase_id_raw)
+            except (TypeError, ValueError):
+                errors.append(f"Clase con geClaseId invalido: {clase_id_raw}")
+                _print_progress(index, total, "Clase con geClaseId invalido")
+                continue
+
+            clase_name = str(item.get("geClase") or item.get("geClaseClave") or "")
+            try:
+                clase_data = _fetch_alumnos_clase_gestion_escolar(
+                    session=session,
+                    token=token,
+                    clase_id=clase_id,
+                    empresa_id=int(args.empresa_id),
+                    ciclo_id=int(args.ciclo_id),
+                    timeout=int(args.timeout),
+                )
+            except Exception as exc:
+                errors.append(f"{clase_id}: {exc}")
+                _print_progress(index, total, f"{clase_id} error")
+                continue
+
+            alumnos_data = clase_data.get("claseAlumnos") or []
+            if not isinstance(alumnos_data, list):
+                errors.append(f"{clase_id}: campo claseAlumnos no es lista")
+                _print_progress(index, total, f"{clase_id} claseAlumnos invalido")
+                continue
+
+            cgg = clase_data.get("colegioGradoGrupo") if isinstance(clase_data, dict) else None
+            grado_info = cgg.get("grado") if isinstance(cgg, dict) else None
+            grupo_info = cgg.get("grupo") if isinstance(cgg, dict) else None
+            grado = str(grado_info.get("grado") or "") if isinstance(grado_info, dict) else ""
+            grupo = str(grupo_info.get("grupo") or "") if isinstance(grupo_info, dict) else ""
+
+            for entry in alumnos_data:
+                if not isinstance(entry, dict):
+                    continue
+                alumno = entry.get("alumno")
+                if not isinstance(alumno, dict):
+                    continue
+                persona = alumno.get("persona")
+                if not isinstance(persona, dict):
+                    continue
+                persona_login = persona.get("personaLogin")
+                if not isinstance(persona_login, dict):
+                    continue
+
+                login_value = str(persona_login.get("login") or "").strip()
+                if login_value.lower() != login_target_lower:
+                    continue
+                if args.solo_activos and (
+                    not bool(entry.get("activo", False))
+                    or not bool(alumno.get("activo", False))
+                ):
+                    continue
+
+                matches.append(
+                    {
+                        "clase_id": clase_id,
+                        "clase": clase_name or str(clase_data.get("geClase") or ""),
+                        "grado": grado,
+                        "grupo": grupo,
+                        "ge_clase_alumno_id": entry.get("geClaseAlumnoId", ""),
+                        "alumno_id": alumno.get("alumnoId", ""),
+                        "persona_id": persona.get("personaId", ""),
+                        "login": login_value,
+                        "nombre": persona.get("nombreCompleto") or "",
+                        "activo_en_censo": alumno.get("activo", ""),
+                        "activo_en_clase": entry.get("activo", ""),
+                    }
+                )
+
+            _print_progress(index, total, f"{clase_id} {clase_name}".strip())
+
+    print(f"Login buscado: {login_target}")
+    print(f"Clases evaluadas: {total}")
+    print(f"Clases con error: {len(errors)}")
+    print(f"Coincidencias encontradas: {len(matches)}")
+
+    if matches:
+        print("clase_id\tclase\tgrado\tgrupo\talumno_id\tlogin\tnombre\tactivo_en_censo\tactivo_en_clase")
+        for row in sorted(matches, key=lambda value: (int(value["clase_id"]), str(value["nombre"]))):
+            print(
+                "{clase_id}\t{clase}\t{grado}\t{grupo}\t{alumno_id}\t{login}\t{nombre}\t{activo_en_censo}\t{activo_en_clase}".format(
+                    **row
+                )
+            )
+    else:
+        print("No se encontro ese login en las clases consultadas.")
+
+    if errors:
+        print("Errores por clase:", file=sys.stderr)
+        for err in errors[:20]:
+            print(f"- {err}", file=sys.stderr)
+        restantes = len(errors) - 20
+        if restantes > 0:
+            print(f"... y {restantes} mas.", file=sys.stderr)
+
+    return 0
+
+
 def _run_alumnos_comparar(args: argparse.Namespace) -> int:
     excel_path = Path(args.ruta_excel)
     if not excel_path.exists():
@@ -1059,6 +1299,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             "clases",
             "clases-api",
             "alumnos-plantilla",
+            "alumno-clases",
             "alumnos-comparar",
             "profesores",
             "profesores-clases",
@@ -1082,6 +1323,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _run_profesores(args)
     if args.command == "alumnos-plantilla":
         return _run_alumnos_plantilla(args)
+    if args.command == "alumno-clases":
+        return _run_alumno_clases(args)
     if args.command == "alumnos-comparar":
         return _run_alumnos_comparar(args)
     if args.command == "profesores-clases":

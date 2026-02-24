@@ -607,7 +607,7 @@ with tab_alumnos:
             with st.spinner("Descargando plantilla..."):
                 output_bytes, summary = descargar_plantilla_edicion_masiva(
                     token=token,
-                    colegio_id=int(colegio_id),
+                    colegio_id=colegio_id,
                     empresa_id=int(empresa_id),
                     ciclo_id=int(ciclo_id),
                     timeout=int(timeout),
@@ -616,7 +616,7 @@ with tab_alumnos:
             st.error(f"Error: {exc}")
             st.stop()
 
-        file_name = f"plantilla_edicion_alumnos_{int(colegio_id)}.xlsx"
+        file_name = f"plantilla_edicion_alumnos_{colegio_id}.xlsx"
         st.success(f"Listo. Alumnos: {summary['alumnos_total']}.")
         st.download_button(
             label="Descargar plantilla",

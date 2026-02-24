@@ -565,13 +565,11 @@ with tab_alumnos:
         key="alumnos_token",
         help="Pega el token JWT sin el prefijo 'Bearer '.",
     )
-    colegio_id = col2.number_input(
-        "Colegio Clave",
-        min_value=1,
-        step=1,
-        format="%d",
-        key="alumnos_colegio",
-    )
+    colegio_id = col2.text_input(
+    "Colegio Clave",
+    key="alumnos_colegio",
+    placeholder="Ejemplo: PAMHU.PE"
+)
     with st.expander("Opciones avanzadas", expanded=False):
         ciclo_id = st.number_input(
             "Ciclo ID",

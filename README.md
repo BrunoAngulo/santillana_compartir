@@ -37,6 +37,7 @@ En la web puedes:
 - Descargar plantilla de alumnos registrados y comparar Plantilla_BD vs Plantilla_Actualizada.
 - Listar y eliminar clases desde el API de gestion escolar.
 - Buscar clases asociadas a un alumno por login (token + login + colegio clave).
+- Generar Excel de alumnos por nivel/grado/seccion usando Censo (nivelesGradosGrupos + alumnos).
 
 ## Ejecutar CLI
 ```bash

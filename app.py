@@ -1,9 +1,11 @@
 import os
 import re
 import tempfile
+from io import BytesIO
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
+import pandas as pd
 import requests
 import streamlit as st
 
@@ -32,6 +34,22 @@ GESTION_ESCOLAR_URL = (
     "https://www.uno-internacional.com/pegasus-api/gestionEscolar/empresas/"
     "{empresa_id}/ciclos/{ciclo_id}/clases"
 )
+GESTION_ESCOLAR_ALUMNOS_CLASE_URL = (
+    "https://www.uno-internacional.com/pegasus-api/gestionEscolar/empresas/"
+    "{empresa_id}/ciclos/{ciclo_id}/clases/{clase_id}/alumnos"
+)
+CENSO_ALUMNOS_URL = (
+    "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
+    "/ciclos/{ciclo_id}/colegios/{colegio_id}/alumnos"
+)
+CENSO_NIVELES_GRADOS_GRUPOS_URL = (
+    "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
+    "/ciclos/{ciclo_id}/colegios/{colegio_id}/alumnos/nivelesGradosGrupos"
+)
+CENSO_PLANTILLA_EDICION_URL = (
+    "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
+    "/ciclos/{ciclo_id}/colegios/{colegio_id}/descargarPlantillaEdicionMasiva"
+)
 GESTION_ESCOLAR_CICLO_ID_DEFAULT = 207
 
 
@@ -39,12 +57,13 @@ st.set_page_config(page_title="Generador de Plantilla", layout="centered")
 st.title("Si estas acá es porque eres flojo")
 st.write("El maravilloso mundo de TED :0 automatiza tu chamba por un buenos dias al dia ;)")
 
-tab_clases, tab_profesores_clases, tab_alumnos, tab_clases_api = st.tabs(
+tab_clases, tab_profesores_clases, tab_alumnos, tab_clases_api, tab_clases_alumnos = st.tabs(
     [
         "Crear clases",
         "Profesores con clases",
         "Alumnos registrados",
         "Clases API",
+        "Clases + alumnos",
     ]
 )
 
@@ -81,6 +100,21 @@ def _parse_persona_ids(raw: str) -> List[int]:
     return unique
 
 
+def _parse_colegio_id(raw: object, field_name: str = "Colegio Clave") -> int:
+    text = str(raw or "").strip()
+    if not text:
+        raise ValueError(f"{field_name} es obligatorio.")
+    compact = re.sub(r"\s+", "", text)
+    if not compact.isdigit():
+        raise ValueError(
+            f"{field_name} invalido: '{text}'. Usa un ID numerico (ej: 2326)."
+        )
+    value = int(compact)
+    if value <= 0:
+        raise ValueError(f"{field_name} invalido: '{text}'. Debe ser mayor a 0.")
+    return value
+
+
 def _fetch_clases_gestion_escolar(
     token: str, colegio_id: int, empresa_id: int, ciclo_id: int, timeout: int
 ) -> List[Dict[str, object]]:
@@ -111,6 +145,230 @@ def _fetch_clases_gestion_escolar(
     if not isinstance(data, list):
         raise RuntimeError("Campo data no es lista")
     return data
+
+
+def _fetch_alumnos_clase_gestion_escolar(
+    token: str, clase_id: int, empresa_id: int, ciclo_id: int, timeout: int
+) -> Dict[str, object]:
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    url = GESTION_ESCOLAR_ALUMNOS_CLASE_URL.format(
+        empresa_id=empresa_id,
+        ciclo_id=ciclo_id,
+        clase_id=clase_id,
+    )
+    try:
+        response = requests.get(url, headers=headers, timeout=timeout)
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Error de red: {exc}") from exc
+
+    status_code = response.status_code
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError(f"Respuesta no JSON (status {status_code})") from exc
+
+    if not response.ok:
+        message = payload.get("message") if isinstance(payload, dict) else ""
+        raise RuntimeError(message or f"HTTP {status_code}")
+
+    if not isinstance(payload, dict) or not payload.get("success", False):
+        message = payload.get("message") if isinstance(payload, dict) else "Respuesta invalida"
+        raise RuntimeError(message or "Respuesta invalida")
+
+    data = payload.get("data") or {}
+    if not isinstance(data, dict):
+        raise RuntimeError("Campo data no es objeto")
+    return data
+
+
+def _fetch_niveles_grados_grupos_censo(
+    token: str, colegio_id: int, empresa_id: int, ciclo_id: int, timeout: int
+) -> List[Dict[str, object]]:
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    url = CENSO_NIVELES_GRADOS_GRUPOS_URL.format(
+        empresa_id=empresa_id,
+        ciclo_id=ciclo_id,
+        colegio_id=colegio_id,
+    )
+    try:
+        response = requests.get(url, headers=headers, timeout=timeout)
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Error de red: {exc}") from exc
+
+    status_code = response.status_code
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError(f"Respuesta no JSON (status {status_code})") from exc
+
+    if not response.ok:
+        message = payload.get("message") if isinstance(payload, dict) else ""
+        raise RuntimeError(message or f"HTTP {status_code}")
+
+    if not isinstance(payload, dict) or not payload.get("success", False):
+        message = payload.get("message") if isinstance(payload, dict) else "Respuesta invalida"
+        raise RuntimeError(message or "Respuesta invalida")
+
+    data = payload.get("data") or {}
+    if not isinstance(data, dict):
+        raise RuntimeError("Campo data no es objeto")
+    niveles = data.get("niveles") or []
+    if not isinstance(niveles, list):
+        raise RuntimeError("Campo data.niveles no es lista")
+    return niveles
+
+
+def _fetch_alumnos_censo(
+    token: str,
+    colegio_id: int,
+    nivel_id: int,
+    grado_id: int,
+    grupo_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+) -> List[Dict[str, object]]:
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    url = CENSO_ALUMNOS_URL.format(
+        empresa_id=empresa_id,
+        ciclo_id=ciclo_id,
+        colegio_id=colegio_id,
+    )
+    params = {"nivelId": nivel_id, "gradoId": grado_id, "grupoId": grupo_id}
+    try:
+        response = requests.get(url, headers=headers, params=params, timeout=timeout)
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Error de red: {exc}") from exc
+
+    status_code = response.status_code
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError(f"Respuesta no JSON (status {status_code})") from exc
+
+    if not response.ok:
+        message = payload.get("message") if isinstance(payload, dict) else ""
+        raise RuntimeError(message or f"HTTP {status_code}")
+
+    if not isinstance(payload, dict) or not payload.get("success", False):
+        message = payload.get("message") if isinstance(payload, dict) else "Respuesta invalida"
+        raise RuntimeError(message or "Respuesta invalida")
+
+    data = payload.get("data") or []
+    if not isinstance(data, list):
+        raise RuntimeError("Campo data no es lista")
+    return data
+
+
+def _fetch_login_password_lookup_censo(
+    token: str, colegio_id: int, empresa_id: int, ciclo_id: int, timeout: int
+) -> Tuple[Dict[str, Dict[str, str]], Dict[str, Dict[str, str]]]:
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    url = CENSO_PLANTILLA_EDICION_URL.format(
+        empresa_id=empresa_id,
+        ciclo_id=ciclo_id,
+        colegio_id=colegio_id,
+    )
+    try:
+        response = requests.get(url, headers=headers, params={"descargar": 0}, timeout=timeout)
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Error de red: {exc}") from exc
+
+    status_code = response.status_code
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError(f"Respuesta no JSON (status {status_code})") from exc
+
+    if not response.ok:
+        message = payload.get("message") if isinstance(payload, dict) else ""
+        raise RuntimeError(message or f"HTTP {status_code}")
+
+    if not isinstance(payload, dict) or not payload.get("success", False):
+        message = payload.get("message") if isinstance(payload, dict) else "Respuesta invalida"
+        raise RuntimeError(message or "Respuesta invalida")
+
+    data = payload.get("data") or []
+    if not isinstance(data, list):
+        raise RuntimeError("Campo data no es lista")
+
+    by_alumno_id: Dict[str, Dict[str, str]] = {}
+    by_persona_id: Dict[str, Dict[str, str]] = {}
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        login = str(item.get("login") or "").strip()
+        password = str(item.get("password") or "").strip()
+        alumno_id = str(item.get("alumnoId") or "").strip()
+        persona_id = str(item.get("personaId") or "").strip()
+
+        if login or password:
+            value = {"login": login, "password": password}
+            if alumno_id:
+                by_alumno_id[alumno_id] = value
+            if persona_id:
+                by_persona_id[persona_id] = value
+
+    return by_alumno_id, by_persona_id
+
+
+def _to_bool(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "si", "sÃ­", "yes"}
+    return False
+
+
+def _resolve_alumno_login_password(
+    item: Dict[str, object],
+    by_alumno_id: Dict[str, Dict[str, str]],
+    by_persona_id: Dict[str, Dict[str, str]],
+) -> Tuple[str, str]:
+    persona = item.get("persona") if isinstance(item.get("persona"), dict) else {}
+    login = ""
+    password = str(item.get("password") or "").strip()
+
+    persona_login = persona.get("personaLogin") if isinstance(persona, dict) else None
+    if isinstance(persona_login, dict):
+        login = str(persona_login.get("login") or "").strip()
+    if not login:
+        login = str(item.get("login") or "").strip()
+
+    alumno_id = str(item.get("alumnoId") or "").strip()
+    persona_id = str(persona.get("personaId") or item.get("personaId") or "").strip()
+
+    if (not login or not password) and alumno_id and alumno_id in by_alumno_id:
+        lookup = by_alumno_id[alumno_id]
+        if not login:
+            login = str(lookup.get("login") or "").strip()
+        if not password:
+            password = str(lookup.get("password") or "").strip()
+
+    if (not login or not password) and persona_id and persona_id in by_persona_id:
+        lookup = by_persona_id[persona_id]
+        if not login:
+            login = str(lookup.get("login") or "").strip()
+        if not password:
+            password = str(lookup.get("password") or "").strip()
+
+    return login, password
+
+
+def _to_int_or_default(value: object, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _grupo_sort_key(grupo_clave: str, grupo_nombre: str) -> Tuple[int, str]:
+    clave = (grupo_clave or "").strip().upper()
+    if len(clave) == 1 and clave.isalpha():
+        return 0, clave
+    return 1, (grupo_nombre or "").strip().upper()
 
 
 def _delete_clase_gestion_escolar(
@@ -240,8 +498,11 @@ with tab_profesores_clases:
         key="profesores_token",
         help="Pega el token JWT sin el prefijo 'Bearer '.",
     )
-    colegio_id = col2.number_input(
-        "Colegio Clave", min_value=1, step=1, format="%d", key="profesores_colegio"
+    colegio_id_raw = col2.text_input(
+        "Colegio Clave",
+        key="profesores_colegio_text",
+        placeholder="2326",
+        help="Acepta texto o numero. Debe ser un ID numerico de colegio.",
     )
 
     with st.expander("Opciones avanzadas", expanded=False):
@@ -279,6 +540,11 @@ with tab_profesores_clases:
             st.error("Falta el token. Usa el input o la variable de entorno.")
             st.stop()
         try:
+            colegio_id_int = _parse_colegio_id(colegio_id_raw)
+        except ValueError as exc:
+            st.error(f"Error: {exc}")
+            st.stop()
+        try:
             persona_ids = _parse_persona_ids(persona_ids_raw)
         except ValueError as exc:
             st.error(f"Error: {exc}")
@@ -286,7 +552,7 @@ with tab_profesores_clases:
         try:
             data, summary, errores = listar_profesores_data(
                 token=token,
-                colegio_id=int(colegio_id),
+                colegio_id=colegio_id_int,
                 empresa_id=DEFAULT_EMPRESA_ID,
                 ciclo_id=int(ciclo_id),
                 timeout=int(timeout),
@@ -343,7 +609,7 @@ with tab_profesores_clases:
             st.warning("No se encontraron profesores para generar el Excel.")
         else:
             output_bytes = export_profesores_excel(filas)
-            file_name = f"profesores_base_{int(colegio_id)}.xlsx"
+            file_name = f"profesores_base_{colegio_id_int}.xlsx"
             st.session_state["profesores_excel_base"] = output_bytes
             st.session_state["profesores_excel_base_name"] = file_name
             st.success(
@@ -428,6 +694,11 @@ with tab_profesores_clases:
         if not token:
             st.error("Falta el token. Usa el input o la variable de entorno.")
             st.stop()
+        try:
+            colegio_id_int = _parse_colegio_id(colegio_id_raw)
+        except ValueError as exc:
+            st.error(f"Error: {exc}")
+            st.stop()
         if run_apply and not confirm_apply:
             st.error("Debes confirmar antes de aplicar cambios.")
             st.stop()
@@ -458,7 +729,7 @@ with tab_profesores_clases:
             if do_password:
                 pwd_summary, pwd_warnings, pwd_errors = actualizar_passwords_docentes(
                     token=token,
-                    colegio_id=int(colegio_id),
+                    colegio_id=colegio_id_int,
                     excel_path=tmp_path,
                     sheet_name=sheet_name.strip() or None,
                     empresa_id=DEFAULT_EMPRESA_ID,
@@ -488,7 +759,7 @@ with tab_profesores_clases:
                     token=token,
                     empresa_id=DEFAULT_EMPRESA_ID,
                     ciclo_id=int(ciclo_id),
-                    colegio_id=int(colegio_id),
+                    colegio_id=colegio_id_int,
                     excel_path=tmp_path,
                     sheet_name=sheet_name.strip() or None,
                     timeout=int(timeout),
@@ -565,12 +836,11 @@ with tab_alumnos:
         key="alumnos_token",
         help="Pega el token JWT sin el prefijo 'Bearer '.",
     )
-    colegio_id = col2.number_input(
+    colegio_id_raw = col2.text_input(
         "Colegio Clave",
-        min_value=1,
-        step=1,
-        format="%d",
-        key="alumnos_colegio",
+        key="alumnos_colegio_text",
+        placeholder="2326",
+        help="Acepta texto o numero. Debe ser un ID numerico de colegio.",
     )
     with st.expander("Opciones avanzadas", expanded=False):
         ciclo_id = st.number_input(
@@ -606,10 +876,15 @@ with tab_alumnos:
             st.error("Falta el token. Usa el input o la variable de entorno.")
             st.stop()
         try:
+            colegio_id_int = _parse_colegio_id(colegio_id_raw)
+        except ValueError as exc:
+            st.error(f"Error: {exc}")
+            st.stop()
+        try:
             with st.spinner("Descargando plantilla..."):
                 output_bytes, summary = descargar_plantilla_edicion_masiva(
                     token=token,
-                    colegio_id=int(colegio_id),
+                    colegio_id=colegio_id_int,
                     empresa_id=int(empresa_id),
                     ciclo_id=int(ciclo_id),
                     timeout=int(timeout),
@@ -618,7 +893,7 @@ with tab_alumnos:
             st.error(f"Error: {exc}")
             st.stop()
 
-        file_name = f"plantilla_edicion_alumnos_{int(colegio_id)}.xlsx"
+        file_name = f"plantilla_edicion_alumnos_{colegio_id_int}.xlsx"
         st.success(f"Listo. Alumnos: {summary['alumnos_total']}.")
         st.download_button(
             label="Descargar plantilla",
@@ -784,3 +1059,513 @@ with tab_clases_api:
         if errores:
             st.error("Errores al eliminar:")
             st.write("\n".join(f"- {item}" for item in errores))
+
+with tab_clases_alumnos:
+    st.subheader("Listar clases con todos sus alumnos")
+    st.write(
+        "Consulta todas las clases del colegio y muestra todos los alumnos asociados "
+        "a cada clase."
+    )
+
+    col1, col2 = st.columns(2)
+    token_input = col1.text_input(
+        "Token (sin Bearer)",
+        type="password",
+        key="clases_alumnos_token",
+        help="Pega el token JWT sin el prefijo 'Bearer '.",
+    )
+    colegio_id = col2.number_input(
+        "Colegio Clave",
+        min_value=1,
+        step=1,
+        format="%d",
+        key="clases_alumnos_colegio",
+    )
+
+    with st.expander("Opciones avanzadas", expanded=False):
+        ciclo_id = st.number_input(
+            "Ciclo ID",
+            min_value=1,
+            step=1,
+            value=GESTION_ESCOLAR_CICLO_ID_DEFAULT,
+            format="%d",
+            key="clases_alumnos_ciclo",
+        )
+        empresa_id = st.number_input(
+            "Empresa ID",
+            min_value=1,
+            step=1,
+            value=DEFAULT_EMPRESA_ID,
+            format="%d",
+            key="clases_alumnos_empresa",
+        )
+        timeout = st.number_input(
+            "Timeout (seg)",
+            min_value=5,
+            step=5,
+            value=30,
+            format="%d",
+            key="clases_alumnos_timeout",
+        )
+        solo_activos = st.checkbox(
+            "Solo alumnos activos",
+            value=False,
+            key="clases_alumnos_solo_activos",
+        )
+
+    if st.button(
+        "Listar clases con alumnos",
+        type="primary",
+        key="clases_alumnos_listar",
+    ):
+        token = _clean_token(token_input)
+        if not token:
+            token = _clean_token(os.environ.get("PEGASUS_TOKEN", ""))
+        if not token:
+            st.error("Falta el token. Usa el input o la variable de entorno.")
+            st.stop()
+
+        try:
+            with st.spinner("Listando clases..."):
+                clases = _fetch_clases_gestion_escolar(
+                    token=token,
+                    colegio_id=int(colegio_id),
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                )
+        except Exception as exc:  # pragma: no cover - UI
+            st.error(f"Error: {exc}")
+            st.stop()
+
+        if not clases:
+            st.info("No se encontraron clases para ese colegio/ciclo.")
+            st.stop()
+
+        detalle_rows: List[Dict[str, object]] = []
+        resumen_rows: List[Dict[str, object]] = []
+        errores: List[str] = []
+        total = len(clases)
+        progress = st.progress(0)
+        status = st.empty()
+
+        for index, item in enumerate(clases, start=1):
+            progress.progress(int((index / total) * 100))
+
+            if not isinstance(item, dict):
+                errores.append("Clase con formato invalido.")
+                continue
+
+            clase_id_raw = item.get("geClaseId")
+            if clase_id_raw is None:
+                errores.append("Clase sin geClaseId.")
+                continue
+            try:
+                clase_id = int(clase_id_raw)
+            except (TypeError, ValueError):
+                errores.append(f"Clase con geClaseId invalido: {clase_id_raw}")
+                continue
+
+            clase_name = str(item.get("geClase") or item.get("geClaseClave") or "")
+            status.write(f"Revisando {index}/{total}: {clase_id} {clase_name}".strip())
+
+            try:
+                clase_data = _fetch_alumnos_clase_gestion_escolar(
+                    token=token,
+                    clase_id=clase_id,
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                )
+            except Exception as exc:  # pragma: no cover - UI
+                errores.append(f"{clase_id}: {exc}")
+                continue
+
+            alumnos_data = clase_data.get("claseAlumnos") or []
+            if not isinstance(alumnos_data, list):
+                errores.append(f"{clase_id}: campo claseAlumnos no es lista")
+                continue
+
+            cgg = clase_data.get("colegioGradoGrupo") if isinstance(clase_data, dict) else None
+            grado_info = cgg.get("grado") if isinstance(cgg, dict) else None
+            grupo_info = cgg.get("grupo") if isinstance(cgg, dict) else None
+            grado = str(grado_info.get("grado") or "") if isinstance(grado_info, dict) else ""
+            grupo = str(grupo_info.get("grupo") or "") if isinstance(grupo_info, dict) else ""
+
+            total_api = len(alumnos_data)
+            listados = 0
+
+            for entry in alumnos_data:
+                if not isinstance(entry, dict):
+                    continue
+                alumno = entry.get("alumno")
+                if not isinstance(alumno, dict):
+                    continue
+                persona = alumno.get("persona")
+                if not isinstance(persona, dict):
+                    continue
+                persona_login = persona.get("personaLogin")
+                if not isinstance(persona_login, dict):
+                    persona_login = {}
+
+                activo_en_clase = bool(entry.get("activo", False))
+                activo_en_censo = bool(alumno.get("activo", False))
+                if solo_activos and (not activo_en_clase or not activo_en_censo):
+                    continue
+
+                listados += 1
+                detalle_rows.append(
+                    {
+                        "Clase ID": clase_id,
+                        "Clase": clase_name,
+                        "Grado": grado,
+                        "Grupo": grupo,
+                        "Alumno ID": alumno.get("alumnoId", ""),
+                        "Persona ID": persona.get("personaId", ""),
+                        "Login": persona_login.get("login", ""),
+                        "Nombre completo": persona.get("nombreCompleto", ""),
+                        "Activo censo": activo_en_censo,
+                        "Activo clase": activo_en_clase,
+                    }
+                )
+
+            resumen_rows.append(
+                {
+                    "Clase ID": clase_id,
+                    "Clase": clase_name,
+                    "Alumnos API": total_api,
+                    "Alumnos listados": listados,
+                }
+            )
+
+            if listados == 0:
+                detalle_rows.append(
+                    {
+                        "Clase ID": clase_id,
+                        "Clase": clase_name,
+                        "Grado": grado,
+                        "Grupo": grupo,
+                        "Alumno ID": "",
+                        "Persona ID": "",
+                        "Login": "",
+                        "Nombre completo": "(sin alumnos)",
+                        "Activo censo": "",
+                        "Activo clase": "",
+                    }
+                )
+
+        progress.progress(100)
+        status.empty()
+
+        st.success("Listado generado.")
+        st.markdown(f"- Clases evaluadas: `{total}`")
+        st.markdown(f"- Clases con error: `{len(errores)}`")
+        st.markdown(f"- Registros listados: `{len(detalle_rows)}`")
+
+        if resumen_rows:
+            resumen_rows = sorted(resumen_rows, key=lambda row: int(row.get("Clase ID", 0)))
+            st.subheader("Resumen por clase")
+            st.dataframe(resumen_rows, use_container_width=True)
+
+        if detalle_rows:
+            detalle_rows = sorted(
+                detalle_rows,
+                key=lambda row: (
+                    int(row.get("Clase ID", 0)),
+                    str(row.get("Nombre completo", "")),
+                ),
+            )
+            st.subheader("Detalle de alumnos por clase")
+            st.dataframe(detalle_rows, use_container_width=True)
+        else:
+            st.info("No hay alumnos para mostrar.")
+
+        if errores:
+            st.warning("Hubo errores en algunas clases.")
+            st.write("\n".join(f"- {item}" for item in errores[:20]))
+            restantes = len(errores) - 20
+            if restantes > 0:
+                st.caption(f"... y {restantes} errores mas.")
+
+    st.divider()
+    st.subheader("Generar Excel por niveles, grados y secciones (Censo)")
+    st.write(
+        "Usa el endpoint nivelesGradosGrupos, luego consulta alumnos por cada "
+        "nivel/grado/grupo y genera un Excel."
+    )
+    solo_activos_censo = st.checkbox(
+        "Solo alumnos activos en censo",
+        value=False,
+        key="clases_alumnos_excel_solo_activos",
+    )
+    if st.button(
+        "Generar Excel alumnos (Censo)",
+        type="primary",
+        key="clases_alumnos_excel_generar",
+    ):
+        token = _clean_token(token_input)
+        if not token:
+            token = _clean_token(os.environ.get("PEGASUS_TOKEN", ""))
+        if not token:
+            st.error("Falta el token. Usa el input o la variable de entorno.")
+            st.stop()
+
+        try:
+            with st.spinner("Consultando niveles/grados/grupos..."):
+                niveles_data = _fetch_niveles_grados_grupos_censo(
+                    token=token,
+                    colegio_id=int(colegio_id),
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                )
+        except Exception as exc:  # pragma: no cover - UI
+            st.error(f"Error: {exc}")
+            st.stop()
+
+        contexts: List[Dict[str, object]] = []
+        seen_contexts = set()
+        for nivel_entry in niveles_data:
+            if not isinstance(nivel_entry, dict):
+                continue
+            nivel = nivel_entry.get("nivel") if isinstance(nivel_entry.get("nivel"), dict) else {}
+            nivel_id = nivel.get("nivelId")
+            if nivel_id is None:
+                continue
+            try:
+                nivel_id_int = int(nivel_id)
+            except (TypeError, ValueError):
+                continue
+            nivel_name = str(nivel.get("nivel") or "")
+            nivel_order = _to_int_or_default(nivel.get("nivel_orden"), 9999)
+            grados = nivel_entry.get("grados") or []
+            if not isinstance(grados, list):
+                continue
+
+            for grado_entry in grados:
+                if not isinstance(grado_entry, dict):
+                    continue
+                grado = (
+                    grado_entry.get("grado")
+                    if isinstance(grado_entry.get("grado"), dict)
+                    else {}
+                )
+                grado_id = grado.get("gradoId")
+                if grado_id is None:
+                    continue
+                try:
+                    grado_id_int = int(grado_id)
+                except (TypeError, ValueError):
+                    continue
+                grado_name = str(grado.get("grado") or "")
+                grado_order = _to_int_or_default(grado_id, 9999)
+                grupos = grado_entry.get("grupos") or []
+                if not isinstance(grupos, list):
+                    continue
+
+                for grupo_entry in grupos:
+                    if not isinstance(grupo_entry, dict):
+                        continue
+                    grupo = (
+                        grupo_entry.get("grupo")
+                        if isinstance(grupo_entry.get("grupo"), dict)
+                        else {}
+                    )
+                    grupo_id = grupo.get("grupoId")
+                    if grupo_id is None:
+                        continue
+                    try:
+                        grupo_id_int = int(grupo_id)
+                    except (TypeError, ValueError):
+                        continue
+
+                    grupo_name = str(grupo.get("grupo") or "")
+                    grupo_clave = str(grupo.get("grupoClave") or "")
+                    key = (nivel_id_int, grado_id_int, grupo_id_int)
+                    if key in seen_contexts:
+                        continue
+                    seen_contexts.add(key)
+                    contexts.append(
+                        {
+                            "nivel_id": nivel_id_int,
+                            "nivel": nivel_name,
+                            "nivel_order": nivel_order,
+                            "grado_id": grado_id_int,
+                            "grado": grado_name,
+                            "grado_order": grado_order,
+                            "grupo_id": grupo_id_int,
+                            "grupo": grupo_name,
+                            "grupo_clave": grupo_clave,
+                        }
+                    )
+
+        if not contexts:
+            st.warning("No se encontraron niveles/grados/grupos para el colegio.")
+            st.stop()
+
+        contexts = sorted(
+            contexts,
+            key=lambda ctx: (
+                int(ctx.get("nivel_order", 9999)),
+                int(ctx.get("grado_order", 9999)),
+                _grupo_sort_key(
+                    str(ctx.get("grupo_clave", "")),
+                    str(ctx.get("grupo", "")),
+                ),
+            ),
+        )
+
+        by_alumno_id: Dict[str, Dict[str, str]] = {}
+        by_persona_id: Dict[str, Dict[str, str]] = {}
+        try:
+            by_alumno_id, by_persona_id = _fetch_login_password_lookup_censo(
+                token=token,
+                colegio_id=int(colegio_id),
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                timeout=int(timeout),
+            )
+        except Exception as exc:  # pragma: no cover - UI
+            st.warning(
+                "No se pudo cargar lookup de login/password desde plantilla de "
+                f"edicion masiva: {exc}"
+            )
+
+        rows_excel: List[Dict[str, object]] = []
+        errores_excel: List[str] = []
+        total = len(contexts)
+        progress = st.progress(0)
+        status = st.empty()
+
+        for index, ctx in enumerate(contexts, start=1):
+            progress.progress(int((index / total) * 100))
+            status.write(
+                "Consultando {idx}/{total}: N{nivel} G{grado} S{seccion}".format(
+                    idx=index,
+                    total=total,
+                    nivel=ctx["nivel_id"],
+                    grado=ctx["grado_id"],
+                    seccion=ctx["grupo_id"],
+                )
+            )
+            try:
+                alumnos_data = _fetch_alumnos_censo(
+                    token=token,
+                    colegio_id=int(colegio_id),
+                    nivel_id=int(ctx["nivel_id"]),
+                    grado_id=int(ctx["grado_id"]),
+                    grupo_id=int(ctx["grupo_id"]),
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                )
+            except Exception as exc:  # pragma: no cover - UI
+                errores_excel.append(
+                    "nivelId={nivel} gradoId={grado} grupoId={grupo}: {error}".format(
+                        nivel=ctx["nivel_id"],
+                        grado=ctx["grado_id"],
+                        grupo=ctx["grupo_id"],
+                        error=exc,
+                    )
+                )
+                continue
+
+            for item in alumnos_data:
+                if not isinstance(item, dict):
+                    continue
+                if solo_activos_censo and not _to_bool(item.get("activo")):
+                    continue
+
+                persona = item.get("persona") if isinstance(item.get("persona"), dict) else {}
+                login, password = _resolve_alumno_login_password(
+                    item=item,
+                    by_alumno_id=by_alumno_id,
+                    by_persona_id=by_persona_id,
+                )
+                rows_excel.append(
+                    {
+                        "_nivel_order": int(ctx["nivel_order"]),
+                        "_grado_order": int(ctx["grado_order"]),
+                        "_grupo_sort": _grupo_sort_key(
+                            str(ctx.get("grupo_clave", "")),
+                            str(ctx.get("grupo", "")),
+                        ),
+                        "Nivel": str(ctx.get("nivel", "")),
+                        "Grado": str(ctx.get("grado", "")),
+                        "Seccion": str(ctx.get("grupo_clave") or ctx.get("grupo") or ""),
+                        "Nombre": str(persona.get("nombre") or ""),
+                        "Apellido Paterno": str(persona.get("apellidoPaterno") or ""),
+                        "Apellido Materno": str(persona.get("apellidoMaterno") or ""),
+                        "Login": login,
+                        "Password": password,
+                    }
+                )
+
+        progress.progress(100)
+        status.empty()
+
+        if rows_excel:
+            rows_excel = sorted(
+                rows_excel,
+                key=lambda row: (
+                    row["_nivel_order"],
+                    row["_grado_order"],
+                    row["_grupo_sort"],
+                    str(row.get("Apellido Paterno", "")).lower(),
+                    str(row.get("Apellido Materno", "")).lower(),
+                    str(row.get("Nombre", "")).lower(),
+                ),
+            )
+
+        output = BytesIO()
+        excel_columns = [
+            "Nivel",
+            "Grado",
+            "Seccion",
+            "Nombre",
+            "Apellido Paterno",
+            "Apellido Materno",
+            "Login",
+            "Password",
+        ]
+        df_excel = pd.DataFrame(rows_excel)
+        if df_excel.empty:
+            df_excel = pd.DataFrame(columns=excel_columns)
+        else:
+            df_excel = df_excel.drop(
+                columns=["_nivel_order", "_grado_order", "_grupo_sort"], errors="ignore"
+            )
+            df_excel = df_excel.reindex(columns=excel_columns)
+
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df_excel.to_excel(writer, index=False, sheet_name="Alumnos")
+            if errores_excel:
+                pd.DataFrame({"error": errores_excel}).to_excel(
+                    writer, index=False, sheet_name="Errores"
+                )
+            ws = writer.book["Alumnos"]
+            ws.freeze_panes = "A2"
+            ws.auto_filter.ref = ws.dimensions
+
+        output.seek(0)
+        file_name = f"alumnos_censo_{int(colegio_id)}_{int(ciclo_id)}.xlsx"
+        st.success("Excel generado.")
+        st.markdown(f"- Combinaciones evaluadas: `{total}`")
+        st.markdown(f"- Filas en Excel: `{len(df_excel)}`")
+        st.markdown(f"- Errores: `{len(errores_excel)}`")
+        st.download_button(
+            label="Descargar Excel alumnos",
+            data=output.getvalue(),
+            file_name=file_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="clases_alumnos_excel_download",
+        )
+
+        if not df_excel.empty:
+            st.dataframe(df_excel, use_container_width=True)
+        if errores_excel:
+            st.warning("Hubo errores en algunas combinaciones.")
+            st.write("\n".join(f"- {item}" for item in errores_excel[:20]))
+            restantes = len(errores_excel) - 20
+            if restantes > 0:
+                st.caption(f"... y {restantes} errores mas.")

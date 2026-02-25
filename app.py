@@ -836,20 +836,12 @@ with tab_alumnos:
         key="alumnos_token",
         help="Pega el token JWT sin el prefijo 'Bearer '.",
     )
-<<<<<<< HEAD
     colegio_id_raw = col2.text_input(
         "Colegio Clave",
         key="alumnos_colegio_text",
         placeholder="2326",
         help="Acepta texto o numero. Debe ser un ID numerico de colegio.",
     )
-=======
-    colegio_id = col2.text_input(
-    "Colegio Clave",
-    key="alumnos_colegio",
-    placeholder="Ejemplo: PAMHU.PE"
-)
->>>>>>> a7f0970f2fd63244192fed87dd5c0d129d2a2018
     with st.expander("Opciones avanzadas", expanded=False):
         ciclo_id = st.number_input(
             "Ciclo ID",
@@ -892,11 +884,7 @@ with tab_alumnos:
             with st.spinner("Descargando plantilla..."):
                 output_bytes, summary = descargar_plantilla_edicion_masiva(
                     token=token,
-<<<<<<< HEAD
                     colegio_id=colegio_id_int,
-=======
-                    colegio_id=colegio_id,
->>>>>>> a7f0970f2fd63244192fed87dd5c0d129d2a2018
                     empresa_id=int(empresa_id),
                     ciclo_id=int(ciclo_id),
                     timeout=int(timeout),
@@ -905,11 +893,7 @@ with tab_alumnos:
             st.error(f"Error: {exc}")
             st.stop()
 
-<<<<<<< HEAD
         file_name = f"plantilla_edicion_alumnos_{colegio_id_int}.xlsx"
-=======
-        file_name = f"plantilla_edicion_alumnos_{colegio_id}.xlsx"
->>>>>>> a7f0970f2fd63244192fed87dd5c0d129d2a2018
         st.success(f"Listo. Alumnos: {summary['alumnos_total']}.")
         st.download_button(
             label="Descargar plantilla",

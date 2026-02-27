@@ -646,12 +646,25 @@ with tab_profesores_clases:
     do_niveles = col_proc1.checkbox("Asignar niveles (asignarNivel)", value=True)
     do_estado = col_proc1.checkbox("Activar/Inactivar (Estado)", value=True)
     do_clases = col_proc2.checkbox("Asignar clases y secciones", value=True)
+    inactivar_no_en_clases = col_proc2.checkbox(
+        "Inactivar IDs fuera de Profesores_clases",
+        value=False,
+        disabled=not do_estado,
+        help=(
+            "Marca Inactivo (por Estado) a IDs presentes en hoja Profesores "
+            "que no esten en Profesores_clases."
+        ),
+    )
     remove_missing = col_proc2.checkbox(
         "Eliminar profesores que no estan en el Excel (solo clases evaluadas)",
         value=False,
         key="profesores_remove",
         disabled=not do_clases,
     )
+    if inactivar_no_en_clases and do_estado:
+        st.warning(
+            "Se inactivaran por Estado los IDs que no aparezcan en Profesores_clases."
+        )
     if remove_missing and do_clases:
         st.warning(
             "Eliminar profesores quita asignaciones en las clases evaluadas. "
@@ -769,6 +782,7 @@ with tab_profesores_clases:
                     on_progress=_on_progress,
                     do_niveles=do_niveles,
                     do_estado=do_estado,
+                    inactivar_no_en_clases=inactivar_no_en_clases if do_estado else False,
                     do_clases=do_clases,
                     do_grupos=do_clases,
                 )
@@ -798,6 +812,8 @@ with tab_profesores_clases:
                 f"Estado activaciones: {summary.get('estado_activaciones', 0)}",
                 f"Estado inactivaciones: {summary.get('estado_inactivaciones', 0)}",
                 f"Estado omitidas: {summary.get('estado_omitidas', 0)}",
+                "Estado forzadas (fuera de Profesores_clases): "
+                f"{summary.get('estado_forzadas_fuera_clases', 0)}",
                 f"Errores API: {summary.get('errores_api', 0)}",
             ]
             st.success("Resumen de ejecucion")

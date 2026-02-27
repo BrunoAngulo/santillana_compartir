@@ -576,6 +576,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Elimina del staff a profesores que no estan en el Excel (solo clases evaluadas).",
     )
     parser_profesores_clases.add_argument(
+        "--inactivar-no-en-clases",
+        action="store_true",
+        help=(
+            "Marca Inactivo por Estado a IDs de la hoja Profesores "
+            "que no esten en Profesores_clases."
+        ),
+    )
+    parser_profesores_clases.add_argument(
         "--no-grupos",
         action="store_true",
         help="No asigna colegio-grado-grupo segun Secciones.",
@@ -1083,6 +1091,7 @@ def _run_profesores_clases(args: argparse.Namespace) -> int:
                 on_log=None,
                 list_estado_only=True,
                 on_estado_change=_on_estado_change,
+                inactivar_no_en_clases=bool(args.inactivar_no_en_clases),
                 do_grupos=do_grupos,
             )
         except Exception as exc:
@@ -1117,6 +1126,7 @@ def _run_profesores_clases(args: argparse.Namespace) -> int:
             on_progress=lambda phase, current, total, msg: _print_progress(
                 current, total, f"{phase}: {msg}"
             ),
+            inactivar_no_en_clases=bool(args.inactivar_no_en_clases),
             do_grupos=do_grupos,
         )
     except Exception as exc:
@@ -1150,6 +1160,10 @@ def _run_profesores_clases(args: argparse.Namespace) -> int:
         print(f"Niveles: {_join_ids(niveles)}")
         print(f"Activar: {_join_ids(activar)}")
         print(f"Inactivar: {_join_ids(inactivar)}")
+        print(
+            "Estado forzadas fuera de Profesores_clases: "
+            f"{summary.get('estado_forzadas_fuera_clases', 0)}"
+        )
         print(f"Asignar: {_join_clases(asignar)}")
         print(f"Eliminar: {_join_clases(eliminar)}")
         if errors:
@@ -1188,7 +1202,10 @@ def _run_profesores_clases(args: argparse.Namespace) -> int:
         "Eliminaciones: {eliminaciones}, "
         "Estado activaciones: {estado_activaciones}, "
         "Estado inactivaciones: {estado_inactivaciones}, "
-        "Estado omitidas: {estado_omitidas}.".format(**summary)
+        "Estado omitidas: {estado_omitidas}, "
+        "Estado forzadas fuera de Profesores_clases: {estado_forzadas_fuera_clases}.".format(
+            **summary
+        )
     )
     if summary.get("docentes_invalidos"):
         print(f"Docentes invalidos: {summary['docentes_invalidos']}", file=sys.stderr)

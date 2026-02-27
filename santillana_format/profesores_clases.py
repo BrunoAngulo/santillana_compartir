@@ -85,6 +85,7 @@ def asignar_profesores_clases(
     on_progress: Optional[Callable[[str, int, int, str], None]] = None,
     do_niveles: bool = True,
     do_estado: bool = True,
+    inactivar_no_en_clases: bool = False,
     do_clases: bool = True,
     do_grupos: bool = True,
     require_curso: Optional[bool] = None,
@@ -108,6 +109,7 @@ def asignar_profesores_clases(
         "estado_activaciones": 0,
         "estado_inactivaciones": 0,
         "estado_omitidas": 0,
+        "estado_forzadas_fuera_clases": 0,
         "niveles_asignados": 0,
         "niveles_omitidos": 0,
         "grupos_asignados": 0,
@@ -255,6 +257,34 @@ def asignar_profesores_clases(
             estado_by_persona, estado_warnings = _collect_estado(docentes_estado)
             warnings.extend(estado_warnings)
             estado_niveles_by_persona = _collect_niveles_por_persona(docentes_estado)
+            if inactivar_no_en_clases:
+                ids_en_clases = {
+                    int(docente.get("persona_id"))
+                    for docente in docentes
+                    if docente.get("persona_id") is not None
+                }
+                ids_en_estado = {
+                    int(docente.get("persona_id"))
+                    for docente in docentes_estado
+                    if docente.get("persona_id") is not None
+                }
+                faltantes = sorted(ids_en_estado - ids_en_clases)
+                if faltantes:
+                    summary["estado_forzadas_fuera_clases"] = len(faltantes)
+                    for persona_id in faltantes:
+                        estado_by_persona[persona_id] = False
+                        niveles_actuales = niveles_actuales_por_persona.get(persona_id, set())
+                        if niveles_actuales:
+                            estado_niveles_by_persona.setdefault(persona_id, set()).update(
+                                int(nivel_id) for nivel_id in niveles_actuales
+                            )
+                    sample = ", ".join(str(pid) for pid in faltantes[:10])
+                    extra = max(0, len(faltantes) - 10)
+                    extra_txt = f" (+{extra} mas)" if extra > 0 else ""
+                    warnings.append(
+                        "Se marcara Inactivo por ausencia en Profesores_clases: "
+                        f"{sample}{extra_txt}"
+                    )
 
     staff_cache: Dict[int, Set[int]] = {}
     planned_by_class: Dict[int, Set[int]] = {}

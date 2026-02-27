@@ -83,6 +83,10 @@ Para eliminar del staff a profesores que no estan en el Excel (solo clases evalu
 ```bash
 python main.py profesores-clases ruta.xlsx --colegio-id 4230 --token 'tu_token' --apply --remove-missing
 ```
+Para inactivar por Estado a IDs que estan en `Profesores` pero no en `Profesores_clases`:
+```bash
+python main.py profesores-clases ruta.xlsx --colegio-id 4230 --token 'tu_token' --apply --inactivar-no-en-clases
+```
 El Excel puede usar la columna `Clases` o `CURSO`; si hay multiples cursos, separamos por coma.
 
 Descargar plantilla de alumnos registrados:

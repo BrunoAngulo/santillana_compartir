@@ -9,7 +9,7 @@ Santillana_format/
 |- app.py                    # Interfaz web (Streamlit)
 |- main.py                   # CLI (wrapper)
 |- santillana_format/
-|  |- processor.py           # Logica de carga/filtrado/transformacion/exportacion
+|  |- processor.py           # L贸gica de carga/filtrado/transformaci贸n/exportaci贸n
 |  |- alumnos.py             # Helpers Pegasus
 |  |- cli.py                 # CLI real
 |  |- __init__.py
@@ -33,11 +33,11 @@ streamlit run app.py
 En la web puedes:
 - Crear clases desde un Excel.
 - Listar profesores y generar Excel base.
-- Asignar profesores a clases (con opcion de simular o aplicar).
+- Asignar profesores a clases (con opci贸n de simular o aplicar).
 - Descargar plantilla de alumnos registrados y comparar Plantilla_BD vs Plantilla_Actualizada.
-- Listar y eliminar clases desde el API de gestion escolar.
+- Listar y eliminar clases desde el API de gesti贸n escolar.
 - Buscar clases asociadas a un alumno por login (token + login + colegio clave).
-- Generar Excel de alumnos por nivel/grado/seccion usando Censo (nivelesGradosGrupos + alumnos).
+- Generar Excel de alumnos por nivel/grado/secci贸n usando Censo (nivelesGradosGrupos + alumnos).
 
 ## Ejecutar CLI
 ```bash
@@ -52,7 +52,7 @@ Alternativa:
 python -m santillana_format.cli ruta_al_excel.xlsx 00001053
 ```
 Salida por defecto: `salidas/Clases/`.
-Listar/eliminar clases (Pegasus gestion escolar):
+Listar/eliminar clases (Pegasus gesti贸n escolar):
 ```bash
 set PEGASUS_TOKEN=tu_token
 python main.py clases-api --colegio-id 4230 --ciclo-id 207
@@ -71,7 +71,7 @@ python main.py profesores --colegio-id 4230 --niveles 38,39
 ```
 Salida por defecto: `salidas/Profesores/`.
 
-Asignar profesores a clases desde un Excel (modo simulacion por defecto):
+Asignar profesores a clases desde un Excel (modo simulaci贸n por defecto):
 ```bash
 python main.py profesores-clases ruta.xlsx --colegio-id 4230 --token 'tu_token'
 ```
@@ -79,15 +79,16 @@ Para aplicar cambios:
 ```bash
 python main.py profesores-clases ruta.xlsx --colegio-id 4230 --token 'tu_token' --apply
 ```
-Para eliminar del staff a profesores que no estan en el Excel (solo clases evaluadas):
+Para eliminar del staff a profesores que no est谩n en el Excel (solo clases evaluadas):
 ```bash
 python main.py profesores-clases ruta.xlsx --colegio-id 4230 --token 'tu_token' --apply --remove-missing
 ```
-Para inactivar por Estado a IDs que estan en `Profesores` pero no en `Profesores_clases`:
+Por defecto, se inactiva por Estado a IDs que est醤 en `Profesores` pero no en `Profesores_clases`.
+Para desactivar ese comportamiento:
 ```bash
-python main.py profesores-clases ruta.xlsx --colegio-id 4230 --token 'tu_token' --apply --inactivar-no-en-clases
+python main.py profesores-clases ruta.xlsx --colegio-id 4230 --token 'tu_token' --apply --no-inactivar-no-en-clases
 ```
-El Excel puede usar la columna `Clases` o `CURSO`; si hay multiples cursos, separamos por coma.
+El Excel puede usar la columna `Clases` o `CURSO`; si hay m鷏tiples cursos, separamos por coma.
 
 Descargar plantilla de alumnos registrados:
 ```bash
@@ -110,6 +111,6 @@ Salida por defecto: `salidas/Alumnos/alumnos_resultados_<archivo>.xlsx` con hoja
 
 ## Flujo de procesamiento
 - Carga la hoja `Export` por defecto y detecta encabezados si hace falta.
-- Filtra por codigo exacto en la columna `CRM` (configurable).
+- Filtra por c贸digo exacto en la columna `CRM` (configurable).
 - Aplica reglas de plataforma/estado y mapea nivel, grado y materia.
 - Genera la hoja `Plantilla alta de clases` y respeta los encabezados de la plantilla si existe.

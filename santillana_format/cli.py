@@ -83,7 +83,7 @@ def _parse_grupo_letras(value: str) -> List[str]:
         else:
             invalid.append(token)
     if invalid:
-        raise ValueError(f"Grupos invalidos: {', '.join(invalid)}")
+        raise ValueError(f"Grupos inválidos: {', '.join(invalid)}")
     return letras
 
 
@@ -109,7 +109,7 @@ def _parse_niveles(value: str) -> List[int]:
             continue
         invalid.append(token)
     if invalid:
-        raise ValueError(f"Niveles invalidos: {', '.join(invalid)}")
+        raise ValueError(f"Niveles inválidos: {', '.join(invalid)}")
     return ids
 
 def _fetch_clases_gestion_escolar(
@@ -140,8 +140,8 @@ def _fetch_clases_gestion_escolar(
         raise RuntimeError(message or f"HTTP {status_code}")
 
     if not isinstance(payload, dict) or not payload.get("success", False):
-        message = payload.get("message") if isinstance(payload, dict) else "Respuesta invalida"
-        raise RuntimeError(message or "Respuesta invalida")
+        message = payload.get("message") if isinstance(payload, dict) else "Respuesta inválida"
+        raise RuntimeError(message or "Respuesta inválida")
 
     data = payload.get("data") or []
     if not isinstance(data, list):
@@ -179,8 +179,8 @@ def _fetch_alumnos_clase_gestion_escolar(
         raise RuntimeError(message or f"HTTP {status_code}")
 
     if not isinstance(payload, dict) or not payload.get("success", False):
-        message = payload.get("message") if isinstance(payload, dict) else "Respuesta invalida"
-        raise RuntimeError(message or "Respuesta invalida")
+        message = payload.get("message") if isinstance(payload, dict) else "Respuesta inválida"
+        raise RuntimeError(message or "Respuesta inválida")
 
     data = payload.get("data") or {}
     if not isinstance(data, dict):
@@ -219,7 +219,7 @@ def _delete_clase_gestion_escolar(
         except ValueError:
             return
         if isinstance(payload, dict) and payload.get("success") is False:
-            message = payload.get("message") or "Respuesta invalida"
+            message = payload.get("message") or "Respuesta inválida"
             raise RuntimeError(message)
 
 
@@ -285,7 +285,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser_clases.add_argument("ruta_excel", help="Ruta del archivo XLSX de entrada")
     parser_clases.add_argument(
-        "codigo", help="Codigo a filtrar (se respetan ceros a la izquierda)"
+        "codigo", help="Código a filtrar (se respetan ceros a la izquierda)"
     )
     parser_clases.add_argument(
         "grupos",
@@ -297,7 +297,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--columna-codigo",
         dest="columna_codigo",
         default=CODE_COLUMN_NAME,
-        help=f"Nombre de la columna que contiene el codigo (default: {CODE_COLUMN_NAME})",
+        help=f"Nombre de la columna que contiene el código (default: {CODE_COLUMN_NAME})",
     )
     parser_clases.add_argument(
         "--hoja",
@@ -312,7 +312,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     parser_clases_api = subparsers.add_parser(
-        "clases-api", help="Listar o eliminar clases desde gestion escolar."
+        "clases-api", help="Listar o eliminar clases desde gestión escolar."
     )
     parser_clases_api.add_argument(
         "--token",
@@ -404,7 +404,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     parser_alumnos = subparsers.add_parser(
         "alumnos-plantilla",
-        help="Descargar plantilla de edicion masiva de alumnos registrados.",
+        help="Descargar plantilla de edición masiva de alumnos registrados.",
     )
     parser_alumnos.add_argument(
         "--token",
@@ -452,7 +452,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser_alumno_clases.add_argument(
         "login",
-        help="Login del alumno a buscar (coincidencia exacta, sin distincion de mayusculas).",
+        help="Login del alumno a buscar (coincidencia exacta, sin distinción de mayúsculas).",
     )
     parser_alumno_clases.add_argument(
         "--token",
@@ -520,7 +520,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     parser_profesores_clases = subparsers.add_parser(
         "profesores-clases",
-        help="Asignar profesores a clases segun un Excel (modo simulacion por defecto).",
+        help="Asignar profesores a clases según un Excel (modo simulación por defecto).",
     )
     parser_profesores_clases.add_argument(
         "ruta_excel",
@@ -568,25 +568,25 @@ def _build_parser() -> argparse.ArgumentParser:
     parser_profesores_clases.add_argument(
         "--apply",
         action="store_true",
-        help="Aplica los cambios (por defecto es simulacion).",
+        help="Aplica los cambios (por defecto es simulación).",
     )
     parser_profesores_clases.add_argument(
         "--remove-missing",
         action="store_true",
-        help="Elimina del staff a profesores que no estan en el Excel (solo clases evaluadas).",
+        help="Elimina del staff a profesores que no están en el Excel (solo clases evaluadas).",
     )
     parser_profesores_clases.add_argument(
-        "--inactivar-no-en-clases",
+        "--no-inactivar-no-en-clases",
         action="store_true",
         help=(
-            "Marca Inactivo por Estado a IDs de la hoja Profesores "
-            "que no esten en Profesores_clases."
+            "Desactiva la inactivación por Estado para IDs de la hoja Profesores "
+            "que no estén en Profesores_clases."
         ),
     )
     parser_profesores_clases.add_argument(
         "--no-grupos",
         action="store_true",
-        help="No asigna colegio-grado-grupo segun Secciones.",
+        help="No asigna colegio-grado-grupo según Secciones.",
     )
     parser_profesores_clases.add_argument(
         "--solo-estado",
@@ -596,12 +596,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser_profesores_clases.add_argument(
         "--compact",
         action="store_true",
-        help="Muestra un listado compacto de acciones en una sola linea por categoria.",
+        help="Muestra un listado compacto de acciones en una sola línea por categoría.",
     )
 
     parser_profesores_password = subparsers.add_parser(
         "profesores-password",
-        help="Actualizar login/password de profesores segun un Excel.",
+        help="Actualizar login/password de profesores según un Excel.",
     )
     parser_profesores_password.add_argument(
         "ruta_excel",
@@ -649,7 +649,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser_profesores_password.add_argument(
         "--apply",
         action="store_true",
-        help="Aplica los cambios (por defecto es simulacion).",
+        help="Aplica los cambios (por defecto es simulación).",
     )
 
     return parser
@@ -732,7 +732,7 @@ def _run_clases_api(args: argparse.Namespace) -> int:
         print(f"{clase_id}\t{clase_nombre}")
 
     if not args.confirm_delete:
-        print("No se elimino nada. Usa --confirm-delete para borrar.")
+        print("No se eliminó nada. Usa --confirm-delete para borrar.")
         return 0
 
     errors: List[str] = []
@@ -822,7 +822,7 @@ def _run_profesores(args: argparse.Namespace) -> int:
             print(f"- {tipo} persona={persona} nivel={nivel}: {mensaje}", file=sys.stderr)
         restantes = len(errores) - 10
         if restantes > 0:
-            print(f"... y {restantes} mas.", file=sys.stderr)
+            print(f"... y {restantes} más.", file=sys.stderr)
     return 0
 
 
@@ -869,7 +869,7 @@ def _run_alumno_clases(args: argparse.Namespace) -> int:
 
     login_target = str(args.login or "").strip()
     if not login_target:
-        print("Error: el login no puede estar vacio.", file=sys.stderr)
+        print("Error: el login no puede estar vacío.", file=sys.stderr)
         return 1
     login_target_lower = login_target.lower()
 
@@ -898,8 +898,8 @@ def _run_alumno_clases(args: argparse.Namespace) -> int:
     with requests.Session() as session:
         for index, item in enumerate(clases, start=1):
             if not isinstance(item, dict):
-                errors.append("Clase con formato invalido.")
-                _print_progress(index, total, "Clase con formato invalido")
+                errors.append("Clase con formato inválido.")
+                _print_progress(index, total, "Clase con formato inválido")
                 continue
 
             clase_id_raw = item.get("geClaseId")
@@ -910,8 +910,8 @@ def _run_alumno_clases(args: argparse.Namespace) -> int:
             try:
                 clase_id = int(clase_id_raw)
             except (TypeError, ValueError):
-                errors.append(f"Clase con geClaseId invalido: {clase_id_raw}")
-                _print_progress(index, total, "Clase con geClaseId invalido")
+                errors.append(f"Clase con geClaseId inválido: {clase_id_raw}")
+                _print_progress(index, total, "Clase con geClaseId inválido")
                 continue
 
             clase_name = str(item.get("geClase") or item.get("geClaseClave") or "")
@@ -932,7 +932,7 @@ def _run_alumno_clases(args: argparse.Namespace) -> int:
             alumnos_data = clase_data.get("claseAlumnos") or []
             if not isinstance(alumnos_data, list):
                 errors.append(f"{clase_id}: campo claseAlumnos no es lista")
-                _print_progress(index, total, f"{clase_id} claseAlumnos invalido")
+                _print_progress(index, total, f"{clase_id} claseAlumnos inválido")
                 continue
 
             cgg = clase_data.get("colegioGradoGrupo") if isinstance(clase_data, dict) else None
@@ -995,7 +995,7 @@ def _run_alumno_clases(args: argparse.Namespace) -> int:
                 )
             )
     else:
-        print("No se encontro ese login en las clases consultadas.")
+        print("No se encontró ese login en las clases consultadas.")
 
     if errors:
         print("Errores por clase:", file=sys.stderr)
@@ -1003,7 +1003,7 @@ def _run_alumno_clases(args: argparse.Namespace) -> int:
             print(f"- {err}", file=sys.stderr)
         restantes = len(errors) - 20
         if restantes > 0:
-            print(f"... y {restantes} mas.", file=sys.stderr)
+            print(f"... y {restantes} más.", file=sys.stderr)
 
     return 0
 
@@ -1055,7 +1055,7 @@ def _run_profesores_clases(args: argparse.Namespace) -> int:
     dry_run = not bool(args.apply)
     do_grupos = not bool(args.no_grupos)
     if dry_run and not args.solo_estado and not args.compact:
-        print("Modo simulacion: no se aplican cambios.")
+        print("Modo simulación: no se aplican cambios.")
 
     if args.solo_estado:
         warnings_module.filterwarnings(
@@ -1091,7 +1091,7 @@ def _run_profesores_clases(args: argparse.Namespace) -> int:
                 on_log=None,
                 list_estado_only=True,
                 on_estado_change=_on_estado_change,
-                inactivar_no_en_clases=bool(args.inactivar_no_en_clases),
+                inactivar_no_en_clases=not bool(args.no_inactivar_no_en_clases),
                 do_grupos=do_grupos,
             )
         except Exception as exc:
@@ -1126,7 +1126,7 @@ def _run_profesores_clases(args: argparse.Namespace) -> int:
             on_progress=lambda phase, current, total, msg: _print_progress(
                 current, total, f"{phase}: {msg}"
             ),
-            inactivar_no_en_clases=bool(args.inactivar_no_en_clases),
+            inactivar_no_en_clases=not bool(args.no_inactivar_no_en_clases),
             do_grupos=do_grupos,
         )
     except Exception as exc:
@@ -1208,14 +1208,14 @@ def _run_profesores_clases(args: argparse.Namespace) -> int:
         )
     )
     if summary.get("docentes_invalidos"):
-        print(f"Docentes invalidos: {summary['docentes_invalidos']}", file=sys.stderr)
+        print(f"Docentes inválidos: {summary['docentes_invalidos']}", file=sys.stderr)
     if warnings:
         print("Avisos:", file=sys.stderr)
         for warn in warnings[:10]:
             print(f"- {warn}", file=sys.stderr)
         restantes = len(warnings) - 10
         if restantes > 0:
-            print(f"... y {restantes} mas.", file=sys.stderr)
+            print(f"... y {restantes} más.", file=sys.stderr)
     if errors:
         print("Errores API:", file=sys.stderr)
         for err in errors:
@@ -1255,7 +1255,7 @@ def _run_profesores_password(args: argparse.Namespace) -> int:
 
     dry_run = not bool(args.apply)
     if dry_run:
-        print("Modo simulacion: no se aplican cambios.")
+        print("Modo simulación: no se aplican cambios.")
 
     try:
         summary, warnings, errors = actualizar_passwords_docentes(
@@ -1287,7 +1287,7 @@ def _run_profesores_password(args: argparse.Namespace) -> int:
             print(f"- {warn}", file=sys.stderr)
         restantes = len(warnings) - 10
         if restantes > 0:
-            print(f"... y {restantes} mas.", file=sys.stderr)
+            print(f"... y {restantes} más.", file=sys.stderr)
     if errors:
         print("Errores API:", file=sys.stderr)
         for err in errors:

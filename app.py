@@ -1,9 +1,10 @@
 import os
 import re
 import tempfile
+import unicodedata
 from io import BytesIO
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 import requests
@@ -54,9 +55,15 @@ GESTION_ESCOLAR_CICLO_ID_DEFAULT = 207
 
 
 st.set_page_config(page_title="Generador de Plantilla", layout="centered")
-st.title("Si estas acá es porque eres flojo")
-st.write("El maravilloso mundo de TED :0 automatiza tu chamba por un buenos dias al dia ;)")
-
+st.title("Si estás acá es porque eres flojo")
+st.write("El maravilloso mundo de TED :0 automatiza tu chamba por unos buenos días al día ;)")
+st.markdown("**Token global Pegasus**")
+st.text_input(
+    "Token (sin Bearer)",
+    type="password",
+    key="shared_pegasus_token",
+    help="Se usa en todas las funciones. Si queda vacio, se usa PEGASUS_TOKEN.",
+)
 tab_clases, tab_profesores_clases, tab_alumnos, tab_clases_api, tab_clases_alumnos = st.tabs(
     [
         "Crear clases",
@@ -75,6 +82,12 @@ def _clean_token(token: str) -> str:
     return token
 
 
+def _get_shared_token() -> str:
+    token = _clean_token(str(st.session_state.get("shared_pegasus_token", "")))
+    if token:
+        return token
+    return _clean_token(os.environ.get("PEGASUS_TOKEN", ""))
+
 def _parse_persona_ids(raw: str) -> List[int]:
     if not raw:
         return []
@@ -89,7 +102,7 @@ def _parse_persona_ids(raw: str) -> List[int]:
         except ValueError:
             invalid.append(token)
     if invalid:
-        raise ValueError(f"IDs invalidos: {', '.join(invalid)}")
+        raise ValueError(f"IDs inválidos: {', '.join(invalid)}")
     unique: List[int] = []
     seen = set()
     for value in ids:
@@ -107,11 +120,11 @@ def _parse_colegio_id(raw: object, field_name: str = "Colegio Clave") -> int:
     compact = re.sub(r"\s+", "", text)
     if not compact.isdigit():
         raise ValueError(
-            f"{field_name} invalido: '{text}'. Usa un ID numerico (ej: 2326)."
+            f"{field_name} inválido: '{text}'. Usa un ID numérico (ej: 2326)."
         )
     value = int(compact)
     if value <= 0:
-        raise ValueError(f"{field_name} invalido: '{text}'. Debe ser mayor a 0.")
+        raise ValueError(f"{field_name} inválido: '{text}'. Debe ser mayor a 0.")
     return value
 
 
@@ -138,13 +151,21 @@ def _fetch_clases_gestion_escolar(
         raise RuntimeError(message or f"HTTP {status_code}")
 
     if not isinstance(payload, dict) or not payload.get("success", False):
-        message = payload.get("message") if isinstance(payload, dict) else "Respuesta invalida"
-        raise RuntimeError(message or "Respuesta invalida")
+        message = payload.get("message") if isinstance(payload, dict) else "Respuesta inválida"
+        raise RuntimeError(message or "Respuesta inválida")
 
-    data = payload.get("data") or []
-    if not isinstance(data, list):
-        raise RuntimeError("Campo data no es lista")
-    return data
+    data = payload.get("data")
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        for key in ("alumnos", "items", "rows", "data"):
+            value = data.get(key)
+            if isinstance(value, list):
+                return value
+        for value in data.values():
+            if isinstance(value, list):
+                return value
+    raise RuntimeError("Campo data no es lista")
 
 
 def _fetch_alumnos_clase_gestion_escolar(
@@ -172,8 +193,8 @@ def _fetch_alumnos_clase_gestion_escolar(
         raise RuntimeError(message or f"HTTP {status_code}")
 
     if not isinstance(payload, dict) or not payload.get("success", False):
-        message = payload.get("message") if isinstance(payload, dict) else "Respuesta invalida"
-        raise RuntimeError(message or "Respuesta invalida")
+        message = payload.get("message") if isinstance(payload, dict) else "Respuesta inválida"
+        raise RuntimeError(message or "Respuesta inválida")
 
     data = payload.get("data") or {}
     if not isinstance(data, dict):
@@ -206,8 +227,8 @@ def _fetch_niveles_grados_grupos_censo(
         raise RuntimeError(message or f"HTTP {status_code}")
 
     if not isinstance(payload, dict) or not payload.get("success", False):
-        message = payload.get("message") if isinstance(payload, dict) else "Respuesta invalida"
-        raise RuntimeError(message or "Respuesta invalida")
+        message = payload.get("message") if isinstance(payload, dict) else "Respuesta inválida"
+        raise RuntimeError(message or "Respuesta inválida")
 
     data = payload.get("data") or {}
     if not isinstance(data, dict):
@@ -222,8 +243,8 @@ def _fetch_alumnos_censo(
     token: str,
     colegio_id: int,
     nivel_id: int,
-    grado_id: int,
-    grupo_id: int,
+    grado_id: Optional[int],
+    grupo_id: Optional[int],
     empresa_id: int,
     ciclo_id: int,
     timeout: int,
@@ -234,7 +255,11 @@ def _fetch_alumnos_censo(
         ciclo_id=ciclo_id,
         colegio_id=colegio_id,
     )
-    params = {"nivelId": nivel_id, "gradoId": grado_id, "grupoId": grupo_id}
+    params: Dict[str, int] = {"nivelId": int(nivel_id)}
+    if grado_id is not None:
+        params["gradoId"] = int(grado_id)
+    if grupo_id is not None:
+        params["grupoId"] = int(grupo_id)
     try:
         response = requests.get(url, headers=headers, params=params, timeout=timeout)
     except requests.RequestException as exc:
@@ -251,13 +276,21 @@ def _fetch_alumnos_censo(
         raise RuntimeError(message or f"HTTP {status_code}")
 
     if not isinstance(payload, dict) or not payload.get("success", False):
-        message = payload.get("message") if isinstance(payload, dict) else "Respuesta invalida"
-        raise RuntimeError(message or "Respuesta invalida")
+        message = payload.get("message") if isinstance(payload, dict) else "Respuesta inválida"
+        raise RuntimeError(message or "Respuesta inválida")
 
-    data = payload.get("data") or []
-    if not isinstance(data, list):
-        raise RuntimeError("Campo data no es lista")
-    return data
+    data = payload.get("data")
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        for key in ("alumnos", "items", "rows", "data"):
+            value = data.get(key)
+            if isinstance(value, list):
+                return value
+        for value in data.values():
+            if isinstance(value, list):
+                return value
+    raise RuntimeError("Campo data no es lista")
 
 
 def _fetch_login_password_lookup_censo(
@@ -285,8 +318,8 @@ def _fetch_login_password_lookup_censo(
         raise RuntimeError(message or f"HTTP {status_code}")
 
     if not isinstance(payload, dict) or not payload.get("success", False):
-        message = payload.get("message") if isinstance(payload, dict) else "Respuesta invalida"
-        raise RuntimeError(message or "Respuesta invalida")
+        message = payload.get("message") if isinstance(payload, dict) else "Respuesta inválida"
+        raise RuntimeError(message or "Respuesta inválida")
 
     data = payload.get("data") or []
     if not isinstance(data, list):
@@ -318,8 +351,18 @@ def _to_bool(value: object) -> bool:
     if isinstance(value, (int, float)):
         return value != 0
     if isinstance(value, str):
-        return value.strip().lower() in {"true", "1", "si", "sÃ­", "yes"}
+        text = value.strip().lower()
+        text = unicodedata.normalize("NFD", text)
+        text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+        return text in {"true", "1", "si", "s", "yes", "y"}
     return False
+
+
+def _extract_alumno_payload(item: Dict[str, object]) -> Dict[str, object]:
+    nested = item.get("alumno")
+    if isinstance(nested, dict):
+        return nested
+    return item
 
 
 def _resolve_alumno_login_password(
@@ -327,18 +370,21 @@ def _resolve_alumno_login_password(
     by_alumno_id: Dict[str, Dict[str, str]],
     by_persona_id: Dict[str, Dict[str, str]],
 ) -> Tuple[str, str]:
-    persona = item.get("persona") if isinstance(item.get("persona"), dict) else {}
+    source = _extract_alumno_payload(item)
+    persona = source.get("persona") if isinstance(source.get("persona"), dict) else {}
     login = ""
-    password = str(item.get("password") or "").strip()
+    password = str(source.get("password") or item.get("password") or "").strip()
 
     persona_login = persona.get("personaLogin") if isinstance(persona, dict) else None
     if isinstance(persona_login, dict):
         login = str(persona_login.get("login") or "").strip()
     if not login:
-        login = str(item.get("login") or "").strip()
+        login = str(source.get("login") or item.get("login") or "").strip()
 
-    alumno_id = str(item.get("alumnoId") or "").strip()
-    persona_id = str(persona.get("personaId") or item.get("personaId") or "").strip()
+    alumno_id = str(source.get("alumnoId") or item.get("alumnoId") or "").strip()
+    persona_id = str(
+        persona.get("personaId") or source.get("personaId") or item.get("personaId") or ""
+    ).strip()
 
     if (not login or not password) and alumno_id and alumno_id in by_alumno_id:
         lookup = by_alumno_id[alumno_id]
@@ -397,7 +443,7 @@ def _delete_clase_gestion_escolar(
         except ValueError:
             return
         if isinstance(payload, dict) and payload.get("success") is False:
-            message = payload.get("message") or "Respuesta invalida"
+            message = payload.get("message") or "Respuesta inválida"
             raise RuntimeError(message)
 
 
@@ -420,7 +466,7 @@ def _collect_colegios(clases: List[Dict[str, object]]) -> List[Dict[str, object]
 
 with tab_clases:
     st.info(
-        "Flujo sugerido: 1) Sube el Excel de detalle, 2) Ingresa el codigo CRM "
+        "Flujo sugerido: 1) Sube el Excel de detalle, 2) Ingresa el código CRM "
         "exacto (respeta ceros), 3) Define secciones (A,B,C...)."
     )
     with st.expander("Opciones de entrada", expanded=True):
@@ -430,11 +476,11 @@ with tab_clases:
             help="Ejemplo: PreOnboarding_Detalle_20251212.xlsx",
         )
         col1, col2 = st.columns(2)
-        codigo = col1.text_input("Codigo (CRM)", placeholder="00001053")
+        codigo = col1.text_input("Código (CRM)", placeholder="00001053")
         columna_codigo = col2.text_input(
-            "Columna de codigo",
+            "Columna de código",
             value=CODE_COLUMN_NAME,
-            help="Nombre de la columna donde buscar el codigo",
+            help="Nombre de la columna donde buscar el código",
         )
         hoja = col1.text_input("Hoja a leer", value=SHEET_NAME, help="Nombre de la hoja")
         grupos = col2.text_input(
@@ -448,7 +494,7 @@ with tab_clases:
             st.error("Sube un Excel de entrada.")
             st.stop()
         if not codigo.strip():
-            st.error("Ingresa un codigo.")
+            st.error("Ingresa un código.")
             st.stop()
         if not grupos.strip():
             st.error("Ingresa las secciones (A,B,C,D).")
@@ -484,25 +530,19 @@ with tab_clases:
 with tab_profesores_clases:
     st.subheader("Profesores con clases")
     st.write(
-        "Genera el Excel base de profesores (activos e inactivos) y luego asignalos a clases."
+        "Genera el Excel base de profesores (activos e inactivos) y luego asígnalos a clases."
     )
     st.warning(
-        "Recomendacion: primero usa 'Simular' para revisar el resumen antes de aplicar "
+        "Recomendación: primero usa 'Simular' para revisar el resumen antes de aplicar "
         "cambios reales."
     )
 
-    col1, col2 = st.columns(2)
-    token_input = col1.text_input(
-        "Token (sin Bearer)",
-        type="password",
-        key="profesores_token",
-        help="Pega el token JWT sin el prefijo 'Bearer '.",
-    )
-    colegio_id_raw = col2.text_input(
+    st.caption("Usando el token global configurado arriba.")
+    colegio_id_raw = st.text_input(
         "Colegio Clave",
         key="profesores_colegio_text",
         placeholder="2326",
-        help="Acepta texto o numero. Debe ser un ID numerico de colegio.",
+        help="Acepta texto o número. Debe ser un ID numérico de colegio.",
     )
 
     with st.expander("Opciones avanzadas", expanded=False):
@@ -533,11 +573,9 @@ with tab_profesores_clases:
         key="profesores_ids",
     )
     if st.button("Generar Excel base", type="primary", key="profesores_generar"):
-        token = _clean_token(token_input)
+        token = _get_shared_token()
         if not token:
-            token = _clean_token(os.environ.get("PEGASUS_TOKEN", ""))
-        if not token:
-            st.error("Falta el token. Usa el input o la variable de entorno.")
+            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
             st.stop()
         try:
             colegio_id_int = _parse_colegio_id(colegio_id_raw)
@@ -631,7 +669,7 @@ with tab_profesores_clases:
 
     st.subheader("Asignar profesores a clases")
     st.write(
-        "Sube un Excel con columnas persona_id y CURSO, mas niveles/grados "
+        "Sube un Excel con columnas persona_id y CURSO, más niveles/grados "
         "(Inicial/Primaria/Secundaria o I3, P1, S2...). "
         "Opcional: columna Secciones con valores como 1PA,2PB,3SB para asignar solo esas secciones. "
         "Si incluyes la columna Estado (Activo/Inactivo), se sincroniza por nivel al aplicar."
@@ -639,7 +677,7 @@ with tab_profesores_clases:
     st.markdown("**Procesos a ejecutar**")
     st.caption(
         "Niveles = acceso por nivel (Inicial/Primaria/Secundaria). "
-        "Clases/Secciones = asignacion directa a clases especificas (incluye grupos)."
+        "Clases/Secciones = asignación directa a clases específicas (incluye grupos)."
     )
     col_proc1, col_proc2 = st.columns(2)
     do_password = col_proc1.checkbox("Actualizar login/password", value=True)
@@ -648,22 +686,22 @@ with tab_profesores_clases:
     do_clases = col_proc2.checkbox("Asignar clases y secciones", value=True)
     inactivar_no_en_clases = col_proc2.checkbox(
         "Inactivar IDs fuera de Profesores_clases",
-        value=False,
+        value=True,
         disabled=not do_estado,
         help=(
             "Marca Inactivo (por Estado) a IDs presentes en hoja Profesores "
-            "que no esten en Profesores_clases."
+            "que no estén en Profesores_clases."
         ),
     )
     remove_missing = col_proc2.checkbox(
-        "Eliminar profesores que no estan en el Excel (solo clases evaluadas)",
+        "Eliminar profesores que no están en el Excel (solo clases evaluadas)",
         value=False,
         key="profesores_remove",
         disabled=not do_clases,
     )
     if inactivar_no_en_clases and do_estado:
         st.warning(
-            "Se inactivaran por Estado los IDs que no aparezcan en Profesores_clases."
+            "Se inactivarán por Estado los IDs que no aparezcan en Profesores_clases."
         )
     if remove_missing and do_clases:
         st.warning(
@@ -678,7 +716,7 @@ with tab_profesores_clases:
     sheet_name = st.text_input(
         "Hoja (opcional)",
         value="Profesores_clases",
-        help="Nombre de la hoja. Si lo dejas en blanco se intentara usar Profesores_clases.",
+        help="Nombre de la hoja. Si lo dejas en blanco se intentará usar Profesores_clases.",
     )
     confirm_apply = st.checkbox(
         "Confirmo aplicar cambios",
@@ -693,7 +731,7 @@ with tab_profesores_clases:
     )
     st.info(
         "Para aplicar cambios debes marcar 'Confirmo aplicar cambios'. "
-        "Si no confirmas, se ejecuta en modo simulacion."
+        "Si no confirmas, se ejecuta en modo simulación."
     )
 
     if run_sim or run_apply:
@@ -701,11 +739,9 @@ with tab_profesores_clases:
             st.error("Sube un Excel de profesores.")
             st.stop()
 
-        token = _clean_token(token_input)
+        token = _get_shared_token()
         if not token:
-            token = _clean_token(os.environ.get("PEGASUS_TOKEN", ""))
-        if not token:
-            st.error("Falta el token. Usa el input o la variable de entorno.")
+            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
             st.stop()
         try:
             colegio_id_int = _parse_colegio_id(colegio_id_raw)
@@ -816,7 +852,7 @@ with tab_profesores_clases:
                 f"{summary.get('estado_forzadas_fuera_clases', 0)}",
                 f"Errores API: {summary.get('errores_api', 0)}",
             ]
-            st.success("Resumen de ejecucion")
+            st.success("Resumen de ejecución")
             st.markdown("\n".join(f"- {item}" for item in resumen))
             if warnings:
                 st.warning("Advertencias:")
@@ -831,7 +867,7 @@ with tab_profesores_clases:
                 while display_logs and not str(display_logs[-1]).strip():
                     display_logs.pop()
                 st.text_area(
-                    "Log de ejecucion",
+                    "Log de ejecución",
                     value="\n".join(display_logs),
                     height=300,
                 )
@@ -841,22 +877,16 @@ with tab_profesores_clases:
 with tab_alumnos:
     st.subheader("Plantilla de alumnos registrados")
     st.write(
-        "Descarga la plantilla de edicion masiva con alumnos ya registrados, "
+        "Descarga la plantilla de edición masiva con alumnos ya registrados, "
         "ordenada por nivel (Inicial, Primaria, Secundaria), grado y grupo (A,B,C...)."
     )
     st.info("Usa esta plantilla como base oficial de alumnos registrados.")
-    col1, col2 = st.columns(2)
-    token_input = col1.text_input(
-        "Token (sin Bearer)",
-        type="password",
-        key="alumnos_token",
-        help="Pega el token JWT sin el prefijo 'Bearer '.",
-    )
-    colegio_id_raw = col2.text_input(
+    st.caption("Usando el token global configurado arriba.")
+    colegio_id_raw = st.text_input(
         "Colegio Clave",
         key="alumnos_colegio_text",
         placeholder="2326",
-        help="Acepta texto o numero. Debe ser un ID numerico de colegio.",
+        help="Acepta texto o número. Debe ser un ID numérico de colegio.",
     )
     with st.expander("Opciones avanzadas", expanded=False):
         ciclo_id = st.number_input(
@@ -885,11 +915,9 @@ with tab_alumnos:
         )
 
     if st.button("Descargar plantilla", type="primary", key="alumnos_descargar"):
-        token = _clean_token(token_input)
+        token = _get_shared_token()
         if not token:
-            token = _clean_token(os.environ.get("PEGASUS_TOKEN", ""))
-        if not token:
-            st.error("Falta el token. Usa el input o la variable de entorno.")
+            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
             st.stop()
         try:
             colegio_id_int = _parse_colegio_id(colegio_id_raw)
@@ -925,7 +953,7 @@ with tab_alumnos:
         "y se generan dos hojas: 'Plantilla alta de alumnos' y 'Plantilla edición masiva'."
     )
     st.warning(
-        "Asegurate de que el archivo tenga ambas hojas con nombres exactos: "
+        "Asegúrate de que el archivo tenga ambas hojas con nombres exactos: "
         "Plantilla_BD y Plantilla_Actualizada."
     )
     uploaded_compare = st.file_uploader(
@@ -968,15 +996,11 @@ with tab_alumnos:
 
 with tab_clases_api:
     st.subheader("Listar y eliminar clases")
-    st.write("Lista y elimina clases del API de gestion escolar.")
+    st.write("Lista y elimina clases del API de gestión escolar.")
     st.warning(
         "Eliminar clases es irreversible. Revisa el listado antes de confirmar."
     )
-    token_input = st.text_input(
-        "Token (sin Bearer)",
-        type="password",
-        help="Pega el token JWT sin el prefijo 'Bearer '.",
-    )
+    st.caption("Usando el token global configurado arriba.")
     colegio_id = st.number_input("Colegio Clave", min_value=1, step=1, format="%d")
     with st.expander("Opciones avanzadas", expanded=False):
         ciclo_id = st.number_input(
@@ -987,16 +1011,14 @@ with tab_clases_api:
             format="%d",
         )
 
-    token = _clean_token(token_input)
-    if not token:
-        token = _clean_token(os.environ.get("PEGASUS_TOKEN", ""))
+    token = _get_shared_token()
     empresa_id = DEFAULT_EMPRESA_ID
     timeout = 30
 
     col_list, col_delete = st.columns(2)
     if col_list.button("Listar clases"):
         if not token:
-            st.error("Falta el token. Usa el input o la variable de entorno.")
+            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
         else:
             try:
                 clases = _fetch_clases_gestion_escolar(
@@ -1028,7 +1050,7 @@ with tab_clases_api:
     confirm_delete = st.checkbox("Confirmo eliminar todas las clases listadas.")
     if col_delete.button("Eliminar clases"):
         if not token:
-            st.error("Falta el token. Usa el input o la variable de entorno.")
+            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
             st.stop()
         if not confirm_delete:
             st.error("Debes confirmar antes de eliminar.")
@@ -1083,14 +1105,8 @@ with tab_clases_alumnos:
         "a cada clase."
     )
 
-    col1, col2 = st.columns(2)
-    token_input = col1.text_input(
-        "Token (sin Bearer)",
-        type="password",
-        key="clases_alumnos_token",
-        help="Pega el token JWT sin el prefijo 'Bearer '.",
-    )
-    colegio_id = col2.number_input(
+    st.caption("Usando el token global configurado arriba.")
+    colegio_id = st.number_input(
         "Colegio Clave",
         min_value=1,
         step=1,
@@ -1134,11 +1150,9 @@ with tab_clases_alumnos:
         type="primary",
         key="clases_alumnos_listar",
     ):
-        token = _clean_token(token_input)
+        token = _get_shared_token()
         if not token:
-            token = _clean_token(os.environ.get("PEGASUS_TOKEN", ""))
-        if not token:
-            st.error("Falta el token. Usa el input o la variable de entorno.")
+            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
             st.stop()
 
         try:
@@ -1169,7 +1183,7 @@ with tab_clases_alumnos:
             progress.progress(int((index / total) * 100))
 
             if not isinstance(item, dict):
-                errores.append("Clase con formato invalido.")
+                errores.append("Clase con formato inválido.")
                 continue
 
             clase_id_raw = item.get("geClaseId")
@@ -1179,7 +1193,7 @@ with tab_clases_alumnos:
             try:
                 clase_id = int(clase_id_raw)
             except (TypeError, ValueError):
-                errores.append(f"Clase con geClaseId invalido: {clase_id_raw}")
+                errores.append(f"Clase con geClaseId inválido: {clase_id_raw}")
                 continue
 
             clase_name = str(item.get("geClase") or item.get("geClaseClave") or "")
@@ -1301,7 +1315,7 @@ with tab_clases_alumnos:
             st.write("\n".join(f"- {item}" for item in errores[:20]))
             restantes = len(errores) - 20
             if restantes > 0:
-                st.caption(f"... y {restantes} errores mas.")
+                st.caption(f"... y {restantes} errores más.")
 
     st.divider()
     st.subheader("Generar Excel por niveles, grados y secciones (Censo)")
@@ -1319,11 +1333,9 @@ with tab_clases_alumnos:
         type="primary",
         key="clases_alumnos_excel_generar",
     ):
-        token = _clean_token(token_input)
+        token = _get_shared_token()
         if not token:
-            token = _clean_token(os.environ.get("PEGASUS_TOKEN", ""))
-        if not token:
-            st.error("Falta el token. Usa el input o la variable de entorno.")
+            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
             st.stop()
 
         try:
@@ -1444,7 +1456,7 @@ with tab_clases_alumnos:
         except Exception as exc:  # pragma: no cover - UI
             st.warning(
                 "No se pudo cargar lookup de login/password desde plantilla de "
-                f"edicion masiva: {exc}"
+                f"edición masiva: {exc}"
             )
 
         rows_excel: List[Dict[str, object]] = []
@@ -1489,10 +1501,12 @@ with tab_clases_alumnos:
             for item in alumnos_data:
                 if not isinstance(item, dict):
                     continue
-                if solo_activos_censo and not _to_bool(item.get("activo")):
+                source = _extract_alumno_payload(item)
+                activo_value = source.get("activo", item.get("activo"))
+                if solo_activos_censo and not _to_bool(activo_value):
                     continue
 
-                persona = item.get("persona") if isinstance(item.get("persona"), dict) else {}
+                persona = source.get("persona") if isinstance(source.get("persona"), dict) else {}
                 login, password = _resolve_alumno_login_password(
                     item=item,
                     by_alumno_id=by_alumno_id,
@@ -1516,6 +1530,98 @@ with tab_clases_alumnos:
                         "Password": password,
                     }
                 )
+
+        if not rows_excel and contexts:
+            status.write(
+                "Sin filas en consulta por grupo. Reintentando por nivel/grado..."
+            )
+            fallback_pairs = sorted(
+                {
+                    (
+                        int(ctx["nivel_id"]),
+                        int(ctx["grado_id"]),
+                        str(ctx.get("nivel", "")),
+                        str(ctx.get("grado", "")),
+                        int(ctx["nivel_order"]),
+                        int(ctx["grado_order"]),
+                    )
+                    for ctx in contexts
+                },
+                key=lambda item: (item[4], item[5]),
+            )
+            for (
+                nivel_id_fb,
+                grado_id_fb,
+                nivel_name_fb,
+                grado_name_fb,
+                nivel_order_fb,
+                grado_order_fb,
+            ) in fallback_pairs:
+                try:
+                    alumnos_fallback = _fetch_alumnos_censo(
+                        token=token,
+                        colegio_id=int(colegio_id),
+                        nivel_id=nivel_id_fb,
+                        grado_id=grado_id_fb,
+                        grupo_id=None,
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                    )
+                except Exception as exc:  # pragma: no cover - UI
+                    errores_excel.append(
+                        "fallback nivelId={nivel} gradoId={grado}: {error}".format(
+                            nivel=nivel_id_fb,
+                            grado=grado_id_fb,
+                            error=exc,
+                        )
+                    )
+                    continue
+
+                for item in alumnos_fallback:
+                    if not isinstance(item, dict):
+                        continue
+                    source = _extract_alumno_payload(item)
+                    activo_value = source.get("activo", item.get("activo"))
+                    if solo_activos_censo and not _to_bool(activo_value):
+                        continue
+
+                    persona = (
+                        source.get("persona")
+                        if isinstance(source.get("persona"), dict)
+                        else {}
+                    )
+                    grupo_info = (
+                        source.get("grupo")
+                        if isinstance(source.get("grupo"), dict)
+                        else (
+                            item.get("grupo")
+                            if isinstance(item.get("grupo"), dict)
+                            else {}
+                        )
+                    )
+                    grupo_clave = str(grupo_info.get("grupoClave") or "")
+                    grupo_nombre = str(grupo_info.get("grupo") or "")
+                    login, password = _resolve_alumno_login_password(
+                        item=item,
+                        by_alumno_id=by_alumno_id,
+                        by_persona_id=by_persona_id,
+                    )
+                    rows_excel.append(
+                        {
+                            "_nivel_order": nivel_order_fb,
+                            "_grado_order": grado_order_fb,
+                            "_grupo_sort": _grupo_sort_key(grupo_clave, grupo_nombre),
+                            "Nivel": nivel_name_fb,
+                            "Grado": grado_name_fb,
+                            "Seccion": grupo_clave or grupo_nombre,
+                            "Nombre": str(persona.get("nombre") or ""),
+                            "Apellido Paterno": str(persona.get("apellidoPaterno") or ""),
+                            "Apellido Materno": str(persona.get("apellidoMaterno") or ""),
+                            "Login": login,
+                            "Password": password,
+                        }
+                    )
 
         progress.progress(100)
         status.empty()
@@ -1584,4 +1690,4 @@ with tab_clases_alumnos:
             st.write("\n".join(f"- {item}" for item in errores_excel[:20]))
             restantes = len(errores_excel) - 20
             if restantes > 0:
-                st.caption(f"... y {restantes} errores mas.")
+                st.caption(f"... y {restantes} errores más.")

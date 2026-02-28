@@ -64,7 +64,12 @@ st.text_input(
     key="shared_pegasus_token",
     help="Se usa en todas las funciones. Si queda vacio, se usa PEGASUS_TOKEN.",
 )
-st.caption("Jira Focus Web ahora esta como pagina independiente en el menu lateral.")
+st.markdown("**Menu principal**")
+nav_col1, nav_col2 = st.columns(2)
+with nav_col1:
+    st.page_link("app.py", label="Procesos Pegasus")
+with nav_col2:
+    st.page_link("pages/Jira_Focus_Web.py", label="Jira Focus Web")
 tab_clases, tab_profesores_clases, tab_alumnos, tab_clases_api, tab_clases_alumnos = st.tabs(
     [
         "Crear clases",

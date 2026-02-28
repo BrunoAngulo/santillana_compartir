@@ -161,6 +161,12 @@
           <input class="inp" id="clientIdInp" type="text" placeholder="Tu client id 3LO" autocomplete="off">
         </div>
         <div>
+          <label for="clientSecretInp">Atlassian OAuth Client Secret</label>
+          <input class="inp" id="clientSecretInp" type="password" placeholder="Tu client secret 3LO" autocomplete="new-password">
+        </div>
+      </div>
+      <div class="grid3" style="margin-top:8px;">
+        <div>
           <label for="redirectUriInp">Redirect URI</label>
           <input class="inp" id="redirectUriInp" type="url" placeholder="https://tu-app/">
         </div>
@@ -413,12 +419,14 @@
           if (!cfg || typeof cfg !== 'object') return null;
           const url = sanitizeUrl(cfg.url || '');
           const client_id = String(cfg.client_id || '').trim();
+          const client_secret = String(cfg.client_secret || '');
           const redirect_uri = String(cfg.redirect_uri || '').trim();
           const cloud_id = String(cfg.cloud_id || '').trim();
-          if (!url || !client_id || !redirect_uri) return null;
+          if (!url || !client_id || !client_secret || !redirect_uri) return null;
           return {
             url,
             client_id,
+            client_secret,
             redirect_uri,
             cloud_id,
             // keep compatibility fields expected by old config shape
@@ -432,6 +440,7 @@
             email: '',
             api_token: '',
             client_id: String(cfg.client_id || '').trim(),
+            client_secret: String(cfg.client_secret || ''),
             redirect_uri: String(cfg.redirect_uri || '').trim(),
             cloud_id: String(cfg.cloud_id || '').trim()
           }));
@@ -640,6 +649,7 @@
           dbg('oauth_start', {
             jira_host: safeHostname(cfg.url),
             redirect_host: safeHostname(cfg.redirect_uri),
+            has_client_secret: !!cfg.client_secret,
             has_popup: !!popupWindow
           });
           const codeVerifier = this.randomString(64);
@@ -698,6 +708,7 @@
           const data = await this.tokenRequest({
             grant_type: 'authorization_code',
             client_id: cfg.client_id,
+            client_secret: cfg.client_secret,
             code: String(code || ''),
             redirect_uri: cfg.redirect_uri,
             code_verifier: codeVerifier
@@ -708,6 +719,7 @@
           const data = await this.tokenRequest({
             grant_type: 'refresh_token',
             client_id: cfg.client_id,
+            client_secret: cfg.client_secret,
             refresh_token: String(refreshToken || '')
           });
           return this.normalizeTokenPayload(data, refreshToken);
@@ -1246,7 +1258,7 @@
         [
           'connPill','userPill','refreshIssuesBtn','disconnectBtn','msg','idleMsg',
           'debugLogBox','debugCopyBtn','debugClearBtn',
-          'loginView','urlInp','clientIdInp','redirectUriInp','callbackUrlInp','connectBtn','processCallbackBtn','clearOAuthBtn',
+          'loginView','urlInp','clientIdInp','clientSecretInp','redirectUriInp','callbackUrlInp','connectBtn','processCallbackBtn','clearOAuthBtn',
           'mainView','issueSel','activityInp','minutesInp','registerBtn','jiraDurationPill','timerVal','timerState','startBtn','pauseBtn',
           'resetBtn','applyTimerBtn','suggestionBox','applySugActBtn','applySugTimeBtn','todayTotal','weekTotal','issueCount','dashMeta',
           'refreshDashBtn','recentBox','commentsBox','worklogBody','timelineBox','ganttBox','genReportBtn','exportReportBtn','reportMeta',
@@ -1310,11 +1322,11 @@
           return;
         }
         if (err && err.kind === 'oauth' && err.status === 400) {
-          showMsg('error', `OAuth invalido. Revisa Client ID, Redirect URI y PKCE en Atlassian.${err && err.message ? ` Detalle: ${err.message}` : ''}`);
+          showMsg('error', `OAuth invalido. Revisa Client ID, Client Secret, Redirect URI y PKCE en Atlassian.${err && err.message ? ` Detalle: ${err.message}` : ''}`);
           return;
         }
         if (err && err.kind === 'oauth' && err.status === 401) {
-          showMsg('error', `Sesion OAuth expirada o invalida. Reconecta con OAuth.${err && err.message ? ` Detalle: ${err.message}` : ''}`);
+          showMsg('error', `Sesion OAuth expirada o invalida. Verifica Client Secret y reconecta.${err && err.message ? ` Detalle: ${err.message}` : ''}`);
           return;
         }
         if (err && err.kind === 'http' && err.status === 401) {
@@ -1895,6 +1907,7 @@
         return {
           url: sanitizeUrl(el.urlInp.value),
           client_id: String(el.clientIdInp.value || '').trim(),
+          client_secret: String(el.clientSecretInp.value || ''),
           redirect_uri: String(el.redirectUriInp.value || '').trim(),
           cloud_id: ''
         };
@@ -1904,6 +1917,7 @@
         if (!cfg) return;
         el.urlInp.value = cfg.url || '';
         el.clientIdInp.value = cfg.client_id || '';
+        el.clientSecretInp.value = cfg.client_secret || '';
         el.redirectUriInp.value = cfg.redirect_uri || deriveDefaultRedirectUri();
       }
 
@@ -1948,10 +1962,11 @@
         const effective = {
           url: sanitizeUrl(cfg.url || ''),
           client_id: String(cfg.client_id || '').trim(),
+          client_secret: String(cfg.client_secret || ''),
           redirect_uri: String(cfg.redirect_uri || '').trim(),
           cloud_id: String(cfg.cloud_id || '').trim()
         };
-        if (!effective.url || !effective.client_id || !effective.redirect_uri) {
+        if (!effective.url || !effective.client_id || !effective.client_secret || !effective.redirect_uri) {
           const err = new Error('Configuracion OAuth incompleta.');
           err.kind = 'oauth';
           err.status = 400;
@@ -2072,8 +2087,8 @@
             cfg.redirect_uri = deriveDefaultRedirectUri();
             el.redirectUriInp.value = cfg.redirect_uri;
           }
-          if (!cfg.url || !cfg.client_id || !cfg.redirect_uri) {
-            showMsg('error', 'Completa URL Jira, Client ID y Redirect URI.');
+          if (!cfg.url || !cfg.client_id || !cfg.client_secret || !cfg.redirect_uri) {
+            showMsg('error', 'Completa URL Jira, Client ID, Client Secret y Redirect URI.');
             return;
           }
           if (isLikelyWrongRedirectUri(cfg.url, cfg.redirect_uri)) {
@@ -2137,7 +2152,7 @@
               cfg.redirect_uri = deriveDefaultRedirectUri();
               el.redirectUriInp.value = cfg.redirect_uri;
             }
-            if (cfg.url && cfg.client_id && cfg.redirect_uri) {
+            if (cfg.url && cfg.client_id && cfg.client_secret && cfg.redirect_uri) {
               StorageService.saveConfig(cfg);
             }
           }

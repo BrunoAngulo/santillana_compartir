@@ -22,7 +22,6 @@ from santillana_format.processor import (
     SHEET_NAME,
     process_excel,
 )
-from santillana_format.jira_focus_web import render_jira_focus_web
 from santillana_format.profesores import (
     DEFAULT_CICLO_ID as PROFESORES_CICLO_ID_DEFAULT,
     export_profesores_excel,
@@ -65,14 +64,14 @@ st.text_input(
     key="shared_pegasus_token",
     help="Se usa en todas las funciones. Si queda vacio, se usa PEGASUS_TOKEN.",
 )
-tab_clases, tab_profesores_clases, tab_alumnos, tab_clases_api, tab_clases_alumnos, tab_jira_focus = st.tabs(
+st.caption("Jira Focus Web ahora esta como pagina independiente en el menu lateral.")
+tab_clases, tab_profesores_clases, tab_alumnos, tab_clases_api, tab_clases_alumnos = st.tabs(
     [
         "Crear clases",
         "Profesores con clases",
         "Alumnos registrados",
         "Clases API",
         "Clases + alumnos",
-        "Jira Focus Web",
     ]
 )
 
@@ -1754,11 +1753,3 @@ with tab_clases_alumnos:
             restantes = len(errores_excel) - 20
             if restantes > 0:
                 st.caption(f"... y {restantes} errores más.")
-
-with tab_jira_focus:
-    st.subheader("Jira Focus Web")
-    st.caption(
-        "Modulo frontend para Jira Cloud: conexion, timer laboral, worklogs, "
-        "historial editable, comentarios, sugerencias y reportes."
-    )
-    render_jira_focus_web()

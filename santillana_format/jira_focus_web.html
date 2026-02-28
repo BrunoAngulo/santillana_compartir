@@ -353,6 +353,7 @@
         config: 'jira_config',
         oauthTokens: 'jira_oauth_tokens',
         oauthPending: 'jira_oauth_pending',
+        oauthDone: 'jira_oauth_done',
         timer: 'jira_focus_timer_state',
         ui: 'jira_focus_ui_state',
         lastActivity: 'jira_focus_last_activity',
@@ -468,6 +469,15 @@
         },
         clearOAuthPending() {
           this.del(STORAGE.oauthPending);
+        },
+        markOAuthDone(source) {
+          this.set(STORAGE.oauthDone, JSON.stringify({
+            at: Date.now(),
+            source: String(source || '')
+          }));
+        },
+        clearOAuthDone() {
+          this.del(STORAGE.oauthDone);
         },
         getTimer() {
           const t = this.parse(this.get(STORAGE.timer), null);
@@ -991,6 +1001,33 @@
           dbg('oauth_popup_error', { message: error && error.message ? error.message : String(error) });
           return null;
         }
+      }
+
+      function isOAuthPopupContext() {
+        try {
+          if (window.name === 'jira_oauth_login') {
+            return true;
+          }
+          return !!(window.opener && window.opener !== window);
+        } catch (_e) {
+          return false;
+        }
+      }
+
+      function tryCloseOAuthPopup(reason) {
+        if (!isOAuthPopupContext()) {
+          return false;
+        }
+        dbg('oauth_popup_close_attempt', { reason: String(reason || '') });
+        window.setTimeout(() => {
+          try {
+            window.close();
+            dbg('oauth_popup_close_called', { reason: String(reason || '') });
+          } catch (error) {
+            dbg('oauth_popup_close_failed', { reason: String(reason || ''), message: error && error.message ? error.message : String(error) });
+          }
+        }, 450);
+        return true;
       }
 
       function normalizeRedirectForCompare(urlValue) {
@@ -1984,11 +2021,28 @@
           clearOAuthParamsFromTopUrl();
         }
         await connectWithStoredSession(cfg, true);
+        StorageService.markOAuthDone('callback');
         dbg('oauth_callback_completed');
+        tryCloseOAuthPopup('callback_completed');
         return true;
       }
 
       function bind() {
+        window.addEventListener('storage', async (event) => {
+          if (!event || event.key !== STORAGE.oauthDone || !event.newValue) {
+            return;
+          }
+          dbg('oauth_done_storage_event');
+          if (state.connected) {
+            return;
+          }
+          try {
+            await autoReconnect();
+          } catch (_e) {
+            // autoReconnect already handles UI/errors
+          }
+        });
+
         el.debugClearBtn.addEventListener('click', () => {
           state.debugLogs = [];
           renderDebugLogs();
@@ -2028,6 +2082,7 @@
           StorageService.saveConfig(cfg);
           StorageService.clearOAuthTokens();
           StorageService.clearOAuthPending();
+          StorageService.clearOAuthDone();
           clearPopupWatcher();
           const popupWindow = openOAuthPopupWindow();
           if (!popupWindow) {
@@ -2049,6 +2104,7 @@
           clearPopupWatcher();
           StorageService.clearOAuthTokens();
           StorageService.clearOAuthPending();
+          StorageService.clearOAuthDone();
           StorageService.del(STORAGE.config);
           resetConnectionState();
           renderTop();
@@ -2096,6 +2152,7 @@
           StorageService.del(STORAGE.config);
           StorageService.clearOAuthTokens();
           StorageService.clearOAuthPending();
+          StorageService.clearOAuthDone();
           resetConnectionState();
           renderTop();
           renderIssueSelect();

@@ -136,6 +136,17 @@
 
     <div class="msg" id="msg"></div>
     <div class="msg" id="idleMsg"></div>
+    <section class="card">
+      <div class="row" style="justify-content:space-between;">
+        <h3 style="margin:0;">Logs de depuracion</h3>
+        <div class="row">
+          <button class="btn" id="debugCopyBtn" type="button">Copiar logs</button>
+          <button class="btn" id="debugClearBtn" type="button">Limpiar logs</button>
+        </div>
+      </div>
+      <div class="muted">No se registran tokens, codes ni secrets. Solo eventos tecnicos.</div>
+      <pre id="debugLogBox" style="margin:8px 0 0 0;max-height:180px;overflow:auto;background:#f6f9fd;border:1px solid #d6e3f0;border-radius:8px;padding:8px;font-size:11px;line-height:1.35;"></pre>
+    </section>
 
     <section class="card" id="loginView">
       <h3>Conectar Jira Cloud</h3>
@@ -359,6 +370,7 @@
           'offline_access'
         ]
       };
+      const DEBUG_MAX = 140;
       const LABOR = { startHour: 8, startMinute: 30, endHour: 18, endMinute: 0, dayMinutes: 570, weekMinutes: 2850 };
       const INACTIVITY_MS = 2 * 60 * 60 * 1000;
       const SUGGESTION_MS = 3 * 24 * 60 * 60 * 1000;
@@ -383,7 +395,8 @@
         lastReminderTs: 0,
         regCtx: null,
         editCtx: null,
-        activities: []
+        activities: [],
+        debugLogs: []
       };
 
       const el = {};
@@ -611,7 +624,12 @@
           crypto.getRandomValues(bytes);
           return base64UrlEncode(bytes).slice(0, size * 2);
         },
-        async startAuth(cfg) {
+        async startAuth(cfg, popupWindow) {
+          dbg('oauth_start', {
+            jira_host: safeHostname(cfg.url),
+            redirect_host: safeHostname(cfg.redirect_uri),
+            has_popup: !!popupWindow
+          });
           const codeVerifier = this.randomString(64);
           const codeChallenge = await this.sha256Base64Url(codeVerifier);
           const oauthState = this.randomString(32);
@@ -633,9 +651,10 @@
           authUrl.searchParams.set('prompt', 'consent');
           authUrl.searchParams.set('code_challenge', codeChallenge);
           authUrl.searchParams.set('code_challenge_method', 'S256');
-          navigateTop(authUrl.toString());
+          navigateTop(authUrl.toString(), popupWindow);
         },
         async tokenRequest(payload) {
+          dbg('oauth_token_request', { grant_type: payload && payload.grant_type ? payload.grant_type : '' });
           let res;
           try {
             res = await fetch(OAUTH.tokenUrl, {
@@ -653,6 +672,7 @@
           if (raw) {
             try { data = JSON.parse(raw); } catch (_e) { data = null; }
           }
+          dbg('oauth_token_response', { status: res.status, ok: res.ok });
           if (!res.ok) {
             const err = new Error(httpMessage(data, res.status));
             err.kind = 'oauth';
@@ -880,6 +900,82 @@
         }
       }
 
+      function sanitizeDebugMeta(input) {
+        const secretKeyPattern = /(token|code|verifier|secret|authorization|refresh|password)/i;
+        const walk = (value, keyName) => {
+          if (keyName && secretKeyPattern.test(String(keyName))) {
+            return '[REDACTED]';
+          }
+          if (value === null || value === undefined) {
+            return value;
+          }
+          if (typeof value === 'string') {
+            if (value.length > 160) {
+              return `${value.slice(0, 160)}...`;
+            }
+            if (/^Bearer\s+/i.test(value)) {
+              return '[REDACTED]';
+            }
+            return value;
+          }
+          if (typeof value === 'number' || typeof value === 'boolean') {
+            return value;
+          }
+          if (Array.isArray(value)) {
+            return value.slice(0, 25).map((item) => walk(item, keyName));
+          }
+          if (typeof value === 'object') {
+            const out = {};
+            Object.keys(value).slice(0, 40).forEach((k) => {
+              out[k] = walk(value[k], k);
+            });
+            return out;
+          }
+          return String(value);
+        };
+        return walk(input, '');
+      }
+
+      function renderDebugLogs() {
+        if (!el.debugLogBox) {
+          return;
+        }
+        const lines = state.debugLogs.length ? state.debugLogs : ['(sin logs)'];
+        el.debugLogBox.textContent = lines.join('\n');
+      }
+
+      function dbg(eventName, meta) {
+        const stamp = new Date().toISOString();
+        let line = `[${stamp}] ${eventName}`;
+        if (meta !== undefined) {
+          try {
+            line += ` | ${JSON.stringify(sanitizeDebugMeta(meta))}`;
+          } catch (_e) {
+            line += ' | {"meta":"(error serializando)"}';
+          }
+        }
+        state.debugLogs.push(line);
+        if (state.debugLogs.length > DEBUG_MAX) {
+          state.debugLogs = state.debugLogs.slice(state.debugLogs.length - DEBUG_MAX);
+        }
+        renderDebugLogs();
+      }
+
+      function openOAuthPopupWindow() {
+        try {
+          const popup = window.open('', 'jira_oauth_login', 'popup=yes,width=560,height=760');
+          if (popup) {
+            dbg('oauth_popup_opened');
+          } else {
+            dbg('oauth_popup_blocked');
+          }
+          return popup;
+        } catch (error) {
+          dbg('oauth_popup_error', { message: error && error.message ? error.message : String(error) });
+          return null;
+        }
+      }
+
       function getTopLocationHref() {
         try {
           if (window.top && window.top.location && window.top.location.href) {
@@ -931,24 +1027,47 @@
         }
       }
 
-      function navigateTop(urlValue) {
+      function navigateTop(urlValue, popupWindow) {
         const target = String(urlValue || '');
         if (!target) return;
+        dbg('oauth_navigate_attempt', { target_host: safeHostname(target), has_popup: !!popupWindow });
+        if (popupWindow && !popupWindow.closed) {
+          try {
+            popupWindow.location.href = target;
+            if (typeof popupWindow.focus === 'function') {
+              popupWindow.focus();
+            }
+            dbg('oauth_navigate_popup_success');
+            return;
+          } catch (error) {
+            dbg('oauth_navigate_popup_failed', { message: error && error.message ? error.message : String(error) });
+          }
+        }
+        try {
+          const popup = window.open(target, '_blank');
+          if (popup) {
+            dbg('oauth_navigate_window_open_success');
+            return;
+          }
+          dbg('oauth_navigate_window_open_blocked');
+        } catch (error) {
+          dbg('oauth_navigate_window_open_failed', { message: error && error.message ? error.message : String(error) });
+        }
         try {
           if (window.top && window.top.location) {
             window.top.location.href = target;
+            dbg('oauth_navigate_top_success');
             return;
           }
-        } catch (_e) {
-          // ignore
+        } catch (error) {
+          dbg('oauth_navigate_top_failed', { message: error && error.message ? error.message : String(error) });
         }
         try {
           window.location.href = target;
-        } catch (_e) {
-          const win = window.open(target, '_blank', 'noopener,noreferrer');
-          if (!win) {
-            showMsg('error', 'No se pudo abrir la autorizacion OAuth. Permite ventanas emergentes.');
-          }
+          dbg('oauth_navigate_iframe_success');
+        } catch (error) {
+          dbg('oauth_navigate_iframe_failed', { message: error && error.message ? error.message : String(error) });
+          showMsg('error', 'No se pudo abrir la autorizacion OAuth. Permite ventanas emergentes y usa nueva pestana.');
         }
       }
 
@@ -990,6 +1109,7 @@
       function cacheElements() {
         [
           'connPill','userPill','refreshIssuesBtn','disconnectBtn','msg','idleMsg',
+          'debugLogBox','debugCopyBtn','debugClearBtn',
           'loginView','urlInp','clientIdInp','redirectUriInp','callbackUrlInp','connectBtn','processCallbackBtn','clearOAuthBtn',
           'mainView','issueSel','activityInp','minutesInp','registerBtn','jiraDurationPill','timerVal','timerState','startBtn','pauseBtn',
           'resetBtn','applyTimerBtn','suggestionBox','applySugActBtn','applySugTimeBtn','todayTotal','weekTotal','issueCount','dashMeta',
@@ -1043,6 +1163,12 @@
       }
 
       function applyError(err, fallback) {
+        dbg('error', {
+          fallback,
+          kind: err && err.kind ? err.kind : '',
+          status: err && err.status ? err.status : '',
+          message: err && err.message ? err.message : ''
+        });
         if (err && err.kind === 'cors') {
           showMsg('error', 'No se pudo conectar a Jira desde frontend por limitacion CORS del tenant Jira Cloud.');
           return;
@@ -1670,6 +1796,7 @@
           return cfg.cloud_id;
         }
         const resources = await OAuthService.getResources(tokens.access_token);
+        dbg('oauth_resources_loaded', { count: resources.length });
         const resource = OAuthService.pickCloudResource(resources, cfg.url);
         const cloudId = String(resource.id || '').trim();
         if (!cloudId) {
@@ -1694,6 +1821,11 @@
           err.status = 400;
           throw err;
         }
+        dbg('connect_with_session_start', {
+          jira_host: safeHostname(effective.url),
+          redirect_host: safeHostname(effective.redirect_uri),
+          has_cloud_id: !!effective.cloud_id
+        });
         const tokens = await OAuthService.ensureValidTokens(effective);
         if (!effective.cloud_id) {
           effective.cloud_id = await resolveCloudId(effective, tokens);
@@ -1709,10 +1841,16 @@
         renderTop();
         await loadIssues();
         await refreshDashboard();
+        dbg('connect_with_session_ok', { issue_count: state.issues.length });
       }
 
       async function processOAuthCallback(callbackUrl, clearTopUrl) {
         const params = parseUrlParams(callbackUrl);
+        dbg('oauth_callback_detected', {
+          has_code: !!params.code,
+          has_error: !!params.error,
+          clear_top_url: !!clearTopUrl
+        });
         if (!params.code && !params.error) {
           return false;
         }
@@ -1750,14 +1888,30 @@
         const tokenPayload = await OAuthService.exchangeCode(cfg, params.code, String(pending.code_verifier || ''));
         StorageService.saveOAuthTokens(tokenPayload);
         StorageService.clearOAuthPending();
+        dbg('oauth_callback_token_saved', { has_refresh: !!tokenPayload.refresh_token });
         if (clearTopUrl) {
           clearOAuthParamsFromTopUrl();
         }
         await connectWithStoredSession(cfg, true);
+        dbg('oauth_callback_completed');
         return true;
       }
 
       function bind() {
+        el.debugClearBtn.addEventListener('click', () => {
+          state.debugLogs = [];
+          renderDebugLogs();
+        });
+        el.debugCopyBtn.addEventListener('click', async () => {
+          const payload = (state.debugLogs || []).join('\n');
+          try {
+            await navigator.clipboard.writeText(payload);
+            showMsg('info', 'Logs copiados al portapapeles.');
+          } catch (_e) {
+            showMsg('error', 'No se pudo copiar logs. Copia manual desde el panel.');
+          }
+        });
+
         el.connectBtn.addEventListener('click', async () => {
           clearMsg();
           const cfg = readConfigInputs();
@@ -1774,15 +1928,25 @@
               'error',
               'El Redirect URI no debe ser la URL de Jira. Usa la URL de esta app (la donde esta abierto este modulo) y registrala en Atlassian OAuth.'
             );
+            dbg('oauth_invalid_redirect_uri', {
+              jira_host: safeHostname(cfg.url),
+              redirect_host: safeHostname(cfg.redirect_uri)
+            });
             return;
           }
           StorageService.saveConfig(cfg);
           StorageService.clearOAuthTokens();
           StorageService.clearOAuthPending();
+          const popupWindow = openOAuthPopupWindow();
+          if (!popupWindow) {
+            showMsg('error', 'El navegador bloqueo la ventana OAuth. Permite popups para este sitio e intenta de nuevo.');
+            return;
+          }
           try {
-            await OAuthService.startAuth(cfg);
-            showMsg('info', 'Redirigiendo a autorizacion OAuth...');
+            await OAuthService.startAuth(cfg, popupWindow);
+            showMsg('info', 'Se abrio una nueva pestaña/ventana para autorizacion OAuth.');
           } catch (e) {
+            try { popupWindow.close(); } catch (_closeErr) { /* ignore */ }
             applyError(e, 'No fue posible iniciar OAuth.');
           }
         });
@@ -1803,6 +1967,7 @@
         el.processCallbackBtn.addEventListener('click', async () => {
           clearMsg();
           const raw = String(el.callbackUrlInp.value || '').trim();
+          dbg('oauth_process_callback_clicked', { has_url: !!raw });
           if (!raw) {
             showMsg('error', 'Pega la URL completa de callback para procesarla.');
             return;
@@ -2001,6 +2166,7 @@
       }
 
       async function autoReconnect() {
+        dbg('auto_reconnect_start');
         const defaultRedirectUri = deriveDefaultRedirectUri();
         if (!el.redirectUriInp.value && defaultRedirectUri) {
           el.redirectUriInp.value = defaultRedirectUri;
@@ -2017,6 +2183,7 @@
         }
         const params = parseUrlParams(topHref);
         if (params.code || params.error) {
+          dbg('auto_reconnect_callback_in_url', { has_code: !!params.code, has_error: !!params.error });
           try {
             await processOAuthCallback(topHref, true);
             showMsg('ok', 'Sesion OAuth iniciada correctamente.');
@@ -2049,6 +2216,10 @@
       }
 
       function bootstrap() {
+        dbg('bootstrap_start', {
+          in_iframe: window.self !== window.top,
+          top_href_available: !!getTopLocationHref()
+        });
         cacheElements();
         bind();
         uiStateLoad();
@@ -2065,6 +2236,7 @@
         renderTimer();
         renderCompact();
         renderIdle();
+        renderDebugLogs();
 
         window.setInterval(() => { renderTimer(); renderCompact(); renderIdle(); }, 1000);
         window.setInterval(renderIdle, 60000);

@@ -95,6 +95,17 @@
       align-items: end;
       margin-top: 8px;
     }
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+      gap: 10px;
+      align-items: start;
+      margin-top: 10px;
+    }
+    .panel-timeline { grid-column: 1; grid-row: 1; }
+    .panel-suggestion { grid-column: 2; grid-row: 1; }
+    .panel-comments { grid-column: 1; grid-row: 2; }
+    .panel-worklogs { grid-column: 2; grid-row: 2; }
     .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
     h2, h3, h4 { margin: 0 0 8px 0; }
     h3 { font-size: 17px; letter-spacing: 0.15px; }
@@ -376,6 +387,14 @@
     @media (max-width: 980px) {
       .grid2, .grid3 { grid-template-columns: 1fr; }
       .activity-config-grid { grid-template-columns: 1fr; }
+      .dashboard-grid { grid-template-columns: 1fr; }
+      .panel-timeline,
+      .panel-suggestion,
+      .panel-comments,
+      .panel-worklogs {
+        grid-column: auto;
+        grid-row: auto;
+      }
       .gantt-row { grid-template-columns: 1fr; }
       .timeline-ticket-row { grid-template-columns: 1fr; }
       .timeline-ticket-total { text-align: left; }
@@ -497,9 +516,10 @@
           <button class="btn primary" id="registerBtn" type="button">Registrar worklog</button>
           <span class="pill" id="jiraDurationPill">0m</span>
         </div>
+        <div class="muted" style="margin-top:6px;">Usa este formato: <strong>2w 4d 6h 45m</strong> (w=semanas, d=dias, h=horas, m=minutos).</div>
       </div>
 
-      <div class="grid2" style="margin-top:10px;grid-template-columns:1fr;">
+      <div class="hide" aria-hidden="true">
         <div id="timerCard" class="card">
           <h3>Cronometro laboral</h3>
           <p class="timer" id="timerVal">00:00:00</p>
@@ -512,12 +532,34 @@
             <button class="btn" id="applyTimerBtn" type="button">Usar tiempo</button>
           </div>
         </div>
-        <div class="card">
+      </div>
+
+      <div class="dashboard-grid">
+        <div class="card panel-timeline">
+          <h3>Timeline / Gantt</h3>
+          <div id="timelineBox" class="empty">Sin registros.</div>
+          <h4 style="margin-top:10px;">Gantt por actividad</h4>
+          <div id="ganttBox" class="empty">Sin registros.</div>
+        </div>
+        <div class="card panel-suggestion">
           <h3>Sugerencia automatica</h3>
           <div id="suggestionBox" class="empty">Selecciona un ticket para buscar sugerencias.</div>
           <div class="row" style="margin-top:10px;">
             <button class="btn" id="applySugActBtn" type="button" disabled>Aplicar actividad</button>
             <button class="btn" id="applySugTimeBtn" type="button" disabled>Aplicar tiempo</button>
+          </div>
+        </div>
+        <div class="card panel-comments">
+          <h3>Comentarios del ticket</h3>
+          <div id="commentsBox" class="comments"></div>
+        </div>
+        <div class="card panel-worklogs">
+          <h3>Historial editable por ticket</h3>
+          <div class="tbl-wrap">
+            <table>
+              <thead><tr><th>Fecha</th><th>Actividad</th><th>Duracion</th><th>Autor</th><th>Acciones</th></tr></thead>
+              <tbody id="worklogBody"></tbody>
+            </table>
           </div>
         </div>
       </div>
@@ -545,43 +587,19 @@
         <div id="recentBox" class="empty" style="margin-top:8px;">Sin historial reciente.</div>
       </div>
 
-      <div class="grid2" style="margin-top:10px;">
-        <div class="card">
-          <h3>Comentarios del ticket</h3>
-          <div id="commentsBox" class="comments"></div>
+      <div id="reportCard" class="card hide" style="margin-top:10px;">
+        <h3>Reporte plantilla + .xlsx</h3>
+        <div class="muted">Detecta comentarios con "plantilla" y adjuntos/links .xlsx. Agrupa por colegio segun resumen normalizado.</div>
+        <div class="row" style="margin-top:10px;">
+          <button class="btn primary" id="genReportBtn" type="button">Generar reporte</button>
+          <button class="btn" id="exportReportBtn" type="button" disabled>Exportar Excel</button>
         </div>
-        <div class="card">
-          <h3>Historial editable por ticket</h3>
-          <div class="tbl-wrap">
-            <table>
-              <thead><tr><th>Fecha</th><th>Actividad</th><th>Duracion</th><th>Autor</th><th>Acciones</th></tr></thead>
-              <tbody id="worklogBody"></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      <div style="margin-top:10px;">
-        <div class="card">
-          <h3>Timeline / Gantt</h3>
-          <div id="timelineBox" class="empty">Sin registros.</div>
-          <h4 style="margin-top:10px;">Gantt por actividad</h4>
-          <div id="ganttBox" class="empty">Sin registros.</div>
-        </div>
-        <div id="reportCard" class="card hide">
-          <h3>Reporte plantilla + .xlsx</h3>
-          <div class="muted">Detecta comentarios con "plantilla" y adjuntos/links .xlsx. Agrupa por colegio segun resumen normalizado.</div>
-          <div class="row" style="margin-top:10px;">
-            <button class="btn primary" id="genReportBtn" type="button">Generar reporte</button>
-            <button class="btn" id="exportReportBtn" type="button" disabled>Exportar Excel</button>
-          </div>
-          <div class="muted" id="reportMeta" style="margin-top:8px;">Sin reporte.</div>
-          <div class="tbl-wrap" style="margin-top:8px;">
-            <table>
-              <thead><tr><th>Colegio</th><th>Tickets</th><th>Comentarios</th><th>Adjuntos .xlsx</th></tr></thead>
-              <tbody id="reportBody"></tbody>
-            </table>
-          </div>
+        <div class="muted" id="reportMeta" style="margin-top:8px;">Sin reporte.</div>
+        <div class="tbl-wrap" style="margin-top:8px;">
+          <table>
+            <thead><tr><th>Colegio</th><th>Tickets</th><th>Comentarios</th><th>Adjuntos .xlsx</th></tr></thead>
+            <tbody id="reportBody"></tbody>
+          </table>
         </div>
       </div>
     </section>
@@ -2039,7 +2057,7 @@
           const author = w.author && w.author.displayName ? w.author.displayName : 'Sin autor';
           const date = TimeService.dtLabel(w.started || w.created || new Date());
           const act = activityOf(w);
-          const mins = `${minutesOf(w)}m`;
+          const mins = TimeService.jiraDuration(minutesOf(w));
           const actions = my
             ? `<button class="btn" data-act="edit-worklog" data-id="${escapeHtml(String(w.id))}">Editar</button> <button class="btn danger" data-act="del-worklog" data-id="${escapeHtml(String(w.id))}">Eliminar</button>`
             : '<span class="pill">Solo lectura</span>';
@@ -2102,7 +2120,7 @@
         }
         const s = state.suggestion;
         el.suggestionBox.className = 'msg show info';
-        el.suggestionBox.innerHTML = `Comentario pendiente detectado.<br>Autor: <strong>${escapeHtml(s.author || 'Sin autor')}</strong><br>Actividad sugerida: <strong>${escapeHtml(s.activity)}</strong><br>Tiempo: <strong>${s.minutes} min</strong><br>Fecha comentario: ${escapeHtml(TimeService.dtLabel(s.created))}`;
+        el.suggestionBox.innerHTML = `Comentario pendiente detectado.<br>Autor: <strong>${escapeHtml(s.author || 'Sin autor')}</strong><br>Actividad sugerida: <strong>${escapeHtml(s.activity)}</strong><br>Tiempo: <strong>${escapeHtml(TimeService.jiraDuration(s.minutes))}</strong><br>Fecha comentario: ${escapeHtml(TimeService.dtLabel(s.created))}`;
         el.applySugActBtn.disabled = false;
         el.applySugTimeBtn.disabled = false;
       }
@@ -2137,14 +2155,14 @@
           const left = ((st - start) / range) * 100;
           const width = Math.max(1.8, (dur / range) * 100);
           const author = w.author && w.author.displayName ? w.author.displayName : 'Sin autor';
-          const meta = `${key} | ${author} | ${act} | ${mins}m | ${TimeService.dtLabel(st)}`;
+          const meta = `${key} | ${author} | ${act} | ${TimeService.jiraDuration(mins)} | ${TimeService.dtLabel(st)}`;
           return `<span class="timeline-ticket-segment" title="${escapeHtml(meta)}" style="left:${left.toFixed(3)}%;width:${width.toFixed(3)}%;background:${escapeHtml(color)};"></span>`;
         }).join('');
 
         const label = issue && issue.summary ? `${key} - ${issue.summary}` : key;
         const legendEntries = Object.values(legendMap).sort((a, b) => b.minutes - a.minutes);
         const legendHtml = legendEntries.length
-          ? `<div class="activity-legend">${legendEntries.map((it) => `<span class="activity-legend-item" title="${escapeHtml(`${it.activity}: ${it.minutes}m`)}"><span class="activity-legend-dot" style="background:${escapeHtml(it.color)};"></span>${escapeHtml(it.activity)} (${it.minutes}m)</span>`).join('')}</div>`
+          ? `<div class="activity-legend">${legendEntries.map((it) => `<span class="activity-legend-item" title="${escapeHtml(`${it.activity}: ${TimeService.jiraDuration(it.minutes)}`)}"><span class="activity-legend-dot" style="background:${escapeHtml(it.color)};"></span>${escapeHtml(it.activity)} (${escapeHtml(TimeService.jiraDuration(it.minutes))})</span>`).join('')}</div>`
           : '';
 
         el.timelineBox.className = '';
@@ -2157,7 +2175,7 @@
             <div class="timeline-ticket-row">
               <div class="timeline-ticket-label" title="${escapeHtml(label)}">${escapeHtml(label)}</div>
               <div class="timeline-ticket-track">${segmentsHtml}</div>
-              <div class="timeline-ticket-total">${totalMinutes}m</div>
+              <div class="timeline-ticket-total">${escapeHtml(TimeService.jiraDuration(totalMinutes))}</div>
             </div>
           </div>
           ${legendHtml}
@@ -2168,7 +2186,8 @@
         el.ganttBox.className = '';
         el.ganttBox.innerHTML = entries.map((it) => {
           const width = Math.max(3, (it.minutes / max) * 100);
-          return `<div class="gantt-row" title="${escapeHtml(`${it.activity}: ${it.minutes}m`)}"><div>${escapeHtml(it.activity)}</div><div class="track"><span class="bar" style="left:0;width:${width.toFixed(2)}%;background:${escapeHtml(it.color)};"></span></div><div style="text-align:right;color:#5f7287;">${it.minutes}m</div></div>`;
+          const jiraDur = TimeService.jiraDuration(it.minutes);
+          return `<div class="gantt-row" title="${escapeHtml(`${it.activity}: ${jiraDur}`)}"><div>${escapeHtml(it.activity)}</div><div class="track"><span class="bar" style="left:0;width:${width.toFixed(2)}%;background:${escapeHtml(it.color)};"></span></div><div style="text-align:right;color:#5f7287;">${escapeHtml(jiraDur)}</div></div>`;
         }).join('');
       }
 
@@ -2189,8 +2208,8 @@
 
       function renderDashboard() {
         if (!FEATURES.dashboard) return;
-        el.todayTotal.textContent = `${state.dash.today}m`;
-        el.weekTotal.textContent = `${state.dash.week}m`;
+        el.todayTotal.textContent = TimeService.jiraDuration(state.dash.today);
+        el.weekTotal.textContent = TimeService.jiraDuration(state.dash.week);
         el.issueCount.textContent = String(state.dash.issueCount);
         el.dashMeta.textContent = state.dash.refreshedAt ? `Actualizado: ${TimeService.dtLabel(state.dash.refreshedAt)}` : 'Sin datos.';
         if (!state.dash.logs.length) {
@@ -2201,7 +2220,7 @@
         el.recentBox.className = '';
         el.recentBox.innerHTML = state.dash.logs.slice(0, 15).map((w) => {
           const line = `${w.issueKey} | ${activityOf(w)}`;
-          const right = `${minutesOf(w)}m - ${TimeService.dtLabel(w.started || w.created)}`;
+          const right = `${TimeService.jiraDuration(minutesOf(w))} - ${TimeService.dtLabel(w.started || w.created)}`;
           return `<div class="row" style="justify-content:space-between;border-bottom:1px solid #eef3f9;padding:6px 0;"><span class="recent-line">${escapeHtml(line)}</span><span class="muted">${escapeHtml(right)}</span></div>`;
         }).join('');
       }
@@ -2820,7 +2839,7 @@
         el.resetBtn.addEventListener('click', timerReset);
         el.applyTimerBtn.addEventListener('click', () => {
           applyTimerToMinutes();
-          showMsg('info', `Duracion tomada del timer: ${state.durationMinutes} minutos.`);
+          showMsg('info', `Duracion tomada del timer: ${TimeService.jiraDuration(state.durationMinutes)}.`);
         });
 
         el.applySugActBtn.addEventListener('click', () => {

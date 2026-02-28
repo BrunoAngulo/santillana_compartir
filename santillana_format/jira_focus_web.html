@@ -230,26 +230,79 @@
     .comment.mine { background: #f7fbff; border: 2px solid #2f8bcb; }
     .meta { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; margin-bottom: 4px; flex-wrap: wrap; }
     .body { white-space: pre-wrap; font-size: 13px; overflow-wrap: anywhere; }
-    .track { height: 10px; border-radius: 999px; background: #edf3f9; position: relative; overflow: hidden; }
-    .bar { position: absolute; top: 0; bottom: 0; border-radius: 999px; background: linear-gradient(90deg, #1d74c7, #4ab2dc); }
-    .timeline-item { border: 1px solid var(--line); border-radius: 9px; padding: 7px; margin-bottom: 8px; }
-    .timeline-axis {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 10px;
-      margin-bottom: 8px;
-      color: var(--muted);
+    .track {
+      height: 12px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, #eaf2fb 0%, #e2edf8 100%);
+      border: 1px solid #d5e2f1;
+      position: relative;
+      overflow: hidden;
+    }
+    .bar {
+      position: absolute;
+      top: 1px;
+      bottom: 1px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #1d74c7, #4ab2dc);
+      box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.08);
+    }
+    .activity-focus {
+      border: 1px solid #d8e5f3;
+      border-radius: 11px;
+      padding: 9px;
+      background: linear-gradient(180deg, #fbfdff 0%, #f5f9ff 100%);
+      margin-bottom: 10px;
+      transition: border-color .15s ease, box-shadow .15s ease;
+    }
+    .activity-focus.active {
+      border-color: #7fb0dd;
+      box-shadow: 0 0 0 3px rgba(22, 111, 188, 0.12);
+    }
+    .activity-focus .muted {
       font-size: 11px;
+      margin-top: 5px;
+    }
+    .timeline-shell {
+      border: 1px solid #d8e5f3;
+      border-radius: 12px;
+      padding: 10px;
+      background: linear-gradient(180deg, #fbfdff 0%, #f4f9ff 100%);
+    }
+    .timeline-head {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .timeline-stat {
+      background: #fff;
+      border: 1px solid #d9e5f2;
+      border-radius: 10px;
+      padding: 7px 8px;
+      min-height: 54px;
+    }
+    .timeline-stat-label {
+      font-size: 10px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      margin-bottom: 2px;
+    }
+    .timeline-stat-value {
+      font-size: 12px;
+      color: #25425e;
+      font-weight: 700;
+      overflow-wrap: anywhere;
     }
     .timeline-ticket-list {
       display: grid;
       gap: 8px;
+      margin-top: 4px;
     }
     .timeline-ticket-row {
       display: grid;
-      grid-template-columns: 180px 1fr 70px;
-      gap: 8px;
+      grid-template-columns: minmax(180px, 1.45fr) minmax(0, 3fr) 90px;
+      gap: 9px;
       align-items: center;
     }
     .timeline-ticket-label {
@@ -258,33 +311,55 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+      font-weight: 700;
     }
     .timeline-ticket-track {
       position: relative;
-      height: 16px;
-      border: 1px solid #dce7f2;
+      height: 24px;
+      border: 1px solid #d5e2f1;
       border-radius: 999px;
-      background: linear-gradient(180deg, #f4f8fc 0%, #edf3fa 100%);
+      background:
+        repeating-linear-gradient(
+          90deg,
+          rgba(173, 200, 227, 0.16) 0,
+          rgba(173, 200, 227, 0.16) 10%,
+          rgba(255, 255, 255, 0.03) 10%,
+          rgba(255, 255, 255, 0.03) 20%
+        ),
+        linear-gradient(180deg, #f3f8fd 0%, #eaf2fb 100%);
       overflow: hidden;
     }
     .timeline-ticket-segment {
       position: absolute;
-      top: 2px;
-      bottom: 2px;
+      top: 3px;
+      bottom: 3px;
       border-radius: 999px;
       min-width: 2px;
-      opacity: 0.92;
+      opacity: 0.86;
+      border: 1px solid rgba(10, 24, 39, 0.14);
+      cursor: pointer;
+      transition: opacity .15s ease, transform .15s ease, box-shadow .15s ease;
+    }
+    .timeline-ticket-segment:hover {
+      opacity: 1;
+      transform: scaleY(1.05);
+    }
+    .timeline-ticket-segment.active {
+      opacity: 1;
+      box-shadow: 0 0 0 2px rgba(11, 80, 140, 0.35);
+      z-index: 2;
     }
     .timeline-ticket-total {
-      font-size: 11px;
-      color: var(--muted);
+      font-size: 12px;
+      color: #31506b;
       text-align: right;
       white-space: nowrap;
+      font-weight: 700;
     }
     .activity-legend {
       display: flex;
       flex-wrap: wrap;
-      gap: 6px;
+      gap: 8px;
       margin-top: 10px;
     }
     .activity-legend-item {
@@ -293,11 +368,25 @@
       gap: 6px;
       border: 1px solid #d7e3f1;
       border-radius: 999px;
-      padding: 3px 8px;
+      padding: 4px 10px;
       font-size: 11px;
       color: #334f68;
       background: #f8fbff;
       max-width: 100%;
+      cursor: pointer;
+      transition: border-color .15s ease, background .15s ease, transform .15s ease;
+    }
+    .activity-legend-item:hover {
+      transform: translateY(-1px);
+      border-color: #9fc1e1;
+      background: #edf5ff;
+    }
+    .activity-legend-item.active {
+      border-color: #5d99cf;
+      background: #e8f3ff;
+      color: #114d81;
+      font-weight: 700;
+      box-shadow: 0 0 0 2px rgba(22, 111, 188, 0.12);
     }
     .activity-legend-dot {
       width: 9px;
@@ -305,7 +394,43 @@
       border-radius: 50%;
       flex: 0 0 auto;
     }
-    .gantt-row { display: grid; grid-template-columns: 190px 1fr 60px; gap: 7px; align-items: center; margin-bottom: 7px; font-size: 12px; }
+    .gantt-list {
+      display: grid;
+      gap: 7px;
+    }
+    .gantt-row {
+      display: grid;
+      grid-template-columns: minmax(160px, 1.6fr) minmax(0, 2fr) 90px;
+      gap: 9px;
+      align-items: center;
+      font-size: 12px;
+      border: 1px solid #d8e5f3;
+      border-radius: 10px;
+      padding: 7px 8px;
+      background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+      cursor: pointer;
+      transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+    }
+    .gantt-row:hover {
+      border-color: #9fc1e1;
+      box-shadow: 0 3px 9px rgba(16, 52, 88, 0.08);
+      transform: translateY(-1px);
+    }
+    .gantt-row.active {
+      border-color: #5d99cf;
+      box-shadow: 0 0 0 2px rgba(22, 111, 188, 0.14);
+      background: linear-gradient(180deg, #f4f9ff 0%, #ebf4ff 100%);
+    }
+    .gantt-name {
+      font-weight: 700;
+      color: #264760;
+      overflow-wrap: anywhere;
+    }
+    .gantt-duration {
+      text-align: right;
+      color: #4b6279;
+      font-weight: 700;
+    }
     .recent-line {
       font-size: 12px;
       flex: 1;
@@ -407,6 +532,7 @@
         grid-column: auto;
         grid-row: auto;
       }
+      .timeline-head { grid-template-columns: 1fr; }
       .gantt-row { grid-template-columns: 1fr; }
       .timeline-ticket-row { grid-template-columns: 1fr; }
       .timeline-ticket-total { text-align: left; }
@@ -551,6 +677,11 @@
         </div>
         <div class="card panel-suggestion">
           <h3>Sugerencia automatica</h3>
+          <div class="activity-focus" id="activityFocusBox">
+            <label for="activityQuickSel">Componente de actividades</label>
+            <select class="sel" id="activityQuickSel"></select>
+            <div class="muted" id="activityQuickMeta">Haz clic en una actividad del grafico para resaltarla aqui.</div>
+          </div>
           <div id="suggestionBox" class="empty">Selecciona un ticket para buscar sugerencias.</div>
           <div class="row" style="margin-top:10px;">
             <button class="btn" id="applySugActBtn" type="button" disabled>Aplicar actividad</button>
@@ -738,6 +869,8 @@
         lastReminderTs: 0,
         regCtx: null,
         editCtx: null,
+        selectedTimelineActivity: '',
+        selectedTimelineMinutes: 0,
         activities: [],
         debugLogs: [],
         popupWatchTimer: 0,
@@ -1705,7 +1838,7 @@
           'mainView','issueSel','activityTypeSel','activityDueInp','activityInp','minutesInp','registerBtn','jiraDurationPill','timerVal','timerState','startBtn','pauseBtn',
           'resetBtn','applyTimerBtn','suggestionBox','applySugActBtn','applySugTimeBtn','registerSugBtn','todayTotal','weekTotal','issueCount','dashMeta',
           'refreshDashBtn','recentBox','commentsBox','worklogBody','timelineBox','ganttBox','genReportBtn','exportReportBtn','reportMeta',
-          'reportBody','compactBtn','floatBox','floatIssue','floatTimer','floatState','floatStartBtn','floatPauseBtn','floatExpandBtn',
+          'reportBody','activityFocusBox','activityQuickSel','activityQuickMeta','compactBtn','floatBox','floatIssue','floatTimer','floatState','floatStartBtn','floatPauseBtn','floatExpandBtn',
           'regModal','regModalMeta','regActInp','regMinInp','regModalOkBtn','regModalCancelBtn',
           'editModal','editMeta','editActInp','editDateInp','editTimeInp','editMinInp','editSaveBtn','editDeleteBtn','editCancelBtn','activityList'
         ].forEach((id) => { el[id] = document.getElementById(id); });
@@ -1847,6 +1980,9 @@
         el.activityDueInp.value = state.activityDueDate;
         state.activity = buildOfficialActivity(state.activityType, state.activityDueDate);
         el.activityInp.value = state.activity;
+        if (el.activityQuickSel && el.activityQuickSel.options.length) {
+          el.activityQuickSel.value = state.activityType;
+        }
         if (saveUi) {
           uiStateSave();
         }
@@ -1865,6 +2001,53 @@
         el.activityTypeSel.value = state.activityType;
         el.activityDueInp.value = state.activityDueDate;
         syncOfficialActivityToState(false);
+      }
+
+      function activityKey(text) {
+        return String(text || '').trim().toLowerCase();
+      }
+
+      function syncActivityFocusComponent() {
+        if (!el.activityQuickSel) return;
+        if (!el.activityQuickSel.options.length) {
+          el.activityQuickSel.innerHTML = OFFICIAL_ACTIVITY_TYPES
+            .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
+            .join('');
+        }
+        if (!OFFICIAL_ACTIVITY_TYPES.includes(state.activityType)) {
+          state.activityType = OFFICIAL_ACTIVITY_TYPES[0];
+        }
+        el.activityQuickSel.value = state.activityType;
+
+        const selected = String(state.selectedTimelineActivity || '').trim();
+        const mins = Number(state.selectedTimelineMinutes || 0);
+        if (!selected) {
+          el.activityFocusBox.classList.remove('active');
+          el.activityQuickMeta.textContent = 'Haz clic en una actividad del grafico para resaltarla aqui.';
+          return;
+        }
+        const duration = mins > 0 ? ` | ${TimeService.jiraDuration(mins)}` : '';
+        el.activityFocusBox.classList.add('active');
+        el.activityQuickMeta.innerHTML = `Actividad resaltada: <strong>${escapeHtml(selected)}</strong>${escapeHtml(duration)}`;
+      }
+
+      function selectActivityFromCharts(activityName, minutes, rerender) {
+        const activity = String(activityName || '').trim();
+        if (!activity) return;
+        state.selectedTimelineActivity = activity;
+        if (Number.isFinite(Number(minutes))) {
+          state.selectedTimelineMinutes = Math.max(0, Math.floor(Number(minutes)));
+        }
+        const official = inferOfficialActivityType(activity);
+        if (OFFICIAL_ACTIVITY_TYPES.includes(official)) {
+          state.activityType = official;
+          el.activityTypeSel.value = state.activityType;
+          syncOfficialActivityToState(true);
+        }
+        syncActivityFocusComponent();
+        if (rerender) {
+          renderTimeline(state.selectedIssueKey);
+        }
       }
 
       function pushActivity(act) {
@@ -2142,10 +2325,13 @@
         const logs = sortDesc((state.worklogsByIssue[key] || []).slice(), (w) => w.started || w.created).reverse();
 
         if (!key || !logs.length) {
+          state.selectedTimelineActivity = '';
+          state.selectedTimelineMinutes = 0;
           el.timelineBox.className = 'empty';
           el.timelineBox.textContent = 'Sin registros para este ticket.';
           el.ganttBox.className = 'empty';
           el.ganttBox.textContent = 'Sin registros para este ticket.';
+          syncActivityFocusComponent();
           return;
         }
 
@@ -2155,6 +2341,7 @@
 
         const legendMap = {};
         const totalMinutes = logs.reduce((acc, w) => acc + minutesOf(w), 0);
+        const selectedKey = activityKey(state.selectedTimelineActivity);
         const segmentsHtml = logs.map((w) => {
           const st = new Date(w.started || w.created).getTime();
           const mins = minutesOf(w);
@@ -2167,39 +2354,65 @@
           const width = Math.max(1.8, (dur / range) * 100);
           const author = w.author && w.author.displayName ? w.author.displayName : 'Sin autor';
           const meta = `${key} | ${author} | ${act} | ${TimeService.jiraDuration(mins)} | ${TimeService.dtLabel(st)}`;
-          return `<span class="timeline-ticket-segment" title="${escapeHtml(meta)}" style="left:${left.toFixed(3)}%;width:${width.toFixed(3)}%;background:${escapeHtml(color)};"></span>`;
+          const activeClass = selectedKey && activityKey(act) === selectedKey ? ' active' : '';
+          return `<span class="timeline-ticket-segment${activeClass}" title="${escapeHtml(meta)}" data-activity="${escapeHtml(act)}" data-minutes="${mins}" style="left:${left.toFixed(3)}%;width:${width.toFixed(3)}%;background:${escapeHtml(color)};"></span>`;
         }).join('');
 
         const label = issue && issue.summary ? `${key} - ${issue.summary}` : key;
         const legendEntries = Object.values(legendMap).sort((a, b) => b.minutes - a.minutes);
+        const selectedLegend = legendEntries.find((it) => activityKey(it.activity) === selectedKey) || null;
+        if (!selectedLegend) {
+          state.selectedTimelineActivity = '';
+          state.selectedTimelineMinutes = 0;
+        } else {
+          state.selectedTimelineMinutes = selectedLegend.minutes;
+        }
+
         const legendHtml = legendEntries.length
-          ? `<div class="activity-legend">${legendEntries.map((it) => `<span class="activity-legend-item" title="${escapeHtml(`${it.activity}: ${TimeService.jiraDuration(it.minutes)}`)}"><span class="activity-legend-dot" style="background:${escapeHtml(it.color)};"></span>${escapeHtml(it.activity)} (${escapeHtml(TimeService.jiraDuration(it.minutes))})</span>`).join('')}</div>`
+          ? `<div class="activity-legend">${legendEntries.map((it) => {
+            const isActive = selectedLegend && activityKey(it.activity) === activityKey(selectedLegend.activity);
+            return `<span class="activity-legend-item${isActive ? ' active' : ''}" title="${escapeHtml(`${it.activity}: ${TimeService.jiraDuration(it.minutes)}`)}" data-activity="${escapeHtml(it.activity)}" data-minutes="${it.minutes}"><span class="activity-legend-dot" style="background:${escapeHtml(it.color)};"></span>${escapeHtml(it.activity)} (${escapeHtml(TimeService.jiraDuration(it.minutes))})</span>`;
+          }).join('')}</div>`
           : '';
 
         el.timelineBox.className = '';
         el.timelineBox.innerHTML = `
-          <div class="timeline-axis">
-            <span>Inicio: ${escapeHtml(TimeService.dtLabel(start))}</span>
-            <span>Fin: ${escapeHtml(TimeService.dtLabel(end))}</span>
-          </div>
-          <div class="timeline-ticket-list">
-            <div class="timeline-ticket-row">
-              <div class="timeline-ticket-label" title="${escapeHtml(label)}">${escapeHtml(label)}</div>
-              <div class="timeline-ticket-track">${segmentsHtml}</div>
-              <div class="timeline-ticket-total">${escapeHtml(TimeService.jiraDuration(totalMinutes))}</div>
+          <div class="timeline-shell">
+            <div class="timeline-head">
+              <div class="timeline-stat">
+                <div class="timeline-stat-label">Inicio</div>
+                <div class="timeline-stat-value">${escapeHtml(TimeService.dtLabel(start))}</div>
+              </div>
+              <div class="timeline-stat">
+                <div class="timeline-stat-label">Fin</div>
+                <div class="timeline-stat-value">${escapeHtml(TimeService.dtLabel(end))}</div>
+              </div>
+              <div class="timeline-stat">
+                <div class="timeline-stat-label">Total acumulado</div>
+                <div class="timeline-stat-value">${escapeHtml(TimeService.jiraDuration(totalMinutes))}</div>
+              </div>
             </div>
+            <div class="timeline-ticket-list">
+              <div class="timeline-ticket-row">
+                <div class="timeline-ticket-label" title="${escapeHtml(label)}">${escapeHtml(label)}</div>
+                <div class="timeline-ticket-track">${segmentsHtml}</div>
+                <div class="timeline-ticket-total">${escapeHtml(TimeService.jiraDuration(totalMinutes))}</div>
+              </div>
+            </div>
+            ${legendHtml}
           </div>
-          ${legendHtml}
         `;
 
         const entries = legendEntries;
         const max = entries[0] ? entries[0].minutes : 1;
         el.ganttBox.className = '';
-        el.ganttBox.innerHTML = entries.map((it) => {
+        el.ganttBox.innerHTML = `<div class="gantt-list">${entries.map((it) => {
           const width = Math.max(3, (it.minutes / max) * 100);
           const jiraDur = TimeService.jiraDuration(it.minutes);
-          return `<div class="gantt-row" title="${escapeHtml(`${it.activity}: ${jiraDur}`)}"><div>${escapeHtml(it.activity)}</div><div class="track"><span class="bar" style="left:0;width:${width.toFixed(2)}%;background:${escapeHtml(it.color)};"></span></div><div style="text-align:right;color:#5f7287;">${escapeHtml(jiraDur)}</div></div>`;
-        }).join('');
+          const isActive = selectedLegend && activityKey(it.activity) === activityKey(selectedLegend.activity);
+          return `<div class="gantt-row${isActive ? ' active' : ''}" title="${escapeHtml(`${it.activity}: ${jiraDur}`)}" data-activity="${escapeHtml(it.activity)}" data-minutes="${it.minutes}"><div class="gantt-name">${escapeHtml(it.activity)}</div><div class="track"><span class="bar" style="left:0;width:${width.toFixed(2)}%;background:${escapeHtml(it.color)};"></span></div><div class="gantt-duration">${escapeHtml(jiraDur)}</div></div>`;
+        }).join('')}</div>`;
+        syncActivityFocusComponent();
       }
 
       function renderIssueData() {
@@ -2831,6 +3044,34 @@
           uiStateSave();
           renderDurationPill();
         });
+        el.activityQuickSel.addEventListener('change', () => {
+          const selectedType = OFFICIAL_ACTIVITY_TYPES.includes(String(el.activityQuickSel.value || '').trim())
+            ? String(el.activityQuickSel.value || '').trim()
+            : OFFICIAL_ACTIVITY_TYPES[0];
+          state.activityType = selectedType;
+          el.activityTypeSel.value = selectedType;
+          syncOfficialActivityToState(true);
+
+          const key = state.selectedIssueKey;
+          const logs = state.worklogsByIssue[key] || [];
+          const grouped = {};
+          logs.forEach((w) => {
+            const act = activityOf(w);
+            const mapped = inferOfficialActivityType(act);
+            if (mapped !== selectedType) return;
+            if (!grouped[act]) grouped[act] = 0;
+            grouped[act] += minutesOf(w);
+          });
+          const match = Object.entries(grouped).sort((a, b) => b[1] - a[1])[0] || null;
+          if (match) {
+            selectActivityFromCharts(match[0], match[1], true);
+          } else {
+            state.selectedTimelineActivity = selectedType;
+            state.selectedTimelineMinutes = 0;
+            syncActivityFocusComponent();
+            renderTimeline(state.selectedIssueKey);
+          }
+        });
 
         el.registerBtn.addEventListener('click', async () => {
           syncOfficialActivityToState(false);
@@ -2901,6 +3142,23 @@
           uiStateSave();
           try { await createWorklog(state.selectedIssueKey, state.activity, state.durationMinutes); }
           catch (e) { applyError(e, 'No se pudo registrar la sugerencia.'); }
+        });
+
+        el.timelineBox.addEventListener('click', (ev) => {
+          const node = ev.target.closest('[data-activity]');
+          if (!node) return;
+          const activity = String(node.getAttribute('data-activity') || '').trim();
+          const mins = Number(node.getAttribute('data-minutes') || 0);
+          if (!activity) return;
+          selectActivityFromCharts(activity, mins, true);
+        });
+        el.ganttBox.addEventListener('click', (ev) => {
+          const node = ev.target.closest('[data-activity]');
+          if (!node) return;
+          const activity = String(node.getAttribute('data-activity') || '').trim();
+          const mins = Number(node.getAttribute('data-minutes') || 0);
+          if (!activity) return;
+          selectActivityFromCharts(activity, mins, true);
         });
 
         if (FEATURES.dashboard) {
@@ -3080,6 +3338,7 @@
         timerLoad();
 
         renderOfficialActivityControls();
+        syncActivityFocusComponent();
         el.minutesInp.value = String(state.durationMinutes);
         renderActivitiesList();
         renderDurationPill();

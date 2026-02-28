@@ -1,0 +1,1512 @@
+﻿<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jira Focus Web</title>
+  <style>
+    :root {
+      --bg: #f5f8fb;
+      --card: #ffffff;
+      --line: #d6e1ee;
+      --text: #1f2d3d;
+      --muted: #5f7287;
+      --primary: #0b5cab;
+      --warn: #8f4f00;
+      --danger: #ab1b1b;
+      --ok: #136f3b;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 14px;
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+    .app {
+      display: grid;
+      gap: 10px;
+      max-width: 1160px;
+      margin: 0 auto;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+    }
+    .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    h2,h3,h4 { margin: 0 0 8px 0; }
+    .muted { color: var(--muted); font-size: 12px; }
+    .pill {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 12px;
+      color: var(--muted);
+      background: #fff;
+    }
+    .pill.ok { color: var(--ok); border-color: #a6d8bb; background: #edfbf3; }
+    .pill.warn { color: var(--warn); border-color: #efcd8f; background: #fff7e8; }
+    .btn {
+      border: 1px solid #c7d3e1;
+      border-radius: 9px;
+      background: #fff;
+      color: var(--text);
+      padding: 7px 11px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .btn:disabled { opacity: .55; cursor: not-allowed; }
+    .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+    .btn.warn { background: #fff7e8; border-color: #efcd8f; color: var(--warn); }
+    .btn.danger { background: #fff1f1; border-color: #e6b2b2; color: var(--danger); }
+    .inp, .sel, .txt {
+      width: 100%;
+      border: 1px solid #c8d5e4;
+      border-radius: 9px;
+      padding: 8px 10px;
+      font-size: 13px;
+    }
+    .txt { min-height: 90px; resize: vertical; }
+    label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+    .msg { display: none; padding: 9px 10px; border-radius: 9px; border: 1px solid transparent; font-size: 13px; }
+    .msg.show { display: block; }
+    .msg.error { background: #ffeaea; border-color: #edb8b8; color: var(--danger); }
+    .msg.ok { background: #ebfaf1; border-color: #b7dfc8; color: var(--ok); }
+    .msg.info { background: #eaf4ff; border-color: #bad6f6; color: #23527d; }
+    .empty { border: 1px dashed #c8d6e7; border-radius: 9px; padding: 10px; font-size: 13px; color: var(--muted); }
+    .timer { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; margin: 0 0 4px 0; }
+    .tbl-wrap { border: 1px solid var(--line); border-radius: 10px; overflow: auto; max-height: 360px; }
+    table { width: 100%; border-collapse: collapse; min-width: 680px; font-size: 12px; }
+    th, td { border-bottom: 1px solid #e8eff7; padding: 8px; text-align: left; vertical-align: top; }
+    th { position: sticky; top: 0; background: #f5f9fd; }
+    .comments { display: grid; gap: 8px; max-height: 360px; overflow: auto; }
+    .comment { border: 1px solid var(--line); border-radius: 9px; padding: 8px; background: #fff; }
+    .comment.mine { background: #eef8ff; border-color: #b8d8f1; }
+    .meta { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+    .body { white-space: pre-wrap; font-size: 13px; }
+    .track { height: 10px; border-radius: 999px; background: #edf3f9; position: relative; overflow: hidden; }
+    .bar { position: absolute; top: 0; bottom: 0; border-radius: 999px; background: linear-gradient(90deg, #1d74c7, #4ab2dc); }
+    .timeline-item { border: 1px solid var(--line); border-radius: 9px; padding: 7px; margin-bottom: 8px; }
+    .gantt-row { display: grid; grid-template-columns: 190px 1fr 60px; gap: 7px; align-items: center; margin-bottom: 7px; font-size: 12px; }
+    .float {
+      position: fixed; right: 12px; bottom: 12px; width: 255px;
+      border: 1px solid #b4cae3; border-radius: 11px; padding: 9px;
+      background: #eff6ff; display: none; z-index: 9998;
+    }
+    .float.show { display: block; }
+    .modal {
+      position: fixed; inset: 0; background: rgba(15, 23, 38, .45);
+      display: none; align-items: center; justify-content: center; padding: 12px; z-index: 9999;
+    }
+    .modal.show { display: flex; }
+    .modal-card {
+      width: min(560px, 100%);
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+    }
+    .hide { display: none !important; }
+    @media (max-width: 980px) {
+      .grid2, .grid3 { grid-template-columns: 1fr; }
+      .gantt-row { grid-template-columns: 1fr; }
+      .float { left: 10px; right: 10px; width: auto; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app" id="app">
+    <div class="card row">
+      <div>
+        <h2>Jira Focus Web</h2>
+        <div class="muted">Trabajo en Jira Cloud, frontend puro, persistencia local.</div>
+      </div>
+      <div class="row" style="margin-left:auto;">
+        <span class="pill" id="connPill">Sin conexion</span>
+        <span class="pill" id="userPill">Usuario: -</span>
+        <button class="btn" id="refreshIssuesBtn" type="button" disabled>Recargar tickets</button>
+        <button class="btn danger" id="disconnectBtn" type="button" disabled>Desconectar</button>
+      </div>
+    </div>
+
+    <div class="msg" id="msg"></div>
+    <div class="msg" id="idleMsg"></div>
+
+    <section class="card" id="loginView">
+      <h3>Conectar Jira Cloud</h3>
+      <div class="muted">Se guarda en localStorage con clave <code>jira_config</code>.</div>
+      <div class="grid3" style="margin-top:8px;">
+        <div>
+          <label for="urlInp">URL Jira</label>
+          <input class="inp" id="urlInp" type="url" placeholder="https://tu-dominio.atlassian.net" autocomplete="off">
+        </div>
+        <div>
+          <label for="emailInp">Email</label>
+          <input class="inp" id="emailInp" type="email" placeholder="usuario@dominio.com" autocomplete="off">
+        </div>
+        <div>
+          <label for="tokenInp">API token</label>
+          <input class="inp" id="tokenInp" type="password" placeholder="********" autocomplete="new-password">
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <button class="btn primary" id="connectBtn" type="button">Conectar</button>
+      </div>
+    </section>
+
+    <section id="mainView" class="hide">
+      <div class="card">
+        <div class="row" style="justify-content:space-between;">
+          <h3 style="margin:0;">Ticket y actividad</h3>
+          <button class="btn" id="compactBtn" type="button">Modo compacto</button>
+        </div>
+        <div class="grid3" style="margin-top:8px;">
+          <div>
+            <label for="issueSel">Ticket padre</label>
+            <select class="sel" id="issueSel"></select>
+          </div>
+          <div>
+            <label for="activityInp">Actividad</label>
+            <input class="inp" id="activityInp" type="text" list="activityList" placeholder="Revision de plantilla">
+            <datalist id="activityList"></datalist>
+          </div>
+          <div>
+            <label for="minutesInp">Duracion (min)</label>
+            <input class="inp" id="minutesInp" type="number" min="1" step="1" value="30">
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px;">
+          <button class="btn primary" id="registerBtn" type="button">Registrar worklog</button>
+          <span class="pill" id="jiraDurationPill">0m</span>
+        </div>
+      </div>
+
+      <div class="grid2" style="margin-top:10px;">
+        <div class="card">
+          <h3>Cronometro laboral</h3>
+          <p class="timer" id="timerVal">00:00:00</p>
+          <div class="muted" id="timerState">Estado: inactivo</div>
+          <div class="muted" style="margin-top:4px;">Horario habil: L-V 08:30 a 18:00.</div>
+          <div class="row" style="margin-top:10px;">
+            <button class="btn" id="startBtn" type="button">Iniciar</button>
+            <button class="btn warn" id="pauseBtn" type="button">Pausar</button>
+            <button class="btn" id="resetBtn" type="button">Reiniciar</button>
+            <button class="btn" id="applyTimerBtn" type="button">Usar tiempo</button>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Sugerencia automatica</h3>
+          <div id="suggestionBox" class="empty">Selecciona un ticket para buscar sugerencias.</div>
+          <div class="row" style="margin-top:10px;">
+            <button class="btn" id="applySugActBtn" type="button" disabled>Aplicar actividad</button>
+            <button class="btn" id="applySugTimeBtn" type="button" disabled>Aplicar tiempo</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:10px;">
+        <h3>Dashboard global</h3>
+        <div class="grid3">
+          <div class="card" style="padding:8px;">
+            <div class="muted">Total hoy</div>
+            <div id="todayTotal" style="font-weight:700;font-size:18px;">0m</div>
+          </div>
+          <div class="card" style="padding:8px;">
+            <div class="muted">Total semana</div>
+            <div id="weekTotal" style="font-weight:700;font-size:18px;">0m</div>
+          </div>
+          <div class="card" style="padding:8px;">
+            <div class="muted">Tickets con registros</div>
+            <div id="issueCount" style="font-weight:700;font-size:18px;">0</div>
+          </div>
+        </div>
+        <div class="row" style="margin-top:8px;">
+          <button class="btn" id="refreshDashBtn" type="button">Actualizar dashboard</button>
+          <span class="muted" id="dashMeta">Sin datos.</span>
+        </div>
+        <div id="recentBox" class="empty" style="margin-top:8px;">Sin historial reciente.</div>
+      </div>
+
+      <div class="grid2" style="margin-top:10px;">
+        <div class="card">
+          <h3>Comentarios del ticket</h3>
+          <div id="commentsBox" class="comments"></div>
+        </div>
+        <div class="card">
+          <h3>Historial editable por ticket</h3>
+          <div class="tbl-wrap">
+            <table>
+              <thead><tr><th>Fecha</th><th>Actividad</th><th>Duracion</th><th>Autor</th><th>Acciones</th></tr></thead>
+              <tbody id="worklogBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid2" style="margin-top:10px;">
+        <div class="card">
+          <h3>Timeline / Gantt</h3>
+          <div id="timelineBox" class="empty">Sin registros.</div>
+          <h4 style="margin-top:10px;">Gantt por actividad</h4>
+          <div id="ganttBox" class="empty">Sin registros.</div>
+        </div>
+        <div class="card">
+          <h3>Reporte plantilla + .xlsx</h3>
+          <div class="muted">Detecta comentarios con "plantilla" y adjuntos/links .xlsx. Agrupa por colegio segun resumen normalizado.</div>
+          <div class="row" style="margin-top:10px;">
+            <button class="btn primary" id="genReportBtn" type="button">Generar reporte</button>
+            <button class="btn" id="exportReportBtn" type="button" disabled>Exportar Excel</button>
+          </div>
+          <div class="muted" id="reportMeta" style="margin-top:8px;">Sin reporte.</div>
+          <div class="tbl-wrap" style="margin-top:8px;">
+            <table>
+              <thead><tr><th>Colegio</th><th>Tickets</th><th>Comentarios</th><th>Adjuntos .xlsx</th></tr></thead>
+              <tbody id="reportBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="float" id="floatBox">
+    <div class="muted" id="floatIssue">-</div>
+    <div style="font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;" id="floatTimer">00:00:00</div>
+    <div class="muted" id="floatState">Estado: inactivo</div>
+    <div class="row" style="margin-top:8px;">
+      <button class="btn" id="floatStartBtn" type="button">Iniciar</button>
+      <button class="btn warn" id="floatPauseBtn" type="button">Pausar</button>
+      <button class="btn" id="floatExpandBtn" type="button">Expandir</button>
+    </div>
+  </div>
+
+  <div class="modal" id="regModal">
+    <div class="modal-card">
+      <h3>Registrar actividad</h3>
+      <div class="muted" id="regModalMeta"></div>
+      <div class="grid2" style="margin-top:8px;">
+        <div><label for="regActInp">Actividad</label><input id="regActInp" class="inp" type="text"></div>
+        <div><label for="regMinInp">Duracion (min)</label><input id="regMinInp" class="inp" type="number" min="1" step="1"></div>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <button class="btn primary" id="regModalOkBtn" type="button">Registrar</button>
+        <button class="btn" id="regModalCancelBtn" type="button">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="editModal">
+    <div class="modal-card">
+      <h3>Editar worklog</h3>
+      <div class="muted" id="editMeta"></div>
+      <div class="grid3" style="margin-top:8px;">
+        <div><label for="editActInp">Actividad</label><input id="editActInp" class="inp" type="text"></div>
+        <div><label for="editDateInp">Fecha</label><input id="editDateInp" class="inp" type="date"></div>
+        <div><label for="editTimeInp">Hora</label><input id="editTimeInp" class="inp" type="time" step="60"></div>
+      </div>
+      <div class="grid2" style="margin-top:8px;">
+        <div><label for="editMinInp">Duracion (min)</label><input id="editMinInp" class="inp" type="number" min="1" step="1"></div>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <button class="btn primary" id="editSaveBtn" type="button">Guardar</button>
+        <button class="btn danger" id="editDeleteBtn" type="button">Eliminar</button>
+        <button class="btn" id="editCancelBtn" type="button">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script>
+    (() => {
+      'use strict';
+
+      const STORAGE = {
+        config: 'jira_config',
+        timer: 'jira_focus_timer_state',
+        ui: 'jira_focus_ui_state',
+        lastActivity: 'jira_focus_last_activity',
+        activities: 'jira_focus_activities'
+      };
+      const LABOR = { startHour: 8, startMinute: 30, endHour: 18, endMinute: 0, dayMinutes: 570, weekMinutes: 2850 };
+      const INACTIVITY_MS = 2 * 60 * 60 * 1000;
+      const SUGGESTION_MS = 3 * 24 * 60 * 60 * 1000;
+
+      const state = {
+        connected: false,
+        config: null,
+        me: null,
+        issues: [],
+        selectedIssueKey: '',
+        activity: '',
+        durationMinutes: 30,
+        commentsByIssue: {},
+        worklogsByIssue: {},
+        suggestion: null,
+        compact: false,
+        report: { detail: [], grouped: [] },
+        dash: { logs: [], today: 0, week: 0, issueCount: 0, refreshedAt: null },
+        timer: { running: false, resumeTs: 0, elapsedBizMs: 0 },
+        lastActivityTs: Date.now(),
+        lastReminderTs: 0,
+        regCtx: null,
+        editCtx: null,
+        activities: []
+      };
+
+      const el = {};
+      const StorageService = {
+        parse(raw, fb) { try { return raw ? JSON.parse(raw) : fb; } catch (_e) { return fb; } },
+        get(key) { try { return localStorage.getItem(key); } catch (_e) { return null; } },
+        set(key, val) { try { localStorage.setItem(key, val); } catch (_e) {} },
+        del(key) { try { localStorage.removeItem(key); } catch (_e) {} },
+        getConfig() {
+          const cfg = this.parse(this.get(STORAGE.config), null);
+          if (!cfg || typeof cfg !== 'object') return null;
+          const url = sanitizeUrl(cfg.url || '');
+          const email = String(cfg.email || '').trim();
+          const api_token = String(cfg.api_token || '');
+          if (!url || !email || !api_token) return null;
+          return { url, email, api_token };
+        },
+        saveConfig(cfg) {
+          this.set(STORAGE.config, JSON.stringify({
+            url: sanitizeUrl(cfg.url || ''),
+            email: String(cfg.email || '').trim(),
+            api_token: String(cfg.api_token || '')
+          }));
+        },
+        getTimer() {
+          const t = this.parse(this.get(STORAGE.timer), null);
+          if (!t) return null;
+          return { running: !!t.running, resumeTs: Number(t.resumeTs || 0), elapsedBizMs: Number(t.elapsedBizMs || 0) };
+        },
+        saveTimer(t) {
+          this.set(STORAGE.timer, JSON.stringify({ running: !!t.running, resumeTs: Number(t.resumeTs || 0), elapsedBizMs: Number(t.elapsedBizMs || 0) }));
+        },
+        getUI() { return this.parse(this.get(STORAGE.ui), {}) || {}; },
+        saveUI(v) { this.set(STORAGE.ui, JSON.stringify(v || {})); },
+        getLastActivity() {
+          const ts = Number(this.get(STORAGE.lastActivity));
+          return Number.isFinite(ts) && ts > 0 ? ts : Date.now();
+        },
+        saveLastActivity(ts) { this.set(STORAGE.lastActivity, String(Number(ts || Date.now()))); },
+        getActivities() {
+          const list = this.parse(this.get(STORAGE.activities), []);
+          return Array.isArray(list) ? list.filter((x) => typeof x === 'string' && x.trim()).slice(0, 100) : [];
+        },
+        saveActivities(list) {
+          this.set(STORAGE.activities, JSON.stringify((list || []).slice(0, 100)));
+        }
+      };
+
+      const TimeService = {
+        isWeekday(d) { const day = d.getDay(); return day >= 1 && day <= 5; },
+        dayWindow(d) {
+          if (!this.isWeekday(d)) return null;
+          const start = new Date(d); start.setHours(LABOR.startHour, LABOR.startMinute, 0, 0);
+          const end = new Date(d); end.setHours(LABOR.endHour, LABOR.endMinute, 0, 0);
+          return { start, end };
+        },
+        isBusinessNow(d) {
+          const w = this.dayWindow(d);
+          return !!w && d >= w.start && d <= w.end;
+        },
+        businessMsBetween(a, b) {
+          const start = new Date(a); const end = new Date(b);
+          if (!(start < end)) return 0;
+          let total = 0;
+          let cur = new Date(start);
+          while (cur < end) {
+            const w = this.dayWindow(cur);
+            if (w) {
+              const s = Math.max(cur.getTime(), w.start.getTime());
+              const e = Math.min(end.getTime(), w.end.getTime());
+              if (e > s) total += (e - s);
+            }
+            cur.setHours(24, 0, 0, 0);
+          }
+          return total;
+        },
+        businessMinutesBetween(a, b) { return Math.floor(this.businessMsBetween(a, b) / 60000); },
+        prevBusinessEnd(dateIn) {
+          const d = new Date(dateIn);
+          while (true) {
+            d.setDate(d.getDate() - 1);
+            const w = this.dayWindow(d);
+            if (w) return new Date(w.end);
+          }
+        },
+        subtractBusinessMinutes(endIn, minsIn) {
+          let remain = Math.max(0, Math.floor(Number(minsIn || 0)));
+          let cur = new Date(endIn);
+          if (!remain) return cur;
+          while (remain > 0) {
+            const w = this.dayWindow(cur);
+            if (!w) { cur = this.prevBusinessEnd(cur); continue; }
+            if (cur > w.end) cur = new Date(w.end);
+            if (cur <= w.start) { cur = this.prevBusinessEnd(cur); continue; }
+            const available = Math.floor((cur.getTime() - w.start.getTime()) / 60000);
+            if (available >= remain) {
+              cur = new Date(cur.getTime() - remain * 60000);
+              remain = 0;
+            } else {
+              remain -= available;
+              cur = this.prevBusinessEnd(cur);
+            }
+          }
+          return cur;
+        },
+        hhmmss(msIn) {
+          const total = Math.floor(Math.max(0, Number(msIn || 0)) / 1000);
+          const h = Math.floor(total / 3600);
+          const m = Math.floor((total % 3600) / 60);
+          const s = total % 60;
+          return [h, m, s].map((x) => String(x).padStart(2, '0')).join(':');
+        },
+        ddmmyyyy(dIn) {
+          const d = new Date(dIn);
+          const dd = String(d.getDate()).padStart(2, '0');
+          const mm = String(d.getMonth() + 1).padStart(2, '0');
+          return `${dd}/${mm}/${d.getFullYear()}`;
+        },
+        dtLabel(dIn) {
+          const d = new Date(dIn);
+          const hh = String(d.getHours()).padStart(2, '0');
+          const mi = String(d.getMinutes()).padStart(2, '0');
+          return `${this.ddmmyyyy(d)} ${hh}:${mi}`;
+        },
+        jiraDateTime(dIn) {
+          const d = new Date(dIn);
+          const y = d.getFullYear();
+          const m = String(d.getMonth() + 1).padStart(2, '0');
+          const day = String(d.getDate()).padStart(2, '0');
+          const hh = String(d.getHours()).padStart(2, '0');
+          const mi = String(d.getMinutes()).padStart(2, '0');
+          const ss = String(d.getSeconds()).padStart(2, '0');
+          const off = -d.getTimezoneOffset();
+          const sign = off >= 0 ? '+' : '-';
+          const abs = Math.abs(off);
+          const oh = String(Math.floor(abs / 60)).padStart(2, '0');
+          const om = String(abs % 60).padStart(2, '0');
+          return `${y}-${m}-${day}T${hh}:${mi}:${ss}.000${sign}${oh}${om}`;
+        },
+        jiraDuration(minsIn) {
+          let mins = Math.max(0, Math.floor(Number(minsIn || 0)));
+          const parts = [];
+          const w = Math.floor(mins / LABOR.weekMinutes); mins -= w * LABOR.weekMinutes;
+          const d = Math.floor(mins / LABOR.dayMinutes); mins -= d * LABOR.dayMinutes;
+          const h = Math.floor(mins / 60); mins -= h * 60;
+          if (w) parts.push(`${w}w`);
+          if (d) parts.push(`${d}d`);
+          if (h) parts.push(`${h}h`);
+          if (mins || !parts.length) parts.push(`${mins}m`);
+          return parts.join(' ');
+        },
+        startOfToday() { const d = new Date(); d.setHours(0, 0, 0, 0); return d; },
+        startOfWeek() {
+          const d = new Date();
+          const day = d.getDay();
+          const diff = day === 0 ? -6 : 1 - day;
+          d.setDate(d.getDate() + diff);
+          d.setHours(0, 0, 0, 0);
+          return d;
+        },
+        toInputDate(dIn) {
+          const d = new Date(dIn);
+          return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        },
+        toInputTime(dIn) {
+          const d = new Date(dIn);
+          return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        }
+      };
+
+      const JiraService = {
+        baseUrl: '',
+        auth: '',
+        setConfig(cfg) {
+          const url = sanitizeUrl(cfg.url || '');
+          const email = String(cfg.email || '').trim();
+          const token = String(cfg.api_token || '');
+          if (!url || !email || !token) throw new Error('Configuracion incompleta');
+          this.baseUrl = url;
+          this.auth = 'Basic ' + btoa(unescape(encodeURIComponent(`${email}:${token}`)));
+        },
+        url(path, params) {
+          const u = new URL(this.baseUrl + path);
+          Object.entries(params || {}).forEach(([k, v]) => {
+            if (v === undefined || v === null || v === '') return;
+            u.searchParams.append(k, String(v));
+          });
+          return u.toString();
+        },
+        async req(method, path, opts = {}) {
+          const init = {
+            method,
+            headers: {
+              Accept: 'application/json',
+              'Content-Type': 'application/json',
+              Authorization: this.auth
+            }
+          };
+          if (opts.body !== undefined) init.body = JSON.stringify(opts.body);
+          let res;
+          try {
+            res = await fetch(this.url(path, opts.params || {}), init);
+          } catch (_e) {
+            const err = new Error('No se pudo conectar directo a Jira. Posible bloqueo CORS del tenant.');
+            err.kind = 'cors';
+            throw err;
+          }
+          const raw = await res.text();
+          let payload = null;
+          if (raw) { try { payload = JSON.parse(raw); } catch (_e) { payload = null; } }
+          if (!res.ok) {
+            const err = new Error(httpMessage(payload, res.status));
+            err.kind = 'http';
+            err.status = res.status;
+            throw err;
+          }
+          return payload || {};
+        },
+        myself() { return this.req('GET', '/rest/api/3/myself'); },
+        searchIssues() {
+          const jql = 'assignee = currentUser() AND statusCategory != Done AND issuetype not in subTaskIssueTypes() ORDER BY updated DESC';
+          return this.req('GET', '/rest/api/3/search', { params: { jql, maxResults: 80, fields: 'summary,status,issuetype,attachment' } });
+        },
+        comments(key) { return this.req('GET', `/rest/api/3/issue/${encodeURIComponent(key)}/comment`, { params: { orderBy: '-created', maxResults: 100 } }); },
+        worklogs(key) { return this.req('GET', `/rest/api/3/issue/${encodeURIComponent(key)}/worklog`); },
+        addWorklog(key, body) { return this.req('POST', `/rest/api/3/issue/${encodeURIComponent(key)}/worklog`, { body }); },
+        updateWorklog(key, id, body) { return this.req('PUT', `/rest/api/3/issue/${encodeURIComponent(key)}/worklog/${encodeURIComponent(id)}`, { body }); },
+        deleteWorklog(key, id) { return this.req('DELETE', `/rest/api/3/issue/${encodeURIComponent(key)}/worklog/${encodeURIComponent(id)}`); }
+      };
+
+      function sanitizeUrl(url) {
+        const base = String(url || '').trim().replace(/\/+$/, '');
+        if (!base) return '';
+        if (/^https?:\/\//i.test(base)) return base;
+        return `https://${base}`;
+      }
+
+      function adfToText(node) {
+        if (!node) return '';
+        if (typeof node === 'string') return node;
+        if (Array.isArray(node)) return node.map(adfToText).join('');
+        if (node.type === 'text') return node.text || '';
+        if (node.type === 'hardBreak') return '\n';
+        if (Array.isArray(node.content)) return node.content.map(adfToText).join('');
+        return '';
+      }
+
+      function toAdf(text) {
+        return {
+          type: 'doc', version: 1,
+          content: [{ type: 'paragraph', content: [{ type: 'text', text: String(text || '') }] }]
+        };
+      }
+
+      function escapeHtml(v) {
+        return String(v || '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#039;');
+      }
+
+      function httpMessage(payload, status) {
+        if (payload && Array.isArray(payload.errorMessages) && payload.errorMessages.length) return payload.errorMessages.join(' | ');
+        if (payload && payload.errors && typeof payload.errors === 'object') {
+          const items = Object.entries(payload.errors).map(([k, v]) => `${k}: ${v}`);
+          if (items.length) return items.join(' | ');
+        }
+        if (payload && payload.message) return payload.message;
+        return `HTTP ${status}`;
+      }
+      function cacheElements() {
+        [
+          'connPill','userPill','refreshIssuesBtn','disconnectBtn','msg','idleMsg','loginView','urlInp','emailInp','tokenInp','connectBtn',
+          'mainView','issueSel','activityInp','minutesInp','registerBtn','jiraDurationPill','timerVal','timerState','startBtn','pauseBtn',
+          'resetBtn','applyTimerBtn','suggestionBox','applySugActBtn','applySugTimeBtn','todayTotal','weekTotal','issueCount','dashMeta',
+          'refreshDashBtn','recentBox','commentsBox','worklogBody','timelineBox','ganttBox','genReportBtn','exportReportBtn','reportMeta',
+          'reportBody','compactBtn','floatBox','floatIssue','floatTimer','floatState','floatStartBtn','floatPauseBtn','floatExpandBtn',
+          'regModal','regModalMeta','regActInp','regMinInp','regModalOkBtn','regModalCancelBtn',
+          'editModal','editMeta','editActInp','editDateInp','editTimeInp','editMinInp','editSaveBtn','editDeleteBtn','editCancelBtn','activityList'
+        ].forEach((id) => { el[id] = document.getElementById(id); });
+      }
+
+      function uiStateSave() {
+        StorageService.saveUI({
+          selectedIssueKey: state.selectedIssueKey,
+          activity: state.activity,
+          durationMinutes: state.durationMinutes,
+          compact: state.compact,
+          lastReminderTs: state.lastReminderTs
+        });
+      }
+
+      function uiStateLoad() {
+        const ui = StorageService.getUI();
+        state.selectedIssueKey = typeof ui.selectedIssueKey === 'string' ? ui.selectedIssueKey : '';
+        state.activity = typeof ui.activity === 'string' ? ui.activity : '';
+        state.durationMinutes = Number.isFinite(Number(ui.durationMinutes)) ? Math.max(1, Math.floor(Number(ui.durationMinutes))) : 30;
+        state.compact = !!ui.compact;
+        state.lastReminderTs = Number(ui.lastReminderTs || 0);
+        state.lastActivityTs = StorageService.getLastActivity();
+        state.activities = StorageService.getActivities();
+      }
+
+      function timerLoad() {
+        const t = StorageService.getTimer();
+        if (!t) return;
+        state.timer.running = !!t.running;
+        state.timer.resumeTs = Number(t.resumeTs || 0);
+        state.timer.elapsedBizMs = Number(t.elapsedBizMs || 0);
+        if (state.timer.running && !state.timer.resumeTs) state.timer.running = false;
+      }
+
+      function timerSave() { StorageService.saveTimer(state.timer); }
+
+      function showMsg(type, text) {
+        el.msg.className = `msg show ${type}`;
+        el.msg.textContent = text;
+      }
+
+      function clearMsg() {
+        el.msg.className = 'msg';
+        el.msg.textContent = '';
+      }
+
+      function applyError(err, fallback) {
+        if (err && err.kind === 'cors') {
+          showMsg('error', 'No se pudo conectar a Jira desde frontend por limitacion CORS del tenant Jira Cloud.');
+          return;
+        }
+        if (err && err.kind === 'http' && err.status === 401) {
+          showMsg('error', 'Credenciales invalidas. Verifica URL, email y API token.');
+          return;
+        }
+        if (err && err.kind === 'http' && err.status === 403) {
+          showMsg('error', 'No tienes permisos suficientes en Jira para esta accion.');
+          return;
+        }
+        showMsg('error', `${fallback}${err && err.message ? ` Detalle: ${err.message}` : ''}`);
+      }
+
+      function markActivity() {
+        state.lastActivityTs = Date.now();
+        state.lastReminderTs = 0;
+        StorageService.saveLastActivity(state.lastActivityTs);
+        uiStateSave();
+      }
+
+      function renderIdle() {
+        const idle = !state.timer.running && (Date.now() - state.lastActivityTs >= INACTIVITY_MS);
+        if (idle) {
+          el.idleMsg.className = 'msg show info';
+          el.idleMsg.textContent = 'Aviso: pasaron mas de 2 horas sin actividad registrada y el timer esta detenido.';
+        } else {
+          el.idleMsg.className = 'msg';
+          el.idleMsg.textContent = '';
+        }
+      }
+
+      function renderTop() {
+        el.connPill.textContent = state.connected ? 'Conectado' : 'Sin conexion';
+        el.connPill.className = `pill ${state.connected ? 'ok' : ''}`;
+        el.userPill.textContent = state.connected
+          ? `Usuario: ${state.me && state.me.displayName ? state.me.displayName : state.config.email}`
+          : 'Usuario: -';
+        el.disconnectBtn.disabled = !state.connected;
+        el.refreshIssuesBtn.disabled = !state.connected;
+        el.loginView.classList.toggle('hide', state.connected);
+        el.mainView.classList.toggle('hide', !state.connected);
+      }
+
+      function renderActivitiesList() {
+        el.activityList.innerHTML = '';
+        state.activities.slice(0, 30).forEach((item) => {
+          const opt = document.createElement('option');
+          opt.value = item;
+          el.activityList.appendChild(opt);
+        });
+      }
+
+      function pushActivity(act) {
+        const value = String(act || '').trim();
+        if (!value) return;
+        const list = [value, ...state.activities.filter((x) => x.toLowerCase() !== value.toLowerCase())].slice(0, 100);
+        state.activities = list;
+        StorageService.saveActivities(list);
+        renderActivitiesList();
+      }
+
+      function issueByKey(key) {
+        return state.issues.find((it) => it.key === key) || null;
+      }
+
+      function parseIssues(payload) {
+        const list = Array.isArray(payload.issues) ? payload.issues : [];
+        return list
+          .filter((it) => it && it.key && it.fields && !(it.fields.issuetype && it.fields.issuetype.subtask))
+          .map((it) => ({
+            key: it.key,
+            summary: String(it.fields.summary || ''),
+            attachments: Array.isArray(it.fields.attachment) ? it.fields.attachment : []
+          }));
+      }
+
+      function renderIssueSelect() {
+        el.issueSel.innerHTML = '';
+        if (!state.issues.length) {
+          el.issueSel.innerHTML = '<option value="">Sin tickets</option>';
+          state.selectedIssueKey = '';
+          uiStateSave();
+          renderIssueData();
+          return;
+        }
+        state.issues.forEach((it) => {
+          const opt = document.createElement('option');
+          opt.value = it.key;
+          opt.textContent = `${it.key} - ${it.summary}`;
+          el.issueSel.appendChild(opt);
+        });
+        if (!state.issues.some((it) => it.key === state.selectedIssueKey)) {
+          state.selectedIssueKey = state.issues[0].key;
+        }
+        el.issueSel.value = state.selectedIssueKey;
+        uiStateSave();
+      }
+
+      function timerBusinessMsNow() {
+        let total = state.timer.elapsedBizMs;
+        if (state.timer.running) {
+          total += TimeService.businessMsBetween(new Date(state.timer.resumeTs), new Date());
+        }
+        return total;
+      }
+
+      function timerStateLabel() {
+        if (!state.timer.running) return 'inactivo';
+        return TimeService.isBusinessNow(new Date()) ? 'en curso' : 'en curso fuera de horario';
+      }
+
+      function renderTimer() {
+        const ms = timerBusinessMsNow();
+        const label = timerStateLabel();
+        const value = TimeService.hhmmss(ms);
+        el.timerVal.textContent = value;
+        el.timerState.textContent = `Estado: ${label}`;
+        el.floatTimer.textContent = value;
+        el.floatState.textContent = `Estado: ${label}`;
+      }
+
+      function timerStart() {
+        if (state.timer.running) return;
+        state.timer.running = true;
+        state.timer.resumeTs = Date.now();
+        timerSave();
+        markActivity();
+        renderTimer();
+      }
+
+      function timerPause() {
+        if (!state.timer.running) return;
+        state.timer.elapsedBizMs += TimeService.businessMsBetween(new Date(state.timer.resumeTs), new Date());
+        state.timer.running = false;
+        state.timer.resumeTs = 0;
+        timerSave();
+        markActivity();
+        renderTimer();
+      }
+
+      function timerReset() {
+        state.timer.running = false;
+        state.timer.resumeTs = 0;
+        state.timer.elapsedBizMs = 0;
+        timerSave();
+        markActivity();
+        renderTimer();
+      }
+
+      function applyTimerToMinutes() {
+        const mins = Math.max(1, Math.ceil(timerBusinessMsNow() / 60000));
+        state.durationMinutes = mins;
+        el.minutesInp.value = String(mins);
+        renderDurationPill();
+        uiStateSave();
+      }
+
+      function renderDurationPill() {
+        const mins = Math.max(1, Math.floor(Number(state.durationMinutes || 0)));
+        el.jiraDurationPill.textContent = TimeService.jiraDuration(mins);
+      }
+
+      function renderCompact() {
+        el.floatIssue.textContent = state.selectedIssueKey || '-';
+        el.floatBox.classList.toggle('show', state.connected && state.compact);
+        el.compactBtn.textContent = state.compact ? 'Expandir vista' : 'Modo compacto';
+      }
+
+      function commentText(c) { return adfToText(c && c.body ? c.body : ''); }
+      function worklogText(w) { return adfToText(w && w.comment ? w.comment : ''); }
+      function mine(author) { return !!(author && state.me && String(author.accountId || '') === String(state.me.accountId || '')); }
+      function minutesOf(worklog) { return Math.max(1, Math.round(Number(worklog && worklog.timeSpentSeconds ? worklog.timeSpentSeconds : 0) / 60)); }
+
+      function activityFromText(text) {
+        const t = String(text || '').trim();
+        if (!t) return '';
+        const m = t.match(/^\[([^\]]+)\]/);
+        if (m && m[1]) return m[1].trim();
+        return (t.split(/\r?\n/)[0] || '').trim().slice(0, 80);
+      }
+
+      function activityOf(worklog) {
+        return activityFromText(worklogText(worklog)) || 'Sin actividad';
+      }
+
+      function sortDesc(items, dateFn) {
+        return items.slice().sort((a, b) => new Date(dateFn(b)).getTime() - new Date(dateFn(a)).getTime());
+      }
+
+      function renderComments(issueKey) {
+        const comments = state.commentsByIssue[issueKey] || [];
+        if (!comments.length) {
+          el.commentsBox.innerHTML = '<div class="empty">Sin comentarios.</div>';
+          return;
+        }
+        el.commentsBox.innerHTML = comments.map((c) => {
+          const my = mine(c.author);
+          const author = c.author && c.author.displayName ? c.author.displayName : 'Sin autor';
+          const txt = commentText(c) || '(sin texto)';
+          return `
+            <div class="comment ${my ? 'mine' : ''}">
+              <div class="meta"><span>${escapeHtml(author)}</span><span>${escapeHtml(TimeService.dtLabel(c.created))}</span></div>
+              <div class="body">${escapeHtml(txt)}</div>
+              ${my ? `<div class="row" style="margin-top:8px;"><button class="btn" data-act="reg-from-comment" data-id="${escapeHtml(String(c.id))}">Registrar actividad</button></div>` : ''}
+            </div>
+          `;
+        }).join('');
+      }
+      function renderWorklogs(issueKey) {
+        const rows = state.worklogsByIssue[issueKey] || [];
+        if (!rows.length) {
+          el.worklogBody.innerHTML = '<tr><td colspan="5"><div class="empty">Sin worklogs.</div></td></tr>';
+          return;
+        }
+        el.worklogBody.innerHTML = rows.map((w) => {
+          const my = mine(w.author);
+          const author = w.author && w.author.displayName ? w.author.displayName : 'Sin autor';
+          const date = TimeService.dtLabel(w.started || w.created || new Date());
+          const act = activityOf(w);
+          const mins = `${minutesOf(w)}m`;
+          const actions = my
+            ? `<button class="btn" data-act="edit-worklog" data-id="${escapeHtml(String(w.id))}">Editar</button> <button class="btn danger" data-act="del-worklog" data-id="${escapeHtml(String(w.id))}">Eliminar</button>`
+            : '<span class="pill">Solo lectura</span>';
+          return `<tr><td>${escapeHtml(date)}</td><td>${escapeHtml(act)}</td><td>${escapeHtml(mins)}</td><td>${escapeHtml(author)}</td><td>${actions}</td></tr>`;
+        }).join('');
+      }
+
+      function suggestionFor(issueKey) {
+        const comments = state.commentsByIssue[issueKey] || [];
+        const worklogs = state.worklogsByIssue[issueKey] || [];
+        if (!comments.length || !state.me) return null;
+        const mineComments = comments
+          .filter((c) => mine(c.author))
+          .filter((c) => Date.now() - new Date(c.created).getTime() <= SUGGESTION_MS);
+        for (const c of mineComments) {
+          const cTs = new Date(c.created).getTime();
+          const posterior = worklogs.some((w) => mine(w.author) && new Date(w.started || w.created || 0).getTime() >= cTs);
+          if (!posterior) {
+            const act = activityFromText(commentText(c)) || 'Seguimiento';
+            const mins = Math.max(5, Math.min(480, TimeService.businessMinutesBetween(new Date(c.created), new Date())));
+            return { commentId: c.id, created: c.created, activity: act, minutes: mins };
+          }
+        }
+        return null;
+      }
+
+      function renderSuggestion(issueKey) {
+        state.suggestion = suggestionFor(issueKey);
+        if (!state.suggestion) {
+          el.suggestionBox.className = 'empty';
+          el.suggestionBox.textContent = 'No hay sugerencias pendientes.';
+          el.applySugActBtn.disabled = true;
+          el.applySugTimeBtn.disabled = true;
+          return;
+        }
+        const s = state.suggestion;
+        el.suggestionBox.className = 'msg show info';
+        el.suggestionBox.innerHTML = `Comentario pendiente detectado.<br>Actividad: <strong>${escapeHtml(s.activity)}</strong><br>Tiempo: <strong>${s.minutes} min</strong><br>Fecha comentario: ${escapeHtml(TimeService.dtLabel(s.created))}`;
+        el.applySugActBtn.disabled = false;
+        el.applySugTimeBtn.disabled = false;
+      }
+
+      function renderTimeline(issueKey) {
+        const logs = (state.worklogsByIssue[issueKey] || []).filter((w) => mine(w.author));
+        if (!logs.length) {
+          el.timelineBox.className = 'empty';
+          el.timelineBox.textContent = 'Sin registros propios.';
+          el.ganttBox.className = 'empty';
+          el.ganttBox.textContent = 'Sin registros propios.';
+          return;
+        }
+        const asc = sortDesc(logs, (w) => w.started || w.created).reverse();
+        const start = Math.min(...asc.map((w) => new Date(w.started || w.created).getTime()));
+        const end = Math.max(...asc.map((w) => new Date(w.started || w.created).getTime() + minutesOf(w) * 60000));
+        const range = Math.max(1, end - start);
+
+        el.timelineBox.className = '';
+        el.timelineBox.innerHTML = asc.map((w) => {
+          const st = new Date(w.started || w.created).getTime();
+          const dur = Math.max(60000, minutesOf(w) * 60000);
+          const left = ((st - start) / range) * 100;
+          const width = Math.max(2, (dur / range) * 100);
+          const meta = `${activityOf(w)} | ${minutesOf(w)}m | ${TimeService.dtLabel(st)}`;
+          return `<div class="timeline-item"><div class="meta"><span>${escapeHtml(TimeService.dtLabel(st))}</span><span>${escapeHtml(activityOf(w))} (${minutesOf(w)}m)</span></div><div class="track" title="${escapeHtml(meta)}"><span class="bar" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;"></span></div></div>`;
+        }).join('');
+
+        const grouped = {};
+        asc.forEach((w) => {
+          const a = activityOf(w);
+          grouped[a] = (grouped[a] || 0) + minutesOf(w);
+        });
+        const entries = Object.entries(grouped).map(([activity, minutes]) => ({ activity, minutes })).sort((a, b) => b.minutes - a.minutes);
+        const max = entries[0] ? entries[0].minutes : 1;
+        el.ganttBox.className = '';
+        el.ganttBox.innerHTML = entries.map((it) => {
+          const width = Math.max(3, (it.minutes / max) * 100);
+          return `<div class="gantt-row" title="${escapeHtml(`${it.activity}: ${it.minutes}m`)}"><div>${escapeHtml(it.activity)}</div><div class="track"><span class="bar" style="left:0;width:${width.toFixed(2)}%;"></span></div><div style="text-align:right;color:#5f7287;">${it.minutes}m</div></div>`;
+        }).join('');
+      }
+
+      function renderIssueData() {
+        const key = state.selectedIssueKey;
+        if (!key) {
+          renderComments('');
+          renderWorklogs('');
+          renderSuggestion('');
+          renderTimeline('');
+          return;
+        }
+        renderComments(key);
+        renderWorklogs(key);
+        renderSuggestion(key);
+        renderTimeline(key);
+      }
+
+      function renderDashboard() {
+        el.todayTotal.textContent = `${state.dash.today}m`;
+        el.weekTotal.textContent = `${state.dash.week}m`;
+        el.issueCount.textContent = String(state.dash.issueCount);
+        el.dashMeta.textContent = state.dash.refreshedAt ? `Actualizado: ${TimeService.dtLabel(state.dash.refreshedAt)}` : 'Sin datos.';
+        if (!state.dash.logs.length) {
+          el.recentBox.className = 'empty';
+          el.recentBox.textContent = 'Sin historial reciente.';
+          return;
+        }
+        el.recentBox.className = '';
+        el.recentBox.innerHTML = state.dash.logs.slice(0, 15).map((w) => {
+          const line = `${w.issueKey} | ${activityOf(w)}`;
+          const right = `${minutesOf(w)}m - ${TimeService.dtLabel(w.started || w.created)}`;
+          return `<div class="row" style="justify-content:space-between;border-bottom:1px solid #eef3f9;padding:6px 0;"><span style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(line)}</span><span class="muted">${escapeHtml(right)}</span></div>`;
+        }).join('');
+      }
+
+      function normalizeSchool(summary) {
+        const raw = String(summary || '').trim();
+        if (!raw) return 'SIN_COLEGIO';
+        const clean = raw.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\[[^\]]+\]/g, ' ').replace(/\s+/g, ' ').trim().toUpperCase();
+        if (!clean) return 'SIN_COLEGIO';
+        return (clean.split(/\s*[-|:;/]\s*/)[0] || clean).slice(0, 80).trim() || 'SIN_COLEGIO';
+      }
+
+      function uniqueStrings(list) {
+        const seen = new Set();
+        const out = [];
+        (list || []).forEach((v) => {
+          const t = String(v || '').trim();
+          if (!t) return;
+          const k = t.toLowerCase();
+          if (seen.has(k)) return;
+          seen.add(k);
+          out.push(t);
+        });
+        return out;
+      }
+
+      function xlsxTokens(text) {
+        const src = String(text || '');
+        const rg = /([A-Za-z0-9_\-./%() ]+\.xlsx)\b/gi;
+        const out = [];
+        let m = rg.exec(src);
+        while (m) {
+          out.push(m[1].trim());
+          m = rg.exec(src);
+        }
+        return uniqueStrings(out);
+      }
+
+      function renderReport() {
+        const g = state.report.grouped || [];
+        el.exportReportBtn.disabled = !g.length;
+        if (!g.length) {
+          el.reportBody.innerHTML = '<tr><td colspan="4"><div class="empty">Sin resultados.</div></td></tr>';
+          if (!(state.report.detail || []).length) el.reportMeta.textContent = 'Sin reporte.';
+          return;
+        }
+        el.reportBody.innerHTML = g.map((it) => `<tr><td>${escapeHtml(it.colegio)}</td><td>${it.tickets}</td><td>${it.comentarios}</td><td>${it.adjuntos_xlsx}</td></tr>`).join('');
+        el.reportMeta.textContent = `Detalle detectado: ${state.report.detail.length} comentarios.`;
+      }
+
+      async function mapLimit(items, limit, fn) {
+        const size = Math.max(1, Math.min(limit, items.length));
+        let idx = 0;
+        const workers = Array.from({ length: size }, async () => {
+          while (true) {
+            const cur = idx;
+            idx += 1;
+            if (cur >= items.length) break;
+            await fn(items[cur], cur);
+          }
+        });
+        await Promise.all(workers);
+      }
+
+      async function refreshDashboard() {
+        if (!state.connected || !state.issues.length) {
+          state.dash = { logs: [], today: 0, week: 0, issueCount: 0, refreshedAt: null };
+          renderDashboard();
+          return;
+        }
+        await mapLimit(state.issues.map((i) => i.key), 4, async (key) => {
+          try {
+            const payload = await JiraService.worklogs(key);
+            const list = Array.isArray(payload.worklogs) ? payload.worklogs : [];
+            state.worklogsByIssue[key] = sortDesc(list, (w) => w.started || w.created || '');
+          } catch (_e) {
+            if (!state.worklogsByIssue[key]) state.worklogsByIssue[key] = [];
+          }
+        });
+        const all = [];
+        const today = TimeService.startOfToday().getTime();
+        const week = TimeService.startOfWeek().getTime();
+        let todayMin = 0;
+        let weekMin = 0;
+        const issueSet = new Set();
+        state.issues.forEach((issue) => {
+          (state.worklogsByIssue[issue.key] || []).forEach((w) => {
+            if (!mine(w.author)) return;
+            const ts = new Date(w.started || w.created || 0).getTime();
+            const mins = minutesOf(w);
+            if (ts >= today) todayMin += mins;
+            if (ts >= week) weekMin += mins;
+            issueSet.add(issue.key);
+            all.push(Object.assign({}, w, { issueKey: issue.key }));
+          });
+        });
+        state.dash = {
+          logs: sortDesc(all, (w) => w.started || w.created || ''),
+          today: todayMin,
+          week: weekMin,
+          issueCount: issueSet.size,
+          refreshedAt: new Date()
+        };
+        renderDashboard();
+      }
+      async function generateReport() {
+        if (!state.connected || !state.issues.length) {
+          showMsg('error', 'No hay tickets cargados para generar reporte.');
+          return;
+        }
+        showMsg('info', 'Generando reporte de comentarios...');
+        const detail = [];
+        await mapLimit(state.issues, 4, async (issue) => {
+          let comments = state.commentsByIssue[issue.key];
+          if (!comments) {
+            try {
+              const payload = await JiraService.comments(issue.key);
+              comments = sortDesc(Array.isArray(payload.comments) ? payload.comments : [], (c) => c.created || '');
+              state.commentsByIssue[issue.key] = comments;
+            } catch (_e) {
+              comments = [];
+            }
+          }
+          const issueXlsx = uniqueStrings((issue.attachments || []).map((a) => (a && a.filename ? String(a.filename) : '')).filter((name) => /\.xlsx$/i.test(name)));
+          comments.forEach((c) => {
+            const text = commentText(c);
+            if (!text.toLowerCase().includes('plantilla')) return;
+            const merged = uniqueStrings([ ...xlsxTokens(text), ...issueXlsx ]);
+            if (!merged.length) return;
+            detail.push({
+              colegio: normalizeSchool(issue.summary),
+              issue_key: issue.key,
+              issue_summary: issue.summary || '',
+              comment_id: c.id,
+              author: c.author && c.author.displayName ? c.author.displayName : '',
+              created: TimeService.dtLabel(c.created),
+              actividad_sugerida: activityFromText(text),
+              adjuntos_xlsx: merged.join(' | '),
+              comentario: text.replace(/\s+/g, ' ').trim().slice(0, 240)
+            });
+          });
+        });
+        const map = {};
+        detail.forEach((row) => {
+          const k = row.colegio || 'SIN_COLEGIO';
+          if (!map[k]) map[k] = { colegio: k, ticketsSet: new Set(), comentarios: 0, adjuntos: 0 };
+          map[k].ticketsSet.add(row.issue_key);
+          map[k].comentarios += 1;
+          map[k].adjuntos += String(row.adjuntos_xlsx || '').split('|').filter((x) => x.trim()).length;
+        });
+        const grouped = Object.values(map).map((it) => ({
+          colegio: it.colegio,
+          tickets: it.ticketsSet.size,
+          comentarios: it.comentarios,
+          adjuntos_xlsx: it.adjuntos
+        })).sort((a, b) => b.comentarios - a.comentarios);
+        state.report = { detail, grouped };
+        renderReport();
+        showMsg(detail.length ? 'ok' : 'info', detail.length ? `Reporte generado (${detail.length} comentarios detectados).` : 'No se detectaron comentarios con plantilla + .xlsx.');
+      }
+
+      function exportReport() {
+        if (!state.report.detail.length) {
+          showMsg('error', 'Primero genera el reporte.');
+          return;
+        }
+        if (!window.XLSX || !window.XLSX.utils) {
+          showMsg('error', 'No se pudo cargar libreria XLSX en el navegador.');
+          return;
+        }
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.report.detail), 'Detalle');
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(state.report.grouped), 'PorColegio');
+        const stamp = TimeService.toInputDate(new Date()).replace(/-/g, '');
+        XLSX.writeFile(wb, `jira_reporte_plantillas_${stamp}.xlsx`);
+      }
+
+      async function loadIssueData(issueKey) {
+        if (!issueKey) return;
+        const [c, w] = await Promise.all([JiraService.comments(issueKey), JiraService.worklogs(issueKey)]);
+        const comments = sortDesc(Array.isArray(c.comments) ? c.comments : [], (x) => x.created || '');
+        const worklogs = sortDesc(Array.isArray(w.worklogs) ? w.worklogs : [], (x) => x.started || x.created || '');
+        state.commentsByIssue[issueKey] = comments;
+        state.worklogsByIssue[issueKey] = worklogs;
+        renderIssueData();
+      }
+
+      async function loadIssues() {
+        const payload = await JiraService.searchIssues();
+        state.issues = parseIssues(payload);
+        renderIssueSelect();
+        if (state.selectedIssueKey) await loadIssueData(state.selectedIssueKey);
+        else renderIssueData();
+      }
+
+      async function createWorklog(issueKey, activity, minutes, explicitStarted = null) {
+        const key = String(issueKey || '').trim();
+        const act = String(activity || '').trim();
+        const mins = Math.max(0, Math.floor(Number(minutes || 0)));
+        if (!key) { showMsg('error', 'Selecciona un ticket.'); return; }
+        if (!act) { showMsg('error', 'Ingresa una actividad.'); return; }
+        if (!mins) { showMsg('error', 'Duracion invalida.'); return; }
+        const started = explicitStarted instanceof Date ? explicitStarted : TimeService.subtractBusinessMinutes(new Date(), mins);
+        const payload = {
+          started: TimeService.jiraDateTime(started),
+          timeSpentSeconds: mins * 60,
+          comment: toAdf(`[${act}] [${TimeService.ddmmyyyy(started)}]`)
+        };
+        await JiraService.addWorklog(key, payload);
+        pushActivity(act);
+        markActivity();
+        timerReset();
+        await loadIssueData(key);
+        await refreshDashboard();
+        showMsg('ok', `Worklog registrado (${TimeService.jiraDuration(mins)}).`);
+      }
+
+      async function updateWorklog(issueKey, worklogId, activity, dateObj, minutes) {
+        const key = String(issueKey || '').trim();
+        const id = String(worklogId || '').trim();
+        const act = String(activity || '').trim();
+        const mins = Math.max(0, Math.floor(Number(minutes || 0)));
+        if (!key || !id || !act || !mins || !(dateObj instanceof Date) || Number.isNaN(dateObj.getTime())) {
+          showMsg('error', 'Datos incompletos para editar worklog.');
+          return;
+        }
+        const payload = {
+          started: TimeService.jiraDateTime(dateObj),
+          timeSpentSeconds: mins * 60,
+          comment: toAdf(`[${act}] [${TimeService.ddmmyyyy(dateObj)}]`)
+        };
+        await JiraService.updateWorklog(key, id, payload);
+        pushActivity(act);
+        markActivity();
+        await loadIssueData(key);
+        await refreshDashboard();
+        showMsg('ok', 'Worklog actualizado.');
+      }
+
+      async function deleteWorklog(issueKey, worklogId) {
+        await JiraService.deleteWorklog(issueKey, worklogId);
+        markActivity();
+        await loadIssueData(issueKey);
+        await refreshDashboard();
+        showMsg('ok', 'Worklog eliminado.');
+      }
+
+      async function connect(cfg, save) {
+        JiraService.setConfig(cfg);
+        const me = await JiraService.myself();
+        state.connected = true;
+        state.config = { url: sanitizeUrl(cfg.url), email: String(cfg.email || '').trim() };
+        state.me = me;
+        if (save) StorageService.saveConfig(cfg);
+        el.tokenInp.value = '';
+        renderTop();
+        await loadIssues();
+        await refreshDashboard();
+      }
+
+      function bind() {
+        el.connectBtn.addEventListener('click', async () => {
+          clearMsg();
+          const cfg = {
+            url: sanitizeUrl(el.urlInp.value),
+            email: String(el.emailInp.value || '').trim(),
+            api_token: String(el.tokenInp.value || '')
+          };
+          if (!cfg.url || !cfg.email || !cfg.api_token) { showMsg('error', 'Completa URL, email y API token.'); return; }
+          try { await connect(cfg, true); showMsg('ok', 'Conexion correcta a Jira Cloud.'); }
+          catch (e) { state.connected = false; renderTop(); applyError(e, 'No fue posible conectar.'); }
+        });
+
+        el.disconnectBtn.addEventListener('click', () => {
+          StorageService.del(STORAGE.config);
+          state.connected = false;
+          state.config = null;
+          state.me = null;
+          state.issues = [];
+          state.selectedIssueKey = '';
+          state.commentsByIssue = {};
+          state.worklogsByIssue = {};
+          state.report = { detail: [], grouped: [] };
+          state.dash = { logs: [], today: 0, week: 0, issueCount: 0, refreshedAt: null };
+          renderTop();
+          renderIssueSelect();
+          renderIssueData();
+          renderDashboard();
+          renderReport();
+          clearMsg();
+        });
+
+        el.refreshIssuesBtn.addEventListener('click', async () => {
+          if (!state.connected) return;
+          try { await loadIssues(); await refreshDashboard(); showMsg('ok', 'Tickets actualizados.'); }
+          catch (e) { applyError(e, 'No se pudieron recargar tickets.'); }
+        });
+
+        el.issueSel.addEventListener('change', async () => {
+          state.selectedIssueKey = String(el.issueSel.value || '');
+          uiStateSave();
+          if (!state.selectedIssueKey) { renderIssueData(); return; }
+          try { await loadIssueData(state.selectedIssueKey); }
+          catch (e) { applyError(e, `No se pudo cargar detalle de ${state.selectedIssueKey}.`); }
+          renderCompact();
+        });
+
+        el.activityInp.addEventListener('input', () => { state.activity = String(el.activityInp.value || ''); uiStateSave(); });
+        el.minutesInp.addEventListener('input', () => {
+          state.durationMinutes = Math.max(1, Math.floor(Number(el.minutesInp.value || 0)));
+          el.minutesInp.value = String(state.durationMinutes);
+          uiStateSave();
+          renderDurationPill();
+        });
+
+        el.registerBtn.addEventListener('click', async () => {
+          state.activity = String(el.activityInp.value || '').trim();
+          state.durationMinutes = Math.max(1, Math.floor(Number(el.minutesInp.value || 0)));
+          uiStateSave();
+          renderDurationPill();
+          try { await createWorklog(state.selectedIssueKey, state.activity, state.durationMinutes); }
+          catch (e) { applyError(e, 'No se pudo registrar worklog.'); }
+        });
+
+        el.startBtn.addEventListener('click', timerStart);
+        el.pauseBtn.addEventListener('click', timerPause);
+        el.resetBtn.addEventListener('click', timerReset);
+        el.applyTimerBtn.addEventListener('click', () => {
+          applyTimerToMinutes();
+          showMsg('info', `Duracion tomada del timer: ${state.durationMinutes} minutos.`);
+        });
+
+        el.applySugActBtn.addEventListener('click', () => {
+          if (!state.suggestion) return;
+          state.activity = state.suggestion.activity;
+          el.activityInp.value = state.activity;
+          uiStateSave();
+        });
+
+        el.applySugTimeBtn.addEventListener('click', () => {
+          if (!state.suggestion) return;
+          state.durationMinutes = state.suggestion.minutes;
+          el.minutesInp.value = String(state.durationMinutes);
+          uiStateSave();
+          renderDurationPill();
+        });
+
+        el.refreshDashBtn.addEventListener('click', async () => {
+          try { await refreshDashboard(); showMsg('ok', 'Dashboard actualizado.'); }
+          catch (e) { applyError(e, 'No se pudo actualizar dashboard.'); }
+        });
+
+        el.genReportBtn.addEventListener('click', async () => {
+          try { await generateReport(); }
+          catch (e) { applyError(e, 'No se pudo generar reporte.'); }
+        });
+        el.exportReportBtn.addEventListener('click', exportReport);
+
+        el.commentsBox.addEventListener('click', (ev) => {
+          const btn = ev.target;
+          if (!btn || btn.dataset.act !== 'reg-from-comment') return;
+          const commentId = btn.dataset.id;
+          const comments = state.commentsByIssue[state.selectedIssueKey] || [];
+          const c = comments.find((x) => String(x.id) === String(commentId));
+          if (!c) return;
+          const mins = Math.max(5, Math.min(480, TimeService.businessMinutesBetween(new Date(c.created), new Date())));
+          state.regCtx = { issueKey: state.selectedIssueKey, commentId: String(c.id) };
+          el.regActInp.value = activityFromText(commentText(c)) || 'Seguimiento';
+          el.regMinInp.value = String(mins);
+          el.regModalMeta.textContent = `${state.selectedIssueKey} | ${TimeService.dtLabel(c.created)}`;
+          el.regModal.classList.add('show');
+        });
+
+        el.regModalCancelBtn.addEventListener('click', () => { state.regCtx = null; el.regModal.classList.remove('show'); });
+        el.regModalOkBtn.addEventListener('click', async () => {
+          if (!state.regCtx) { el.regModal.classList.remove('show'); return; }
+          const issueKey = state.regCtx.issueKey;
+          const activity = String(el.regActInp.value || '').trim();
+          const mins = Math.max(1, Math.floor(Number(el.regMinInp.value || 0)));
+          el.regModal.classList.remove('show');
+          state.regCtx = null;
+          try { await createWorklog(issueKey, activity, mins); }
+          catch (e) { applyError(e, 'No se pudo registrar actividad desde comentario.'); }
+        });
+
+        el.worklogBody.addEventListener('click', async (ev) => {
+          const btn = ev.target;
+          if (!btn || !btn.dataset.act) return;
+          const action = btn.dataset.act;
+          const id = btn.dataset.id;
+          const key = state.selectedIssueKey;
+          if (!key || !id) return;
+          const worklogs = state.worklogsByIssue[key] || [];
+          const w = worklogs.find((x) => String(x.id) === String(id));
+          if (!w) return;
+          if (action === 'edit-worklog') {
+            state.editCtx = { issueKey: key, id: String(id) };
+            const d = new Date(w.started || w.created || new Date());
+            el.editMeta.textContent = `${key} | Worklog ${id}`;
+            el.editActInp.value = activityOf(w);
+            el.editDateInp.value = TimeService.toInputDate(d);
+            el.editTimeInp.value = TimeService.toInputTime(d);
+            el.editMinInp.value = String(minutesOf(w));
+            el.editModal.classList.add('show');
+          }
+          if (action === 'del-worklog') {
+            if (!window.confirm(`Eliminar worklog ${id}?`)) return;
+            try { await deleteWorklog(key, id); }
+            catch (e) { applyError(e, 'No se pudo eliminar worklog.'); }
+          }
+        });
+
+        el.editCancelBtn.addEventListener('click', () => { state.editCtx = null; el.editModal.classList.remove('show'); });
+        el.editSaveBtn.addEventListener('click', async () => {
+          if (!state.editCtx) { el.editModal.classList.remove('show'); return; }
+          const act = String(el.editActInp.value || '').trim();
+          const mins = Math.max(1, Math.floor(Number(el.editMinInp.value || 0)));
+          const date = String(el.editDateInp.value || '');
+          const time = String(el.editTimeInp.value || '08:30');
+          const dt = new Date(`${date}T${time}:00`);
+          if (!act || !date || Number.isNaN(dt.getTime()) || !mins) { showMsg('error', 'Completa actividad, fecha, hora y duracion.'); return; }
+          const { issueKey, id } = state.editCtx;
+          state.editCtx = null;
+          el.editModal.classList.remove('show');
+          try { await updateWorklog(issueKey, id, act, dt, mins); }
+          catch (e) { applyError(e, 'No se pudo actualizar worklog.'); }
+        });
+
+        el.editDeleteBtn.addEventListener('click', async () => {
+          if (!state.editCtx) return;
+          const { issueKey, id } = state.editCtx;
+          state.editCtx = null;
+          el.editModal.classList.remove('show');
+          if (!window.confirm(`Eliminar worklog ${id}?`)) return;
+          try { await deleteWorklog(issueKey, id); }
+          catch (e) { applyError(e, 'No se pudo eliminar worklog.'); }
+        });
+
+        el.compactBtn.addEventListener('click', () => {
+          state.compact = !state.compact;
+          uiStateSave();
+          renderCompact();
+        });
+        el.floatExpandBtn.addEventListener('click', () => {
+          state.compact = false;
+          uiStateSave();
+          renderCompact();
+        });
+        el.floatStartBtn.addEventListener('click', timerStart);
+        el.floatPauseBtn.addEventListener('click', timerPause);
+      }
+
+      async function autoReconnect() {
+        const cfg = StorageService.getConfig();
+        if (!cfg) { renderTop(); return; }
+        el.urlInp.value = cfg.url || '';
+        el.emailInp.value = cfg.email || '';
+        try {
+          await connect(cfg, false);
+          showMsg('ok', 'Reconectado automaticamente.');
+        } catch (e) {
+          state.connected = false;
+          renderTop();
+          applyError(e, 'No se pudo reconectar automaticamente.');
+        }
+      }
+
+      function bootstrap() {
+        cacheElements();
+        bind();
+        uiStateLoad();
+        timerLoad();
+
+        el.activityInp.value = state.activity;
+        el.minutesInp.value = String(state.durationMinutes);
+        renderActivitiesList();
+        renderDurationPill();
+        renderTop();
+        renderIssueData();
+        renderDashboard();
+        renderReport();
+        renderTimer();
+        renderCompact();
+        renderIdle();
+
+        window.setInterval(() => { renderTimer(); renderCompact(); renderIdle(); }, 1000);
+        window.setInterval(renderIdle, 60000);
+
+        autoReconnect();
+      }
+
+      bootstrap();
+    })();
+  </script>
+</body>
+</html>

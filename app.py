@@ -22,6 +22,7 @@ from santillana_format.processor import (
     SHEET_NAME,
     process_excel,
 )
+from santillana_format.jira_focus_web import render_jira_focus_web
 from santillana_format.profesores import (
     DEFAULT_CICLO_ID as PROFESORES_CICLO_ID_DEFAULT,
     export_profesores_excel,
@@ -64,13 +65,14 @@ st.text_input(
     key="shared_pegasus_token",
     help="Se usa en todas las funciones. Si queda vacio, se usa PEGASUS_TOKEN.",
 )
-tab_clases, tab_profesores_clases, tab_alumnos, tab_clases_api, tab_clases_alumnos = st.tabs(
+tab_clases, tab_profesores_clases, tab_alumnos, tab_clases_api, tab_clases_alumnos, tab_jira_focus = st.tabs(
     [
         "Crear clases",
         "Profesores con clases",
         "Alumnos registrados",
         "Clases API",
         "Clases + alumnos",
+        "Jira Focus Web",
     ]
 )
 
@@ -415,6 +417,32 @@ def _grupo_sort_key(grupo_clave: str, grupo_nombre: str) -> Tuple[int, str]:
     if len(clave) == 1 and clave.isalpha():
         return 0, clave
     return 1, (grupo_nombre or "").strip().upper()
+
+
+def _normalize_plain_text(value: object) -> str:
+    text = str(value or "").strip().upper()
+    text = unicodedata.normalize("NFD", text)
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+    return text
+
+
+def _is_quinto_secundaria_z(
+    nivel_id: Optional[int],
+    nivel_name: object,
+    grado_name: object,
+    seccion: object,
+) -> bool:
+    seccion_txt = _normalize_plain_text(seccion)
+    if seccion_txt != "Z":
+        return False
+    nivel_txt = _normalize_plain_text(nivel_name)
+    grado_txt = _normalize_plain_text(grado_name)
+    is_secundaria = int(nivel_id or 0) == 40 or "SECUNDARIA" in nivel_txt
+    if not is_secundaria:
+        return False
+    if any(tag in grado_txt for tag in ("QUINTO", "QUINTA", "5TO", "5TA")):
+        return True
+    return bool(re.search(r"(^|\\D)5(\\D|$)", grado_txt))
 
 
 def _delete_clase_gestion_escolar(
@@ -1323,10 +1351,20 @@ with tab_clases_alumnos:
         "Usa el endpoint nivelesGradosGrupos, luego consulta alumnos por cada "
         "nivel/grado/grupo y genera un Excel."
     )
+    st.caption(
+        "Nota: este proceso puede incluir la seccion Z. "
+        "Si vas a compartir la plantilla, revisa ese contenido."
+    )
     solo_activos_censo = st.checkbox(
         "Solo alumnos activos en censo",
         value=False,
         key="clases_alumnos_excel_solo_activos",
+    )
+    excluir_5to_sec_z = st.checkbox(
+        "Excluir 5to Sec Z del Excel",
+        value=True,
+        key="clases_alumnos_excel_excluir_5to_sec_z",
+        help="Cuando esta activo, no se incluye la seccion Z de 5to de Secundaria.",
     )
     if st.button(
         "Generar Excel alumnos (Censo)",
@@ -1442,6 +1480,24 @@ with tab_clases_alumnos:
                 ),
             ),
         )
+        if excluir_5to_sec_z:
+            before_count = len(contexts)
+            contexts = [
+                ctx
+                for ctx in contexts
+                if not _is_quinto_secundaria_z(
+                    int(ctx.get("nivel_id", 0)),
+                    ctx.get("nivel", ""),
+                    ctx.get("grado", ""),
+                    ctx.get("grupo_clave") or ctx.get("grupo") or "",
+                )
+            ]
+            excluded_count = before_count - len(contexts)
+            if excluded_count > 0:
+                st.info(f"Se excluyeron {excluded_count} combinaciones de 5to Sec Z.")
+            if not contexts:
+                st.warning("No quedaron combinaciones para consultar despues del filtro.")
+                st.stop()
 
         by_alumno_id: Dict[str, Dict[str, str]] = {}
         by_persona_id: Dict[str, Dict[str, str]] = {}
@@ -1602,6 +1658,13 @@ with tab_clases_alumnos:
                     )
                     grupo_clave = str(grupo_info.get("grupoClave") or "")
                     grupo_nombre = str(grupo_info.get("grupo") or "")
+                    if excluir_5to_sec_z and _is_quinto_secundaria_z(
+                        int(nivel_id_fb),
+                        nivel_name_fb,
+                        grado_name_fb,
+                        grupo_clave or grupo_nombre,
+                    ):
+                        continue
                     login, password = _resolve_alumno_login_password(
                         item=item,
                         by_alumno_id=by_alumno_id,
@@ -1691,3 +1754,11 @@ with tab_clases_alumnos:
             restantes = len(errores_excel) - 20
             if restantes > 0:
                 st.caption(f"... y {restantes} errores más.")
+
+with tab_jira_focus:
+    st.subheader("Jira Focus Web")
+    st.caption(
+        "Modulo frontend para Jira Cloud: conexion, timer laboral, worklogs, "
+        "historial editable, comentarios, sugerencias y reportes."
+    )
+    render_jira_focus_web()

@@ -422,7 +422,7 @@
         </div>
       </div>
 
-      <div class="card" style="margin-top:10px;">
+      <div id="dashboardCard" class="card hide" style="margin-top:10px;">
         <h3>Dashboard global</h3>
         <div class="grid3">
           <div class="card" style="padding:8px;">
@@ -461,14 +461,14 @@
         </div>
       </div>
 
-      <div class="grid2" style="margin-top:10px;">
+      <div style="margin-top:10px;">
         <div class="card">
           <h3>Timeline / Gantt</h3>
           <div id="timelineBox" class="empty">Sin registros.</div>
           <h4 style="margin-top:10px;">Gantt por actividad</h4>
           <div id="ganttBox" class="empty">Sin registros.</div>
         </div>
-        <div class="card">
+        <div id="reportCard" class="card hide">
           <h3>Reporte plantilla + .xlsx</h3>
           <div class="muted">Detecta comentarios con "plantilla" y adjuntos/links .xlsx. Agrupa por colegio segun resumen normalizado.</div>
           <div class="row" style="margin-top:10px;">
@@ -564,6 +564,10 @@
       const LABOR = { startHour: 8, startMinute: 30, endHour: 18, endMinute: 0, dayMinutes: 570, weekMinutes: 2850 };
       const INACTIVITY_MS = 2 * 60 * 60 * 1000;
       const SUGGESTION_MS = 3 * 24 * 60 * 60 * 1000;
+      const FEATURES = {
+        dashboard: false,
+        report: false
+      };
 
       const state = {
         connected: false,
@@ -1864,6 +1868,7 @@
       }
 
       function renderDashboard() {
+        if (!FEATURES.dashboard) return;
         el.todayTotal.textContent = `${state.dash.today}m`;
         el.weekTotal.textContent = `${state.dash.week}m`;
         el.issueCount.textContent = String(state.dash.issueCount);
@@ -1916,6 +1921,7 @@
       }
 
       function renderReport() {
+        if (!FEATURES.report) return;
         const g = state.report.grouped || [];
         el.exportReportBtn.disabled = !g.length;
         if (!g.length) {
@@ -1942,6 +1948,9 @@
       }
 
       async function refreshDashboard() {
+        if (!FEATURES.dashboard) {
+          return;
+        }
         if (!state.connected || !state.issues.length) {
           state.dash = { logs: [], today: 0, week: 0, issueCount: 0, refreshedAt: null };
           renderDashboard();
@@ -1983,6 +1992,9 @@
         renderDashboard();
       }
       async function generateReport() {
+        if (!FEATURES.report) {
+          return;
+        }
         if (!state.connected || !state.issues.length) {
           showMsg('error', 'No hay tickets cargados para generar reporte.');
           return;
@@ -2039,6 +2051,9 @@
       }
 
       function exportReport() {
+        if (!FEATURES.report) {
+          return;
+        }
         if (!state.report.detail.length) {
           showMsg('error', 'Primero genera el reporte.');
           return;
@@ -2494,16 +2509,20 @@
           renderDurationPill();
         });
 
-        el.refreshDashBtn.addEventListener('click', async () => {
-          try { await refreshDashboard(); showMsg('ok', 'Dashboard actualizado.'); }
-          catch (e) { applyError(e, 'No se pudo actualizar dashboard.'); }
-        });
+        if (FEATURES.dashboard) {
+          el.refreshDashBtn.addEventListener('click', async () => {
+            try { await refreshDashboard(); showMsg('ok', 'Dashboard actualizado.'); }
+            catch (e) { applyError(e, 'No se pudo actualizar dashboard.'); }
+          });
+        }
 
-        el.genReportBtn.addEventListener('click', async () => {
-          try { await generateReport(); }
-          catch (e) { applyError(e, 'No se pudo generar reporte.'); }
-        });
-        el.exportReportBtn.addEventListener('click', exportReport);
+        if (FEATURES.report) {
+          el.genReportBtn.addEventListener('click', async () => {
+            try { await generateReport(); }
+            catch (e) { applyError(e, 'No se pudo generar reporte.'); }
+          });
+          el.exportReportBtn.addEventListener('click', exportReport);
+        }
 
         el.commentsBox.addEventListener('click', (ev) => {
           const btn = ev.target;

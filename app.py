@@ -55,7 +55,7 @@ CENSO_PLANTILLA_EDICION_URL = (
 GESTION_ESCOLAR_CICLO_ID_DEFAULT = 207
 
 
-st.set_page_config(page_title="Generador de Plantilla", layout="wide")
+st.set_page_config(page_title="Generador de Plantilla", layout="centered")
 st.markdown("**Menu principal**")
 menu_option = st.radio(
     "Menu",
@@ -65,23 +65,6 @@ menu_option = st.radio(
     key="main_top_menu",
 )
 if menu_option == "Jira Focus Web":
-    st.markdown(
-        """
-        <style>
-        .block-container {
-            max-width: 100% !important;
-            padding-top: 0.4rem !important;
-            padding-left: 0.6rem !important;
-            padding-right: 0.6rem !important;
-            padding-bottom: 0.4rem !important;
-        }
-        div[data-testid="stVerticalBlock"] {
-            gap: 0.4rem;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
     render_jira_focus_web(height=4600)
     st.stop()
 st.title("Si estás acá es porque eres flojo")

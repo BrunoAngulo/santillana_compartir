@@ -3,7 +3,7 @@ import streamlit as st
 from santillana_format.jira_focus_web import render_jira_focus_web
 
 
-st.set_page_config(page_title="Jira Focus Web", layout="wide")
+st.set_page_config(page_title="Jira Focus Web", layout="centered")
 
 st.title("Jira Focus Web")
 st.caption(

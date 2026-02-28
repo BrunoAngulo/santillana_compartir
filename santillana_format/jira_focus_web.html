@@ -139,6 +139,11 @@
       background: #fff;
       color: var(--text);
     }
+    .inp[readonly] {
+      background: #f4f8fd;
+      color: #2b445a;
+      border-color: #c6d7e8;
+    }
     .inp:focus, .sel:focus, .txt:focus {
       outline: none;
       border-color: #75a8d5;
@@ -198,6 +203,78 @@
     .track { height: 10px; border-radius: 999px; background: #edf3f9; position: relative; overflow: hidden; }
     .bar { position: absolute; top: 0; bottom: 0; border-radius: 999px; background: linear-gradient(90deg, #1d74c7, #4ab2dc); }
     .timeline-item { border: 1px solid var(--line); border-radius: 9px; padding: 7px; margin-bottom: 8px; }
+    .timeline-axis {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .timeline-ticket-list {
+      display: grid;
+      gap: 8px;
+    }
+    .timeline-ticket-row {
+      display: grid;
+      grid-template-columns: 180px 1fr 70px;
+      gap: 8px;
+      align-items: center;
+    }
+    .timeline-ticket-label {
+      font-size: 12px;
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .timeline-ticket-track {
+      position: relative;
+      height: 16px;
+      border: 1px solid #dce7f2;
+      border-radius: 999px;
+      background: linear-gradient(180deg, #f4f8fc 0%, #edf3fa 100%);
+      overflow: hidden;
+    }
+    .timeline-ticket-segment {
+      position: absolute;
+      top: 2px;
+      bottom: 2px;
+      border-radius: 999px;
+      min-width: 2px;
+      opacity: 0.92;
+    }
+    .timeline-ticket-total {
+      font-size: 11px;
+      color: var(--muted);
+      text-align: right;
+      white-space: nowrap;
+    }
+    .activity-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+    }
+    .activity-legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid #d7e3f1;
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 11px;
+      color: #334f68;
+      background: #f8fbff;
+      max-width: 100%;
+    }
+    .activity-legend-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      flex: 0 0 auto;
+    }
     .gantt-row { display: grid; grid-template-columns: 190px 1fr 60px; gap: 7px; align-items: center; margin-bottom: 7px; font-size: 12px; }
     .recent-line {
       font-size: 12px;
@@ -243,6 +320,11 @@
       overflow: auto;
     }
     .hide { display: none !important; }
+    #timerCard,
+    #compactBtn,
+    #floatBox {
+      display: none !important;
+    }
     details.debug-panel {
       padding: 0;
     }
@@ -287,6 +369,8 @@
     @media (max-width: 980px) {
       .grid2, .grid3 { grid-template-columns: 1fr; }
       .gantt-row { grid-template-columns: 1fr; }
+      .timeline-ticket-row { grid-template-columns: 1fr; }
+      .timeline-ticket-total { text-align: left; }
       .float { left: 10px; right: 10px; width: auto; }
       .topbar { gap: 10px; }
       #userPill { max-width: 100%; }
@@ -384,8 +468,16 @@
             <select class="sel" id="issueSel"></select>
           </div>
           <div>
-            <label for="activityInp">Actividad</label>
-            <input class="inp" id="activityInp" type="text" list="activityList" placeholder="Revision de plantilla">
+            <label for="activityTypeSel">Tipo de actividad (oficial)</label>
+            <select class="sel" id="activityTypeSel"></select>
+            <div style="margin-top:8px;">
+              <label for="activityDueInp">Fecha fin (actividad)</label>
+              <input class="inp" id="activityDueInp" type="date">
+            </div>
+            <div style="margin-top:8px;">
+              <label for="activityInp">Actividad final</label>
+              <input class="inp" id="activityInp" type="text" readonly>
+            </div>
             <datalist id="activityList"></datalist>
           </div>
           <div>
@@ -399,8 +491,8 @@
         </div>
       </div>
 
-      <div class="grid2" style="margin-top:10px;">
-        <div class="card">
+      <div class="grid2" style="margin-top:10px;grid-template-columns:1fr;">
+        <div id="timerCard" class="card">
           <h3>Cronometro laboral</h3>
           <p class="timer" id="timerVal">00:00:00</p>
           <div class="muted" id="timerState">Estado: inactivo</div>
@@ -564,6 +656,26 @@
       const LABOR = { startHour: 8, startMinute: 30, endHour: 18, endMinute: 0, dayMinutes: 570, weekMinutes: 2850 };
       const INACTIVITY_MS = 2 * 60 * 60 * 1000;
       const SUGGESTION_MS = 3 * 24 * 60 * 60 * 1000;
+      const OFFICIAL_ACTIVITY_TYPES = [
+        'Configuración Agente de Éxito',
+        'Estandarización de plantillas',
+        'Entrega de plantillas DOCENTES Coach/Farmer/Hunter',
+        'Entrega de plantillas ESTUDIANTES Coach/Farmer/Hunter',
+        'Pendiente información',
+        'Integración LQL',
+        'Integración RLP',
+        'Integración LDB',
+        'Integración WeMath',
+        'Integración Pleno',
+        'Configuración de colegio',
+        'Configuración de docentes',
+        'Configuración de estudiantes',
+        'Integración Studio'
+      ];
+      const ACTIVITY_PALETTE = [
+        '#1b78c4', '#1f8f71', '#e07a2f', '#7a57c2', '#c63f69', '#3e8f5b', '#2e7fba',
+        '#aa5d13', '#5f7bca', '#0f8fa8', '#b0453e', '#1d9164', '#8568c8', '#ad4c88'
+      ];
       const FEATURES = {
         dashboard: false,
         report: false
@@ -576,6 +688,8 @@
         issues: [],
         selectedIssueKey: '',
         activity: '',
+        activityType: OFFICIAL_ACTIVITY_TYPES[0],
+        activityDueDate: '',
         durationMinutes: 30,
         commentsByIssue: {},
         worklogsByIssue: {},
@@ -821,6 +935,77 @@
           return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
         }
       };
+
+      function isValidInputDate(value) {
+        const text = String(value || '').trim();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) return false;
+        const d = new Date(`${text}T00:00:00`);
+        return !Number.isNaN(d.getTime()) && TimeService.toInputDate(d) === text;
+      }
+
+      function inputDateToDdmmyyyy(value) {
+        const text = String(value || '').trim();
+        if (!isValidInputDate(text)) return '';
+        const [y, m, d] = text.split('-');
+        return `${d}/${m}/${y}`;
+      }
+
+      function ddmmyyyyToInputDate(value) {
+        const text = String(value || '').trim();
+        const m = text.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+        if (!m) return '';
+        const input = `${m[3]}-${m[2]}-${m[1]}`;
+        return isValidInputDate(input) ? input : '';
+      }
+
+      function buildOfficialActivity(typeName, dueInputDate) {
+        const type = OFFICIAL_ACTIVITY_TYPES.includes(String(typeName || '').trim())
+          ? String(typeName || '').trim()
+          : OFFICIAL_ACTIVITY_TYPES[0];
+        const due = isValidInputDate(dueInputDate) ? dueInputDate : TimeService.toInputDate(new Date());
+        const dueDdmmyyyy = inputDateToDdmmyyyy(due);
+        return `[${type}] [${dueDdmmyyyy}]`;
+      }
+
+      function parseOfficialActivity(text) {
+        const raw = String(text || '').trim();
+        const match = raw.match(/^\[(.+?)\]\s+\[(\d{2}\/\d{2}\/\d{4})\]$/);
+        if (!match) return null;
+        const type = String(match[1] || '').trim();
+        const dueDdmmyyyy = String(match[2] || '').trim();
+        const dueInput = ddmmyyyyToInputDate(dueDdmmyyyy);
+        if (!dueInput || !OFFICIAL_ACTIVITY_TYPES.includes(type)) {
+          return null;
+        }
+        return { type, dueInput };
+      }
+
+      function worklogCommentFromActivity(activityValue, refDate) {
+        const act = String(activityValue || '').trim();
+        if (!act) return '';
+        if (parseOfficialActivity(act)) {
+          return act;
+        }
+        const fallbackDate = TimeService.ddmmyyyy(refDate || new Date());
+        return `[${act}] [${fallbackDate}]`;
+      }
+
+      function hashText(input) {
+        const text = String(input || '');
+        let hash = 0;
+        for (let i = 0; i < text.length; i += 1) {
+          hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+        }
+        return Math.abs(hash);
+      }
+
+      function activityColor(activityName) {
+        const act = String(activityName || '').trim();
+        if (!act) return ACTIVITY_PALETTE[0];
+        const officialIndex = OFFICIAL_ACTIVITY_TYPES.findIndex((name) => name.toLowerCase() === act.toLowerCase());
+        const idx = officialIndex >= 0 ? officialIndex : (hashText(act) % ACTIVITY_PALETTE.length);
+        return ACTIVITY_PALETTE[idx % ACTIVITY_PALETTE.length];
+      }
 
       const OAuthService = {
         async sha256Base64Url(input) {
@@ -1482,7 +1667,7 @@
           'connPill','userPill','refreshIssuesBtn','disconnectBtn','msg','idleMsg',
           'debugLogBox','debugCopyBtn','debugClearBtn',
           'loginView','urlInp','clientIdInp','clientSecretInp','redirectUriInp','callbackUrlInp','connectBtn','processCallbackBtn','clearOAuthBtn',
-          'mainView','issueSel','activityInp','minutesInp','registerBtn','jiraDurationPill','timerVal','timerState','startBtn','pauseBtn',
+          'mainView','issueSel','activityTypeSel','activityDueInp','activityInp','minutesInp','registerBtn','jiraDurationPill','timerVal','timerState','startBtn','pauseBtn',
           'resetBtn','applyTimerBtn','suggestionBox','applySugActBtn','applySugTimeBtn','todayTotal','weekTotal','issueCount','dashMeta',
           'refreshDashBtn','recentBox','commentsBox','worklogBody','timelineBox','ganttBox','genReportBtn','exportReportBtn','reportMeta',
           'reportBody','compactBtn','floatBox','floatIssue','floatTimer','floatState','floatStartBtn','floatPauseBtn','floatExpandBtn',
@@ -1495,6 +1680,8 @@
         StorageService.saveUI({
           selectedIssueKey: state.selectedIssueKey,
           activity: state.activity,
+          activityType: state.activityType,
+          activityDueDate: state.activityDueDate,
           durationMinutes: state.durationMinutes,
           compact: state.compact,
           lastReminderTs: state.lastReminderTs
@@ -1505,6 +1692,19 @@
         const ui = StorageService.getUI();
         state.selectedIssueKey = typeof ui.selectedIssueKey === 'string' ? ui.selectedIssueKey : '';
         state.activity = typeof ui.activity === 'string' ? ui.activity : '';
+        state.activityType = OFFICIAL_ACTIVITY_TYPES.includes(String(ui.activityType || '').trim())
+          ? String(ui.activityType || '').trim()
+          : OFFICIAL_ACTIVITY_TYPES[0];
+        state.activityDueDate = isValidInputDate(ui.activityDueDate)
+          ? String(ui.activityDueDate)
+          : TimeService.toInputDate(new Date());
+        const parsed = parseOfficialActivity(state.activity);
+        if (parsed) {
+          state.activityType = parsed.type;
+          state.activityDueDate = parsed.dueInput;
+        } else {
+          state.activity = buildOfficialActivity(state.activityType, state.activityDueDate);
+        }
         state.durationMinutes = Number.isFinite(Number(ui.durationMinutes)) ? Math.max(1, Math.floor(Number(ui.durationMinutes))) : 30;
         state.compact = !!ui.compact;
         state.lastReminderTs = Number(ui.lastReminderTs || 0);
@@ -1600,6 +1800,36 @@
           opt.value = item;
           el.activityList.appendChild(opt);
         });
+      }
+
+      function syncOfficialActivityToState(saveUi = true) {
+        state.activityType = OFFICIAL_ACTIVITY_TYPES.includes(String(el.activityTypeSel.value || '').trim())
+          ? String(el.activityTypeSel.value || '').trim()
+          : OFFICIAL_ACTIVITY_TYPES[0];
+        state.activityDueDate = isValidInputDate(el.activityDueInp.value)
+          ? String(el.activityDueInp.value)
+          : TimeService.toInputDate(new Date());
+        el.activityDueInp.value = state.activityDueDate;
+        state.activity = buildOfficialActivity(state.activityType, state.activityDueDate);
+        el.activityInp.value = state.activity;
+        if (saveUi) {
+          uiStateSave();
+        }
+      }
+
+      function renderOfficialActivityControls() {
+        el.activityTypeSel.innerHTML = OFFICIAL_ACTIVITY_TYPES
+          .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
+          .join('');
+        if (!OFFICIAL_ACTIVITY_TYPES.includes(state.activityType)) {
+          state.activityType = OFFICIAL_ACTIVITY_TYPES[0];
+        }
+        if (!isValidInputDate(state.activityDueDate)) {
+          state.activityDueDate = TimeService.toInputDate(new Date());
+        }
+        el.activityTypeSel.value = state.activityType;
+        el.activityDueInp.value = state.activityDueDate;
+        syncOfficialActivityToState(false);
       }
 
       function pushActivity(act) {
@@ -1814,41 +2044,87 @@
         el.applySugTimeBtn.disabled = false;
       }
 
-      function renderTimeline(issueKey) {
-        const logs = (state.worklogsByIssue[issueKey] || []).filter((w) => mine(w.author));
-        if (!logs.length) {
+      function renderTimeline(_issueKey) {
+        const ticketRows = Object.entries(state.worklogsByIssue || {})
+          .map(([issueKey, list]) => ({
+            issueKey: String(issueKey || ''),
+            logs: sortDesc((Array.isArray(list) ? list : []).filter((w) => mine(w.author)), (w) => w.started || w.created).reverse()
+          }))
+          .filter((row) => row.issueKey && row.logs.length);
+
+        if (!ticketRows.length) {
           el.timelineBox.className = 'empty';
           el.timelineBox.textContent = 'Sin registros propios.';
           el.ganttBox.className = 'empty';
           el.ganttBox.textContent = 'Sin registros propios.';
           return;
         }
-        const asc = sortDesc(logs, (w) => w.started || w.created).reverse();
-        const start = Math.min(...asc.map((w) => new Date(w.started || w.created).getTime()));
-        const end = Math.max(...asc.map((w) => new Date(w.started || w.created).getTime() + minutesOf(w) * 60000));
+
+        const allLogs = [];
+        ticketRows.forEach((row) => {
+          row.logs.forEach((w) => allLogs.push({ issueKey: row.issueKey, worklog: w }));
+        });
+        const start = Math.min(...allLogs.map((it) => new Date(it.worklog.started || it.worklog.created).getTime()));
+        const end = Math.max(...allLogs.map((it) => new Date(it.worklog.started || it.worklog.created).getTime() + minutesOf(it.worklog) * 60000));
         const range = Math.max(1, end - start);
 
-        el.timelineBox.className = '';
-        el.timelineBox.innerHTML = asc.map((w) => {
-          const st = new Date(w.started || w.created).getTime();
-          const dur = Math.max(60000, minutesOf(w) * 60000);
-          const left = ((st - start) / range) * 100;
-          const width = Math.max(2, (dur / range) * 100);
-          const meta = `${activityOf(w)} | ${minutesOf(w)}m | ${TimeService.dtLabel(st)}`;
-          return `<div class="timeline-item"><div class="meta"><span>${escapeHtml(TimeService.dtLabel(st))}</span><span>${escapeHtml(activityOf(w))} (${minutesOf(w)}m)</span></div><div class="track" title="${escapeHtml(meta)}"><span class="bar" style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;"></span></div></div>`;
+        const legendMap = {};
+        const timelineRowsHtml = ticketRows.map((row) => {
+          const issue = issueByKey(row.issueKey);
+          const label = issue && issue.summary
+            ? `${row.issueKey} - ${issue.summary}`
+            : row.issueKey;
+          const totalMinutes = row.logs.reduce((acc, w) => acc + minutesOf(w), 0);
+          const segmentsHtml = row.logs.map((w) => {
+            const st = new Date(w.started || w.created).getTime();
+            const mins = minutesOf(w);
+            const dur = Math.max(60000, mins * 60000);
+            const act = activityOf(w) || 'Sin actividad';
+            const color = activityColor(act);
+            legendMap[act] = legendMap[act] || { activity: act, minutes: 0, color };
+            legendMap[act].minutes += mins;
+            const left = ((st - start) / range) * 100;
+            const width = Math.max(1.8, (dur / range) * 100);
+            const meta = `${row.issueKey} | ${act} | ${mins}m | ${TimeService.dtLabel(st)}`;
+            return `<span class="timeline-ticket-segment" title="${escapeHtml(meta)}" style="left:${left.toFixed(3)}%;width:${width.toFixed(3)}%;background:${escapeHtml(color)};"></span>`;
+          }).join('');
+          return `
+            <div class="timeline-ticket-row">
+              <div class="timeline-ticket-label" title="${escapeHtml(label)}">${escapeHtml(label)}</div>
+              <div class="timeline-ticket-track">${segmentsHtml}</div>
+              <div class="timeline-ticket-total">${totalMinutes}m</div>
+            </div>
+          `;
         }).join('');
 
+        const legendEntries = Object.values(legendMap).sort((a, b) => b.minutes - a.minutes);
+        const legendHtml = legendEntries.length
+          ? `<div class="activity-legend">${legendEntries.map((it) => `<span class="activity-legend-item" title="${escapeHtml(`${it.activity}: ${it.minutes}m`)}"><span class="activity-legend-dot" style="background:${escapeHtml(it.color)};"></span>${escapeHtml(it.activity)} (${it.minutes}m)</span>`).join('')}</div>`
+          : '';
+
+        el.timelineBox.className = '';
+        el.timelineBox.innerHTML = `
+          <div class="timeline-axis">
+            <span>Inicio: ${escapeHtml(TimeService.dtLabel(start))}</span>
+            <span>Fin: ${escapeHtml(TimeService.dtLabel(end))}</span>
+          </div>
+          <div class="timeline-ticket-list">${timelineRowsHtml}</div>
+          ${legendHtml}
+        `;
+
         const grouped = {};
-        asc.forEach((w) => {
-          const a = activityOf(w);
-          grouped[a] = (grouped[a] || 0) + minutesOf(w);
+        allLogs.forEach((it) => {
+          const act = activityOf(it.worklog) || 'Sin actividad';
+          grouped[act] = (grouped[act] || 0) + minutesOf(it.worklog);
         });
-        const entries = Object.entries(grouped).map(([activity, minutes]) => ({ activity, minutes })).sort((a, b) => b.minutes - a.minutes);
+        const entries = Object.entries(grouped)
+          .map(([activity, minutes]) => ({ activity, minutes, color: activityColor(activity) }))
+          .sort((a, b) => b.minutes - a.minutes);
         const max = entries[0] ? entries[0].minutes : 1;
         el.ganttBox.className = '';
         el.ganttBox.innerHTML = entries.map((it) => {
           const width = Math.max(3, (it.minutes / max) * 100);
-          return `<div class="gantt-row" title="${escapeHtml(`${it.activity}: ${it.minutes}m`)}"><div>${escapeHtml(it.activity)}</div><div class="track"><span class="bar" style="left:0;width:${width.toFixed(2)}%;"></span></div><div style="text-align:right;color:#5f7287;">${it.minutes}m</div></div>`;
+          return `<div class="gantt-row" title="${escapeHtml(`${it.activity}: ${it.minutes}m`)}"><div>${escapeHtml(it.activity)}</div><div class="track"><span class="bar" style="left:0;width:${width.toFixed(2)}%;background:${escapeHtml(it.color)};"></span></div><div style="text-align:right;color:#5f7287;">${it.minutes}m</div></div>`;
         }).join('');
       }
 
@@ -2083,6 +2359,16 @@
         const payload = await JiraService.searchIssues();
         state.issues = parseIssues(payload);
         renderIssueSelect();
+        await mapLimit(state.issues.map((i) => i.key), 4, async (key) => {
+          if (Array.isArray(state.worklogsByIssue[key])) return;
+          try {
+            const worklogPayload = await JiraService.worklogs(key);
+            const worklogs = Array.isArray(worklogPayload.worklogs) ? worklogPayload.worklogs : [];
+            state.worklogsByIssue[key] = sortDesc(worklogs, (x) => x.started || x.created || '');
+          } catch (_e) {
+            state.worklogsByIssue[key] = [];
+          }
+        });
         if (state.selectedIssueKey) await loadIssueData(state.selectedIssueKey);
         else renderIssueData();
       }
@@ -2098,7 +2384,7 @@
         const payload = {
           started: TimeService.jiraDateTime(started),
           timeSpentSeconds: mins * 60,
-          comment: toAdf(`[${act}] [${TimeService.ddmmyyyy(started)}]`)
+          comment: toAdf(worklogCommentFromActivity(act, started))
         };
         await JiraService.addWorklog(key, payload);
         pushActivity(act);
@@ -2121,7 +2407,7 @@
         const payload = {
           started: TimeService.jiraDateTime(dateObj),
           timeSpentSeconds: mins * 60,
-          comment: toAdf(`[${act}] [${TimeService.ddmmyyyy(dateObj)}]`)
+          comment: toAdf(worklogCommentFromActivity(act, dateObj))
         };
         await JiraService.updateWorklog(key, id, payload);
         pushActivity(act);
@@ -2469,7 +2755,12 @@
           renderCompact();
         });
 
-        el.activityInp.addEventListener('input', () => { state.activity = String(el.activityInp.value || ''); uiStateSave(); });
+        el.activityTypeSel.addEventListener('change', () => {
+          syncOfficialActivityToState(true);
+        });
+        el.activityDueInp.addEventListener('change', () => {
+          syncOfficialActivityToState(true);
+        });
         el.minutesInp.addEventListener('input', () => {
           state.durationMinutes = Math.max(1, Math.floor(Number(el.minutesInp.value || 0)));
           el.minutesInp.value = String(state.durationMinutes);
@@ -2478,7 +2769,11 @@
         });
 
         el.registerBtn.addEventListener('click', async () => {
-          state.activity = String(el.activityInp.value || '').trim();
+          syncOfficialActivityToState(false);
+          if (!parseOfficialActivity(state.activity)) {
+            showMsg('error', 'Selecciona un tipo de actividad oficial y una fecha fin valida.');
+            return;
+          }
           state.durationMinutes = Math.max(1, Math.floor(Number(el.minutesInp.value || 0)));
           uiStateSave();
           renderDurationPill();
@@ -2496,9 +2791,22 @@
 
         el.applySugActBtn.addEventListener('click', () => {
           if (!state.suggestion) return;
-          state.activity = state.suggestion.activity;
-          el.activityInp.value = state.activity;
-          uiStateSave();
+          const suggested = String(state.suggestion.activity || '').trim();
+          const parsed = parseOfficialActivity(suggested);
+          if (parsed) {
+            state.activityType = parsed.type;
+            state.activityDueDate = parsed.dueInput;
+          } else if (OFFICIAL_ACTIVITY_TYPES.includes(suggested)) {
+            state.activityType = suggested;
+          } else {
+            showMsg('info', 'La sugerencia no coincide con los tipos oficiales de actividad.');
+            return;
+          }
+          el.activityTypeSel.value = state.activityType;
+          if (isValidInputDate(state.activityDueDate)) {
+            el.activityDueInp.value = state.activityDueDate;
+          }
+          syncOfficialActivityToState(true);
         });
 
         el.applySugTimeBtn.addEventListener('click', () => {
@@ -2679,7 +2987,7 @@
         uiStateLoad();
         timerLoad();
 
-        el.activityInp.value = state.activity;
+        renderOfficialActivityControls();
         el.minutesInp.value = String(state.durationMinutes);
         renderActivitiesList();
         renderDurationPill();

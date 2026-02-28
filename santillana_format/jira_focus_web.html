@@ -112,7 +112,366 @@
       margin-top: 10px;
     }
     .dashboard-grid > .card { min-height: 270px; }
-    .panel-timeline { grid-column: 1; grid-row: 1; }
+    .panel-timeline {
+      grid-column: 1;
+      grid-row: 1;
+      --tl-shell-border: #d8e5f3;
+      --tl-shell-bg: linear-gradient(180deg, #fbfdff 0%, #f4f9ff 100%);
+      --tl-stat-bg: #ffffff;
+      --tl-stat-border: #d9e5f2;
+      --tl-stat-value: #25425e;
+      --tl-track-border: #d5e2f1;
+      --tl-track-bg: repeating-linear-gradient(90deg, rgba(173, 200, 227, 0.16) 0, rgba(173, 200, 227, 0.16) 10%, rgba(255, 255, 255, 0.03) 10%, rgba(255, 255, 255, 0.03) 20%), linear-gradient(180deg, #f3f8fd 0%, #eaf2fb 100%);
+      --tl-bar-bg: linear-gradient(90deg, #1d74c7, #4ab2dc);
+      --tl-segment-border: rgba(10, 24, 39, 0.14);
+      --tl-segment-active-ring: rgba(11, 80, 140, 0.35);
+      --tl-total-color: #31506b;
+      --tl-legend-bg: #f8fbff;
+      --tl-legend-border: #d7e3f1;
+      --tl-legend-color: #334f68;
+      --tl-legend-hover-bg: #edf5ff;
+      --tl-legend-hover-border: #9fc1e1;
+      --tl-legend-active-bg: #e8f3ff;
+      --tl-legend-active-border: #5d99cf;
+      --tl-legend-active-color: #114d81;
+      --tl-focus-border: #d8e5f3;
+      --tl-focus-bg: linear-gradient(180deg, #fbfdff 0%, #f5f9ff 100%);
+      --tl-focus-active-border: #7fb0dd;
+      --tl-focus-active-ring: rgba(22, 111, 188, 0.12);
+      --tl-gantt-row-bg: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+      --tl-gantt-row-border: #d8e5f3;
+      --tl-gantt-row-hover-border: #9fc1e1;
+      --tl-gantt-row-hover-shadow: rgba(16, 52, 88, 0.08);
+      --tl-gantt-row-active-bg: linear-gradient(180deg, #f4f9ff 0%, #ebf4ff 100%);
+      --tl-gantt-row-active-border: #5d99cf;
+      --tl-gantt-name: #264760;
+      --tl-gantt-duration: #4b6279;
+      --tl-picker-border: #d8e5f3;
+      --tl-picker-bg: #f7fbff;
+      --tl-picker-label: #31506b;
+    }
+    .panel-timeline.design-aurora {
+      --tl-shell-border: #cbd7f8;
+      --tl-shell-bg: linear-gradient(160deg, #f4f7ff 0%, #eefbff 58%, #fdf7ff 100%);
+      --tl-stat-bg: #ffffff;
+      --tl-stat-border: #d8e2fb;
+      --tl-stat-value: #2f3f6b;
+      --tl-track-border: #cdd8f5;
+      --tl-track-bg: repeating-linear-gradient(90deg, rgba(157, 180, 247, 0.18) 0, rgba(157, 180, 247, 0.18) 10%, rgba(255, 255, 255, 0.03) 10%, rgba(255, 255, 255, 0.03) 20%), linear-gradient(180deg, #f4f7ff 0%, #ebf3ff 100%);
+      --tl-bar-bg: linear-gradient(90deg, #4f71ff, #3fb9f3);
+      --tl-segment-active-ring: rgba(79, 113, 255, 0.4);
+      --tl-total-color: #2d4c75;
+      --tl-legend-bg: #f4f8ff;
+      --tl-legend-border: #d5e1f9;
+      --tl-legend-color: #3a4f77;
+      --tl-legend-hover-bg: #e9f2ff;
+      --tl-legend-hover-border: #93b6ef;
+      --tl-legend-active-bg: #e6efff;
+      --tl-legend-active-border: #688ee0;
+      --tl-legend-active-color: #244f9a;
+      --tl-gantt-row-bg: linear-gradient(180deg, #ffffff 0%, #f5f9ff 100%);
+      --tl-gantt-row-border: #d6e2f6;
+      --tl-gantt-row-hover-border: #95b9ec;
+      --tl-gantt-row-active-bg: linear-gradient(180deg, #edf4ff 0%, #e4efff 100%);
+      --tl-gantt-row-active-border: #6289de;
+    }
+    .panel-timeline.design-midnight {
+      --tl-shell-border: #24384e;
+      --tl-shell-bg: linear-gradient(180deg, #152434 0%, #11202f 100%);
+      --tl-stat-bg: #1a2a3d;
+      --tl-stat-border: #2a4059;
+      --tl-stat-value: #d7e8ff;
+      --tl-track-border: #30465f;
+      --tl-track-bg: repeating-linear-gradient(90deg, rgba(95, 132, 170, 0.2) 0, rgba(95, 132, 170, 0.2) 10%, rgba(17, 32, 47, 0.04) 10%, rgba(17, 32, 47, 0.04) 20%), linear-gradient(180deg, #24384f 0%, #1a2e44 100%);
+      --tl-bar-bg: linear-gradient(90deg, #2d96f0, #5de0c5);
+      --tl-segment-border: rgba(194, 222, 255, 0.32);
+      --tl-segment-active-ring: rgba(93, 224, 197, 0.52);
+      --tl-total-color: #c8ddf5;
+      --tl-legend-bg: #1b2d41;
+      --tl-legend-border: #2a435e;
+      --tl-legend-color: #c8dcf3;
+      --tl-legend-hover-bg: #213850;
+      --tl-legend-hover-border: #3e658a;
+      --tl-legend-active-bg: #244365;
+      --tl-legend-active-border: #66b4ff;
+      --tl-legend-active-color: #dff2ff;
+      --tl-focus-border: #2a435e;
+      --tl-focus-bg: linear-gradient(180deg, #16283b 0%, #132638 100%);
+      --tl-focus-active-border: #4a82b6;
+      --tl-focus-active-ring: rgba(76, 147, 212, 0.26);
+      --tl-gantt-row-bg: linear-gradient(180deg, #16283b 0%, #132637 100%);
+      --tl-gantt-row-border: #2b425d;
+      --tl-gantt-row-hover-border: #4572a1;
+      --tl-gantt-row-hover-shadow: rgba(0, 0, 0, 0.25);
+      --tl-gantt-row-active-bg: linear-gradient(180deg, #203850 0%, #1b3248 100%);
+      --tl-gantt-row-active-border: #57a6ee;
+      --tl-gantt-name: #d7e9ff;
+      --tl-gantt-duration: #b6cce6;
+      --tl-picker-border: #2a435e;
+      --tl-picker-bg: #16283b;
+      --tl-picker-label: #c8dcf3;
+    }
+    .panel-timeline.design-emerald {
+      --tl-shell-border: #b7decf;
+      --tl-shell-bg: linear-gradient(180deg, #f3fcf8 0%, #ecfaf4 100%);
+      --tl-stat-border: #c5e7da;
+      --tl-stat-value: #1f5c52;
+      --tl-track-border: #b9dfcf;
+      --tl-track-bg: repeating-linear-gradient(90deg, rgba(159, 214, 194, 0.2) 0, rgba(159, 214, 194, 0.2) 10%, rgba(255, 255, 255, 0.03) 10%, rgba(255, 255, 255, 0.03) 20%), linear-gradient(180deg, #eefaf4 0%, #e6f6ef 100%);
+      --tl-bar-bg: linear-gradient(90deg, #1da574, #4fc989);
+      --tl-segment-active-ring: rgba(32, 152, 111, 0.42);
+      --tl-total-color: #28695f;
+      --tl-legend-bg: #f2fcf7;
+      --tl-legend-border: #c6e8d9;
+      --tl-legend-color: #2b665b;
+      --tl-legend-hover-bg: #e9f8f1;
+      --tl-legend-hover-border: #87c7ad;
+      --tl-legend-active-bg: #e0f4ea;
+      --tl-legend-active-border: #45a47e;
+      --tl-legend-active-color: #1c6d4e;
+      --tl-focus-border: #c5e7da;
+      --tl-focus-bg: linear-gradient(180deg, #f5fdf9 0%, #eefaf4 100%);
+      --tl-focus-active-border: #63b997;
+      --tl-focus-active-ring: rgba(40, 161, 122, 0.2);
+      --tl-gantt-row-border: #c8e9dc;
+      --tl-gantt-row-hover-border: #7fbeaa;
+      --tl-gantt-row-active-bg: linear-gradient(180deg, #ebf9f2 0%, #dff2e9 100%);
+      --tl-gantt-row-active-border: #47a481;
+      --tl-gantt-name: #265f56;
+      --tl-gantt-duration: #3a6c62;
+      --tl-picker-border: #c5e7da;
+      --tl-picker-bg: #f3fcf8;
+      --tl-picker-label: #2a655a;
+    }
+    .panel-timeline.design-amber {
+      --tl-shell-border: #ecd5b0;
+      --tl-shell-bg: linear-gradient(180deg, #fffbf2 0%, #fff7e9 100%);
+      --tl-stat-border: #efd9b8;
+      --tl-stat-value: #6a4c16;
+      --tl-track-border: #e9d0a7;
+      --tl-track-bg: repeating-linear-gradient(90deg, rgba(241, 205, 149, 0.24) 0, rgba(241, 205, 149, 0.24) 10%, rgba(255, 255, 255, 0.03) 10%, rgba(255, 255, 255, 0.03) 20%), linear-gradient(180deg, #fff8eb 0%, #fff1dc 100%);
+      --tl-bar-bg: linear-gradient(90deg, #e89b1f, #ffb84e);
+      --tl-segment-active-ring: rgba(217, 133, 10, 0.36);
+      --tl-total-color: #7b5719;
+      --tl-legend-bg: #fff8ec;
+      --tl-legend-border: #efd9b7;
+      --tl-legend-color: #78561a;
+      --tl-legend-hover-bg: #fff2dc;
+      --tl-legend-hover-border: #d8aa63;
+      --tl-legend-active-bg: #ffeed2;
+      --tl-legend-active-border: #ca8a22;
+      --tl-legend-active-color: #7b4d00;
+      --tl-focus-border: #efd9b7;
+      --tl-focus-bg: linear-gradient(180deg, #fffbf3 0%, #fff7e9 100%);
+      --tl-focus-active-border: #d7a156;
+      --tl-focus-active-ring: rgba(214, 152, 58, 0.22);
+      --tl-gantt-row-border: #efd8b5;
+      --tl-gantt-row-hover-border: #d7a35d;
+      --tl-gantt-row-active-bg: linear-gradient(180deg, #fff4df 0%, #ffeecf 100%);
+      --tl-gantt-row-active-border: #c88313;
+      --tl-gantt-name: #6d4d1a;
+      --tl-gantt-duration: #7d623a;
+      --tl-picker-border: #edd8b4;
+      --tl-picker-bg: #fff8ec;
+      --tl-picker-label: #7a5924;
+    }
+    .panel-timeline.design-rose {
+      --tl-shell-border: #eccfdb;
+      --tl-shell-bg: linear-gradient(180deg, #fff8fb 0%, #fff2f8 100%);
+      --tl-stat-border: #efd7e1;
+      --tl-stat-value: #6b3c53;
+      --tl-track-border: #e8cfdd;
+      --tl-track-bg: repeating-linear-gradient(90deg, rgba(235, 187, 210, 0.22) 0, rgba(235, 187, 210, 0.22) 10%, rgba(255, 255, 255, 0.03) 10%, rgba(255, 255, 255, 0.03) 20%), linear-gradient(180deg, #fff5fb 0%, #ffebf4 100%);
+      --tl-bar-bg: linear-gradient(90deg, #ce4c85, #f08db7);
+      --tl-segment-active-ring: rgba(189, 58, 116, 0.36);
+      --tl-total-color: #75445b;
+      --tl-legend-bg: #fff4f9;
+      --tl-legend-border: #eed5e2;
+      --tl-legend-color: #6f4358;
+      --tl-legend-hover-bg: #ffeaf4;
+      --tl-legend-hover-border: #d9a6bf;
+      --tl-legend-active-bg: #ffe2f0;
+      --tl-legend-active-border: #c76a94;
+      --tl-legend-active-color: #8f325f;
+      --tl-focus-border: #eed5e2;
+      --tl-focus-bg: linear-gradient(180deg, #fff9fc 0%, #fff2f8 100%);
+      --tl-focus-active-border: #cf86aa;
+      --tl-focus-active-ring: rgba(201, 110, 156, 0.2);
+      --tl-gantt-row-border: #eed6e2;
+      --tl-gantt-row-hover-border: #cf8cab;
+      --tl-gantt-row-active-bg: linear-gradient(180deg, #fff0f7 0%, #ffe5f1 100%);
+      --tl-gantt-row-active-border: #be5f8a;
+      --tl-gantt-name: #6a3e55;
+      --tl-gantt-duration: #7a5a6d;
+      --tl-picker-border: #edd4e1;
+      --tl-picker-bg: #fff5fa;
+      --tl-picker-label: #764f64;
+    }
+    .panel-timeline.design-minimal {
+      --tl-shell-border: #d7dde4;
+      --tl-shell-bg: linear-gradient(180deg, #ffffff 0%, #f7f8fa 100%);
+      --tl-stat-border: #d9dfe6;
+      --tl-stat-value: #37424f;
+      --tl-track-border: #d5dce4;
+      --tl-track-bg: repeating-linear-gradient(90deg, rgba(184, 194, 206, 0.2) 0, rgba(184, 194, 206, 0.2) 10%, rgba(255, 255, 255, 0.03) 10%, rgba(255, 255, 255, 0.03) 20%), linear-gradient(180deg, #f7f9fb 0%, #edf1f5 100%);
+      --tl-bar-bg: linear-gradient(90deg, #4d6078, #7c8fa5);
+      --tl-segment-active-ring: rgba(90, 108, 132, 0.35);
+      --tl-total-color: #4a5563;
+      --tl-legend-bg: #f7f9fb;
+      --tl-legend-border: #d9dfe6;
+      --tl-legend-color: #4a5768;
+      --tl-legend-hover-bg: #eef2f6;
+      --tl-legend-hover-border: #b2bfcc;
+      --tl-legend-active-bg: #e8edf3;
+      --tl-legend-active-border: #8295a8;
+      --tl-legend-active-color: #344454;
+      --tl-focus-border: #d9dfe6;
+      --tl-focus-bg: linear-gradient(180deg, #fcfdff 0%, #f6f8fb 100%);
+      --tl-focus-active-border: #8ca0b4;
+      --tl-focus-active-ring: rgba(102, 122, 145, 0.2);
+      --tl-gantt-row-border: #dbe1e8;
+      --tl-gantt-row-hover-border: #b3bfcb;
+      --tl-gantt-row-active-bg: linear-gradient(180deg, #f2f5f9 0%, #e9edf2 100%);
+      --tl-gantt-row-active-border: #7f90a4;
+      --tl-gantt-name: #3e4a57;
+      --tl-gantt-duration: #5a6775;
+      --tl-picker-border: #d8dfe7;
+      --tl-picker-bg: #f8fafc;
+      --tl-picker-label: #4d5a6a;
+    }
+    .panel-timeline.design-neon {
+      --tl-shell-border: #283262;
+      --tl-shell-bg: linear-gradient(180deg, #0f1330 0%, #121a3d 100%);
+      --tl-stat-bg: #151c42;
+      --tl-stat-border: #2a3b73;
+      --tl-stat-value: #ddf6ff;
+      --tl-track-border: #2e3f78;
+      --tl-track-bg: repeating-linear-gradient(90deg, rgba(77, 113, 214, 0.24) 0, rgba(77, 113, 214, 0.24) 10%, rgba(15, 19, 48, 0.04) 10%, rgba(15, 19, 48, 0.04) 20%), linear-gradient(180deg, #1a2557 0%, #16224d 100%);
+      --tl-bar-bg: linear-gradient(90deg, #3ef6ff, #7d7dff);
+      --tl-segment-border: rgba(191, 236, 255, 0.36);
+      --tl-segment-active-ring: rgba(89, 236, 255, 0.56);
+      --tl-total-color: #d7eeff;
+      --tl-legend-bg: #16204a;
+      --tl-legend-border: #304885;
+      --tl-legend-color: #d4e6ff;
+      --tl-legend-hover-bg: #1c2a60;
+      --tl-legend-hover-border: #4670c9;
+      --tl-legend-active-bg: #20356d;
+      --tl-legend-active-border: #5fb3ff;
+      --tl-legend-active-color: #e4fbff;
+      --tl-focus-border: #2d4481;
+      --tl-focus-bg: linear-gradient(180deg, #141c45 0%, #121a3f 100%);
+      --tl-focus-active-border: #5f90f0;
+      --tl-focus-active-ring: rgba(88, 167, 255, 0.3);
+      --tl-gantt-row-bg: linear-gradient(180deg, #131c45 0%, #121a40 100%);
+      --tl-gantt-row-border: #304987;
+      --tl-gantt-row-hover-border: #4f73ca;
+      --tl-gantt-row-hover-shadow: rgba(0, 0, 0, 0.32);
+      --tl-gantt-row-active-bg: linear-gradient(180deg, #1b2d60 0%, #172956 100%);
+      --tl-gantt-row-active-border: #63b0ff;
+      --tl-gantt-name: #e1f4ff;
+      --tl-gantt-duration: #bad7f5;
+      --tl-picker-border: #2f4784;
+      --tl-picker-bg: #141c45;
+      --tl-picker-label: #cbe3ff;
+    }
+    .panel-timeline.design-paper {
+      --tl-shell-border: #d8cdbf;
+      --tl-shell-bg: linear-gradient(180deg, #fffdf7 0%, #fcf7ed 100%);
+      --tl-stat-border: #ded1c1;
+      --tl-stat-value: #5b4935;
+      --tl-track-border: #d8c9b6;
+      --tl-track-bg: repeating-linear-gradient(90deg, rgba(220, 202, 175, 0.25) 0, rgba(220, 202, 175, 0.25) 10%, rgba(255, 255, 255, 0.03) 10%, rgba(255, 255, 255, 0.03) 20%), linear-gradient(180deg, #fdf8ee 0%, #f8f0e1 100%);
+      --tl-bar-bg: linear-gradient(90deg, #8a6c45, #b38c5f);
+      --tl-segment-active-ring: rgba(130, 97, 55, 0.36);
+      --tl-total-color: #6a5237;
+      --tl-legend-bg: #fdf8ef;
+      --tl-legend-border: #dfd0bd;
+      --tl-legend-color: #655038;
+      --tl-legend-hover-bg: #f7ecdc;
+      --tl-legend-hover-border: #c6aa85;
+      --tl-legend-active-bg: #f1e2ca;
+      --tl-legend-active-border: #aa8251;
+      --tl-legend-active-color: #5f4423;
+      --tl-focus-border: #ded1c1;
+      --tl-focus-bg: linear-gradient(180deg, #fffcf6 0%, #faf4e9 100%);
+      --tl-focus-active-border: #ba9b74;
+      --tl-focus-active-ring: rgba(160, 126, 84, 0.22);
+      --tl-gantt-row-border: #e0d2bf;
+      --tl-gantt-row-hover-border: #c7aa84;
+      --tl-gantt-row-active-bg: linear-gradient(180deg, #f8efe0 0%, #f1e4cf 100%);
+      --tl-gantt-row-active-border: #a57c46;
+      --tl-gantt-name: #5f4932;
+      --tl-gantt-duration: #725a3f;
+      --tl-picker-border: #dfd0bd;
+      --tl-picker-bg: #fdf8ef;
+      --tl-picker-label: #69523a;
+    }
+    .panel-timeline.design-sunset {
+      --tl-shell-border: #efcbb3;
+      --tl-shell-bg: linear-gradient(180deg, #fff8f3 0%, #fff1e9 100%);
+      --tl-stat-border: #f0d3be;
+      --tl-stat-value: #7c3f2f;
+      --tl-track-border: #ebc8ad;
+      --tl-track-bg: repeating-linear-gradient(90deg, rgba(245, 184, 151, 0.26) 0, rgba(245, 184, 151, 0.26) 10%, rgba(255, 255, 255, 0.03) 10%, rgba(255, 255, 255, 0.03) 20%), linear-gradient(180deg, #fff3e8 0%, #ffe8d7 100%);
+      --tl-bar-bg: linear-gradient(90deg, #f26b3f, #f4ab53);
+      --tl-segment-active-ring: rgba(224, 93, 41, 0.36);
+      --tl-total-color: #8a4a36;
+      --tl-legend-bg: #fff2e9;
+      --tl-legend-border: #efd2bf;
+      --tl-legend-color: #844d39;
+      --tl-legend-hover-bg: #ffe8db;
+      --tl-legend-hover-border: #e1a880;
+      --tl-legend-active-bg: #ffdfcb;
+      --tl-legend-active-border: #cf7443;
+      --tl-legend-active-color: #8a401f;
+      --tl-focus-border: #efd2bf;
+      --tl-focus-bg: linear-gradient(180deg, #fff9f4 0%, #fff1e8 100%);
+      --tl-focus-active-border: #d28f67;
+      --tl-focus-active-ring: rgba(213, 115, 68, 0.22);
+      --tl-gantt-row-border: #efd2bf;
+      --tl-gantt-row-hover-border: #dc9871;
+      --tl-gantt-row-active-bg: linear-gradient(180deg, #ffeede 0%, #ffe2cf 100%);
+      --tl-gantt-row-active-border: #c96f3d;
+      --tl-gantt-name: #7b4836;
+      --tl-gantt-duration: #916252;
+      --tl-picker-border: #eed0bc;
+      --tl-picker-bg: #fff3ea;
+      --tl-picker-label: #844f3c;
+    }
+    .panel-timeline.design-contrast {
+      --tl-shell-border: #334657;
+      --tl-shell-bg: linear-gradient(180deg, #ffffff 0%, #f4f8fc 100%);
+      --tl-stat-border: #334657;
+      --tl-stat-value: #102334;
+      --tl-track-border: #334657;
+      --tl-track-bg: repeating-linear-gradient(90deg, rgba(51, 70, 87, 0.24) 0, rgba(51, 70, 87, 0.24) 10%, rgba(255, 255, 255, 0.03) 10%, rgba(255, 255, 255, 0.03) 20%), linear-gradient(180deg, #e8f0f8 0%, #d9e4ef 100%);
+      --tl-bar-bg: linear-gradient(90deg, #003c75, #0090ff);
+      --tl-segment-border: rgba(7, 20, 32, 0.4);
+      --tl-segment-active-ring: rgba(0, 113, 209, 0.45);
+      --tl-total-color: #143146;
+      --tl-legend-bg: #ffffff;
+      --tl-legend-border: #334657;
+      --tl-legend-color: #16364f;
+      --tl-legend-hover-bg: #ecf5ff;
+      --tl-legend-hover-border: #2a628f;
+      --tl-legend-active-bg: #deeeff;
+      --tl-legend-active-border: #005697;
+      --tl-legend-active-color: #003b69;
+      --tl-focus-border: #334657;
+      --tl-focus-bg: linear-gradient(180deg, #ffffff 0%, #f5f9fd 100%);
+      --tl-focus-active-border: #2f7fbd;
+      --tl-focus-active-ring: rgba(0, 98, 181, 0.2);
+      --tl-gantt-row-border: #334657;
+      --tl-gantt-row-hover-border: #276ba0;
+      --tl-gantt-row-active-bg: linear-gradient(180deg, #e8f3ff 0%, #d8ebff 100%);
+      --tl-gantt-row-active-border: #005ea3;
+      --tl-gantt-name: #16324a;
+      --tl-gantt-duration: #30506a;
+      --tl-picker-border: #334657;
+      --tl-picker-bg: #f4f8fc;
+      --tl-picker-label: #18374f;
+    }
     .panel-suggestion { grid-column: 2; grid-row: 1; }
     .panel-comments { grid-column: 1; grid-row: 2; }
     .panel-worklogs { grid-column: 2; grid-row: 2; }
@@ -233,8 +592,8 @@
     .track {
       height: 12px;
       border-radius: 999px;
-      background: linear-gradient(180deg, #eaf2fb 0%, #e2edf8 100%);
-      border: 1px solid #d5e2f1;
+      background: var(--tl-track-bg);
+      border: 1px solid var(--tl-track-border);
       position: relative;
       overflow: hidden;
     }
@@ -243,30 +602,30 @@
       top: 1px;
       bottom: 1px;
       border-radius: 999px;
-      background: linear-gradient(90deg, #1d74c7, #4ab2dc);
+      background: var(--tl-bar-bg);
       box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.08);
     }
     .activity-focus {
-      border: 1px solid #d8e5f3;
+      border: 1px solid var(--tl-focus-border, #d8e5f3);
       border-radius: 11px;
       padding: 9px;
-      background: linear-gradient(180deg, #fbfdff 0%, #f5f9ff 100%);
+      background: var(--tl-focus-bg, linear-gradient(180deg, #fbfdff 0%, #f5f9ff 100%));
       margin-bottom: 10px;
       transition: border-color .15s ease, box-shadow .15s ease;
     }
     .activity-focus.active {
-      border-color: #7fb0dd;
-      box-shadow: 0 0 0 3px rgba(22, 111, 188, 0.12);
+      border-color: var(--tl-focus-active-border, #7fb0dd);
+      box-shadow: 0 0 0 3px var(--tl-focus-active-ring, rgba(22, 111, 188, 0.12));
     }
     .activity-focus .muted {
       font-size: 11px;
       margin-top: 5px;
     }
     .timeline-shell {
-      border: 1px solid #d8e5f3;
+      border: 1px solid var(--tl-shell-border);
       border-radius: 12px;
       padding: 10px;
-      background: linear-gradient(180deg, #fbfdff 0%, #f4f9ff 100%);
+      background: var(--tl-shell-bg);
     }
     .timeline-head {
       display: grid;
@@ -275,8 +634,8 @@
       margin-bottom: 10px;
     }
     .timeline-stat {
-      background: #fff;
-      border: 1px solid #d9e5f2;
+      background: var(--tl-stat-bg);
+      border: 1px solid var(--tl-stat-border);
       border-radius: 10px;
       padding: 7px 8px;
       min-height: 54px;
@@ -290,7 +649,7 @@
     }
     .timeline-stat-value {
       font-size: 12px;
-      color: #25425e;
+      color: var(--tl-stat-value);
       font-weight: 700;
       overflow-wrap: anywhere;
     }
@@ -316,17 +675,9 @@
     .timeline-ticket-track {
       position: relative;
       height: 24px;
-      border: 1px solid #d5e2f1;
+      border: 1px solid var(--tl-track-border);
       border-radius: 999px;
-      background:
-        repeating-linear-gradient(
-          90deg,
-          rgba(173, 200, 227, 0.16) 0,
-          rgba(173, 200, 227, 0.16) 10%,
-          rgba(255, 255, 255, 0.03) 10%,
-          rgba(255, 255, 255, 0.03) 20%
-        ),
-        linear-gradient(180deg, #f3f8fd 0%, #eaf2fb 100%);
+      background: var(--tl-track-bg);
       overflow: hidden;
     }
     .timeline-ticket-segment {
@@ -336,7 +687,7 @@
       border-radius: 999px;
       min-width: 2px;
       opacity: 0.86;
-      border: 1px solid rgba(10, 24, 39, 0.14);
+      border: 1px solid var(--tl-segment-border);
       cursor: pointer;
       transition: opacity .15s ease, transform .15s ease, box-shadow .15s ease;
     }
@@ -346,12 +697,12 @@
     }
     .timeline-ticket-segment.active {
       opacity: 1;
-      box-shadow: 0 0 0 2px rgba(11, 80, 140, 0.35);
+      box-shadow: 0 0 0 2px var(--tl-segment-active-ring);
       z-index: 2;
     }
     .timeline-ticket-total {
       font-size: 12px;
-      color: #31506b;
+      color: var(--tl-total-color);
       text-align: right;
       white-space: nowrap;
       font-weight: 700;
@@ -366,25 +717,25 @@
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      border: 1px solid #d7e3f1;
+      border: 1px solid var(--tl-legend-border);
       border-radius: 999px;
       padding: 4px 10px;
       font-size: 11px;
-      color: #334f68;
-      background: #f8fbff;
+      color: var(--tl-legend-color);
+      background: var(--tl-legend-bg);
       max-width: 100%;
       cursor: pointer;
       transition: border-color .15s ease, background .15s ease, transform .15s ease;
     }
     .activity-legend-item:hover {
       transform: translateY(-1px);
-      border-color: #9fc1e1;
-      background: #edf5ff;
+      border-color: var(--tl-legend-hover-border);
+      background: var(--tl-legend-hover-bg);
     }
     .activity-legend-item.active {
-      border-color: #5d99cf;
-      background: #e8f3ff;
-      color: #114d81;
+      border-color: var(--tl-legend-active-border);
+      background: var(--tl-legend-active-bg);
+      color: var(--tl-legend-active-color);
       font-weight: 700;
       box-shadow: 0 0 0 2px rgba(22, 111, 188, 0.12);
     }
@@ -404,32 +755,47 @@
       gap: 9px;
       align-items: center;
       font-size: 12px;
-      border: 1px solid #d8e5f3;
+      border: 1px solid var(--tl-gantt-row-border);
       border-radius: 10px;
       padding: 7px 8px;
-      background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+      background: var(--tl-gantt-row-bg);
       cursor: pointer;
       transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
     }
     .gantt-row:hover {
-      border-color: #9fc1e1;
-      box-shadow: 0 3px 9px rgba(16, 52, 88, 0.08);
+      border-color: var(--tl-gantt-row-hover-border);
+      box-shadow: 0 3px 9px var(--tl-gantt-row-hover-shadow);
       transform: translateY(-1px);
     }
     .gantt-row.active {
-      border-color: #5d99cf;
+      border-color: var(--tl-gantt-row-active-border);
       box-shadow: 0 0 0 2px rgba(22, 111, 188, 0.14);
-      background: linear-gradient(180deg, #f4f9ff 0%, #ebf4ff 100%);
+      background: var(--tl-gantt-row-active-bg);
     }
     .gantt-name {
       font-weight: 700;
-      color: #264760;
+      color: var(--tl-gantt-name);
       overflow-wrap: anywhere;
     }
     .gantt-duration {
       text-align: right;
-      color: #4b6279;
+      color: var(--tl-gantt-duration);
       font-weight: 700;
+    }
+    .chart-design-picker {
+      margin-top: 10px;
+      border-top: 1px dashed var(--tl-picker-border);
+      padding-top: 9px;
+      background: var(--tl-picker-bg);
+      border-radius: 8px;
+      padding-left: 8px;
+      padding-right: 8px;
+      padding-bottom: 8px;
+    }
+    .chart-design-picker label {
+      color: var(--tl-picker-label);
+      font-size: 11px;
+      margin-bottom: 4px;
     }
     .recent-line {
       font-size: 12px;
@@ -669,11 +1035,15 @@
       </div>
 
       <div class="dashboard-grid">
-        <div class="card panel-timeline">
+        <div class="card panel-timeline" id="timelinePanel">
           <h3>Linea de tiempo / Gantt</h3>
           <div id="timelineBox" class="empty">Sin registros.</div>
           <h4 style="margin-top:10px;">Gantt por actividad</h4>
           <div id="ganttBox" class="empty">Sin registros.</div>
+          <div class="chart-design-picker">
+            <label for="chartDesignSel">Diseno de grafico (10 opciones)</label>
+            <select class="sel" id="chartDesignSel"></select>
+          </div>
         </div>
         <div class="card panel-suggestion">
           <h3>Sugerencia automatica</h3>
@@ -842,6 +1212,19 @@
         '#1b78c4', '#1f8f71', '#e07a2f', '#7a57c2', '#c63f69', '#3e8f5b', '#2e7fba',
         '#aa5d13', '#5f7bca', '#0f8fa8', '#b0453e', '#1d9164', '#8568c8', '#ad4c88'
       ];
+      const CHART_DESIGNS = [
+        { id: 'default', label: '1. Ejecutivo limpio' },
+        { id: 'aurora', label: '2. Aurora suave' },
+        { id: 'midnight', label: '3. Midnight pro' },
+        { id: 'emerald', label: '4. Emerald green' },
+        { id: 'amber', label: '5. Amber focus' },
+        { id: 'rose', label: '6. Rose pastel' },
+        { id: 'minimal', label: '7. Minimal gray' },
+        { id: 'neon', label: '8. Neon tech' },
+        { id: 'paper', label: '9. Paper classic' },
+        { id: 'sunset', label: '10. Sunset warm' }
+      ];
+      const DEFAULT_CHART_DESIGN = 'default';
       const FEATURES = {
         dashboard: false,
         report: false
@@ -871,6 +1254,7 @@
         editCtx: null,
         selectedTimelineActivity: '',
         selectedTimelineMinutes: 0,
+        chartDesign: DEFAULT_CHART_DESIGN,
         activities: [],
         debugLogs: [],
         popupWatchTimer: 0,
@@ -1838,7 +2222,7 @@
           'mainView','issueSel','activityTypeSel','activityDueInp','activityInp','minutesInp','registerBtn','jiraDurationPill','timerVal','timerState','startBtn','pauseBtn',
           'resetBtn','applyTimerBtn','suggestionBox','applySugActBtn','applySugTimeBtn','registerSugBtn','todayTotal','weekTotal','issueCount','dashMeta',
           'refreshDashBtn','recentBox','commentsBox','worklogBody','timelineBox','ganttBox','genReportBtn','exportReportBtn','reportMeta',
-          'reportBody','activityFocusBox','activityQuickSel','activityQuickMeta','compactBtn','floatBox','floatIssue','floatTimer','floatState','floatStartBtn','floatPauseBtn','floatExpandBtn',
+          'reportBody','timelinePanel','chartDesignSel','activityFocusBox','activityQuickSel','activityQuickMeta','compactBtn','floatBox','floatIssue','floatTimer','floatState','floatStartBtn','floatPauseBtn','floatExpandBtn',
           'regModal','regModalMeta','regActInp','regMinInp','regModalOkBtn','regModalCancelBtn',
           'editModal','editMeta','editActInp','editDateInp','editTimeInp','editMinInp','editSaveBtn','editDeleteBtn','editCancelBtn','activityList'
         ].forEach((id) => { el[id] = document.getElementById(id); });
@@ -1852,6 +2236,7 @@
           activityDueDate: state.activityDueDate,
           durationMinutes: state.durationMinutes,
           compact: state.compact,
+          chartDesign: state.chartDesign,
           lastReminderTs: state.lastReminderTs
         });
       }
@@ -1875,6 +2260,9 @@
         }
         state.durationMinutes = Number.isFinite(Number(ui.durationMinutes)) ? Math.max(1, Math.floor(Number(ui.durationMinutes))) : 30;
         state.compact = !!ui.compact;
+        state.chartDesign = CHART_DESIGNS.some((d) => d.id === String(ui.chartDesign || '').trim())
+          ? String(ui.chartDesign || '').trim()
+          : DEFAULT_CHART_DESIGN;
         state.lastReminderTs = Number(ui.lastReminderTs || 0);
         state.lastActivityTs = StorageService.getLastActivity();
         state.activities = StorageService.getActivities();
@@ -2029,6 +2417,29 @@
         const duration = mins > 0 ? ` | ${TimeService.jiraDuration(mins)}` : '';
         el.activityFocusBox.classList.add('active');
         el.activityQuickMeta.innerHTML = `Actividad resaltada: <strong>${escapeHtml(selected)}</strong>${escapeHtml(duration)}`;
+      }
+
+      function applyChartDesign() {
+        const valid = CHART_DESIGNS.some((d) => d.id === state.chartDesign);
+        if (!valid) {
+          state.chartDesign = DEFAULT_CHART_DESIGN;
+        }
+        if (el.chartDesignSel) {
+          if (!el.chartDesignSel.options.length) {
+            el.chartDesignSel.innerHTML = CHART_DESIGNS
+              .map((d) => `<option value="${escapeHtml(d.id)}">${escapeHtml(d.label)}</option>`)
+              .join('');
+          }
+          el.chartDesignSel.value = state.chartDesign;
+        }
+        if (el.timelinePanel) {
+          Array.from(el.timelinePanel.classList)
+            .filter((c) => c.indexOf('design-') === 0)
+            .forEach((c) => el.timelinePanel.classList.remove(c));
+          if (state.chartDesign !== DEFAULT_CHART_DESIGN) {
+            el.timelinePanel.classList.add(`design-${state.chartDesign}`);
+          }
+        }
       }
 
       function selectActivityFromCharts(activityName, minutes, rerender) {
@@ -3072,6 +3483,14 @@
             renderTimeline(state.selectedIssueKey);
           }
         });
+        el.chartDesignSel.addEventListener('change', () => {
+          const selected = String(el.chartDesignSel.value || '').trim();
+          state.chartDesign = CHART_DESIGNS.some((d) => d.id === selected)
+            ? selected
+            : DEFAULT_CHART_DESIGN;
+          applyChartDesign();
+          uiStateSave();
+        });
 
         el.registerBtn.addEventListener('click', async () => {
           syncOfficialActivityToState(false);
@@ -3339,6 +3758,7 @@
 
         renderOfficialActivityControls();
         syncActivityFocusComponent();
+        applyChartDesign();
         el.minutesInp.value = String(state.durationMinutes);
         renderActivitiesList();
         renderDurationPill();

@@ -168,6 +168,7 @@
       </div>
       <div class="row" style="margin-top:10px;">
         <button class="btn primary" id="connectBtn" type="button">Conectar con OAuth</button>
+        <button class="btn danger" id="clearOAuthBtn" type="button">Limpiar sesion OAuth local</button>
       </div>
     </section>
 
@@ -989,7 +990,7 @@
       function cacheElements() {
         [
           'connPill','userPill','refreshIssuesBtn','disconnectBtn','msg','idleMsg',
-          'loginView','urlInp','clientIdInp','redirectUriInp','callbackUrlInp','connectBtn','processCallbackBtn',
+          'loginView','urlInp','clientIdInp','redirectUriInp','callbackUrlInp','connectBtn','processCallbackBtn','clearOAuthBtn',
           'mainView','issueSel','activityInp','minutesInp','registerBtn','jiraDurationPill','timerVal','timerState','startBtn','pauseBtn',
           'resetBtn','applyTimerBtn','suggestionBox','applySugActBtn','applySugTimeBtn','todayTotal','weekTotal','issueCount','dashMeta',
           'refreshDashBtn','recentBox','commentsBox','worklogBody','timelineBox','ganttBox','genReportBtn','exportReportBtn','reportMeta',
@@ -1047,11 +1048,11 @@
           return;
         }
         if (err && err.kind === 'oauth' && err.status === 400) {
-          showMsg('error', 'OAuth invalido. Revisa Client ID, Redirect URI y la configuracion PKCE en Atlassian.');
+          showMsg('error', `OAuth invalido. Revisa Client ID, Redirect URI y PKCE en Atlassian.${err && err.message ? ` Detalle: ${err.message}` : ''}`);
           return;
         }
         if (err && err.kind === 'oauth' && err.status === 401) {
-          showMsg('error', 'Sesion OAuth expirada o invalida. Reconecta con OAuth.');
+          showMsg('error', `Sesion OAuth expirada o invalida. Reconecta con OAuth.${err && err.message ? ` Detalle: ${err.message}` : ''}`);
           return;
         }
         if (err && err.kind === 'http' && err.status === 401) {
@@ -1644,6 +1645,13 @@
         el.redirectUriInp.value = cfg.redirect_uri || deriveDefaultRedirectUri();
       }
 
+      function isLikelyWrongRedirectUri(jiraUrl, redirectUri) {
+        const jiraHost = safeHostname(jiraUrl);
+        const redirectHost = safeHostname(redirectUri);
+        if (!jiraHost || !redirectHost) return false;
+        return jiraHost === redirectHost;
+      }
+
       function resetConnectionState() {
         state.connected = false;
         state.config = null;
@@ -1761,14 +1769,35 @@
             showMsg('error', 'Completa URL Jira, Client ID y Redirect URI.');
             return;
           }
+          if (isLikelyWrongRedirectUri(cfg.url, cfg.redirect_uri)) {
+            showMsg(
+              'error',
+              'El Redirect URI no debe ser la URL de Jira. Usa la URL de esta app (la donde esta abierto este modulo) y registrala en Atlassian OAuth.'
+            );
+            return;
+          }
           StorageService.saveConfig(cfg);
           StorageService.clearOAuthTokens();
+          StorageService.clearOAuthPending();
           try {
             await OAuthService.startAuth(cfg);
             showMsg('info', 'Redirigiendo a autorizacion OAuth...');
           } catch (e) {
             applyError(e, 'No fue posible iniciar OAuth.');
           }
+        });
+
+        el.clearOAuthBtn.addEventListener('click', () => {
+          StorageService.clearOAuthTokens();
+          StorageService.clearOAuthPending();
+          StorageService.del(STORAGE.config);
+          resetConnectionState();
+          renderTop();
+          renderIssueSelect();
+          renderIssueData();
+          renderDashboard();
+          renderReport();
+          showMsg('info', 'Sesion OAuth local limpiada.');
         });
 
         el.processCallbackBtn.addEventListener('click', async () => {

@@ -95,6 +95,14 @@
       align-items: end;
       margin-top: 8px;
     }
+    .board-head {
+      padding-top: 10px;
+      padding-bottom: 10px;
+    }
+    .board-ticket-picker {
+      width: 100%;
+      max-width: 100%;
+    }
     .dashboard-grid {
       display: grid;
       grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
@@ -102,10 +110,13 @@
       align-items: start;
       margin-top: 10px;
     }
+    .dashboard-grid > .card { min-height: 270px; }
     .panel-timeline { grid-column: 1; grid-row: 1; }
     .panel-suggestion { grid-column: 2; grid-row: 1; }
     .panel-comments { grid-column: 1; grid-row: 2; }
     .panel-worklogs { grid-column: 2; grid-row: 2; }
+    .panel-comments .comments { max-height: 460px; }
+    .panel-worklogs .tbl-wrap { max-height: 460px; }
     .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
     h2, h3, h4 { margin: 0 0 8px 0; }
     h3 { font-size: 17px; letter-spacing: 0.15px; }
@@ -484,16 +495,16 @@
     </section>
 
     <section id="mainView" class="hide">
-      <div class="card">
-        <div class="row" style="justify-content:space-between;">
-          <h3 style="margin:0;">Ticket y actividad</h3>
-          <button class="btn" id="compactBtn" type="button">Modo compacto</button>
+      <div class="card board-head">
+        <div class="board-ticket-picker">
+          <label for="issueSel">Ticket actual</label>
+          <select class="sel" id="issueSel"></select>
         </div>
+      </div>
+
+      <div class="hide" aria-hidden="true">
+        <button class="btn" id="compactBtn" type="button">Modo compacto</button>
         <div class="activity-config-grid">
-          <div>
-            <label for="issueSel">Ticket padre</label>
-            <select class="sel" id="issueSel"></select>
-          </div>
           <div>
             <label for="activityTypeSel">Tipo de actividad (oficial)</label>
             <select class="sel" id="activityTypeSel"></select>
@@ -506,20 +517,16 @@
             <label for="minutesInp">Duracion (min)</label>
             <input class="inp" id="minutesInp" type="number" min="1" step="1" value="30">
           </div>
+          <div class="row" style="margin-top:22px;">
+            <button class="btn primary" id="registerBtn" type="button">Registrar worklog</button>
+            <span class="pill" id="jiraDurationPill">0m</span>
+          </div>
         </div>
         <div style="margin-top:8px;">
           <label for="activityInp">Actividad final</label>
           <input class="inp" id="activityInp" type="text" readonly>
           <datalist id="activityList"></datalist>
         </div>
-        <div class="row" style="margin-top:10px;">
-          <button class="btn primary" id="registerBtn" type="button">Registrar worklog</button>
-          <span class="pill" id="jiraDurationPill">0m</span>
-        </div>
-        <div class="muted" style="margin-top:6px;">Usa este formato: <strong>2w 4d 6h 45m</strong> (w=semanas, d=dias, h=horas, m=minutos).</div>
-      </div>
-
-      <div class="hide" aria-hidden="true">
         <div id="timerCard" class="card">
           <h3>Cronometro laboral</h3>
           <p class="timer" id="timerVal">00:00:00</p>
@@ -536,7 +543,7 @@
 
       <div class="dashboard-grid">
         <div class="card panel-timeline">
-          <h3>Timeline / Gantt</h3>
+          <h3>Linea de tiempo / Gantt</h3>
           <div id="timelineBox" class="empty">Sin registros.</div>
           <h4 style="margin-top:10px;">Gantt por actividad</h4>
           <div id="ganttBox" class="empty">Sin registros.</div>
@@ -547,6 +554,7 @@
           <div class="row" style="margin-top:10px;">
             <button class="btn" id="applySugActBtn" type="button" disabled>Aplicar actividad</button>
             <button class="btn" id="applySugTimeBtn" type="button" disabled>Aplicar tiempo</button>
+            <button class="btn primary" id="registerSugBtn" type="button" disabled>Registrar sugerencia</button>
           </div>
         </div>
         <div class="card panel-comments">
@@ -1694,7 +1702,7 @@
           'debugLogBox','debugCopyBtn','debugClearBtn',
           'loginView','urlInp','clientIdInp','clientSecretInp','redirectUriInp','callbackUrlInp','connectBtn','processCallbackBtn','clearOAuthBtn',
           'mainView','issueSel','activityTypeSel','activityDueInp','activityInp','minutesInp','registerBtn','jiraDurationPill','timerVal','timerState','startBtn','pauseBtn',
-          'resetBtn','applyTimerBtn','suggestionBox','applySugActBtn','applySugTimeBtn','todayTotal','weekTotal','issueCount','dashMeta',
+          'resetBtn','applyTimerBtn','suggestionBox','applySugActBtn','applySugTimeBtn','registerSugBtn','todayTotal','weekTotal','issueCount','dashMeta',
           'refreshDashBtn','recentBox','commentsBox','worklogBody','timelineBox','ganttBox','genReportBtn','exportReportBtn','reportMeta',
           'reportBody','compactBtn','floatBox','floatIssue','floatTimer','floatState','floatStartBtn','floatPauseBtn','floatExpandBtn',
           'regModal','regModalMeta','regActInp','regMinInp','regModalOkBtn','regModalCancelBtn',
@@ -2116,6 +2124,7 @@
           el.suggestionBox.textContent = 'No hay sugerencias pendientes.';
           el.applySugActBtn.disabled = true;
           el.applySugTimeBtn.disabled = true;
+          el.registerSugBtn.disabled = true;
           return;
         }
         const s = state.suggestion;
@@ -2123,6 +2132,7 @@
         el.suggestionBox.innerHTML = `Comentario pendiente detectado.<br>Autor: <strong>${escapeHtml(s.author || 'Sin autor')}</strong><br>Actividad sugerida: <strong>${escapeHtml(s.activity)}</strong><br>Tiempo: <strong>${escapeHtml(TimeService.jiraDuration(s.minutes))}</strong><br>Fecha comentario: ${escapeHtml(TimeService.dtLabel(s.created))}`;
         el.applySugActBtn.disabled = false;
         el.applySugTimeBtn.disabled = false;
+        el.registerSugBtn.disabled = false;
       }
 
       function renderTimeline(issueKey) {
@@ -2865,6 +2875,31 @@
           el.minutesInp.value = String(state.durationMinutes);
           uiStateSave();
           renderDurationPill();
+        });
+        el.registerSugBtn.addEventListener('click', async () => {
+          if (!state.suggestion) return;
+          if (!state.selectedIssueKey) {
+            showMsg('error', 'Selecciona un ticket para registrar la sugerencia.');
+            return;
+          }
+          const suggested = String(state.suggestion.activityType || state.suggestion.activity || '').trim();
+          state.activityType = OFFICIAL_ACTIVITY_TYPES.includes(suggested)
+            ? suggested
+            : inferOfficialActivityType(suggested);
+          const suggestedDate = TimeService.toInputDate(state.suggestion.created || new Date());
+          state.activityDueDate = isValidInputDate(suggestedDate)
+            ? suggestedDate
+            : TimeService.toInputDate(new Date());
+          state.activity = buildOfficialActivity(state.activityType, state.activityDueDate);
+          state.durationMinutes = Math.max(1, Math.floor(Number(state.suggestion.minutes || 0)));
+          el.activityTypeSel.value = state.activityType;
+          el.activityDueInp.value = state.activityDueDate;
+          el.activityInp.value = state.activity;
+          el.minutesInp.value = String(state.durationMinutes);
+          renderDurationPill();
+          uiStateSave();
+          try { await createWorklog(state.selectedIssueKey, state.activity, state.durationMinutes); }
+          catch (e) { applyError(e, 'No se pudo registrar la sugerencia.'); }
         });
 
         if (FEATURES.dashboard) {

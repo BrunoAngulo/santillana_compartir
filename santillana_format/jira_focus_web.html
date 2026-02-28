@@ -6,70 +6,143 @@
   <title>Jira Focus Web</title>
   <style>
     :root {
-      --bg: #f5f8fb;
+      --bg: #edf2f8;
+      --bg-soft: #f8fbff;
       --card: #ffffff;
-      --line: #d6e1ee;
-      --text: #1f2d3d;
-      --muted: #5f7287;
-      --primary: #0b5cab;
-      --warn: #8f4f00;
-      --danger: #ab1b1b;
-      --ok: #136f3b;
+      --line: #d5e2f1;
+      --line-strong: #b9cde2;
+      --text: #132538;
+      --muted: #567089;
+      --primary: #0d5ea8;
+      --primary-dark: #0a4d89;
+      --warn: #87500a;
+      --danger: #ab2525;
+      --ok: #157247;
+      --shadow: 0 10px 28px rgba(14, 42, 74, 0.08);
     }
-    * { box-sizing: border-box; }
+    * {
+      box-sizing: border-box;
+      min-width: 0;
+    }
+    html, body {
+      max-width: 100%;
+      overflow-x: hidden;
+    }
     body {
       margin: 0;
-      padding: 14px;
-      font-family: "Segoe UI", Tahoma, sans-serif;
+      padding: 16px;
+      font-family: "Trebuchet MS", "Gill Sans", "Verdana", sans-serif;
       color: var(--text);
-      background: var(--bg);
+      background:
+        radial-gradient(circle at 8% -20%, #ffffff 0, var(--bg-soft) 34%, transparent 58%),
+        linear-gradient(180deg, #eef3f9 0%, var(--bg) 100%);
     }
     .app {
       display: grid;
-      gap: 10px;
-      max-width: 1160px;
+      gap: 12px;
+      width: min(1160px, 100%);
       margin: 0 auto;
     }
     .card {
       background: var(--card);
       border: 1px solid var(--line);
-      border-radius: 12px;
-      padding: 12px;
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .topbar {
+      border: 0;
+      background: linear-gradient(120deg, #0e518f 0%, #1973ba 70%, #2f8bcb 100%);
+      color: #ffffff;
+    }
+    .topbar h2 {
+      color: #ffffff;
+      letter-spacing: 0.2px;
+    }
+    .topbar .muted { color: rgba(235, 245, 255, 0.9); }
+    .topbar .pill {
+      color: #ffffff;
+      border-color: rgba(255, 255, 255, 0.5);
+      background: rgba(255, 255, 255, 0.18);
+      backdrop-filter: blur(3px);
+    }
+    .topbar .pill.ok {
+      color: #ffffff;
+      border-color: rgba(196, 255, 215, 0.65);
+      background: rgba(55, 154, 95, 0.45);
+    }
+    .topbar .btn {
+      color: #ffffff;
+      border-color: rgba(255, 255, 255, 0.45);
+      background: rgba(255, 255, 255, 0.16);
+    }
+    .topbar .btn:hover:not(:disabled) {
+      border-color: rgba(255, 255, 255, 0.7);
+      background: rgba(255, 255, 255, 0.24);
+    }
+    .topbar .btn.danger {
+      color: #ffffff;
+      border-color: rgba(255, 209, 209, 0.75);
+      background: rgba(173, 46, 46, 0.45);
     }
     .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
     .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
     .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-    h2,h3,h4 { margin: 0 0 8px 0; }
+    h2, h3, h4 { margin: 0 0 8px 0; }
+    h3 { font-size: 17px; letter-spacing: 0.15px; }
     .muted { color: var(--muted); font-size: 12px; }
     .pill {
+      display: inline-flex;
+      align-items: center;
+      max-width: 100%;
       border: 1px solid var(--line);
       border-radius: 999px;
-      padding: 4px 10px;
+      padding: 5px 11px;
       font-size: 12px;
       color: var(--muted);
       background: #fff;
+      white-space: normal;
+      overflow-wrap: anywhere;
     }
     .pill.ok { color: var(--ok); border-color: #a6d8bb; background: #edfbf3; }
     .pill.warn { color: var(--warn); border-color: #efcd8f; background: #fff7e8; }
     .btn {
-      border: 1px solid #c7d3e1;
+      border: 1px solid #c4d3e3;
       border-radius: 9px;
-      background: #fff;
+      background: linear-gradient(180deg, #ffffff 0%, #f4f8fc 100%);
       color: var(--text);
-      padding: 7px 11px;
+      padding: 8px 12px;
       font-size: 13px;
       cursor: pointer;
+      transition: transform .15s ease, box-shadow .15s ease, border-color .15s ease;
+    }
+    .btn:hover:not(:disabled) {
+      transform: translateY(-1px);
+      border-color: var(--line-strong);
+      box-shadow: 0 4px 10px rgba(20, 43, 70, 0.08);
     }
     .btn:disabled { opacity: .55; cursor: not-allowed; }
-    .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+    .btn.primary {
+      background: linear-gradient(180deg, #1472bf 0%, var(--primary) 100%);
+      border-color: var(--primary-dark);
+      color: #fff;
+    }
     .btn.warn { background: #fff7e8; border-color: #efcd8f; color: var(--warn); }
     .btn.danger { background: #fff1f1; border-color: #e6b2b2; color: var(--danger); }
     .inp, .sel, .txt {
       width: 100%;
-      border: 1px solid #c8d5e4;
+      border: 1px solid #c5d4e6;
       border-radius: 9px;
       padding: 8px 10px;
       font-size: 13px;
+      background: #fff;
+      color: var(--text);
+    }
+    .inp:focus, .sel:focus, .txt:focus {
+      outline: none;
+      border-color: #75a8d5;
+      box-shadow: 0 0 0 3px rgba(62, 133, 196, 0.14);
     }
     .txt { min-height: 90px; resize: vertical; }
     label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
@@ -78,25 +151,81 @@
     .msg.error { background: #ffeaea; border-color: #edb8b8; color: var(--danger); }
     .msg.ok { background: #ebfaf1; border-color: #b7dfc8; color: var(--ok); }
     .msg.info { background: #eaf4ff; border-color: #bad6f6; color: #23527d; }
-    .empty { border: 1px dashed #c8d6e7; border-radius: 9px; padding: 10px; font-size: 13px; color: var(--muted); }
+    .empty {
+      border: 1px dashed #c8d6e7;
+      border-radius: 10px;
+      padding: 10px;
+      font-size: 13px;
+      color: var(--muted);
+      background: linear-gradient(180deg, #fbfdff 0%, #f4f9ff 100%);
+    }
     .timer { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; margin: 0 0 4px 0; }
-    .tbl-wrap { border: 1px solid var(--line); border-radius: 10px; overflow: auto; max-height: 360px; }
-    table { width: 100%; border-collapse: collapse; min-width: 680px; font-size: 12px; }
-    th, td { border-bottom: 1px solid #e8eff7; padding: 8px; text-align: left; vertical-align: top; }
-    th { position: sticky; top: 0; background: #f5f9fd; }
+    .tbl-wrap {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      overflow-y: auto;
+      overflow-x: hidden;
+      max-height: 360px;
+      background: #fff;
+    }
+    table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      min-width: 0;
+      table-layout: fixed;
+      font-size: 12px;
+    }
+    th, td {
+      border-bottom: 1px solid #e8eff7;
+      padding: 8px;
+      text-align: left;
+      vertical-align: top;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      background: #f3f8ff;
+    }
     .comments { display: grid; gap: 8px; max-height: 360px; overflow: auto; }
     .comment { border: 1px solid var(--line); border-radius: 9px; padding: 8px; background: #fff; }
     .comment.mine { background: #eef8ff; border-color: #b8d8f1; }
-    .meta { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; margin-bottom: 4px; }
-    .body { white-space: pre-wrap; font-size: 13px; }
+    .meta { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; margin-bottom: 4px; flex-wrap: wrap; }
+    .body { white-space: pre-wrap; font-size: 13px; overflow-wrap: anywhere; }
     .track { height: 10px; border-radius: 999px; background: #edf3f9; position: relative; overflow: hidden; }
     .bar { position: absolute; top: 0; bottom: 0; border-radius: 999px; background: linear-gradient(90deg, #1d74c7, #4ab2dc); }
     .timeline-item { border: 1px solid var(--line); border-radius: 9px; padding: 7px; margin-bottom: 8px; }
     .gantt-row { display: grid; grid-template-columns: 190px 1fr 60px; gap: 7px; align-items: center; margin-bottom: 7px; font-size: 12px; }
+    .recent-line {
+      font-size: 12px;
+      flex: 1;
+      min-width: 0;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+    #userPill { max-width: 360px; }
+    #debugLogBox {
+      margin: 8px 0 0 0;
+      max-height: 180px;
+      overflow: auto;
+      background: #f6f9fd;
+      border: 1px solid #d6e3f0;
+      border-radius: 10px;
+      padding: 10px;
+      font-size: 11px;
+      line-height: 1.35;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
     .float {
       position: fixed; right: 12px; bottom: 12px; width: 255px;
       border: 1px solid #b4cae3; border-radius: 11px; padding: 9px;
       background: #eff6ff; display: none; z-index: 9998;
+      box-shadow: var(--shadow);
     }
     .float.show { display: block; }
     .modal {
@@ -110,18 +239,32 @@
       border: 1px solid var(--line);
       border-radius: 12px;
       padding: 12px;
+      max-height: calc(100vh - 36px);
+      overflow: auto;
     }
     .hide { display: none !important; }
+    @media (max-width: 1180px) {
+      body { padding: 12px; }
+    }
     @media (max-width: 980px) {
       .grid2, .grid3 { grid-template-columns: 1fr; }
       .gantt-row { grid-template-columns: 1fr; }
       .float { left: 10px; right: 10px; width: auto; }
+      .topbar { gap: 10px; }
+      #userPill { max-width: 100%; }
+    }
+    @media (max-width: 640px) {
+      body { padding: 8px; }
+      .card { padding: 11px; border-radius: 12px; }
+      .timer { font-size: 26px; }
+      .btn { width: 100%; justify-content: center; }
+      .row > .btn { flex: 1 1 100%; }
     }
   </style>
 </head>
 <body>
   <div class="app" id="app">
-    <div class="card row">
+    <div class="card row topbar">
       <div>
         <h2>Jira Focus Web</h2>
         <div class="muted">Trabajo en Jira Cloud, frontend puro, persistencia local.</div>
@@ -145,7 +288,7 @@
         </div>
       </div>
       <div class="muted">No se registran tokens, codes ni secrets. Solo eventos tecnicos.</div>
-      <pre id="debugLogBox" style="margin:8px 0 0 0;max-height:180px;overflow:auto;background:#f6f9fd;border:1px solid #d6e3f0;border-radius:8px;padding:8px;font-size:11px;line-height:1.35;"></pre>
+      <pre id="debugLogBox"></pre>
     </section>
 
     <section class="card" id="loginView">
@@ -405,7 +548,8 @@
         activities: [],
         debugLogs: [],
         popupWatchTimer: 0,
-        popupProcessing: false
+        popupProcessing: false,
+        oauthCallbackInProgress: false
       };
 
       const el = {};
@@ -880,7 +1024,7 @@
         myself() { return this.req('GET', '/rest/api/3/myself'); },
         searchIssues() {
           const jql = 'assignee = currentUser() AND statusCategory != Done AND issuetype not in subTaskIssueTypes() ORDER BY updated DESC';
-          return this.req('GET', '/rest/api/3/search', { params: { jql, maxResults: 80, fields: 'summary,status,issuetype,attachment' } });
+          return this.req('GET', '/rest/api/3/search/jql', { params: { jql, maxResults: 80, fields: 'summary,status,issuetype,attachment' } });
         },
         comments(key) { return this.req('GET', `/rest/api/3/issue/${encodeURIComponent(key)}/comment`, { params: { orderBy: '-created', maxResults: 100 } }); },
         worklogs(key) { return this.req('GET', `/rest/api/3/issue/${encodeURIComponent(key)}/worklog`); },
@@ -1067,6 +1211,40 @@
         state.popupProcessing = false;
       }
 
+      function closePopupWindowRef(popupWindow, reason) {
+        if (!popupWindow) return;
+        try {
+          if (popupWindow.closed) {
+            dbg('oauth_popup_already_closed', { reason: String(reason || '') });
+            return;
+          }
+        } catch (_e) {
+          // ignore and try close anyway
+        }
+        try {
+          popupWindow.close();
+          dbg('oauth_popup_closed_by_parent', { reason: String(reason || '') });
+        } catch (error) {
+          dbg('oauth_popup_close_by_parent_failed', {
+            reason: String(reason || ''),
+            message: error && error.message ? error.message : String(error)
+          });
+        }
+        window.setTimeout(() => {
+          try {
+            if (popupWindow && !popupWindow.closed) {
+              popupWindow.close();
+              dbg('oauth_popup_closed_by_parent_retry', { reason: String(reason || '') });
+            }
+          } catch (error) {
+            dbg('oauth_popup_close_by_parent_retry_failed', {
+              reason: String(reason || ''),
+              message: error && error.message ? error.message : String(error)
+            });
+          }
+        }, 700);
+      }
+
       function watchOAuthPopupCallback(popupWindow, cfg) {
         clearPopupWatcher();
         dbg('oauth_popup_watch_start', {
@@ -1106,9 +1284,10 @@
               } else {
                 showMsg('error', 'La ventana OAuth regreso sin parametros esperados.');
               }
-              try { popupWindow.close(); } catch (_closeErr) { /* ignore */ }
+              closePopupWindowRef(popupWindow, 'callback_processed');
             })
             .catch((error) => {
+              closePopupWindowRef(popupWindow, 'callback_error');
               applyError(error, 'No se pudo procesar callback automatico.');
             })
             .finally(() => {
@@ -1393,7 +1572,9 @@
       }
 
       function parseIssues(payload) {
-        const list = Array.isArray(payload.issues) ? payload.issues : [];
+        const list = Array.isArray(payload.issues)
+          ? payload.issues
+          : (Array.isArray(payload.values) ? payload.values : []);
         return list
           .filter((it) => it && it.key && it.fields && !(it.fields.issuetype && it.fields.issuetype.subtask))
           .map((it) => ({
@@ -1656,7 +1837,7 @@
         el.recentBox.innerHTML = state.dash.logs.slice(0, 15).map((w) => {
           const line = `${w.issueKey} | ${activityOf(w)}`;
           const right = `${minutesOf(w)}m - ${TimeService.dtLabel(w.started || w.created)}`;
-          return `<div class="row" style="justify-content:space-between;border-bottom:1px solid #eef3f9;padding:6px 0;"><span style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(line)}</span><span class="muted">${escapeHtml(right)}</span></div>`;
+          return `<div class="row" style="justify-content:space-between;border-bottom:1px solid #eef3f9;padding:6px 0;"><span class="recent-line">${escapeHtml(line)}</span><span class="muted">${escapeHtml(right)}</span></div>`;
         }).join('');
       }
 
@@ -1996,58 +2177,91 @@
       }
 
       async function processOAuthCallback(callbackUrl, clearTopUrl) {
+        if (state.oauthCallbackInProgress) {
+          dbg('oauth_callback_skip_in_progress');
+          return false;
+        }
+        state.oauthCallbackInProgress = true;
         const params = parseUrlParams(callbackUrl);
         dbg('oauth_callback_detected', {
           has_code: !!params.code,
           has_error: !!params.error,
           clear_top_url: !!clearTopUrl
         });
-        if (!params.code && !params.error) {
-          return false;
-        }
-        if (params.error) {
+        try {
+          if (!params.code && !params.error) {
+            return false;
+          }
+          if (params.error) {
+            StorageService.clearOAuthPending();
+            if (clearTopUrl) {
+              clearOAuthParamsFromTopUrl();
+            }
+            const err = new Error(params.error_description || params.error);
+            err.kind = 'oauth';
+            err.status = 400;
+            throw err;
+          }
+          const pending = StorageService.getOAuthPending();
+          if (!pending) {
+            if (StorageService.getOAuthTokens()) {
+              dbg('oauth_callback_pending_missing_but_tokens_exist');
+              if (clearTopUrl) {
+                clearOAuthParamsFromTopUrl();
+              }
+              tryCloseOAuthPopup('callback_already_processed');
+              return true;
+            }
+            const err = new Error('No hay estado OAuth pendiente. Inicia nuevamente la conexion.');
+            err.kind = 'oauth';
+            err.status = 400;
+            throw err;
+          }
+          if (String(params.state || '') !== String(pending.state || '')) {
+            StorageService.clearOAuthPending();
+            const err = new Error('State OAuth invalido. Posible callback de otra sesion.');
+            err.kind = 'oauth';
+            err.status = 400;
+            throw err;
+          }
+          const cfg = StorageService.getConfig();
+          if (!cfg) {
+            const err = new Error('No existe configuracion local para completar OAuth.');
+            err.kind = 'oauth';
+            err.status = 400;
+            throw err;
+          }
+          const tokenPayload = await OAuthService.exchangeCode(cfg, params.code, String(pending.code_verifier || ''));
+          StorageService.saveOAuthTokens(tokenPayload);
           StorageService.clearOAuthPending();
+          dbg('oauth_callback_token_saved', { has_refresh: !!tokenPayload.refresh_token });
           if (clearTopUrl) {
             clearOAuthParamsFromTopUrl();
           }
-          const err = new Error(params.error_description || params.error);
-          err.kind = 'oauth';
-          err.status = 400;
-          throw err;
+          let postConnectError = null;
+          try {
+            await connectWithStoredSession(cfg, true);
+          } catch (error) {
+            postConnectError = error;
+            dbg('oauth_callback_post_connect_error', {
+              kind: error && error.kind ? error.kind : '',
+              status: error && error.status ? error.status : '',
+              message: error && error.message ? error.message : ''
+            });
+          }
+          StorageService.markOAuthDone('callback');
+          dbg('oauth_callback_completed', {
+            connected: state.connected,
+            has_post_error: !!postConnectError
+          });
+          tryCloseOAuthPopup('callback_completed');
+          if (postConnectError) {
+            throw postConnectError;
+          }
+          return true;
+        } finally {
+          state.oauthCallbackInProgress = false;
         }
-        const pending = StorageService.getOAuthPending();
-        if (!pending) {
-          const err = new Error('No hay estado OAuth pendiente. Inicia nuevamente la conexion.');
-          err.kind = 'oauth';
-          err.status = 400;
-          throw err;
-        }
-        if (String(params.state || '') !== String(pending.state || '')) {
-          StorageService.clearOAuthPending();
-          const err = new Error('State OAuth invalido. Posible callback de otra sesion.');
-          err.kind = 'oauth';
-          err.status = 400;
-          throw err;
-        }
-        const cfg = StorageService.getConfig();
-        if (!cfg) {
-          const err = new Error('No existe configuracion local para completar OAuth.');
-          err.kind = 'oauth';
-          err.status = 400;
-          throw err;
-        }
-        const tokenPayload = await OAuthService.exchangeCode(cfg, params.code, String(pending.code_verifier || ''));
-        StorageService.saveOAuthTokens(tokenPayload);
-        StorageService.clearOAuthPending();
-        dbg('oauth_callback_token_saved', { has_refresh: !!tokenPayload.refresh_token });
-        if (clearTopUrl) {
-          clearOAuthParamsFromTopUrl();
-        }
-        await connectWithStoredSession(cfg, true);
-        StorageService.markOAuthDone('callback');
-        dbg('oauth_callback_completed');
-        tryCloseOAuthPopup('callback_completed');
-        return true;
       }
 
       function bind() {

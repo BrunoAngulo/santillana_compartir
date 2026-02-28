@@ -139,23 +139,35 @@
 
     <section class="card" id="loginView">
       <h3>Conectar Jira Cloud</h3>
-      <div class="muted">Se guarda en localStorage con clave <code>jira_config</code>.</div>
+      <div class="muted">OAuth 2.0 PKCE. Configuracion local en <code>jira_config</code> (sin exponer tokens en UI).</div>
       <div class="grid3" style="margin-top:8px;">
         <div>
           <label for="urlInp">URL Jira</label>
           <input class="inp" id="urlInp" type="url" placeholder="https://tu-dominio.atlassian.net" autocomplete="off">
         </div>
         <div>
-          <label for="emailInp">Email</label>
-          <input class="inp" id="emailInp" type="email" placeholder="usuario@dominio.com" autocomplete="off">
+          <label for="clientIdInp">Atlassian OAuth Client ID</label>
+          <input class="inp" id="clientIdInp" type="text" placeholder="Tu client id 3LO" autocomplete="off">
         </div>
         <div>
-          <label for="tokenInp">API token</label>
-          <input class="inp" id="tokenInp" type="password" placeholder="********" autocomplete="new-password">
+          <label for="redirectUriInp">Redirect URI</label>
+          <input class="inp" id="redirectUriInp" type="url" placeholder="https://tu-app/">
+        </div>
+      </div>
+      <div class="muted" style="margin-top:8px;">
+        Registra este Redirect URI en tu app OAuth de Atlassian. Si no se detecta callback automatico, pega la URL retornada:
+      </div>
+      <div class="grid2" style="margin-top:8px;">
+        <div>
+          <label for="callbackUrlInp">URL de callback (manual)</label>
+          <input class="inp" id="callbackUrlInp" type="text" placeholder="https://tu-app/?code=...&state=...">
+        </div>
+        <div class="row" style="align-items:flex-end;">
+          <button class="btn" id="processCallbackBtn" type="button">Procesar callback</button>
         </div>
       </div>
       <div class="row" style="margin-top:10px;">
-        <button class="btn primary" id="connectBtn" type="button">Conectar</button>
+        <button class="btn primary" id="connectBtn" type="button">Conectar con OAuth</button>
       </div>
     </section>
 
@@ -327,10 +339,24 @@
 
       const STORAGE = {
         config: 'jira_config',
+        oauthTokens: 'jira_oauth_tokens',
+        oauthPending: 'jira_oauth_pending',
         timer: 'jira_focus_timer_state',
         ui: 'jira_focus_ui_state',
         lastActivity: 'jira_focus_last_activity',
         activities: 'jira_focus_activities'
+      };
+      const OAUTH = {
+        authorizeUrl: 'https://auth.atlassian.com/authorize',
+        tokenUrl: 'https://auth.atlassian.com/oauth/token',
+        resourcesUrl: 'https://api.atlassian.com/oauth/token/accessible-resources',
+        scopes: [
+          'read:jira-user',
+          'read:jira-work',
+          'write:jira-work',
+          'delete:jira-work',
+          'offline_access'
+        ]
       };
       const LABOR = { startHour: 8, startMinute: 30, endHour: 18, endMinute: 0, dayMinutes: 570, weekMinutes: 2850 };
       const INACTIVITY_MS = 2 * 60 * 60 * 1000;
@@ -351,6 +377,7 @@
         report: { detail: [], grouped: [] },
         dash: { logs: [], today: 0, week: 0, issueCount: 0, refreshedAt: null },
         timer: { running: false, resumeTs: 0, elapsedBizMs: 0 },
+        oauthTokens: null,
         lastActivityTs: Date.now(),
         lastReminderTs: 0,
         regCtx: null,
@@ -368,17 +395,63 @@
           const cfg = this.parse(this.get(STORAGE.config), null);
           if (!cfg || typeof cfg !== 'object') return null;
           const url = sanitizeUrl(cfg.url || '');
-          const email = String(cfg.email || '').trim();
-          const api_token = String(cfg.api_token || '');
-          if (!url || !email || !api_token) return null;
-          return { url, email, api_token };
+          const client_id = String(cfg.client_id || '').trim();
+          const redirect_uri = String(cfg.redirect_uri || '').trim();
+          const cloud_id = String(cfg.cloud_id || '').trim();
+          if (!url || !client_id || !redirect_uri) return null;
+          return {
+            url,
+            client_id,
+            redirect_uri,
+            cloud_id,
+            // keep compatibility fields expected by old config shape
+            email: String(cfg.email || '').trim(),
+            api_token: String(cfg.api_token || '')
+          };
         },
         saveConfig(cfg) {
           this.set(STORAGE.config, JSON.stringify({
             url: sanitizeUrl(cfg.url || ''),
-            email: String(cfg.email || '').trim(),
-            api_token: String(cfg.api_token || '')
+            email: '',
+            api_token: '',
+            client_id: String(cfg.client_id || '').trim(),
+            redirect_uri: String(cfg.redirect_uri || '').trim(),
+            cloud_id: String(cfg.cloud_id || '').trim()
           }));
+        },
+        getOAuthTokens() {
+          const tokenData = this.parse(this.get(STORAGE.oauthTokens), null);
+          if (!tokenData || typeof tokenData !== 'object') return null;
+          const access_token = String(tokenData.access_token || '');
+          const refresh_token = String(tokenData.refresh_token || '');
+          const expires_at = Number(tokenData.expires_at || 0);
+          if (!access_token || !expires_at) return null;
+          return { access_token, refresh_token, expires_at };
+        },
+        saveOAuthTokens(tokens) {
+          this.set(STORAGE.oauthTokens, JSON.stringify({
+            access_token: String(tokens.access_token || ''),
+            refresh_token: String(tokens.refresh_token || ''),
+            expires_at: Number(tokens.expires_at || 0)
+          }));
+        },
+        clearOAuthTokens() {
+          this.del(STORAGE.oauthTokens);
+        },
+        getOAuthPending() {
+          const pending = this.parse(this.get(STORAGE.oauthPending), null);
+          if (!pending || typeof pending !== 'object') return null;
+          const state = String(pending.state || '');
+          const code_verifier = String(pending.code_verifier || '');
+          const created_at = Number(pending.created_at || 0);
+          if (!state || !code_verifier || !created_at) return null;
+          return pending;
+        },
+        saveOAuthPending(payload) {
+          this.set(STORAGE.oauthPending, JSON.stringify(payload || {}));
+        },
+        clearOAuthPending() {
+          this.del(STORAGE.oauthPending);
         },
         getTimer() {
           const t = this.parse(this.get(STORAGE.timer), null);
@@ -526,32 +599,205 @@
         }
       };
 
+      const OAuthService = {
+        async sha256Base64Url(input) {
+          const data = new TextEncoder().encode(String(input || ''));
+          const digest = await crypto.subtle.digest('SHA-256', data);
+          return base64UrlEncode(new Uint8Array(digest));
+        },
+        randomString(size) {
+          const bytes = new Uint8Array(size);
+          crypto.getRandomValues(bytes);
+          return base64UrlEncode(bytes).slice(0, size * 2);
+        },
+        async startAuth(cfg) {
+          const codeVerifier = this.randomString(64);
+          const codeChallenge = await this.sha256Base64Url(codeVerifier);
+          const oauthState = this.randomString(32);
+          StorageService.saveOAuthPending({
+            state: oauthState,
+            code_verifier: codeVerifier,
+            created_at: Date.now(),
+            redirect_uri: cfg.redirect_uri,
+            url: cfg.url,
+            client_id: cfg.client_id
+          });
+          const authUrl = new URL(OAUTH.authorizeUrl);
+          authUrl.searchParams.set('audience', 'api.atlassian.com');
+          authUrl.searchParams.set('client_id', cfg.client_id);
+          authUrl.searchParams.set('scope', OAUTH.scopes.join(' '));
+          authUrl.searchParams.set('redirect_uri', cfg.redirect_uri);
+          authUrl.searchParams.set('state', oauthState);
+          authUrl.searchParams.set('response_type', 'code');
+          authUrl.searchParams.set('prompt', 'consent');
+          authUrl.searchParams.set('code_challenge', codeChallenge);
+          authUrl.searchParams.set('code_challenge_method', 'S256');
+          navigateTop(authUrl.toString());
+        },
+        async tokenRequest(payload) {
+          let res;
+          try {
+            res = await fetch(OAUTH.tokenUrl, {
+              method: 'POST',
+              headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload || {})
+            });
+          } catch (_e) {
+            const err = new Error('No se pudo llegar a auth.atlassian.com (posible bloqueo de red/CORS).');
+            err.kind = 'cors';
+            throw err;
+          }
+          const raw = await res.text();
+          let data = null;
+          if (raw) {
+            try { data = JSON.parse(raw); } catch (_e) { data = null; }
+          }
+          if (!res.ok) {
+            const err = new Error(httpMessage(data, res.status));
+            err.kind = 'oauth';
+            err.status = res.status;
+            throw err;
+          }
+          return data || {};
+        },
+        async exchangeCode(cfg, code, codeVerifier) {
+          const data = await this.tokenRequest({
+            grant_type: 'authorization_code',
+            client_id: cfg.client_id,
+            code: String(code || ''),
+            redirect_uri: cfg.redirect_uri,
+            code_verifier: codeVerifier
+          });
+          return this.normalizeTokenPayload(data);
+        },
+        async refresh(cfg, refreshToken) {
+          const data = await this.tokenRequest({
+            grant_type: 'refresh_token',
+            client_id: cfg.client_id,
+            refresh_token: String(refreshToken || '')
+          });
+          return this.normalizeTokenPayload(data, refreshToken);
+        },
+        normalizeTokenPayload(data, fallbackRefreshToken) {
+          const accessToken = String(data.access_token || '');
+          const refreshToken = String(data.refresh_token || fallbackRefreshToken || '');
+          const expiresIn = Number(data.expires_in || 0);
+          if (!accessToken || !expiresIn) {
+            const err = new Error('Respuesta OAuth incompleta.');
+            err.kind = 'oauth';
+            throw err;
+          }
+          return {
+            access_token: accessToken,
+            refresh_token: refreshToken,
+            expires_at: Date.now() + Math.max(60, expiresIn - 45) * 1000
+          };
+        },
+        async ensureValidTokens(cfg) {
+          const current = StorageService.getOAuthTokens();
+          if (!current) {
+            const err = new Error('No existe sesion OAuth en localStorage.');
+            err.kind = 'oauth';
+            err.status = 401;
+            throw err;
+          }
+          const stillValid = current.expires_at > Date.now() + 15000;
+          if (stillValid) {
+            state.oauthTokens = current;
+            return current;
+          }
+          if (!current.refresh_token) {
+            StorageService.clearOAuthTokens();
+            const err = new Error('Sesion expirada. Reconecta OAuth.');
+            err.kind = 'oauth';
+            err.status = 401;
+            throw err;
+          }
+          const refreshed = await this.refresh(cfg, current.refresh_token);
+          StorageService.saveOAuthTokens(refreshed);
+          state.oauthTokens = refreshed;
+          return refreshed;
+        },
+        async getResources(accessToken) {
+          let res;
+          try {
+            res = await fetch(OAUTH.resourcesUrl, {
+              method: 'GET',
+              headers: {
+                Accept: 'application/json',
+                Authorization: `Bearer ${accessToken}`
+              }
+            });
+          } catch (_e) {
+            const err = new Error('No se pudo consultar accessible-resources (CORS/red).');
+            err.kind = 'cors';
+            throw err;
+          }
+          const raw = await res.text();
+          let data = null;
+          if (raw) {
+            try { data = JSON.parse(raw); } catch (_e) { data = null; }
+          }
+          if (!res.ok) {
+            const err = new Error(httpMessage(data, res.status));
+            err.kind = 'oauth';
+            err.status = res.status;
+            throw err;
+          }
+          return Array.isArray(data) ? data : [];
+        },
+        pickCloudResource(resources, jiraUrl) {
+          const site = sanitizeUrl(jiraUrl);
+          const siteHost = safeHostname(site);
+          let match = resources.find((r) => sanitizeUrl(r.url || '') === site);
+          if (!match && siteHost) {
+            match = resources.find((r) => safeHostname(r.url || '') === siteHost);
+          }
+          if (!match && resources.length === 1) {
+            match = resources[0];
+          }
+          if (!match) {
+            const err = new Error('No se encontro recurso accesible para la URL Jira indicada.');
+            err.kind = 'oauth';
+            err.status = 404;
+            throw err;
+          }
+          return match;
+        }
+      };
+
       const JiraService = {
-        baseUrl: '',
-        auth: '',
-        setConfig(cfg) {
-          const url = sanitizeUrl(cfg.url || '');
-          const email = String(cfg.email || '').trim();
-          const token = String(cfg.api_token || '');
-          if (!url || !email || !token) throw new Error('Configuracion incompleta');
-          this.baseUrl = url;
-          this.auth = 'Basic ' + btoa(unescape(encodeURIComponent(`${email}:${token}`)));
+        cloudId: '',
+        setCloudId(cloudId) {
+          this.cloudId = String(cloudId || '').trim();
         },
         url(path, params) {
-          const u = new URL(this.baseUrl + path);
+          if (!this.cloudId) {
+            throw new Error('cloudId no configurado.');
+          }
+          const base = `https://api.atlassian.com/ex/jira/${encodeURIComponent(this.cloudId)}`;
+          const u = new URL(base + path);
           Object.entries(params || {}).forEach(([k, v]) => {
             if (v === undefined || v === null || v === '') return;
             u.searchParams.append(k, String(v));
           });
           return u.toString();
         },
-        async req(method, path, opts = {}) {
+        async req(method, path, opts = {}, retried = false) {
+          const cfg = StorageService.getConfig();
+          if (!cfg) {
+            const err = new Error('No existe configuracion OAuth.');
+            err.kind = 'oauth';
+            err.status = 401;
+            throw err;
+          }
+          const tokens = await OAuthService.ensureValidTokens(cfg);
           const init = {
             method,
             headers: {
               Accept: 'application/json',
               'Content-Type': 'application/json',
-              Authorization: this.auth
+              Authorization: `Bearer ${tokens.access_token}`
             }
           };
           if (opts.body !== undefined) init.body = JSON.stringify(opts.body);
@@ -559,7 +805,7 @@
           try {
             res = await fetch(this.url(path, opts.params || {}), init);
           } catch (_e) {
-            const err = new Error('No se pudo conectar directo a Jira. Posible bloqueo CORS del tenant.');
+            const err = new Error('No se pudo conectar directo a Jira Cloud (posible CORS/red).');
             err.kind = 'cors';
             throw err;
           }
@@ -567,6 +813,17 @@
           let payload = null;
           if (raw) { try { payload = JSON.parse(raw); } catch (_e) { payload = null; } }
           if (!res.ok) {
+            if (res.status === 401 && !retried) {
+              try {
+                await OAuthService.refresh(cfg, tokens.refresh_token).then((newTokens) => {
+                  StorageService.saveOAuthTokens(newTokens);
+                  state.oauthTokens = newTokens;
+                });
+                return this.req(method, path, opts, true);
+              } catch (_refreshError) {
+                StorageService.clearOAuthTokens();
+              }
+            }
             const err = new Error(httpMessage(payload, res.status));
             err.kind = 'http';
             err.status = res.status;
@@ -591,6 +848,107 @@
         if (!base) return '';
         if (/^https?:\/\//i.test(base)) return base;
         return `https://${base}`;
+      }
+
+      function safeHostname(url) {
+        try {
+          return new URL(sanitizeUrl(url)).hostname.toLowerCase();
+        } catch (_e) {
+          return '';
+        }
+      }
+
+      function base64UrlEncode(bytes) {
+        let str = '';
+        const source = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+        source.forEach((b) => { str += String.fromCharCode(b); });
+        return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+      }
+
+      function parseUrlParams(urlValue) {
+        try {
+          const url = new URL(String(urlValue || ''));
+          return {
+            code: url.searchParams.get('code') || '',
+            state: url.searchParams.get('state') || '',
+            error: url.searchParams.get('error') || '',
+            error_description: url.searchParams.get('error_description') || ''
+          };
+        } catch (_e) {
+          return { code: '', state: '', error: '', error_description: '' };
+        }
+      }
+
+      function getTopLocationHref() {
+        try {
+          if (window.top && window.top.location && window.top.location.href) {
+            return String(window.top.location.href);
+          }
+        } catch (_e) {
+          // ignore and fallback below
+        }
+        if (document.referrer) {
+          return String(document.referrer);
+        }
+        try {
+          return String(window.location.href || '');
+        } catch (_e) {
+          return '';
+        }
+      }
+
+      function deriveDefaultRedirectUri() {
+        const href = getTopLocationHref();
+        if (!href) return '';
+        try {
+          const url = new URL(href);
+          url.search = '';
+          url.hash = '';
+          return url.toString();
+        } catch (_e) {
+          return '';
+        }
+      }
+
+      function clearOAuthParamsFromTopUrl() {
+        const href = getTopLocationHref();
+        try {
+          const url = new URL(href);
+          ['code', 'state', 'error', 'error_description'].forEach((key) => url.searchParams.delete(key));
+          const clean = url.toString();
+          try {
+            if (window.top && window.top.history && typeof window.top.history.replaceState === 'function') {
+              window.top.history.replaceState({}, '', clean);
+              return;
+            }
+          } catch (_eTop) {
+            // ignore
+          }
+          window.history.replaceState({}, '', clean);
+        } catch (_e) {
+          // ignore
+        }
+      }
+
+      function navigateTop(urlValue) {
+        const target = String(urlValue || '');
+        if (!target) return;
+        try {
+          if (window.top && window.top.location) {
+            window.top.location.href = target;
+            return;
+          }
+        } catch (_e) {
+          // ignore
+        }
+        try {
+          window.location.href = target;
+        } catch (_e) {
+          const win = window.open(target, '_blank', 'noopener,noreferrer');
+          if (!win) {
+            showMsg('error', 'No se pudo abrir la autorizacion OAuth. Permite ventanas emergentes.');
+          }
+        }
       }
 
       function adfToText(node) {
@@ -630,7 +988,8 @@
       }
       function cacheElements() {
         [
-          'connPill','userPill','refreshIssuesBtn','disconnectBtn','msg','idleMsg','loginView','urlInp','emailInp','tokenInp','connectBtn',
+          'connPill','userPill','refreshIssuesBtn','disconnectBtn','msg','idleMsg',
+          'loginView','urlInp','clientIdInp','redirectUriInp','callbackUrlInp','connectBtn','processCallbackBtn',
           'mainView','issueSel','activityInp','minutesInp','registerBtn','jiraDurationPill','timerVal','timerState','startBtn','pauseBtn',
           'resetBtn','applyTimerBtn','suggestionBox','applySugActBtn','applySugTimeBtn','todayTotal','weekTotal','issueCount','dashMeta',
           'refreshDashBtn','recentBox','commentsBox','worklogBody','timelineBox','ganttBox','genReportBtn','exportReportBtn','reportMeta',
@@ -687,8 +1046,16 @@
           showMsg('error', 'No se pudo conectar a Jira desde frontend por limitacion CORS del tenant Jira Cloud.');
           return;
         }
+        if (err && err.kind === 'oauth' && err.status === 400) {
+          showMsg('error', 'OAuth invalido. Revisa Client ID, Redirect URI y la configuracion PKCE en Atlassian.');
+          return;
+        }
+        if (err && err.kind === 'oauth' && err.status === 401) {
+          showMsg('error', 'Sesion OAuth expirada o invalida. Reconecta con OAuth.');
+          return;
+        }
         if (err && err.kind === 'http' && err.status === 401) {
-          showMsg('error', 'Credenciales invalidas. Verifica URL, email y API token.');
+          showMsg('error', 'Sesion expirada o autorizacion invalida en Jira. Reconecta con OAuth.');
           return;
         }
         if (err && err.kind === 'http' && err.status === 403) {
@@ -720,7 +1087,7 @@
         el.connPill.textContent = state.connected ? 'Conectado' : 'Sin conexion';
         el.connPill.className = `pill ${state.connected ? 'ok' : ''}`;
         el.userPill.textContent = state.connected
-          ? `Usuario: ${state.me && state.me.displayName ? state.me.displayName : state.config.email}`
+          ? `Usuario: ${state.me && state.me.displayName ? state.me.displayName : (state.config && state.config.url ? state.config.url : '-')}`
           : 'Usuario: -';
         el.disconnectBtn.disabled = !state.connected;
         el.refreshIssuesBtn.disabled = !state.connected;
@@ -1261,43 +1628,181 @@
         showMsg('ok', 'Worklog eliminado.');
       }
 
-      async function connect(cfg, save) {
-        JiraService.setConfig(cfg);
+      function readConfigInputs() {
+        return {
+          url: sanitizeUrl(el.urlInp.value),
+          client_id: String(el.clientIdInp.value || '').trim(),
+          redirect_uri: String(el.redirectUriInp.value || '').trim(),
+          cloud_id: ''
+        };
+      }
+
+      function applyConfigToInputs(cfg) {
+        if (!cfg) return;
+        el.urlInp.value = cfg.url || '';
+        el.clientIdInp.value = cfg.client_id || '';
+        el.redirectUriInp.value = cfg.redirect_uri || deriveDefaultRedirectUri();
+      }
+
+      function resetConnectionState() {
+        state.connected = false;
+        state.config = null;
+        state.me = null;
+        state.issues = [];
+        state.selectedIssueKey = '';
+        state.commentsByIssue = {};
+        state.worklogsByIssue = {};
+        state.report = { detail: [], grouped: [] };
+        state.dash = { logs: [], today: 0, week: 0, issueCount: 0, refreshedAt: null };
+        JiraService.setCloudId('');
+      }
+
+      async function resolveCloudId(cfg, tokens) {
+        if (cfg.cloud_id) {
+          return cfg.cloud_id;
+        }
+        const resources = await OAuthService.getResources(tokens.access_token);
+        const resource = OAuthService.pickCloudResource(resources, cfg.url);
+        const cloudId = String(resource.id || '').trim();
+        if (!cloudId) {
+          const err = new Error('No se pudo resolver cloudId para Jira.');
+          err.kind = 'oauth';
+          err.status = 404;
+          throw err;
+        }
+        return cloudId;
+      }
+
+      async function connectWithStoredSession(cfg, persistConfig) {
+        const effective = {
+          url: sanitizeUrl(cfg.url || ''),
+          client_id: String(cfg.client_id || '').trim(),
+          redirect_uri: String(cfg.redirect_uri || '').trim(),
+          cloud_id: String(cfg.cloud_id || '').trim()
+        };
+        if (!effective.url || !effective.client_id || !effective.redirect_uri) {
+          const err = new Error('Configuracion OAuth incompleta.');
+          err.kind = 'oauth';
+          err.status = 400;
+          throw err;
+        }
+        const tokens = await OAuthService.ensureValidTokens(effective);
+        if (!effective.cloud_id) {
+          effective.cloud_id = await resolveCloudId(effective, tokens);
+        }
+        if (persistConfig) {
+          StorageService.saveConfig(effective);
+        }
+        JiraService.setCloudId(effective.cloud_id);
         const me = await JiraService.myself();
         state.connected = true;
-        state.config = { url: sanitizeUrl(cfg.url), email: String(cfg.email || '').trim() };
+        state.config = effective;
         state.me = me;
-        if (save) StorageService.saveConfig(cfg);
-        el.tokenInp.value = '';
         renderTop();
         await loadIssues();
         await refreshDashboard();
       }
 
+      async function processOAuthCallback(callbackUrl, clearTopUrl) {
+        const params = parseUrlParams(callbackUrl);
+        if (!params.code && !params.error) {
+          return false;
+        }
+        if (params.error) {
+          StorageService.clearOAuthPending();
+          if (clearTopUrl) {
+            clearOAuthParamsFromTopUrl();
+          }
+          const err = new Error(params.error_description || params.error);
+          err.kind = 'oauth';
+          err.status = 400;
+          throw err;
+        }
+        const pending = StorageService.getOAuthPending();
+        if (!pending) {
+          const err = new Error('No hay estado OAuth pendiente. Inicia nuevamente la conexion.');
+          err.kind = 'oauth';
+          err.status = 400;
+          throw err;
+        }
+        if (String(params.state || '') !== String(pending.state || '')) {
+          StorageService.clearOAuthPending();
+          const err = new Error('State OAuth invalido. Posible callback de otra sesion.');
+          err.kind = 'oauth';
+          err.status = 400;
+          throw err;
+        }
+        const cfg = StorageService.getConfig();
+        if (!cfg) {
+          const err = new Error('No existe configuracion local para completar OAuth.');
+          err.kind = 'oauth';
+          err.status = 400;
+          throw err;
+        }
+        const tokenPayload = await OAuthService.exchangeCode(cfg, params.code, String(pending.code_verifier || ''));
+        StorageService.saveOAuthTokens(tokenPayload);
+        StorageService.clearOAuthPending();
+        if (clearTopUrl) {
+          clearOAuthParamsFromTopUrl();
+        }
+        await connectWithStoredSession(cfg, true);
+        return true;
+      }
+
       function bind() {
         el.connectBtn.addEventListener('click', async () => {
           clearMsg();
-          const cfg = {
-            url: sanitizeUrl(el.urlInp.value),
-            email: String(el.emailInp.value || '').trim(),
-            api_token: String(el.tokenInp.value || '')
-          };
-          if (!cfg.url || !cfg.email || !cfg.api_token) { showMsg('error', 'Completa URL, email y API token.'); return; }
-          try { await connect(cfg, true); showMsg('ok', 'Conexion correcta a Jira Cloud.'); }
-          catch (e) { state.connected = false; renderTop(); applyError(e, 'No fue posible conectar.'); }
+          const cfg = readConfigInputs();
+          if (!cfg.redirect_uri) {
+            cfg.redirect_uri = deriveDefaultRedirectUri();
+            el.redirectUriInp.value = cfg.redirect_uri;
+          }
+          if (!cfg.url || !cfg.client_id || !cfg.redirect_uri) {
+            showMsg('error', 'Completa URL Jira, Client ID y Redirect URI.');
+            return;
+          }
+          StorageService.saveConfig(cfg);
+          StorageService.clearOAuthTokens();
+          try {
+            await OAuthService.startAuth(cfg);
+            showMsg('info', 'Redirigiendo a autorizacion OAuth...');
+          } catch (e) {
+            applyError(e, 'No fue posible iniciar OAuth.');
+          }
+        });
+
+        el.processCallbackBtn.addEventListener('click', async () => {
+          clearMsg();
+          const raw = String(el.callbackUrlInp.value || '').trim();
+          if (!raw) {
+            showMsg('error', 'Pega la URL completa de callback para procesarla.');
+            return;
+          }
+          if (!StorageService.getConfig()) {
+            const cfg = readConfigInputs();
+            if (!cfg.redirect_uri) {
+              cfg.redirect_uri = deriveDefaultRedirectUri();
+              el.redirectUriInp.value = cfg.redirect_uri;
+            }
+            if (cfg.url && cfg.client_id && cfg.redirect_uri) {
+              StorageService.saveConfig(cfg);
+            }
+          }
+          try {
+            await processOAuthCallback(raw, false);
+            showMsg('ok', 'Callback OAuth procesado correctamente.');
+          } catch (e) {
+            resetConnectionState();
+            renderTop();
+            applyError(e, 'No se pudo procesar el callback OAuth.');
+          }
         });
 
         el.disconnectBtn.addEventListener('click', () => {
           StorageService.del(STORAGE.config);
-          state.connected = false;
-          state.config = null;
-          state.me = null;
-          state.issues = [];
-          state.selectedIssueKey = '';
-          state.commentsByIssue = {};
-          state.worklogsByIssue = {};
-          state.report = { detail: [], grouped: [] };
-          state.dash = { logs: [], today: 0, week: 0, issueCount: 0, refreshedAt: null };
+          StorageService.clearOAuthTokens();
+          StorageService.clearOAuthPending();
+          resetConnectionState();
           renderTop();
           renderIssueSelect();
           renderIssueData();
@@ -1467,17 +1972,50 @@
       }
 
       async function autoReconnect() {
+        const defaultRedirectUri = deriveDefaultRedirectUri();
+        if (!el.redirectUriInp.value && defaultRedirectUri) {
+          el.redirectUriInp.value = defaultRedirectUri;
+        }
+
         const cfg = StorageService.getConfig();
-        if (!cfg) { renderTop(); return; }
-        el.urlInp.value = cfg.url || '';
-        el.emailInp.value = cfg.email || '';
+        if (cfg) {
+          applyConfigToInputs(cfg);
+        }
+
+        const topHref = getTopLocationHref();
+        if (topHref) {
+          el.callbackUrlInp.value = topHref;
+        }
+        const params = parseUrlParams(topHref);
+        if (params.code || params.error) {
+          try {
+            await processOAuthCallback(topHref, true);
+            showMsg('ok', 'Sesion OAuth iniciada correctamente.');
+            return;
+          } catch (e) {
+            resetConnectionState();
+            renderTop();
+            applyError(e, 'No se pudo completar OAuth al volver de Atlassian.');
+            return;
+          }
+        }
+
+        if (!cfg) {
+          renderTop();
+          return;
+        }
+
         try {
-          await connect(cfg, false);
+          await connectWithStoredSession(cfg, false);
           showMsg('ok', 'Reconectado automaticamente.');
         } catch (e) {
-          state.connected = false;
+          resetConnectionState();
           renderTop();
-          applyError(e, 'No se pudo reconectar automaticamente.');
+          if (e && e.kind === 'oauth' && e.status === 401) {
+            showMsg('info', 'Conecta con OAuth para iniciar sesion en Jira.');
+          } else {
+            applyError(e, 'No se pudo reconectar automaticamente.');
+          }
         }
       }
 

@@ -782,6 +782,252 @@
       color: var(--tl-gantt-duration);
       font-weight: 700;
     }
+    .chart-headline {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .chart-kpi {
+      border: 1px solid #d8e5f3;
+      border-radius: 10px;
+      padding: 7px 8px;
+      background: #fff;
+    }
+    .chart-kpi .k {
+      font-size: 10px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      margin-bottom: 2px;
+    }
+    .chart-kpi .v {
+      font-size: 12px;
+      font-weight: 700;
+      color: #264760;
+      overflow-wrap: anywhere;
+    }
+    .chart-stack {
+      display: grid;
+      gap: 8px;
+    }
+    .chart-stack-row {
+      display: grid;
+      grid-template-columns: minmax(180px, 1.8fr) minmax(0, 2fr) 80px;
+      gap: 8px;
+      align-items: center;
+      border: 1px solid #d9e5f2;
+      border-radius: 9px;
+      padding: 7px 8px;
+      background: #fff;
+      cursor: pointer;
+    }
+    .chart-stack-row:hover {
+      border-color: #8fb6dc;
+      background: #f6fbff;
+    }
+    .chart-stack-row.active {
+      border-color: #5b95ca;
+      box-shadow: 0 0 0 2px rgba(22, 111, 188, 0.14);
+      background: #eef6ff;
+    }
+    .chart-stack-name {
+      font-size: 12px;
+      font-weight: 700;
+      color: #2a4861;
+      overflow-wrap: anywhere;
+    }
+    .chart-stack-val {
+      text-align: right;
+      font-size: 11px;
+      color: #48627a;
+      font-weight: 700;
+    }
+    .chart-cards {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .chart-card {
+      border: 1px solid #d9e5f2;
+      border-radius: 10px;
+      padding: 8px;
+      background: #fff;
+      cursor: pointer;
+    }
+    .chart-card.active {
+      border-color: #5b95ca;
+      box-shadow: 0 0 0 2px rgba(22, 111, 188, 0.14);
+      background: #eef6ff;
+    }
+    .chart-card-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: #2a4861;
+      margin-bottom: 6px;
+      overflow-wrap: anywhere;
+    }
+    .chart-card-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: #4c6680;
+      margin-top: 6px;
+      gap: 8px;
+    }
+    .chart-donut-wrap {
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      gap: 10px;
+      align-items: center;
+    }
+    .chart-donut {
+      width: 210px;
+      height: 210px;
+      border-radius: 50%;
+      margin: 0 auto;
+      position: relative;
+      border: 1px solid #d6e3f1;
+    }
+    .chart-donut-center {
+      position: absolute;
+      inset: 23%;
+      border-radius: 50%;
+      background: #fff;
+      border: 1px solid #dfe9f4;
+      display: grid;
+      place-items: center;
+      text-align: center;
+      padding: 8px;
+    }
+    .chart-donut-center .big {
+      font-size: 16px;
+      font-weight: 700;
+      color: #25425e;
+      line-height: 1.2;
+    }
+    .chart-donut-center .small {
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .chart-week-list,
+    .chart-day-list,
+    .chart-steps {
+      display: grid;
+      gap: 7px;
+    }
+    .chart-week-row,
+    .chart-day-row,
+    .chart-step-row {
+      border: 1px solid #d9e5f2;
+      border-radius: 9px;
+      padding: 7px 8px;
+      background: #fff;
+      display: grid;
+      gap: 6px;
+    }
+    .chart-step-row.active {
+      border-color: #5b95ca;
+      box-shadow: 0 0 0 2px rgba(22, 111, 188, 0.14);
+      background: #eef6ff;
+    }
+    .chart-row-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      color: #2d4b64;
+      font-weight: 700;
+      flex-wrap: wrap;
+    }
+    .chart-row-sub {
+      font-size: 11px;
+      color: #587088;
+      overflow-wrap: anywhere;
+    }
+    .chart-matrix-wrap {
+      border: 1px solid #d8e5f3;
+      border-radius: 10px;
+      overflow: auto;
+      background: #fff;
+      max-height: 310px;
+    }
+    .chart-matrix {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      font-size: 11px;
+      min-width: 620px;
+    }
+    .chart-matrix th,
+    .chart-matrix td {
+      border-bottom: 1px solid #e6eef8;
+      border-right: 1px solid #edf3fb;
+      padding: 6px;
+      text-align: center;
+      vertical-align: middle;
+    }
+    .chart-matrix th:first-child,
+    .chart-matrix td:first-child {
+      text-align: left;
+      min-width: 180px;
+      position: sticky;
+      left: 0;
+      z-index: 1;
+      background: #f9fcff;
+    }
+    .chart-matrix td.activity-cell {
+      cursor: pointer;
+      font-weight: 700;
+      color: #274760;
+    }
+    .chart-matrix td.activity-cell.active {
+      box-shadow: inset 0 0 0 2px rgba(22, 111, 188, 0.2);
+      background: #edf6ff;
+    }
+    .chart-mini-table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      font-size: 12px;
+      background: #fff;
+      border: 1px solid #d8e5f3;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .chart-mini-table th,
+    .chart-mini-table td {
+      padding: 7px 8px;
+      border-bottom: 1px solid #e8eff7;
+      text-align: left;
+      vertical-align: middle;
+    }
+    .chart-mini-table th {
+      background: #f4f9ff;
+      color: #31506b;
+      font-size: 11px;
+    }
+    .chart-mini-table tr.active td {
+      background: #eef6ff;
+    }
+    .chart-clickable {
+      cursor: pointer;
+      color: #225f97;
+      font-weight: 700;
+      text-decoration: underline;
+      text-decoration-style: dotted;
+      text-underline-offset: 2px;
+    }
+    .chart-note {
+      border: 1px dashed #c9d8e9;
+      border-radius: 9px;
+      padding: 8px;
+      font-size: 12px;
+      color: #5a7188;
+      background: #f9fcff;
+    }
     .chart-design-picker {
       margin-top: 10px;
       border-top: 1px dashed var(--tl-picker-border);
@@ -902,6 +1148,11 @@
       .gantt-row { grid-template-columns: 1fr; }
       .timeline-ticket-row { grid-template-columns: 1fr; }
       .timeline-ticket-total { text-align: left; }
+      .chart-headline { grid-template-columns: 1fr; }
+      .chart-stack-row { grid-template-columns: 1fr; }
+      .chart-cards { grid-template-columns: 1fr; }
+      .chart-donut-wrap { grid-template-columns: 1fr; }
+      .chart-donut { width: 180px; height: 180px; }
       .float { left: 10px; right: 10px; width: auto; }
       .topbar { gap: 10px; }
       #userPill { max-width: 100%; }
@@ -1041,8 +1292,9 @@
           <h4 style="margin-top:10px;">Gantt por actividad</h4>
           <div id="ganttBox" class="empty">Sin registros.</div>
           <div class="chart-design-picker">
-            <label for="chartDesignSel">Diseno de grafico (10 opciones)</label>
+            <label for="chartDesignSel">Tipo de grafico (10 disenos)</label>
             <select class="sel" id="chartDesignSel"></select>
+            <div class="muted" id="chartDesignHelp"></div>
           </div>
         </div>
         <div class="card panel-suggestion">
@@ -1213,18 +1465,18 @@
         '#aa5d13', '#5f7bca', '#0f8fa8', '#b0453e', '#1d9164', '#8568c8', '#ad4c88'
       ];
       const CHART_DESIGNS = [
-        { id: 'default', label: '1. Ejecutivo limpio' },
-        { id: 'aurora', label: '2. Aurora suave' },
-        { id: 'midnight', label: '3. Midnight pro' },
-        { id: 'emerald', label: '4. Emerald green' },
-        { id: 'amber', label: '5. Amber focus' },
-        { id: 'rose', label: '6. Rose pastel' },
-        { id: 'minimal', label: '7. Minimal gray' },
-        { id: 'neon', label: '8. Neon tech' },
-        { id: 'paper', label: '9. Paper classic' },
-        { id: 'sunset', label: '10. Sunset warm' }
+        { id: 'classic', label: '1. Timeline + Gantt (clasico)', help: 'Linea de tiempo arriba y Gantt por actividad abajo.' },
+        { id: 'compact', label: '2. Compacto por actividad', help: 'Resumen rapido por actividad con barras simples.' },
+        { id: 'ranking', label: '3. Ranking de actividades', help: 'Ordena actividades por tiempo de mayor a menor.' },
+        { id: 'cards', label: '4. Tarjetas de progreso', help: 'Cada actividad en una tarjeta con porcentaje.' },
+        { id: 'donut', label: '5. Donut de distribucion', help: 'Distribucion del tiempo total por actividad.' },
+        { id: 'weekly', label: '6. Vista semanal', help: 'Agrupa el trabajo por semanas calendario.' },
+        { id: 'daily', label: '7. Vista diaria', help: 'Agrupa el trabajo por dia para detectar picos.' },
+        { id: 'steps', label: '8. Flujo cronologico', help: 'Lista paso a paso de registros en orden de tiempo.' },
+        { id: 'matrix', label: '9. Matriz actividad/semana', help: 'Cruza actividad contra semanas para ver cobertura.' },
+        { id: 'table', label: '10. Tabla clara (simple)', help: 'Vista mas entendible y facil de leer para operacion.' }
       ];
-      const DEFAULT_CHART_DESIGN = 'default';
+      const DEFAULT_CHART_DESIGN = 'table';
       const FEATURES = {
         dashboard: false,
         report: false
@@ -2222,7 +2474,7 @@
           'mainView','issueSel','activityTypeSel','activityDueInp','activityInp','minutesInp','registerBtn','jiraDurationPill','timerVal','timerState','startBtn','pauseBtn',
           'resetBtn','applyTimerBtn','suggestionBox','applySugActBtn','applySugTimeBtn','registerSugBtn','todayTotal','weekTotal','issueCount','dashMeta',
           'refreshDashBtn','recentBox','commentsBox','worklogBody','timelineBox','ganttBox','genReportBtn','exportReportBtn','reportMeta',
-          'reportBody','timelinePanel','chartDesignSel','activityFocusBox','activityQuickSel','activityQuickMeta','compactBtn','floatBox','floatIssue','floatTimer','floatState','floatStartBtn','floatPauseBtn','floatExpandBtn',
+          'reportBody','timelinePanel','chartDesignSel','chartDesignHelp','activityFocusBox','activityQuickSel','activityQuickMeta','compactBtn','floatBox','floatIssue','floatTimer','floatState','floatStartBtn','floatPauseBtn','floatExpandBtn',
           'regModal','regModalMeta','regActInp','regMinInp','regModalOkBtn','regModalCancelBtn',
           'editModal','editMeta','editActInp','editDateInp','editTimeInp','editMinInp','editSaveBtn','editDeleteBtn','editCancelBtn','activityList'
         ].forEach((id) => { el[id] = document.getElementById(id); });
@@ -2424,6 +2676,7 @@
         if (!valid) {
           state.chartDesign = DEFAULT_CHART_DESIGN;
         }
+        const current = CHART_DESIGNS.find((d) => d.id === state.chartDesign) || CHART_DESIGNS[0];
         if (el.chartDesignSel) {
           if (!el.chartDesignSel.options.length) {
             el.chartDesignSel.innerHTML = CHART_DESIGNS
@@ -2432,13 +2685,8 @@
           }
           el.chartDesignSel.value = state.chartDesign;
         }
-        if (el.timelinePanel) {
-          Array.from(el.timelinePanel.classList)
-            .filter((c) => c.indexOf('design-') === 0)
-            .forEach((c) => el.timelinePanel.classList.remove(c));
-          if (state.chartDesign !== DEFAULT_CHART_DESIGN) {
-            el.timelinePanel.classList.add(`design-${state.chartDesign}`);
-          }
+        if (el.chartDesignHelp) {
+          el.chartDesignHelp.textContent = current && current.help ? current.help : '';
         }
       }
 
@@ -2730,6 +2978,392 @@
         el.registerSugBtn.disabled = false;
       }
 
+      function weekStartTs(ts) {
+        const d = new Date(ts);
+        const day = (d.getDay() + 6) % 7;
+        d.setHours(0, 0, 0, 0);
+        d.setDate(d.getDate() - day);
+        return d.getTime();
+      }
+
+      function weekLabel(ts) {
+        const s = new Date(ts);
+        const e = new Date(ts);
+        e.setDate(e.getDate() + 6);
+        return `${inputDateToDdMmYyyy(TimeService.toInputDate(s))} - ${inputDateToDdMmYyyy(TimeService.toInputDate(e))}`;
+      }
+
+      function dayLabel(ts) {
+        return inputDateToDdMmYyyy(TimeService.toInputDate(ts));
+      }
+
+      function renderChartHeadline(data) {
+        return `
+          <div class="chart-headline">
+            <div class="chart-kpi">
+              <div class="k">Inicio</div>
+              <div class="v">${escapeHtml(TimeService.dtLabel(data.start))}</div>
+            </div>
+            <div class="chart-kpi">
+              <div class="k">Fin</div>
+              <div class="v">${escapeHtml(TimeService.dtLabel(data.end))}</div>
+            </div>
+            <div class="chart-kpi">
+              <div class="k">Total</div>
+              <div class="v">${escapeHtml(TimeService.jiraDuration(data.totalMinutes))}</div>
+            </div>
+          </div>
+        `;
+      }
+
+      function renderLegend(entries, selectedKey) {
+        if (!entries.length) return '';
+        return `<div class="activity-legend">${entries.map((it) => {
+          const isActive = selectedKey && activityKey(it.activity) === selectedKey;
+          return `<span class="activity-legend-item${isActive ? ' active' : ''}" data-activity="${escapeHtml(it.activity)}" data-minutes="${it.minutes}" title="${escapeHtml(`${it.activity}: ${TimeService.jiraDuration(it.minutes)}`)}"><span class="activity-legend-dot" style="background:${escapeHtml(it.color)};"></span>${escapeHtml(it.activity)} (${escapeHtml(TimeService.jiraDuration(it.minutes))})</span>`;
+        }).join('')}</div>`;
+      }
+
+      function buildTimelineData(issueKey, issue, logs) {
+        const rows = logs.map((w) => {
+          const startTs = new Date(w.started || w.created).getTime();
+          const mins = minutesOf(w);
+          const endTs = startTs + Math.max(60000, mins * 60000);
+          const activity = activityOf(w) || 'Sin actividad';
+          const color = activityColor(activity);
+          const author = w.author && w.author.displayName ? w.author.displayName : 'Sin autor';
+          return {
+            id: String(w.id || ''),
+            worklog: w,
+            startTs,
+            endTs,
+            mins,
+            activity,
+            color,
+            author
+          };
+        });
+
+        const start = Math.min(...rows.map((r) => r.startTs));
+        const end = Math.max(...rows.map((r) => r.endTs));
+        const range = Math.max(1, end - start);
+        const totalMinutes = rows.reduce((acc, r) => acc + r.mins, 0);
+        const label = issue && issue.summary ? `${issueKey} - ${issue.summary}` : issueKey;
+
+        const legendMap = {};
+        rows.forEach((r) => {
+          if (!legendMap[r.activity]) {
+            legendMap[r.activity] = { activity: r.activity, minutes: 0, count: 0, color: r.color };
+          }
+          legendMap[r.activity].minutes += r.mins;
+          legendMap[r.activity].count += 1;
+        });
+        const legendEntries = Object.values(legendMap)
+          .map((it) => Object.assign({}, it, { pct: totalMinutes ? (it.minutes * 100) / totalMinutes : 0 }))
+          .sort((a, b) => b.minutes - a.minutes);
+
+        const selectedKey = activityKey(state.selectedTimelineActivity);
+        const selectedLegend = legendEntries.find((it) => activityKey(it.activity) === selectedKey) || null;
+        if (!selectedLegend) {
+          state.selectedTimelineActivity = '';
+          state.selectedTimelineMinutes = 0;
+        } else {
+          state.selectedTimelineMinutes = selectedLegend.minutes;
+        }
+        const stableSelectedKey = activityKey(state.selectedTimelineActivity);
+
+        return {
+          key: issueKey,
+          label,
+          rows,
+          start,
+          end,
+          range,
+          totalMinutes,
+          legendEntries,
+          selectedKey: stableSelectedKey,
+          selectedLegend
+        };
+      }
+
+      function renderClassic(data) {
+        const segmentsHtml = data.rows.map((r) => {
+          const left = ((r.startTs - data.start) / data.range) * 100;
+          const width = Math.max(1.8, ((r.endTs - r.startTs) / data.range) * 100);
+          const active = data.selectedKey && activityKey(r.activity) === data.selectedKey ? ' active' : '';
+          const meta = `${data.key} | ${r.author} | ${r.activity} | ${TimeService.jiraDuration(r.mins)} | ${TimeService.dtLabel(r.startTs)}`;
+          return `<span class="timeline-ticket-segment${active}" title="${escapeHtml(meta)}" data-activity="${escapeHtml(r.activity)}" data-minutes="${r.mins}" style="left:${left.toFixed(3)}%;width:${width.toFixed(3)}%;background:${escapeHtml(r.color)};"></span>`;
+        }).join('');
+
+        el.timelineBox.className = '';
+        el.timelineBox.innerHTML = `
+          <div class="timeline-shell">
+            ${renderChartHeadline(data)}
+            <div class="timeline-ticket-list">
+              <div class="timeline-ticket-row">
+                <div class="timeline-ticket-label" title="${escapeHtml(data.label)}">${escapeHtml(data.label)}</div>
+                <div class="timeline-ticket-track">${segmentsHtml}</div>
+                <div class="timeline-ticket-total">${escapeHtml(TimeService.jiraDuration(data.totalMinutes))}</div>
+              </div>
+            </div>
+            ${renderLegend(data.legendEntries, data.selectedKey)}
+          </div>
+        `;
+
+        const max = data.legendEntries[0] ? data.legendEntries[0].minutes : 1;
+        el.ganttBox.className = '';
+        el.ganttBox.innerHTML = `<div class="gantt-list">${data.legendEntries.map((it) => {
+          const width = Math.max(3, (it.minutes / max) * 100);
+          const active = data.selectedKey && activityKey(it.activity) === data.selectedKey ? ' active' : '';
+          return `<div class="gantt-row${active}" data-activity="${escapeHtml(it.activity)}" data-minutes="${it.minutes}" title="${escapeHtml(`${it.activity}: ${TimeService.jiraDuration(it.minutes)}`)}"><div class="gantt-name">${escapeHtml(it.activity)}</div><div class="track"><span class="bar" style="left:0;width:${width.toFixed(2)}%;background:${escapeHtml(it.color)};"></span></div><div class="gantt-duration">${escapeHtml(TimeService.jiraDuration(it.minutes))}</div></div>`;
+        }).join('')}</div>`;
+      }
+
+      function renderChartCompact(data) {
+        const max = data.legendEntries[0] ? data.legendEntries[0].minutes : 1;
+        el.timelineBox.className = '';
+        el.timelineBox.innerHTML = `
+          ${renderChartHeadline(data)}
+          <div class="chart-stack">
+            ${data.legendEntries.map((it) => {
+              const active = data.selectedKey && activityKey(it.activity) === data.selectedKey ? ' active' : '';
+              const width = Math.max(4, (it.minutes / max) * 100);
+              return `<div class="chart-stack-row${active}" data-activity="${escapeHtml(it.activity)}" data-minutes="${it.minutes}">
+                <div class="chart-stack-name">${escapeHtml(it.activity)}</div>
+                <div class="track"><span class="bar" style="left:0;width:${width.toFixed(2)}%;background:${escapeHtml(it.color)};"></span></div>
+                <div class="chart-stack-val">${escapeHtml(TimeService.jiraDuration(it.minutes))}</div>
+              </div>`;
+            }).join('')}
+          </div>
+        `;
+        el.ganttBox.className = '';
+        el.ganttBox.innerHTML = `
+          <div class="chart-note">Vista compacta para registrar rapido: elige una actividad y registra.</div>
+          ${renderLegend(data.legendEntries, data.selectedKey)}
+        `;
+      }
+
+      function renderRanking(data) {
+        const max = data.legendEntries[0] ? data.legendEntries[0].minutes : 1;
+        el.timelineBox.className = '';
+        el.timelineBox.innerHTML = `
+          ${renderChartHeadline(data)}
+          <div class="chart-stack">
+            ${data.legendEntries.map((it, idx) => {
+              const active = data.selectedKey && activityKey(it.activity) === data.selectedKey ? ' active' : '';
+              const width = Math.max(4, (it.minutes / max) * 100);
+              return `<div class="chart-stack-row${active}" data-activity="${escapeHtml(it.activity)}" data-minutes="${it.minutes}">
+                <div class="chart-stack-name">#${idx + 1} ${escapeHtml(it.activity)}</div>
+                <div class="track"><span class="bar" style="left:0;width:${width.toFixed(2)}%;background:${escapeHtml(it.color)};"></span></div>
+                <div class="chart-stack-val">${escapeHtml(it.pct.toFixed(1))}%</div>
+              </div>`;
+            }).join('')}
+          </div>
+        `;
+        el.ganttBox.className = '';
+        el.ganttBox.innerHTML = `<table class="chart-mini-table"><thead><tr><th>Actividad</th><th>Duracion</th><th>Registros</th></tr></thead><tbody>${data.legendEntries.map((it) => {
+          const active = data.selectedKey && activityKey(it.activity) === data.selectedKey ? ' class="active"' : '';
+          return `<tr${active} data-activity="${escapeHtml(it.activity)}" data-minutes="${it.minutes}"><td class="chart-clickable">${escapeHtml(it.activity)}</td><td>${escapeHtml(TimeService.jiraDuration(it.minutes))}</td><td>${it.count}</td></tr>`;
+        }).join('')}</tbody></table>`;
+      }
+
+      function renderCards(data) {
+        const max = data.legendEntries[0] ? data.legendEntries[0].minutes : 1;
+        el.timelineBox.className = '';
+        el.timelineBox.innerHTML = `
+          ${renderChartHeadline(data)}
+          <div class="chart-cards">
+            ${data.legendEntries.map((it) => {
+              const active = data.selectedKey && activityKey(it.activity) === data.selectedKey ? ' active' : '';
+              const width = Math.max(6, (it.minutes / max) * 100);
+              return `<div class="chart-card${active}" data-activity="${escapeHtml(it.activity)}" data-minutes="${it.minutes}">
+                <div class="chart-card-title">${escapeHtml(it.activity)}</div>
+                <div class="track"><span class="bar" style="left:0;width:${width.toFixed(2)}%;background:${escapeHtml(it.color)};"></span></div>
+                <div class="chart-card-meta"><span>${escapeHtml(TimeService.jiraDuration(it.minutes))}</span><span>${escapeHtml(it.pct.toFixed(1))}%</span></div>
+              </div>`;
+            }).join('')}
+          </div>
+        `;
+        el.ganttBox.className = '';
+        el.ganttBox.innerHTML = renderLegend(data.legendEntries, data.selectedKey);
+      }
+
+      function renderDonut(data) {
+        const total = Math.max(1, data.totalMinutes);
+        let cursor = 0;
+        const slices = data.legendEntries.map((it) => {
+          const start = cursor;
+          cursor += (it.minutes / total) * 100;
+          return `${it.color} ${start.toFixed(2)}% ${cursor.toFixed(2)}%`;
+        }).join(', ');
+
+        el.timelineBox.className = '';
+        el.timelineBox.innerHTML = `
+          ${renderChartHeadline(data)}
+          <div class="chart-donut-wrap">
+            <div class="chart-donut" style="background: conic-gradient(${slices || '#dce8f5 0 100%'});">
+              <div class="chart-donut-center">
+                <div class="big">${escapeHtml(TimeService.jiraDuration(data.totalMinutes))}</div>
+                <div class="small">Total ticket</div>
+              </div>
+            </div>
+            <div>
+              <div class="chart-note">Haz clic en una actividad de la leyenda para enfocarla.</div>
+              ${renderLegend(data.legendEntries, data.selectedKey)}
+            </div>
+          </div>
+        `;
+        el.ganttBox.className = '';
+        el.ganttBox.innerHTML = `<table class="chart-mini-table"><thead><tr><th>Actividad</th><th>%</th><th>Duracion</th></tr></thead><tbody>${data.legendEntries.map((it) => {
+          const active = data.selectedKey && activityKey(it.activity) === data.selectedKey ? ' class="active"' : '';
+          return `<tr${active} data-activity="${escapeHtml(it.activity)}" data-minutes="${it.minutes}"><td class="chart-clickable">${escapeHtml(it.activity)}</td><td>${escapeHtml(it.pct.toFixed(1))}%</td><td>${escapeHtml(TimeService.jiraDuration(it.minutes))}</td></tr>`;
+        }).join('')}</tbody></table>`;
+      }
+
+      function renderWeekly(data) {
+        const weeks = {};
+        data.rows.forEach((r) => {
+          const key = weekStartTs(r.startTs);
+          if (!weeks[key]) weeks[key] = { ts: key, minutes: 0, byAct: {} };
+          weeks[key].minutes += r.mins;
+          weeks[key].byAct[r.activity] = (weeks[key].byAct[r.activity] || 0) + r.mins;
+        });
+        const list = Object.values(weeks).sort((a, b) => a.ts - b.ts);
+        const max = list.reduce((m, it) => Math.max(m, it.minutes), 1);
+        el.timelineBox.className = '';
+        el.timelineBox.innerHTML = `
+          ${renderChartHeadline(data)}
+          <div class="chart-week-list">${list.map((w) => {
+            const top = Object.entries(w.byAct).sort((a, b) => b[1] - a[1])[0] || ['Sin actividad', 0];
+            const width = Math.max(5, (w.minutes / max) * 100);
+            const topActivity = String(top[0] || 'Sin actividad');
+            const topMinutes = Number(top[1] || 0);
+            return `<div class="chart-week-row">
+              <div class="chart-row-head"><span>${escapeHtml(weekLabel(w.ts))}</span><span>${escapeHtml(TimeService.jiraDuration(w.minutes))}</span></div>
+              <div class="track"><span class="bar" style="left:0;width:${width.toFixed(2)}%;"></span></div>
+              <div class="chart-row-sub">Principal: <span class="chart-clickable" data-activity="${escapeHtml(topActivity)}" data-minutes="${topMinutes}">${escapeHtml(topActivity)}</span></div>
+            </div>`;
+          }).join('')}</div>
+        `;
+        el.ganttBox.className = '';
+        el.ganttBox.innerHTML = renderLegend(data.legendEntries, data.selectedKey);
+      }
+
+      function renderDaily(data) {
+        const days = {};
+        data.rows.forEach((r) => {
+          const k = TimeService.toInputDate(r.startTs);
+          if (!days[k]) days[k] = { key: k, minutes: 0, byAct: {} };
+          days[k].minutes += r.mins;
+          days[k].byAct[r.activity] = (days[k].byAct[r.activity] || 0) + r.mins;
+        });
+        const list = Object.values(days).sort((a, b) => String(a.key).localeCompare(String(b.key)));
+        const max = list.reduce((m, it) => Math.max(m, it.minutes), 1);
+
+        el.timelineBox.className = '';
+        el.timelineBox.innerHTML = `
+          ${renderChartHeadline(data)}
+          <div class="chart-day-list">${list.map((d) => {
+            const top = Object.entries(d.byAct).sort((a, b) => b[1] - a[1])[0] || ['Sin actividad', 0];
+            const width = Math.max(5, (d.minutes / max) * 100);
+            return `<div class="chart-day-row">
+              <div class="chart-row-head"><span>${escapeHtml(inputDateToDdMmYyyy(d.key))}</span><span>${escapeHtml(TimeService.jiraDuration(d.minutes))}</span></div>
+              <div class="track"><span class="bar" style="left:0;width:${width.toFixed(2)}%;"></span></div>
+              <div class="chart-row-sub">Top: <span class="chart-clickable" data-activity="${escapeHtml(top[0])}" data-minutes="${top[1]}">${escapeHtml(top[0])}</span></div>
+            </div>`;
+          }).join('')}</div>
+        `;
+        el.ganttBox.className = '';
+        el.ganttBox.innerHTML = renderLegend(data.legendEntries, data.selectedKey);
+      }
+
+      function renderSteps(data) {
+        let cumulative = 0;
+        el.timelineBox.className = '';
+        el.timelineBox.innerHTML = `
+          ${renderChartHeadline(data)}
+          <div class="chart-steps">${data.rows.map((r, idx) => {
+            cumulative += r.mins;
+            const active = data.selectedKey && activityKey(r.activity) === data.selectedKey ? ' active' : '';
+            return `<div class="chart-step-row${active}">
+              <div class="chart-row-head"><span>${idx + 1}. ${escapeHtml(TimeService.dtLabel(r.startTs))}</span><span>${escapeHtml(TimeService.jiraDuration(r.mins))}</span></div>
+              <div class="chart-row-sub"><span class="chart-clickable" data-activity="${escapeHtml(r.activity)}" data-minutes="${r.mins}">${escapeHtml(r.activity)}</span> | Autor: ${escapeHtml(r.author)} | Acumulado: ${escapeHtml(TimeService.jiraDuration(cumulative))}</div>
+            </div>`;
+          }).join('')}</div>
+        `;
+        el.ganttBox.className = '';
+        el.ganttBox.innerHTML = renderLegend(data.legendEntries, data.selectedKey);
+      }
+
+      function renderMatrix(data) {
+        const weekKeys = Array.from(new Set(data.rows.map((r) => weekStartTs(r.startTs)))).sort((a, b) => a - b).slice(-8);
+        const activities = data.legendEntries.slice(0, 8);
+        const matrix = {};
+        let maxCell = 1;
+
+        activities.forEach((a) => {
+          matrix[a.activity] = {};
+          weekKeys.forEach((wk) => {
+            const sum = data.rows
+              .filter((r) => r.activity === a.activity && weekStartTs(r.startTs) === wk)
+              .reduce((acc, r) => acc + r.mins, 0);
+            matrix[a.activity][wk] = sum;
+            if (sum > maxCell) maxCell = sum;
+          });
+        });
+
+        el.timelineBox.className = '';
+        el.timelineBox.innerHTML = `
+          ${renderChartHeadline(data)}
+          <div class="chart-matrix-wrap">
+            <table class="chart-matrix">
+              <thead>
+                <tr><th>Actividad</th>${weekKeys.map((wk) => `<th>${escapeHtml(weekLabel(wk))}</th>`).join('')}</tr>
+              </thead>
+              <tbody>
+                ${activities.map((a) => {
+                  const active = data.selectedKey && activityKey(a.activity) === data.selectedKey ? ' active' : '';
+                  return `<tr>
+                    <td class="activity-cell${active}" data-activity="${escapeHtml(a.activity)}" data-minutes="${a.minutes}">${escapeHtml(a.activity)}</td>
+                    ${weekKeys.map((wk) => {
+                      const val = matrix[a.activity][wk] || 0;
+                      if (!val) return '<td>-</td>';
+                      const alpha = Math.max(0.12, Math.min(0.72, val / maxCell));
+                      return `<td data-activity="${escapeHtml(a.activity)}" data-minutes="${val}" style="background:rgba(29,116,199,${alpha.toFixed(3)});color:#0f2e4b;font-weight:700;cursor:pointer;">${escapeHtml(TimeService.jiraDuration(val))}</td>`;
+                    }).join('')}
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+        el.ganttBox.className = '';
+        el.ganttBox.innerHTML = renderLegend(data.legendEntries, data.selectedKey);
+      }
+
+      function renderSimpleTable(data) {
+        el.timelineBox.className = '';
+        el.timelineBox.innerHTML = `
+          ${renderChartHeadline(data)}
+          <table class="chart-mini-table">
+            <thead><tr><th>Actividad</th><th>Duracion</th><th>%</th><th>Registros</th></tr></thead>
+            <tbody>
+              ${data.legendEntries.map((it) => {
+                const active = data.selectedKey && activityKey(it.activity) === data.selectedKey ? ' class="active"' : '';
+                return `<tr${active} data-activity="${escapeHtml(it.activity)}" data-minutes="${it.minutes}">
+                  <td class="chart-clickable">${escapeHtml(it.activity)}</td>
+                  <td>${escapeHtml(TimeService.jiraDuration(it.minutes))}</td>
+                  <td>${escapeHtml(it.pct.toFixed(1))}%</td>
+                  <td>${it.count}</td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        `;
+        el.ganttBox.className = '';
+        el.ganttBox.innerHTML = '<div class="chart-note">Vista recomendada para operación diaria por ser la más fácil de leer.</div>';
+      }
+
       function renderTimeline(issueKey) {
         const key = String(issueKey || '').trim();
         const issue = issueByKey(key);
@@ -2746,83 +3380,20 @@
           return;
         }
 
-        const start = Math.min(...logs.map((w) => new Date(w.started || w.created).getTime()));
-        const end = Math.max(...logs.map((w) => new Date(w.started || w.created).getTime() + minutesOf(w) * 60000));
-        const range = Math.max(1, end - start);
+        const data = buildTimelineData(key, issue, logs);
+        const design = String(state.chartDesign || DEFAULT_CHART_DESIGN);
+        if (design === 'classic') renderClassic(data);
+        else if (design === 'compact') renderChartCompact(data);
+        else if (design === 'ranking') renderRanking(data);
+        else if (design === 'cards') renderCards(data);
+        else if (design === 'donut') renderDonut(data);
+        else if (design === 'weekly') renderWeekly(data);
+        else if (design === 'daily') renderDaily(data);
+        else if (design === 'steps') renderSteps(data);
+        else if (design === 'matrix') renderMatrix(data);
+        else if (design === 'table') renderSimpleTable(data);
+        else renderClassic(data);
 
-        const legendMap = {};
-        const totalMinutes = logs.reduce((acc, w) => acc + minutesOf(w), 0);
-        const selectedKey = activityKey(state.selectedTimelineActivity);
-        const segmentsHtml = logs.map((w) => {
-          const st = new Date(w.started || w.created).getTime();
-          const mins = minutesOf(w);
-          const dur = Math.max(60000, mins * 60000);
-          const act = activityOf(w) || 'Sin actividad';
-          const color = activityColor(act);
-          legendMap[act] = legendMap[act] || { activity: act, minutes: 0, color };
-          legendMap[act].minutes += mins;
-          const left = ((st - start) / range) * 100;
-          const width = Math.max(1.8, (dur / range) * 100);
-          const author = w.author && w.author.displayName ? w.author.displayName : 'Sin autor';
-          const meta = `${key} | ${author} | ${act} | ${TimeService.jiraDuration(mins)} | ${TimeService.dtLabel(st)}`;
-          const activeClass = selectedKey && activityKey(act) === selectedKey ? ' active' : '';
-          return `<span class="timeline-ticket-segment${activeClass}" title="${escapeHtml(meta)}" data-activity="${escapeHtml(act)}" data-minutes="${mins}" style="left:${left.toFixed(3)}%;width:${width.toFixed(3)}%;background:${escapeHtml(color)};"></span>`;
-        }).join('');
-
-        const label = issue && issue.summary ? `${key} - ${issue.summary}` : key;
-        const legendEntries = Object.values(legendMap).sort((a, b) => b.minutes - a.minutes);
-        const selectedLegend = legendEntries.find((it) => activityKey(it.activity) === selectedKey) || null;
-        if (!selectedLegend) {
-          state.selectedTimelineActivity = '';
-          state.selectedTimelineMinutes = 0;
-        } else {
-          state.selectedTimelineMinutes = selectedLegend.minutes;
-        }
-
-        const legendHtml = legendEntries.length
-          ? `<div class="activity-legend">${legendEntries.map((it) => {
-            const isActive = selectedLegend && activityKey(it.activity) === activityKey(selectedLegend.activity);
-            return `<span class="activity-legend-item${isActive ? ' active' : ''}" title="${escapeHtml(`${it.activity}: ${TimeService.jiraDuration(it.minutes)}`)}" data-activity="${escapeHtml(it.activity)}" data-minutes="${it.minutes}"><span class="activity-legend-dot" style="background:${escapeHtml(it.color)};"></span>${escapeHtml(it.activity)} (${escapeHtml(TimeService.jiraDuration(it.minutes))})</span>`;
-          }).join('')}</div>`
-          : '';
-
-        el.timelineBox.className = '';
-        el.timelineBox.innerHTML = `
-          <div class="timeline-shell">
-            <div class="timeline-head">
-              <div class="timeline-stat">
-                <div class="timeline-stat-label">Inicio</div>
-                <div class="timeline-stat-value">${escapeHtml(TimeService.dtLabel(start))}</div>
-              </div>
-              <div class="timeline-stat">
-                <div class="timeline-stat-label">Fin</div>
-                <div class="timeline-stat-value">${escapeHtml(TimeService.dtLabel(end))}</div>
-              </div>
-              <div class="timeline-stat">
-                <div class="timeline-stat-label">Total acumulado</div>
-                <div class="timeline-stat-value">${escapeHtml(TimeService.jiraDuration(totalMinutes))}</div>
-              </div>
-            </div>
-            <div class="timeline-ticket-list">
-              <div class="timeline-ticket-row">
-                <div class="timeline-ticket-label" title="${escapeHtml(label)}">${escapeHtml(label)}</div>
-                <div class="timeline-ticket-track">${segmentsHtml}</div>
-                <div class="timeline-ticket-total">${escapeHtml(TimeService.jiraDuration(totalMinutes))}</div>
-              </div>
-            </div>
-            ${legendHtml}
-          </div>
-        `;
-
-        const entries = legendEntries;
-        const max = entries[0] ? entries[0].minutes : 1;
-        el.ganttBox.className = '';
-        el.ganttBox.innerHTML = `<div class="gantt-list">${entries.map((it) => {
-          const width = Math.max(3, (it.minutes / max) * 100);
-          const jiraDur = TimeService.jiraDuration(it.minutes);
-          const isActive = selectedLegend && activityKey(it.activity) === activityKey(selectedLegend.activity);
-          return `<div class="gantt-row${isActive ? ' active' : ''}" title="${escapeHtml(`${it.activity}: ${jiraDur}`)}" data-activity="${escapeHtml(it.activity)}" data-minutes="${it.minutes}"><div class="gantt-name">${escapeHtml(it.activity)}</div><div class="track"><span class="bar" style="left:0;width:${width.toFixed(2)}%;background:${escapeHtml(it.color)};"></span></div><div class="gantt-duration">${escapeHtml(jiraDur)}</div></div>`;
-        }).join('')}</div>`;
         syncActivityFocusComponent();
       }
 
@@ -3490,6 +4061,7 @@
             : DEFAULT_CHART_DESIGN;
           applyChartDesign();
           uiStateSave();
+          renderTimeline(state.selectedIssueKey);
         });
 
         el.registerBtn.addEventListener('click', async () => {

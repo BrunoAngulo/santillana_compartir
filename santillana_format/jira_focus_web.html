@@ -472,11 +472,20 @@
       --tl-picker-bg: #f4f8fc;
       --tl-picker-label: #18374f;
     }
-    .panel-suggestion { grid-column: 2; grid-row: 1; }
     .panel-comments { grid-column: 1; grid-row: 2; }
-    .panel-worklogs { grid-column: 2; grid-row: 2; }
-    .panel-comments .comments { max-height: 460px; }
-    .panel-worklogs .tbl-wrap { max-height: 460px; }
+    .panel-worklogs {
+      grid-column: 2;
+      grid-row: 1 / span 2;
+      display: flex;
+      flex-direction: column;
+      align-self: stretch;
+    }
+    .panel-comments .comments { max-height: 430px; }
+    .panel-worklogs .tbl-wrap {
+      flex: 1 1 auto;
+      max-height: none;
+      min-height: 620px;
+    }
     .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
     h2, h3, h4 { margin: 0 0 8px 0; }
     h3 { font-size: 17px; letter-spacing: 0.15px; }
@@ -1028,6 +1037,17 @@
       color: #5a7188;
       background: #f9fcff;
     }
+    .worklog-row {
+      cursor: pointer;
+      transition: background .12s ease;
+    }
+    .worklog-row:hover td {
+      background: #f7fbff;
+    }
+    .worklog-row.selected td {
+      background: #edf6ff;
+      box-shadow: inset 0 0 0 1px rgba(22, 111, 188, 0.18);
+    }
     .chart-design-picker {
       margin-top: 10px;
       border-top: 1px dashed var(--tl-picker-border);
@@ -1138,12 +1158,12 @@
       .activity-config-grid { grid-template-columns: 1fr; }
       .dashboard-grid { grid-template-columns: 1fr; }
       .panel-timeline,
-      .panel-suggestion,
       .panel-comments,
       .panel-worklogs {
         grid-column: auto;
         grid-row: auto;
       }
+      .panel-worklogs .tbl-wrap { min-height: 0; }
       .timeline-head { grid-template-columns: 1fr; }
       .gantt-row { grid-template-columns: 1fr; }
       .timeline-ticket-row { grid-template-columns: 1fr; }
@@ -1288,6 +1308,11 @@
       <div class="dashboard-grid">
         <div class="card panel-timeline" id="timelinePanel">
           <h3>Linea de tiempo / Gantt</h3>
+          <div class="activity-focus" id="activityFocusBox">
+            <label for="activityQuickSel">Componente de actividades</label>
+            <select class="sel" id="activityQuickSel"></select>
+            <div class="muted" id="activityQuickMeta">Haz clic en una actividad del grafico para resaltarla aqui.</div>
+          </div>
           <div id="timelineBox" class="empty">Sin registros.</div>
           <h4 style="margin-top:10px;">Gantt por actividad</h4>
           <div id="ganttBox" class="empty">Sin registros.</div>
@@ -1295,20 +1320,6 @@
             <label for="chartDesignSel">Tipo de grafico (10 disenos)</label>
             <select class="sel" id="chartDesignSel"></select>
             <div class="muted" id="chartDesignHelp"></div>
-          </div>
-        </div>
-        <div class="card panel-suggestion">
-          <h3>Sugerencia automatica</h3>
-          <div class="activity-focus" id="activityFocusBox">
-            <label for="activityQuickSel">Componente de actividades</label>
-            <select class="sel" id="activityQuickSel"></select>
-            <div class="muted" id="activityQuickMeta">Haz clic en una actividad del grafico para resaltarla aqui.</div>
-          </div>
-          <div id="suggestionBox" class="empty">Selecciona un ticket para buscar sugerencias.</div>
-          <div class="row" style="margin-top:10px;">
-            <button class="btn" id="applySugActBtn" type="button" disabled>Aplicar actividad</button>
-            <button class="btn" id="applySugTimeBtn" type="button" disabled>Aplicar tiempo</button>
-            <button class="btn primary" id="registerSugBtn" type="button" disabled>Registrar sugerencia</button>
           </div>
         </div>
         <div class="card panel-comments">
@@ -1324,6 +1335,13 @@
             </table>
           </div>
         </div>
+      </div>
+
+      <div class="hide" aria-hidden="true">
+        <div id="suggestionBox"></div>
+        <button id="applySugActBtn" type="button"></button>
+        <button id="applySugTimeBtn" type="button"></button>
+        <button id="registerSugBtn" type="button"></button>
       </div>
 
       <div id="dashboardCard" class="card hide" style="margin-top:10px;">
@@ -1506,6 +1524,7 @@
         editCtx: null,
         selectedTimelineActivity: '',
         selectedTimelineMinutes: 0,
+        selectedWorklogId: '',
         chartDesign: DEFAULT_CHART_DESIGN,
         activities: [],
         debugLogs: [],
@@ -2900,20 +2919,34 @@
       function renderWorklogs(issueKey) {
         const rows = state.worklogsByIssue[issueKey] || [];
         if (!rows.length) {
+          state.selectedWorklogId = '';
           el.worklogBody.innerHTML = '<tr><td colspan="5"><div class="empty">Sin worklogs.</div></td></tr>';
           return;
         }
         el.worklogBody.innerHTML = rows.map((w) => {
           const my = mine(w.author);
+          const id = String(w.id || '');
           const author = w.author && w.author.displayName ? w.author.displayName : 'Sin autor';
           const date = TimeService.dtLabel(w.started || w.created || new Date());
           const act = activityOf(w);
           const mins = TimeService.jiraDuration(minutesOf(w));
           const actions = my
-            ? `<button class="btn" data-act="edit-worklog" data-id="${escapeHtml(String(w.id))}">Editar</button> <button class="btn danger" data-act="del-worklog" data-id="${escapeHtml(String(w.id))}">Eliminar</button>`
-            : '<span class="pill">Solo lectura</span>';
-          return `<tr><td>${escapeHtml(date)}</td><td>${escapeHtml(act)}</td><td>${escapeHtml(mins)}</td><td>${escapeHtml(author)}</td><td>${actions}</td></tr>`;
+            ? `<button class="btn" data-act="view-worklog" data-id="${escapeHtml(id)}">Ver dashboard</button> <button class="btn" data-act="edit-worklog" data-id="${escapeHtml(id)}">Editar</button> <button class="btn danger" data-act="del-worklog" data-id="${escapeHtml(id)}">Eliminar</button>`
+            : `<button class="btn" data-act="view-worklog" data-id="${escapeHtml(id)}">Ver dashboard</button> <span class="pill">Solo lectura</span>`;
+          const selectedClass = state.selectedWorklogId && String(state.selectedWorklogId) === id ? ' selected' : '';
+          return `<tr class="worklog-row${selectedClass}" data-worklog-id="${escapeHtml(id)}"><td>${escapeHtml(date)}</td><td>${escapeHtml(act)}</td><td>${escapeHtml(mins)}</td><td>${escapeHtml(author)}</td><td>${actions}</td></tr>`;
         }).join('');
+      }
+
+      function focusWorklogInDashboard(issueKey, worklog) {
+        if (!worklog) return;
+        state.selectedWorklogId = String(worklog.id || '');
+        selectActivityFromCharts(activityOf(worklog), minutesOf(worklog), true);
+        renderWorklogs(issueKey);
+        if (el.timelinePanel && typeof el.timelinePanel.scrollIntoView === 'function') {
+          el.timelinePanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        showMsg('info', 'Registro enfocado en el dashboard.');
       }
 
       function suggestionFor(issueKey) {
@@ -3400,6 +3433,7 @@
       function renderIssueData() {
         const key = state.selectedIssueKey;
         if (!key) {
+          state.selectedWorklogId = '';
           renderComments('');
           renderWorklogs('');
           renderSuggestion('');
@@ -4210,6 +4244,10 @@
           const worklogs = state.worklogsByIssue[key] || [];
           const w = worklogs.find((x) => String(x.id) === String(id));
           if (!w) return;
+          if (action === 'view-worklog') {
+            focusWorklogInDashboard(key, w);
+            return;
+          }
           if (action === 'edit-worklog') {
             state.editCtx = { issueKey: key, id: String(id) };
             const d = new Date(w.started || w.created || new Date());
@@ -4225,6 +4263,20 @@
             try { await deleteWorklog(key, id); }
             catch (e) { applyError(e, 'No se pudo eliminar worklog.'); }
           }
+        });
+        el.worklogBody.addEventListener('click', (ev) => {
+          const target = ev.target;
+          if (target.closest('button')) return;
+          const row = target.closest('tr[data-worklog-id]');
+          if (!row) return;
+          const id = String(row.getAttribute('data-worklog-id') || '').trim();
+          if (!id) return;
+          const key = state.selectedIssueKey;
+          if (!key) return;
+          const worklogs = state.worklogsByIssue[key] || [];
+          const w = worklogs.find((x) => String(x.id) === id);
+          if (!w) return;
+          focusWorklogInDashboard(key, w);
         });
 
         el.editCancelBtn.addEventListener('click', () => { state.editCtx = null; el.editModal.classList.remove('show'); });

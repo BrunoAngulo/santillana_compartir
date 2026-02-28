@@ -686,6 +686,7 @@
           }
           dbg('oauth_token_response', { status: res.status, ok: res.ok });
           if (!res.ok) {
+            dbg('oauth_token_error_payload', data && typeof data === 'object' ? data : { raw: raw ? raw.slice(0, 200) : '' });
             const err = new Error(httpMessage(data, res.status));
             err.kind = 'oauth';
             err.status = res.status;
@@ -1226,6 +1227,13 @@
       }
 
       function httpMessage(payload, status) {
+        if (payload && typeof payload.error_description === 'string' && payload.error_description) {
+          const errCode = typeof payload.error === 'string' && payload.error ? payload.error : 'oauth_error';
+          return `${errCode}: ${payload.error_description}`;
+        }
+        if (payload && typeof payload.error === 'string' && payload.error) {
+          return payload.error;
+        }
         if (payload && Array.isArray(payload.errorMessages) && payload.errorMessages.length) return payload.errorMessages.join(' | ');
         if (payload && payload.errors && typeof payload.errors === 'object') {
           const items = Object.entries(payload.errors).map(([k, v]) => `${k}: ${v}`);

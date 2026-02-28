@@ -396,7 +396,9 @@
         regCtx: null,
         editCtx: null,
         activities: [],
-        debugLogs: []
+        debugLogs: [],
+        popupWatchTimer: 0,
+        popupProcessing: false
       };
 
       const el = {};
@@ -901,10 +903,25 @@
       }
 
       function sanitizeDebugMeta(input) {
-        const secretKeyPattern = /(token|code|verifier|secret|authorization|refresh|password)/i;
+        const secretKeys = new Set([
+          'code',
+          'state',
+          'authorization',
+          'access_token',
+          'refresh_token',
+          'id_token',
+          'token',
+          'api_token',
+          'client_secret',
+          'code_verifier',
+          'password'
+        ]);
         const walk = (value, keyName) => {
-          if (keyName && secretKeyPattern.test(String(keyName))) {
-            return '[REDACTED]';
+          if (keyName) {
+            const key = String(keyName || '').toLowerCase();
+            if (secretKeys.has(key) || key.endsWith('_token') || key.endsWith('_secret')) {
+              return '[REDACTED]';
+            }
           }
           if (value === null || value === undefined) {
             return value;
@@ -974,6 +991,80 @@
           dbg('oauth_popup_error', { message: error && error.message ? error.message : String(error) });
           return null;
         }
+      }
+
+      function normalizeRedirectForCompare(urlValue) {
+        try {
+          const url = new URL(String(urlValue || ''));
+          const path = (url.pathname || '/').replace(/\/+$/, '') || '/';
+          return `${url.origin}${path}`;
+        } catch (_e) {
+          return '';
+        }
+      }
+
+      function isRedirectUriMatch(urlValue, redirectUri) {
+        const left = normalizeRedirectForCompare(urlValue);
+        const right = normalizeRedirectForCompare(redirectUri);
+        return !!left && !!right && left === right;
+      }
+
+      function clearPopupWatcher() {
+        if (state.popupWatchTimer) {
+          window.clearInterval(state.popupWatchTimer);
+          state.popupWatchTimer = 0;
+        }
+        state.popupProcessing = false;
+      }
+
+      function watchOAuthPopupCallback(popupWindow, cfg) {
+        clearPopupWatcher();
+        dbg('oauth_popup_watch_start', {
+          redirect_host: safeHostname(cfg.redirect_uri)
+        });
+        state.popupWatchTimer = window.setInterval(() => {
+          if (state.popupProcessing) {
+            return;
+          }
+          if (!popupWindow || popupWindow.closed) {
+            dbg('oauth_popup_closed_before_callback');
+            clearPopupWatcher();
+            return;
+          }
+          let href = '';
+          try {
+            href = String(popupWindow.location.href || '');
+          } catch (_e) {
+            return;
+          }
+          if (!href || !isRedirectUriMatch(href, cfg.redirect_uri)) {
+            return;
+          }
+          const params = parseUrlParams(href);
+          if (!params.code && !params.error) {
+            return;
+          }
+          state.popupProcessing = true;
+          dbg('oauth_popup_callback_detected', {
+            has_code: !!params.code,
+            has_error: !!params.error
+          });
+          Promise.resolve(processOAuthCallback(href, false))
+            .then((processed) => {
+              if (processed) {
+                showMsg('ok', 'Callback OAuth recibido automaticamente.');
+              } else {
+                showMsg('error', 'La ventana OAuth regreso sin parametros esperados.');
+              }
+              try { popupWindow.close(); } catch (_closeErr) { /* ignore */ }
+            })
+            .catch((error) => {
+              applyError(error, 'No se pudo procesar callback automatico.');
+            })
+            .finally(() => {
+              clearPopupWatcher();
+            });
+        }, 700);
       }
 
       function getTopLocationHref() {
@@ -1937,6 +2028,7 @@
           StorageService.saveConfig(cfg);
           StorageService.clearOAuthTokens();
           StorageService.clearOAuthPending();
+          clearPopupWatcher();
           const popupWindow = openOAuthPopupWindow();
           if (!popupWindow) {
             showMsg('error', 'El navegador bloqueo la ventana OAuth. Permite popups para este sitio e intenta de nuevo.');
@@ -1944,14 +2036,17 @@
           }
           try {
             await OAuthService.startAuth(cfg, popupWindow);
+            watchOAuthPopupCallback(popupWindow, cfg);
             showMsg('info', 'Se abrio una nueva pestaña/ventana para autorizacion OAuth.');
           } catch (e) {
             try { popupWindow.close(); } catch (_closeErr) { /* ignore */ }
+            clearPopupWatcher();
             applyError(e, 'No fue posible iniciar OAuth.');
           }
         });
 
         el.clearOAuthBtn.addEventListener('click', () => {
+          clearPopupWatcher();
           StorageService.clearOAuthTokens();
           StorageService.clearOAuthPending();
           StorageService.del(STORAGE.config);
@@ -1983,7 +2078,11 @@
             }
           }
           try {
-            await processOAuthCallback(raw, false);
+            const processed = await processOAuthCallback(raw, false);
+            if (!processed) {
+              showMsg('error', 'La URL no contiene parametros OAuth (code/state/error). Pega la URL completa de retorno.');
+              return;
+            }
             showMsg('ok', 'Callback OAuth procesado correctamente.');
           } catch (e) {
             resetConnectionState();
@@ -1993,6 +2092,7 @@
         });
 
         el.disconnectBtn.addEventListener('click', () => {
+          clearPopupWatcher();
           StorageService.del(STORAGE.config);
           StorageService.clearOAuthTokens();
           StorageService.clearOAuthPending();
@@ -2167,6 +2267,7 @@
 
       async function autoReconnect() {
         dbg('auto_reconnect_start');
+        clearPopupWatcher();
         const defaultRedirectUri = deriveDefaultRedirectUri();
         if (!el.redirectUriInp.value && defaultRedirectUri) {
           el.redirectUriInp.value = defaultRedirectUri;

@@ -55,7 +55,7 @@ CENSO_PLANTILLA_EDICION_URL = (
 GESTION_ESCOLAR_CICLO_ID_DEFAULT = 207
 
 
-st.set_page_config(page_title="Generador de Plantilla", layout="centered")
+st.set_page_config(page_title="Generador de Plantilla", layout="wide")
 st.markdown("**Menu principal**")
 menu_option = st.radio(
     "Menu",

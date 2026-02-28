@@ -22,6 +22,7 @@ from santillana_format.processor import (
     SHEET_NAME,
     process_excel,
 )
+from santillana_format.jira_focus_web import render_jira_focus_web
 from santillana_format.profesores import (
     DEFAULT_CICLO_ID as PROFESORES_CICLO_ID_DEFAULT,
     export_profesores_excel,
@@ -65,11 +66,16 @@ st.text_input(
     help="Se usa en todas las funciones. Si queda vacio, se usa PEGASUS_TOKEN.",
 )
 st.markdown("**Menu principal**")
-nav_col1, nav_col2 = st.columns(2)
-with nav_col1:
-    st.page_link("app.py", label="Procesos Pegasus")
-with nav_col2:
-    st.page_link("pages/Jira_Focus_Web.py", label="Jira Focus Web")
+menu_option = st.radio(
+    "Menu",
+    ["Procesos Pegasus", "Jira Focus Web"],
+    horizontal=True,
+    label_visibility="collapsed",
+    key="main_top_menu",
+)
+if menu_option == "Jira Focus Web":
+    render_jira_focus_web()
+    st.stop()
 tab_clases, tab_profesores_clases, tab_alumnos, tab_clases_api, tab_clases_alumnos = st.tabs(
     [
         "Crear clases",

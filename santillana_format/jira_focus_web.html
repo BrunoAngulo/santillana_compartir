@@ -88,6 +88,13 @@
     }
     .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
     .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .activity-config-grid {
+      display: grid;
+      grid-template-columns: minmax(220px, 2fr) minmax(220px, 2fr) minmax(170px, 1.2fr) minmax(120px, 1fr);
+      gap: 10px;
+      align-items: end;
+      margin-top: 8px;
+    }
     .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
     h2, h3, h4 { margin: 0 0 8px 0; }
     h3 { font-size: 17px; letter-spacing: 0.15px; }
@@ -197,7 +204,7 @@
     }
     .comments { display: grid; gap: 8px; max-height: 360px; overflow: auto; }
     .comment { border: 1px solid var(--line); border-radius: 9px; padding: 8px; background: #fff; }
-    .comment.mine { background: #eef8ff; border-color: #b8d8f1; }
+    .comment.mine { background: #f7fbff; border: 2px solid #2f8bcb; }
     .meta { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; margin-bottom: 4px; flex-wrap: wrap; }
     .body { white-space: pre-wrap; font-size: 13px; overflow-wrap: anywhere; }
     .track { height: 10px; border-radius: 999px; background: #edf3f9; position: relative; overflow: hidden; }
@@ -368,6 +375,7 @@
     }
     @media (max-width: 980px) {
       .grid2, .grid3 { grid-template-columns: 1fr; }
+      .activity-config-grid { grid-template-columns: 1fr; }
       .gantt-row { grid-template-columns: 1fr; }
       .timeline-ticket-row { grid-template-columns: 1fr; }
       .timeline-ticket-total { text-align: left; }
@@ -462,7 +470,7 @@
           <h3 style="margin:0;">Ticket y actividad</h3>
           <button class="btn" id="compactBtn" type="button">Modo compacto</button>
         </div>
-        <div class="grid3" style="margin-top:8px;">
+        <div class="activity-config-grid">
           <div>
             <label for="issueSel">Ticket padre</label>
             <select class="sel" id="issueSel"></select>
@@ -470,20 +478,20 @@
           <div>
             <label for="activityTypeSel">Tipo de actividad (oficial)</label>
             <select class="sel" id="activityTypeSel"></select>
-            <div style="margin-top:8px;">
-              <label for="activityDueInp">Fecha fin (actividad)</label>
-              <input class="inp" id="activityDueInp" type="date">
-            </div>
-            <div style="margin-top:8px;">
-              <label for="activityInp">Actividad final</label>
-              <input class="inp" id="activityInp" type="text" readonly>
-            </div>
-            <datalist id="activityList"></datalist>
+          </div>
+          <div>
+            <label for="activityDueInp">Fecha fin (actividad)</label>
+            <input class="inp" id="activityDueInp" type="date">
           </div>
           <div>
             <label for="minutesInp">Duracion (min)</label>
             <input class="inp" id="minutesInp" type="number" min="1" step="1" value="30">
           </div>
+        </div>
+        <div style="margin-top:8px;">
+          <label for="activityInp">Actividad final</label>
+          <input class="inp" id="activityInp" type="text" readonly>
+          <datalist id="activityList"></datalist>
         </div>
         <div class="row" style="margin-top:10px;">
           <button class="btn primary" id="registerBtn" type="button">Registrar worklog</button>
@@ -1967,6 +1975,36 @@
         return activityFromText(worklogText(worklog)) || 'Sin actividad';
       }
 
+      function normalizePlain(text) {
+        return String(text || '')
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .toLowerCase();
+      }
+
+      function inferOfficialActivityType(sourceText) {
+        const normalized = normalizePlain(sourceText);
+        for (const name of OFFICIAL_ACTIVITY_TYPES) {
+          const n = normalizePlain(name);
+          if (normalized.includes(n)) return name;
+        }
+        if (normalized.includes('agente') && normalized.includes('exito')) return 'Configuración Agente de Éxito';
+        if (normalized.includes('estandarizacion') && normalized.includes('plantilla')) return 'Estandarización de plantillas';
+        if (normalized.includes('docente') && normalized.includes('plantilla')) return 'Entrega de plantillas DOCENTES Coach/Farmer/Hunter';
+        if (normalized.includes('estudiante') && normalized.includes('plantilla')) return 'Entrega de plantillas ESTUDIANTES Coach/Farmer/Hunter';
+        if (normalized.includes('pendiente')) return 'Pendiente información';
+        if (normalized.includes('integracion') && normalized.includes('lql')) return 'Integración LQL';
+        if (normalized.includes('integracion') && normalized.includes('rlp')) return 'Integración RLP';
+        if (normalized.includes('integracion') && normalized.includes('ldb')) return 'Integración LDB';
+        if (normalized.includes('integracion') && normalized.includes('wemath')) return 'Integración WeMath';
+        if (normalized.includes('integracion') && normalized.includes('pleno')) return 'Integración Pleno';
+        if (normalized.includes('integracion') && normalized.includes('studio')) return 'Integración Studio';
+        if (normalized.includes('configuracion') && normalized.includes('colegio')) return 'Configuración de colegio';
+        if (normalized.includes('configuracion') && normalized.includes('docente')) return 'Configuración de docentes';
+        if (normalized.includes('configuracion') && normalized.includes('estudiante')) return 'Configuración de estudiantes';
+        return OFFICIAL_ACTIVITY_TYPES[0];
+      }
+
       function sortDesc(items, dateFn) {
         return items.slice().sort((a, b) => new Date(dateFn(b)).getTime() - new Date(dateFn(a)).getTime());
       }
@@ -1985,7 +2023,7 @@
             <div class="comment ${my ? 'mine' : ''}">
               <div class="meta"><span>${escapeHtml(author)}</span><span>${escapeHtml(TimeService.dtLabel(c.created))}</span></div>
               <div class="body">${escapeHtml(txt)}</div>
-              ${my ? `<div class="row" style="margin-top:8px;"><button class="btn" data-act="reg-from-comment" data-id="${escapeHtml(String(c.id))}">Registrar actividad</button></div>` : ''}
+              <div class="row" style="margin-top:8px;"><button class="btn" data-act="reg-from-comment" data-id="${escapeHtml(String(c.id))}">Registrar actividad</button></div>
             </div>
           `;
         }).join('');
@@ -2013,17 +2051,42 @@
         const comments = state.commentsByIssue[issueKey] || [];
         const worklogs = state.worklogsByIssue[issueKey] || [];
         if (!comments.length || !state.me) return null;
-        const mineComments = comments
-          .filter((c) => mine(c.author))
-          .filter((c) => Date.now() - new Date(c.created).getTime() <= SUGGESTION_MS);
-        for (const c of mineComments) {
+        const commentsAsc = comments
+          .slice()
+          .filter((c) => c && c.created)
+          .sort((a, b) => new Date(a.created).getTime() - new Date(b.created).getTime());
+        const myLogs = worklogs
+          .slice()
+          .filter((w) => mine(w.author))
+          .sort((a, b) => new Date(a.started || a.created || 0).getTime() - new Date(b.started || b.created || 0).getTime());
+        const pending = [];
+        for (let i = 0; i < commentsAsc.length; i += 1) {
+          const c = commentsAsc[i];
           const cTs = new Date(c.created).getTime();
-          const posterior = worklogs.some((w) => mine(w.author) && new Date(w.started || w.created || 0).getTime() >= cTs);
-          if (!posterior) {
-            const act = activityFromText(commentText(c)) || 'Seguimiento';
-            const mins = Math.max(5, Math.min(480, TimeService.businessMinutesBetween(new Date(c.created), new Date())));
-            return { commentId: c.id, created: c.created, activity: act, minutes: mins };
+          const nextTs = i < commentsAsc.length - 1
+            ? new Date(commentsAsc[i + 1].created).getTime()
+            : Number.POSITIVE_INFINITY;
+          if (!Number.isFinite(cTs)) continue;
+          const registered = myLogs.some((w) => {
+            const wTs = new Date(w.started || w.created || 0).getTime();
+            return Number.isFinite(wTs) && wTs >= cTs && wTs < nextTs;
+          });
+          if (!registered) {
+            pending.push(c);
           }
+        }
+        if (pending.length) {
+          const c = pending[pending.length - 1];
+          const suggestedType = inferOfficialActivityType(commentText(c));
+          const mins = Math.max(5, Math.min(480, TimeService.businessMinutesBetween(new Date(c.created), new Date())));
+          return {
+            commentId: c.id,
+            created: c.created,
+            author: c.author && c.author.displayName ? c.author.displayName : 'Sin autor',
+            activity: suggestedType,
+            activityType: suggestedType,
+            minutes: mins
+          };
         }
         return null;
       }
@@ -2039,64 +2102,46 @@
         }
         const s = state.suggestion;
         el.suggestionBox.className = 'msg show info';
-        el.suggestionBox.innerHTML = `Comentario pendiente detectado.<br>Actividad: <strong>${escapeHtml(s.activity)}</strong><br>Tiempo: <strong>${s.minutes} min</strong><br>Fecha comentario: ${escapeHtml(TimeService.dtLabel(s.created))}`;
+        el.suggestionBox.innerHTML = `Comentario pendiente detectado.<br>Autor: <strong>${escapeHtml(s.author || 'Sin autor')}</strong><br>Actividad sugerida: <strong>${escapeHtml(s.activity)}</strong><br>Tiempo: <strong>${s.minutes} min</strong><br>Fecha comentario: ${escapeHtml(TimeService.dtLabel(s.created))}`;
         el.applySugActBtn.disabled = false;
         el.applySugTimeBtn.disabled = false;
       }
 
-      function renderTimeline(_issueKey) {
-        const ticketRows = Object.entries(state.worklogsByIssue || {})
-          .map(([issueKey, list]) => ({
-            issueKey: String(issueKey || ''),
-            logs: sortDesc((Array.isArray(list) ? list : []).filter((w) => mine(w.author)), (w) => w.started || w.created).reverse()
-          }))
-          .filter((row) => row.issueKey && row.logs.length);
+      function renderTimeline(issueKey) {
+        const key = String(issueKey || '').trim();
+        const issue = issueByKey(key);
+        const logs = sortDesc((state.worklogsByIssue[key] || []).slice(), (w) => w.started || w.created).reverse();
 
-        if (!ticketRows.length) {
+        if (!key || !logs.length) {
           el.timelineBox.className = 'empty';
-          el.timelineBox.textContent = 'Sin registros propios.';
+          el.timelineBox.textContent = 'Sin registros para este ticket.';
           el.ganttBox.className = 'empty';
-          el.ganttBox.textContent = 'Sin registros propios.';
+          el.ganttBox.textContent = 'Sin registros para este ticket.';
           return;
         }
 
-        const allLogs = [];
-        ticketRows.forEach((row) => {
-          row.logs.forEach((w) => allLogs.push({ issueKey: row.issueKey, worklog: w }));
-        });
-        const start = Math.min(...allLogs.map((it) => new Date(it.worklog.started || it.worklog.created).getTime()));
-        const end = Math.max(...allLogs.map((it) => new Date(it.worklog.started || it.worklog.created).getTime() + minutesOf(it.worklog) * 60000));
+        const start = Math.min(...logs.map((w) => new Date(w.started || w.created).getTime()));
+        const end = Math.max(...logs.map((w) => new Date(w.started || w.created).getTime() + minutesOf(w) * 60000));
         const range = Math.max(1, end - start);
 
         const legendMap = {};
-        const timelineRowsHtml = ticketRows.map((row) => {
-          const issue = issueByKey(row.issueKey);
-          const label = issue && issue.summary
-            ? `${row.issueKey} - ${issue.summary}`
-            : row.issueKey;
-          const totalMinutes = row.logs.reduce((acc, w) => acc + minutesOf(w), 0);
-          const segmentsHtml = row.logs.map((w) => {
-            const st = new Date(w.started || w.created).getTime();
-            const mins = minutesOf(w);
-            const dur = Math.max(60000, mins * 60000);
-            const act = activityOf(w) || 'Sin actividad';
-            const color = activityColor(act);
-            legendMap[act] = legendMap[act] || { activity: act, minutes: 0, color };
-            legendMap[act].minutes += mins;
-            const left = ((st - start) / range) * 100;
-            const width = Math.max(1.8, (dur / range) * 100);
-            const meta = `${row.issueKey} | ${act} | ${mins}m | ${TimeService.dtLabel(st)}`;
-            return `<span class="timeline-ticket-segment" title="${escapeHtml(meta)}" style="left:${left.toFixed(3)}%;width:${width.toFixed(3)}%;background:${escapeHtml(color)};"></span>`;
-          }).join('');
-          return `
-            <div class="timeline-ticket-row">
-              <div class="timeline-ticket-label" title="${escapeHtml(label)}">${escapeHtml(label)}</div>
-              <div class="timeline-ticket-track">${segmentsHtml}</div>
-              <div class="timeline-ticket-total">${totalMinutes}m</div>
-            </div>
-          `;
+        const totalMinutes = logs.reduce((acc, w) => acc + minutesOf(w), 0);
+        const segmentsHtml = logs.map((w) => {
+          const st = new Date(w.started || w.created).getTime();
+          const mins = minutesOf(w);
+          const dur = Math.max(60000, mins * 60000);
+          const act = activityOf(w) || 'Sin actividad';
+          const color = activityColor(act);
+          legendMap[act] = legendMap[act] || { activity: act, minutes: 0, color };
+          legendMap[act].minutes += mins;
+          const left = ((st - start) / range) * 100;
+          const width = Math.max(1.8, (dur / range) * 100);
+          const author = w.author && w.author.displayName ? w.author.displayName : 'Sin autor';
+          const meta = `${key} | ${author} | ${act} | ${mins}m | ${TimeService.dtLabel(st)}`;
+          return `<span class="timeline-ticket-segment" title="${escapeHtml(meta)}" style="left:${left.toFixed(3)}%;width:${width.toFixed(3)}%;background:${escapeHtml(color)};"></span>`;
         }).join('');
 
+        const label = issue && issue.summary ? `${key} - ${issue.summary}` : key;
         const legendEntries = Object.values(legendMap).sort((a, b) => b.minutes - a.minutes);
         const legendHtml = legendEntries.length
           ? `<div class="activity-legend">${legendEntries.map((it) => `<span class="activity-legend-item" title="${escapeHtml(`${it.activity}: ${it.minutes}m`)}"><span class="activity-legend-dot" style="background:${escapeHtml(it.color)};"></span>${escapeHtml(it.activity)} (${it.minutes}m)</span>`).join('')}</div>`
@@ -2108,18 +2153,17 @@
             <span>Inicio: ${escapeHtml(TimeService.dtLabel(start))}</span>
             <span>Fin: ${escapeHtml(TimeService.dtLabel(end))}</span>
           </div>
-          <div class="timeline-ticket-list">${timelineRowsHtml}</div>
+          <div class="timeline-ticket-list">
+            <div class="timeline-ticket-row">
+              <div class="timeline-ticket-label" title="${escapeHtml(label)}">${escapeHtml(label)}</div>
+              <div class="timeline-ticket-track">${segmentsHtml}</div>
+              <div class="timeline-ticket-total">${totalMinutes}m</div>
+            </div>
+          </div>
           ${legendHtml}
         `;
 
-        const grouped = {};
-        allLogs.forEach((it) => {
-          const act = activityOf(it.worklog) || 'Sin actividad';
-          grouped[act] = (grouped[act] || 0) + minutesOf(it.worklog);
-        });
-        const entries = Object.entries(grouped)
-          .map(([activity, minutes]) => ({ activity, minutes, color: activityColor(activity) }))
-          .sort((a, b) => b.minutes - a.minutes);
+        const entries = legendEntries;
         const max = entries[0] ? entries[0].minutes : 1;
         el.ganttBox.className = '';
         el.ganttBox.innerHTML = entries.map((it) => {
@@ -2359,16 +2403,6 @@
         const payload = await JiraService.searchIssues();
         state.issues = parseIssues(payload);
         renderIssueSelect();
-        await mapLimit(state.issues.map((i) => i.key), 4, async (key) => {
-          if (Array.isArray(state.worklogsByIssue[key])) return;
-          try {
-            const worklogPayload = await JiraService.worklogs(key);
-            const worklogs = Array.isArray(worklogPayload.worklogs) ? worklogPayload.worklogs : [];
-            state.worklogsByIssue[key] = sortDesc(worklogs, (x) => x.started || x.created || '');
-          } catch (_e) {
-            state.worklogsByIssue[key] = [];
-          }
-        });
         if (state.selectedIssueKey) await loadIssueData(state.selectedIssueKey);
         else renderIssueData();
       }
@@ -2791,17 +2825,14 @@
 
         el.applySugActBtn.addEventListener('click', () => {
           if (!state.suggestion) return;
-          const suggested = String(state.suggestion.activity || '').trim();
-          const parsed = parseOfficialActivity(suggested);
-          if (parsed) {
-            state.activityType = parsed.type;
-            state.activityDueDate = parsed.dueInput;
-          } else if (OFFICIAL_ACTIVITY_TYPES.includes(suggested)) {
-            state.activityType = suggested;
-          } else {
-            showMsg('info', 'La sugerencia no coincide con los tipos oficiales de actividad.');
-            return;
-          }
+          const suggested = String(state.suggestion.activityType || state.suggestion.activity || '').trim();
+          state.activityType = OFFICIAL_ACTIVITY_TYPES.includes(suggested)
+            ? suggested
+            : inferOfficialActivityType(suggested);
+          const suggestedDate = TimeService.toInputDate(state.suggestion.created || new Date());
+          state.activityDueDate = isValidInputDate(suggestedDate)
+            ? suggestedDate
+            : TimeService.toInputDate(new Date());
           el.activityTypeSel.value = state.activityType;
           if (isValidInputDate(state.activityDueDate)) {
             el.activityDueInp.value = state.activityDueDate;
@@ -2841,7 +2872,9 @@
           if (!c) return;
           const mins = Math.max(5, Math.min(480, TimeService.businessMinutesBetween(new Date(c.created), new Date())));
           state.regCtx = { issueKey: state.selectedIssueKey, commentId: String(c.id) };
-          el.regActInp.value = activityFromText(commentText(c)) || 'Seguimiento';
+          const inferredType = inferOfficialActivityType(commentText(c));
+          const inferredDue = TimeService.toInputDate(c.created || new Date());
+          el.regActInp.value = buildOfficialActivity(inferredType, inferredDue);
           el.regMinInp.value = String(mins);
           el.regModalMeta.textContent = `${state.selectedIssueKey} | ${TimeService.dtLabel(c.created)}`;
           el.regModal.classList.add('show');
@@ -2853,6 +2886,10 @@
           const issueKey = state.regCtx.issueKey;
           const activity = String(el.regActInp.value || '').trim();
           const mins = Math.max(1, Math.floor(Number(el.regMinInp.value || 0)));
+          if (!parseOfficialActivity(activity)) {
+            showMsg('error', 'La actividad debe usar formato oficial: [Tipo de actividad] [DD/MM/AAAA].');
+            return;
+          }
           el.regModal.classList.remove('show');
           state.regCtx = null;
           try { await createWorklog(issueKey, activity, mins); }

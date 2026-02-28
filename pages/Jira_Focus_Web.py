@@ -11,4 +11,4 @@ st.caption(
     "historial editable, comentarios, sugerencias y reportes."
 )
 
-render_jira_focus_web()
+render_jira_focus_web(height=4600)

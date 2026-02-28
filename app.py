@@ -55,16 +55,7 @@ CENSO_PLANTILLA_EDICION_URL = (
 GESTION_ESCOLAR_CICLO_ID_DEFAULT = 207
 
 
-st.set_page_config(page_title="Generador de Plantilla", layout="centered")
-st.title("Si estás acá es porque eres flojo")
-st.write("El maravilloso mundo de TED :0 automatiza tu chamba por unos buenos días al día ;)")
-st.markdown("**Token global Pegasus**")
-st.text_input(
-    "Token (sin Bearer)",
-    type="password",
-    key="shared_pegasus_token",
-    help="Se usa en todas las funciones. Si queda vacio, se usa PEGASUS_TOKEN.",
-)
+st.set_page_config(page_title="Generador de Plantilla", layout="wide")
 st.markdown("**Menu principal**")
 menu_option = st.radio(
     "Menu",
@@ -74,8 +65,34 @@ menu_option = st.radio(
     key="main_top_menu",
 )
 if menu_option == "Jira Focus Web":
-    render_jira_focus_web()
+    st.markdown(
+        """
+        <style>
+        .block-container {
+            max-width: 100% !important;
+            padding-top: 0.4rem !important;
+            padding-left: 0.6rem !important;
+            padding-right: 0.6rem !important;
+            padding-bottom: 0.4rem !important;
+        }
+        div[data-testid="stVerticalBlock"] {
+            gap: 0.4rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    render_jira_focus_web(height=4600)
     st.stop()
+st.title("Si estás acá es porque eres flojo")
+st.write("El maravilloso mundo de TED :0 automatiza tu chamba por unos buenos días al día ;)")
+st.markdown("**Token global Pegasus**")
+st.text_input(
+    "Token (sin Bearer)",
+    type="password",
+    key="shared_pegasus_token",
+    help="Se usa en todas las funciones. Si queda vacio, se usa PEGASUS_TOKEN.",
+)
 tab_clases, tab_profesores_clases, tab_alumnos, tab_clases_api, tab_clases_alumnos = st.tabs(
     [
         "Crear clases",

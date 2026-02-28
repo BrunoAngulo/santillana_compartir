@@ -243,6 +243,44 @@
       overflow: auto;
     }
     .hide { display: none !important; }
+    details.debug-panel {
+      padding: 0;
+    }
+    details.debug-panel summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
+      user-select: none;
+    }
+    details.debug-panel summary::-webkit-details-marker {
+      display: none;
+    }
+    details.debug-panel summary::after {
+      content: 'Mostrar';
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--muted);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 3px 8px;
+      background: #fff;
+    }
+    details.debug-panel[open] summary {
+      border-bottom: 1px solid #e5eef8;
+    }
+    details.debug-panel[open] summary::after {
+      content: 'Ocultar';
+    }
+    .debug-body {
+      padding: 12px 14px 14px;
+    }
     @media (max-width: 1180px) {
       body { padding: 12px; }
     }
@@ -279,17 +317,19 @@
 
     <div class="msg" id="msg"></div>
     <div class="msg" id="idleMsg"></div>
-    <section class="card">
-      <div class="row" style="justify-content:space-between;">
-        <h3 style="margin:0;">Logs de depuracion</h3>
-        <div class="row">
-          <button class="btn" id="debugCopyBtn" type="button">Copiar logs</button>
-          <button class="btn" id="debugClearBtn" type="button">Limpiar logs</button>
+    <details class="card debug-panel">
+      <summary>Logs de depuracion (tecnico)</summary>
+      <div class="debug-body">
+        <div class="row" style="justify-content:space-between;">
+          <div class="muted">No se registran tokens, codes ni secrets. Solo eventos tecnicos.</div>
+          <div class="row">
+            <button class="btn" id="debugCopyBtn" type="button">Copiar logs</button>
+            <button class="btn" id="debugClearBtn" type="button">Limpiar logs</button>
+          </div>
         </div>
+        <pre id="debugLogBox"></pre>
       </div>
-      <div class="muted">No se registran tokens, codes ni secrets. Solo eventos tecnicos.</div>
-      <pre id="debugLogBox"></pre>
-    </section>
+    </details>
 
     <section class="card" id="loginView">
       <h3>Conectar Jira Cloud</h3>

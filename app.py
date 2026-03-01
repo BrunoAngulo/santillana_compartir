@@ -913,28 +913,9 @@ with tab_profesores_clases:
 
 with tab_crud_alumnos:
     st.subheader("CRUD Alumnos")
-    st.caption(
-        "MÃ³dulo unificado para operaciones de alumnos: plantilla base, comparaciÃ³n, "
-        "listado por clases y Excel por niveles/grados/secciones."
-    )
-    st.markdown(
-        """
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin:4px 0 12px 0;">
-          <div style="border:1px solid #d7e4f2;border-radius:10px;padding:8px 10px;background:#f7fbff;"><strong>1)</strong> Plantilla de alumnos registrados</div>
-          <div style="border:1px solid #d7e4f2;border-radius:10px;padding:8px 10px;background:#f7fbff;"><strong>2)</strong> Comparar Plantilla_BD vs Plantilla_Actualizada</div>
-          <div style="border:1px solid #d7e4f2;border-radius:10px;padding:8px 10px;background:#f7fbff;"><strong>3)</strong> Listar clases con todos sus alumnos</div>
-          <div style="border:1px solid #d7e4f2;border-radius:10px;padding:8px 10px;background:#f7fbff;"><strong>4)</strong> Generar Excel por niveles, grados y secciones</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.caption("Flujo unificado y compacto para alumnos.")
     st.subheader("1) Plantilla de alumnos registrados")
-    st.write(
-        "Descarga la plantilla de edición masiva con alumnos ya registrados, "
-        "ordenada por nivel (Inicial, Primaria, Secundaria), grado y grupo (A,B,C...)."
-    )
-    st.info("Usa esta plantilla como base oficial de alumnos registrados.")
-    st.caption("Usando el token global configurado arriba.")
+    st.caption("Descarga la plantilla base. Esta configuracion se reutiliza abajo.")
     colegio_id_raw = st.text_input(
         "Colegio Clave",
         key="alumnos_colegio_text",
@@ -1001,14 +982,7 @@ with tab_crud_alumnos:
 
     st.divider()
     st.subheader("2) Comparar Plantilla_BD vs Plantilla_Actualizada")
-    st.write(
-        "Sube el Excel descargado (con hojas Plantilla_BD y Plantilla_Actualizada) "
-        "y se generan dos hojas: 'Plantilla alta de alumnos' y 'Plantilla edición masiva'."
-    )
-    st.warning(
-        "Asegúrate de que el archivo tenga ambas hojas con nombres exactos: "
-        "Plantilla_BD y Plantilla_Actualizada."
-    )
+    st.caption("Sube el .xlsx con hojas Plantilla_BD y Plantilla_Actualizada.")
     uploaded_compare = st.file_uploader(
         "Excel con Plantilla_BD y Plantilla_Actualizada",
         type=["xlsx"],
@@ -1155,50 +1129,19 @@ with tab_clases_api:
 with tab_crud_alumnos:
     st.divider()
     st.subheader("3) Listar clases con todos sus alumnos")
-    st.write(
-        "Consulta todas las clases del colegio y muestra todos los alumnos asociados "
-        "a cada clase."
+    colegio_id_raw = str(st.session_state.get("alumnos_colegio_text", "")).strip()
+    ciclo_id = int(st.session_state.get("alumnos_ciclo", ALUMNOS_CICLO_ID_DEFAULT))
+    empresa_id = int(st.session_state.get("alumnos_empresa", DEFAULT_EMPRESA_ID))
+    timeout = int(st.session_state.get("alumnos_timeout", 30))
+    st.caption(
+        f"Colegio: `{colegio_id_raw or '-'}` | Ciclo: `{ciclo_id}` | "
+        f"Empresa: `{empresa_id}` | Timeout: `{timeout}s`"
     )
-
-    st.caption("Usando el token global configurado arriba.")
-    colegio_id = st.number_input(
-        "Colegio Clave",
-        min_value=1,
-        step=1,
-        format="%d",
-        key="clases_alumnos_colegio",
+    solo_activos = st.checkbox(
+        "Solo alumnos activos",
+        value=False,
+        key="clases_alumnos_solo_activos",
     )
-
-    with st.expander("Opciones avanzadas", expanded=False):
-        ciclo_id = st.number_input(
-            "Ciclo ID",
-            min_value=1,
-            step=1,
-            value=GESTION_ESCOLAR_CICLO_ID_DEFAULT,
-            format="%d",
-            key="clases_alumnos_ciclo",
-        )
-        empresa_id = st.number_input(
-            "Empresa ID",
-            min_value=1,
-            step=1,
-            value=DEFAULT_EMPRESA_ID,
-            format="%d",
-            key="clases_alumnos_empresa",
-        )
-        timeout = st.number_input(
-            "Timeout (seg)",
-            min_value=5,
-            step=5,
-            value=30,
-            format="%d",
-            key="clases_alumnos_timeout",
-        )
-        solo_activos = st.checkbox(
-            "Solo alumnos activos",
-            value=False,
-            key="clases_alumnos_solo_activos",
-        )
 
     if st.button(
         "Listar clases con alumnos",
@@ -1209,12 +1152,17 @@ with tab_crud_alumnos:
         if not token:
             st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
             st.stop()
+        try:
+            colegio_id_int = _parse_colegio_id(colegio_id_raw)
+        except ValueError as exc:
+            st.error(f"Error: {exc}")
+            st.stop()
 
         try:
             with st.spinner("Listando clases..."):
                 clases = _fetch_clases_gestion_escolar(
                     token=token,
-                    colegio_id=int(colegio_id),
+                    colegio_id=colegio_id_int,
                     empresa_id=int(empresa_id),
                     ciclo_id=int(ciclo_id),
                     timeout=int(timeout),
@@ -1374,14 +1322,7 @@ with tab_crud_alumnos:
 
     st.divider()
     st.subheader("4) Generar Excel por niveles, grados y secciones (Censo)")
-    st.write(
-        "Usa el endpoint nivelesGradosGrupos, luego consulta alumnos por cada "
-        "nivel/grado/grupo y genera un Excel."
-    )
-    st.caption(
-        "Nota: este proceso puede incluir la seccion Z. "
-        "Si vas a compartir la plantilla, revisa ese contenido."
-    )
+    st.caption("Genera Excel desde censo por nivel/grado/seccion.")
     solo_activos_censo = st.checkbox(
         "Solo alumnos activos en censo",
         value=False,
@@ -1402,12 +1343,17 @@ with tab_crud_alumnos:
         if not token:
             st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
             st.stop()
+        try:
+            colegio_id_int = _parse_colegio_id(colegio_id_raw)
+        except ValueError as exc:
+            st.error(f"Error: {exc}")
+            st.stop()
 
         try:
             with st.spinner("Consultando niveles/grados/grupos..."):
                 niveles_data = _fetch_niveles_grados_grupos_censo(
                     token=token,
-                    colegio_id=int(colegio_id),
+                    colegio_id=colegio_id_int,
                     empresa_id=int(empresa_id),
                     ciclo_id=int(ciclo_id),
                     timeout=int(timeout),
@@ -1531,7 +1477,7 @@ with tab_crud_alumnos:
         try:
             by_alumno_id, by_persona_id = _fetch_login_password_lookup_censo(
                 token=token,
-                colegio_id=int(colegio_id),
+                colegio_id=colegio_id_int,
                 empresa_id=int(empresa_id),
                 ciclo_id=int(ciclo_id),
                 timeout=int(timeout),
@@ -1562,7 +1508,7 @@ with tab_crud_alumnos:
             try:
                 alumnos_data = _fetch_alumnos_censo(
                     token=token,
-                    colegio_id=int(colegio_id),
+                    colegio_id=colegio_id_int,
                     nivel_id=int(ctx["nivel_id"]),
                     grado_id=int(ctx["grado_id"]),
                     grupo_id=int(ctx["grupo_id"]),
@@ -1643,7 +1589,7 @@ with tab_crud_alumnos:
                 try:
                     alumnos_fallback = _fetch_alumnos_censo(
                         token=token,
-                        colegio_id=int(colegio_id),
+                        colegio_id=colegio_id_int,
                         nivel_id=nivel_id_fb,
                         grado_id=grado_id_fb,
                         grupo_id=None,
@@ -1760,7 +1706,7 @@ with tab_crud_alumnos:
             ws.auto_filter.ref = ws.dimensions
 
         output.seek(0)
-        file_name = f"alumnos_censo_{int(colegio_id)}_{int(ciclo_id)}.xlsx"
+        file_name = f"alumnos_censo_{colegio_id_int}_{int(ciclo_id)}.xlsx"
         st.success("Excel generado.")
         st.markdown(f"- Combinaciones evaluadas: `{total}`")
         st.markdown(f"- Filas en Excel: `{len(df_excel)}`")

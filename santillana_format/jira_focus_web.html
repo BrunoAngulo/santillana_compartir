@@ -1511,7 +1511,10 @@
           </div>
         </div>
         <div class="card panel-worklogs">
-          <h3>Historial editable por ticket</h3>
+          <div class="row" style="justify-content:space-between;align-items:center;">
+            <h3 style="margin:0;">Historial editable por ticket</h3>
+            <button class="btn danger" id="deleteAllWorklogsBtn" type="button" disabled>Eliminar todo</button>
+          </div>
           <div class="tbl-wrap">
             <table>
               <thead><tr><th>Fecha</th><th>Actividad</th><th>Duracion</th><th>Acciones</th></tr></thead>
@@ -2756,7 +2759,7 @@
           'loginView','urlInp','clientIdInp','clientSecretInp','redirectUriInp','callbackUrlInp','connectBtn','processCallbackBtn','clearOAuthBtn',
           'mainView','issueSel','activityTypeSel','activityDueInp','activityInp','minutesInp','registerBtn','jiraDurationPill','timerVal','timerState','startBtn','pauseBtn',
           'resetBtn','applyTimerBtn','suggestionBox','applySugActBtn','applySugTimeBtn','registerSugBtn','todayTotal','weekTotal','issueCount','dashMeta',
-          'refreshDashBtn','recentBox','commentsBox','worklogBody','timelineBox','ganttBox','genReportBtn','exportReportBtn','reportMeta',
+          'refreshDashBtn','recentBox','commentsBox','worklogBody','deleteAllWorklogsBtn','timelineBox','ganttBox','genReportBtn','exportReportBtn','reportMeta',
           'reportBody','timelinePanel','chartDesignSel','chartDesignHelp','activityFocusBox','activityQuickSel','activityQuickMeta','compactBtn','floatBox','floatIssue','floatTimer','floatState','floatStartBtn','floatPauseBtn','floatExpandBtn',
           'regInlineBox','regInlineMeta','regTypeSel','regDateInp','regMinInp','regInlineOkBtn','regInlineCancelBtn',
           'editInlineBox','editMeta','editTypeSel','editActInp','editDateInp','editTimeInp','editMinInp','editSaveBtn','editDeleteBtn','editCancelBtn','activityList'
@@ -3338,6 +3341,9 @@
       }
       function renderWorklogs(issueKey) {
         const rows = state.worklogsByIssue[issueKey] || [];
+        if (el.deleteAllWorklogsBtn) {
+          el.deleteAllWorklogsBtn.disabled = !(issueKey && rows.length);
+        }
         if (!rows.length) {
           state.selectedWorklogId = '';
           el.worklogBody.innerHTML = '<tr><td colspan="4"><div class="empty">Sin worklogs.</div></td></tr>';
@@ -4006,6 +4012,50 @@
         showMsg('ok', 'Worklog eliminado.');
       }
 
+      async function deleteAllWorklogs(issueKey) {
+        const key = String(issueKey || '').trim();
+        if (!key) {
+          showMsg('error', 'Selecciona un ticket.');
+          return;
+        }
+        const rows = (state.worklogsByIssue[key] || []).slice();
+        if (!rows.length) {
+          showMsg('info', 'No hay worklogs para eliminar en este ticket.');
+          return;
+        }
+        const total = rows.length;
+        const confirmed = window.confirm(`Se eliminaran ${total} worklogs del ticket ${key}. Esta accion no se puede deshacer. Continuar?`);
+        if (!confirmed) return;
+
+        if (el.deleteAllWorklogsBtn) {
+          el.deleteAllWorklogsBtn.disabled = true;
+        }
+
+        let okCount = 0;
+        let failCount = 0;
+        await mapLimit(rows, 4, async (w) => {
+          const id = String(w && w.id ? w.id : '').trim();
+          if (!id) return;
+          try {
+            await JiraService.deleteWorklog(key, id);
+            okCount += 1;
+          } catch (_e) {
+            failCount += 1;
+          }
+        });
+
+        markActivity();
+        await loadIssueData(key);
+        await refreshDashboard();
+        if (failCount === 0) {
+          showMsg('ok', `Se eliminaron ${okCount} worklogs del ticket ${key}.`);
+        } else if (okCount > 0) {
+          showMsg('info', `Eliminacion parcial: ${okCount} eliminados, ${failCount} con error.`);
+        } else {
+          showMsg('error', `No se pudo eliminar worklogs del ticket ${key}.`);
+        }
+      }
+
       function readConfigInputs() {
         return {
           url: sanitizeUrl(el.urlInp.value),
@@ -4330,6 +4380,13 @@
           if (!state.connected) return;
           try { await loadIssues(); await refreshDashboard(); showMsg('ok', 'Tickets actualizados.'); }
           catch (e) { applyError(e, 'No se pudieron recargar tickets.'); }
+        });
+        el.deleteAllWorklogsBtn.addEventListener('click', async () => {
+          try {
+            await deleteAllWorklogs(state.selectedIssueKey);
+          } catch (e) {
+            applyError(e, 'No se pudo eliminar todos los worklogs del ticket.');
+          }
         });
 
         el.issueSel.addEventListener('change', async () => {

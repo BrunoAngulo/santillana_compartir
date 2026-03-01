@@ -1601,7 +1601,18 @@
         ]
       };
       const DEBUG_MAX = 140;
-      const LABOR = { startHour: 8, startMinute: 30, endHour: 18, endMinute: 0, dayMinutes: 570, weekMinutes: 2850 };
+      const LABOR = {
+        startHour: 8,
+        startMinute: 30,
+        breakStartHour: 13,
+        breakStartMinute: 0,
+        breakEndHour: 14,
+        breakEndMinute: 0,
+        endHour: 18,
+        endMinute: 0,
+        dayMinutes: 510,
+        weekMinutes: 2550
+      };
       const INACTIVITY_MS = 2 * 60 * 60 * 1000;
       const SUGGESTION_MS = 3 * 24 * 60 * 60 * 1000;
       const COMMENT_LINK_NEAR_MINUTES = 120;
@@ -1793,9 +1804,28 @@
           const end = new Date(d); end.setHours(LABOR.endHour, LABOR.endMinute, 0, 0);
           return { start, end };
         },
+        dayWorkBlocks(d) {
+          if (!this.isWeekday(d)) return [];
+          const start = new Date(d); start.setHours(LABOR.startHour, LABOR.startMinute, 0, 0);
+          const breakStart = new Date(d); breakStart.setHours(LABOR.breakStartHour, LABOR.breakStartMinute, 0, 0);
+          const breakEnd = new Date(d); breakEnd.setHours(LABOR.breakEndHour, LABOR.breakEndMinute, 0, 0);
+          const end = new Date(d); end.setHours(LABOR.endHour, LABOR.endMinute, 0, 0);
+
+          // 2 bloques efectivos: 08:30-13:00 y 14:00-18:00 => 8h30 por dia.
+          const blocks = [];
+          if (breakStart > start) {
+            blocks.push({ start: new Date(start), end: new Date(breakStart) });
+          }
+          if (end > breakEnd) {
+            blocks.push({ start: new Date(breakEnd), end: new Date(end) });
+          }
+          if (!blocks.length && end > start) {
+            blocks.push({ start: new Date(start), end: new Date(end) });
+          }
+          return blocks;
+        },
         isBusinessNow(d) {
-          const w = this.dayWindow(d);
-          return !!w && d >= w.start && d <= w.end;
+          return this.dayWorkBlocks(d).some((b) => d >= b.start && d <= b.end);
         },
         businessMsBetween(a, b) {
           const start = new Date(a); const end = new Date(b);
@@ -1803,12 +1833,12 @@
           let total = 0;
           let cur = new Date(start);
           while (cur < end) {
-            const w = this.dayWindow(cur);
-            if (w) {
-              const s = Math.max(cur.getTime(), w.start.getTime());
-              const e = Math.min(end.getTime(), w.end.getTime());
+            const blocks = this.dayWorkBlocks(cur);
+            blocks.forEach((block) => {
+              const s = Math.max(cur.getTime(), block.start.getTime());
+              const e = Math.min(end.getTime(), block.end.getTime());
               if (e > s) total += (e - s);
-            }
+            });
             cur.setHours(24, 0, 0, 0);
           }
           return total;
@@ -1818,8 +1848,10 @@
           const d = new Date(dateIn);
           while (true) {
             d.setDate(d.getDate() - 1);
-            const w = this.dayWindow(d);
-            if (w) return new Date(w.end);
+            const blocks = this.dayWorkBlocks(d);
+            if (blocks.length) {
+              return new Date(blocks[blocks.length - 1].end);
+            }
           }
         },
         nextBusinessStart(dateIn) {
@@ -1848,16 +1880,37 @@
           let cur = new Date(endIn);
           if (!remain) return cur;
           while (remain > 0) {
-            const w = this.dayWindow(cur);
-            if (!w) { cur = this.prevBusinessEnd(cur); continue; }
-            if (cur > w.end) cur = new Date(w.end);
-            if (cur <= w.start) { cur = this.prevBusinessEnd(cur); continue; }
-            const available = Math.floor((cur.getTime() - w.start.getTime()) / 60000);
+            const blocks = this.dayWorkBlocks(cur);
+            if (!blocks.length) { cur = this.prevBusinessEnd(cur); continue; }
+            const firstStart = blocks[0].start;
+            const lastEnd = blocks[blocks.length - 1].end;
+            if (cur > lastEnd) { cur = new Date(lastEnd); continue; }
+            if (cur <= firstStart) { cur = this.prevBusinessEnd(cur); continue; }
+
+            let chosenIdx = -1;
+            for (let i = blocks.length - 1; i >= 0; i -= 1) {
+              const block = blocks[i];
+              if (cur > block.start) {
+                if (cur > block.end) {
+                  cur = new Date(block.end);
+                }
+                chosenIdx = i;
+                break;
+              }
+            }
+            if (chosenIdx < 0) { cur = this.prevBusinessEnd(cur); continue; }
+
+            const chosen = blocks[chosenIdx];
+            const available = Math.floor((cur.getTime() - chosen.start.getTime()) / 60000);
             if (available >= remain) {
               cur = new Date(cur.getTime() - remain * 60000);
               remain = 0;
+              continue;
+            }
+            remain -= Math.max(0, available);
+            if (chosenIdx > 0) {
+              cur = new Date(blocks[chosenIdx - 1].end);
             } else {
-              remain -= available;
               cur = this.prevBusinessEnd(cur);
             }
           }

@@ -76,13 +76,12 @@ st.text_input(
     key="shared_pegasus_token",
     help="Se usa en todas las funciones. Si queda vacio, se usa PEGASUS_TOKEN.",
 )
-tab_clases, tab_profesores_clases, tab_alumnos, tab_clases_api, tab_clases_alumnos = st.tabs(
+tab_clases, tab_profesores_clases, tab_crud_alumnos, tab_clases_api = st.tabs(
     [
         "Crear clases",
         "Profesores con clases",
-        "Alumnos registrados",
+        "CRUD Alumnos",
         "Clases API",
-        "Clases + alumnos",
     ]
 )
 
@@ -912,8 +911,24 @@ with tab_profesores_clases:
         else:
             st.success("Listo. Solo se procesaron passwords.")
 
-with tab_alumnos:
-    st.subheader("Plantilla de alumnos registrados")
+with tab_crud_alumnos:
+    st.subheader("CRUD Alumnos")
+    st.caption(
+        "MÃ³dulo unificado para operaciones de alumnos: plantilla base, comparaciÃ³n, "
+        "listado por clases y Excel por niveles/grados/secciones."
+    )
+    st.markdown(
+        """
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin:4px 0 12px 0;">
+          <div style="border:1px solid #d7e4f2;border-radius:10px;padding:8px 10px;background:#f7fbff;"><strong>1)</strong> Plantilla de alumnos registrados</div>
+          <div style="border:1px solid #d7e4f2;border-radius:10px;padding:8px 10px;background:#f7fbff;"><strong>2)</strong> Comparar Plantilla_BD vs Plantilla_Actualizada</div>
+          <div style="border:1px solid #d7e4f2;border-radius:10px;padding:8px 10px;background:#f7fbff;"><strong>3)</strong> Listar clases con todos sus alumnos</div>
+          <div style="border:1px solid #d7e4f2;border-radius:10px;padding:8px 10px;background:#f7fbff;"><strong>4)</strong> Generar Excel por niveles, grados y secciones</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.subheader("1) Plantilla de alumnos registrados")
     st.write(
         "Descarga la plantilla de edición masiva con alumnos ya registrados, "
         "ordenada por nivel (Inicial, Primaria, Secundaria), grado y grupo (A,B,C...)."
@@ -985,7 +1000,7 @@ with tab_alumnos:
         )
 
     st.divider()
-    st.subheader("Comparar Plantilla_BD vs Plantilla_Actualizada")
+    st.subheader("2) Comparar Plantilla_BD vs Plantilla_Actualizada")
     st.write(
         "Sube el Excel descargado (con hojas Plantilla_BD y Plantilla_Actualizada) "
         "y se generan dos hojas: 'Plantilla alta de alumnos' y 'Plantilla edición masiva'."
@@ -1137,8 +1152,9 @@ with tab_clases_api:
             st.error("Errores al eliminar:")
             st.write("\n".join(f"- {item}" for item in errores))
 
-with tab_clases_alumnos:
-    st.subheader("Listar clases con todos sus alumnos")
+with tab_crud_alumnos:
+    st.divider()
+    st.subheader("3) Listar clases con todos sus alumnos")
     st.write(
         "Consulta todas las clases del colegio y muestra todos los alumnos asociados "
         "a cada clase."
@@ -1357,7 +1373,7 @@ with tab_clases_alumnos:
                 st.caption(f"... y {restantes} errores más.")
 
     st.divider()
-    st.subheader("Generar Excel por niveles, grados y secciones (Censo)")
+    st.subheader("4) Generar Excel por niveles, grados y secciones (Censo)")
     st.write(
         "Usa el endpoint nivelesGradosGrupos, luego consulta alumnos por cada "
         "nivel/grado/grupo y genera un Excel."

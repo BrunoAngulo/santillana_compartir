@@ -674,11 +674,6 @@
       border-color: #b8d1ea;
       background: #edf6ff;
     }
-    .comment-activity-line.suggested-line {
-      border-color: #d6e3d9;
-      background: #f4fbf5;
-      color: #2c5a40;
-    }
     .meta { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; margin-bottom: 4px; flex-wrap: wrap; }
     .body { white-space: pre-wrap; font-size: 13px; overflow-wrap: anywhere; }
     .track {
@@ -3297,19 +3292,33 @@
         return Number.isFinite(ts) ? Math.floor(ts / 60000) : NaN;
       }
       function linkedWorklogIdsForComment(issueKey, commentId) {
-        const links = state.timelineLinksByIssue[issueKey] || { commentToWorklogIds: {} };
+        const links = state.timelineLinksByIssue[issueKey] || { commentToWorklogIds: {}, worklogToCommentId: {} };
+        const commentKey = String(commentId || '').trim();
         const ids = links.commentToWorklogIds && Array.isArray(links.commentToWorklogIds[commentId])
           ? links.commentToWorklogIds[commentId]
           : [];
-        return ids
+        const normalized = ids
           .map((id) => String(id || '').trim())
           .filter((id) => !!id);
+        if (normalized.length) return normalized;
+        const reverse = links.worklogToCommentId && typeof links.worklogToCommentId === 'object'
+          ? Object.entries(links.worklogToCommentId)
+            .filter(([_, cId]) => String(cId || '').trim() === commentKey)
+            .map(([wId]) => String(wId || '').trim())
+            .filter((id) => !!id)
+          : [];
+        return reverse;
       }
       function findExistingWorklogForComment(issueKey, comment) {
         const key = String(issueKey || '').trim();
         if (!key || !comment) return null;
         const rows = state.worklogsByIssue[key] || [];
         if (!rows.length) return null;
+        const links = state.timelineLinksByIssue[key] || { worklogToCommentId: {} };
+        const resolvedLinks = links.worklogToCommentId && typeof links.worklogToCommentId === 'object'
+          ? links.worklogToCommentId
+          : {};
+        const hasResolvedLinks = Object.keys(resolvedLinks).length > 0;
 
         const commentId = String(comment.id || '').trim();
         if (commentId) {
@@ -3327,6 +3336,7 @@
               return linkedRows[0];
             }
           }
+          if (hasResolvedLinks) return null;
         }
 
         const commentMinute = minuteBucket(comment.created);
@@ -3489,7 +3499,6 @@
           const existingWorklog = findExistingWorklogForComment(issueKey, c);
           const existingWorklogId = existingWorklog ? String(existingWorklog.id || '').trim() : '';
           const linkedActivity = existingWorklog ? activityOf(existingWorklog) : '';
-          const suggestedType = !existingWorklog ? suggestOfficialActivityType(txt) : '';
           const accent = linkedActivity ? activityColor(linkedActivity) : '';
           const linkedClass = accent ? ' linked' : '';
           const accentAttr = accent ? ` style="--comment-accent:${escapeHtml(accent)}"` : '';
@@ -3505,9 +3514,7 @@
             : '';
           const activityInfo = linkedActivity
             ? `<div class="comment-activity-line linked-line">Actividad vinculada: <strong>${escapeHtml(linkedActivity)}</strong>${endsAtCommentMinute ? ' (fin coincide con hora del comentario)' : ''}</div>`
-            : (suggestedType
-              ? `<div class="comment-activity-line suggested-line">Actividad sugerida: <strong>${escapeHtml(suggestedType)}</strong></div>`
-              : '');
+            : '';
           return `
             <div class="comment${mineClass}${selectedClass}${linkedClass}" data-comment-id="${escapeHtml(id)}"${accentAttr}>
               <div class="meta"><span>${escapeHtml(author)}</span><span>${escapeHtml(TimeService.dtLabel(c.created))}</span></div>
@@ -3700,6 +3707,10 @@
         }
         Object.entries(worklogToBest).forEach(([worklogId, best]) => {
           worklogToCommentId[worklogId] = String(best.commentId || '');
+        });
+        Object.keys(commentToWorklogIds).forEach((commentId) => {
+          const current = Array.isArray(commentToWorklogIds[commentId]) ? commentToWorklogIds[commentId] : [];
+          commentToWorklogIds[commentId] = current.filter((worklogId) => String(worklogToCommentId[worklogId] || '') === String(commentId));
         });
         return { commentToWorklogIds, worklogToCommentId };
       }

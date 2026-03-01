@@ -3591,6 +3591,18 @@
         return state.issues.find((it) => it.key === key) || null;
       }
 
+      function compactSubtaskSummary(summary) {
+        const raw = String(summary || '').replace(/\s+/g, ' ').trim();
+        if (!raw) return '';
+        const between = raw.match(/^implementaci[oó]n[\s:.-]+(.+?)\s+colegio\s*:/i);
+        if (between && between[1]) {
+          return String(between[1] || '').trim();
+        }
+        const noCollege = raw.replace(/\s+colegio\s*:.*$/i, '').trim();
+        const noPrefix = noCollege.replace(/^implementaci[oó]n[\s:.-]+/i, '').trim();
+        return noPrefix || noCollege || raw;
+      }
+
       function parseIssues(payload) {
         const list = Array.isArray(payload.issues)
           ? payload.issues
@@ -3601,7 +3613,7 @@
             const subtasksRaw = Array.isArray(it.fields.subtasks) ? it.fields.subtasks : [];
             const subtasks = uniqueStrings(
               subtasksRaw
-                .map((sub) => (sub && sub.fields ? String(sub.fields.summary || '').trim() : ''))
+                .map((sub) => compactSubtaskSummary(sub && sub.fields ? sub.fields.summary : ''))
                 .filter((name) => !!name)
             );
             return {

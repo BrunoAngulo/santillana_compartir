@@ -620,10 +620,40 @@
     .comments { display: grid; gap: 8px; max-height: 360px; overflow: auto; }
     .comment { border: 1px solid var(--line); border-radius: 9px; padding: 8px; background: #fff; }
     .comment.mine { background: #f7fbff; border: 2px solid #2f8bcb; }
+    .comment.linked {
+      border-left: 5px solid var(--comment-accent, #5d99cf);
+      background: linear-gradient(90deg, #f2f8ff 0%, #ffffff 30%);
+    }
+    .comment.mine.linked,
+    .comment.selected.linked {
+      border-left: 5px solid var(--comment-accent, #5d99cf);
+    }
     .comment.selected {
       border-color: #5d99cf;
       box-shadow: 0 0 0 2px rgba(22, 111, 188, 0.14);
       background: #eef6ff;
+    }
+    .comment-ref {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-top: 6px;
+      padding: 3px 8px;
+      border: 1px solid #c9dced;
+      border-radius: 999px;
+      font-size: 11px;
+      color: #34526b;
+      background: #f7fbff;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .comment-ref-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex: 0 0 auto;
     }
     .meta { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; margin-bottom: 4px; flex-wrap: wrap; }
     .body { white-space: pre-wrap; font-size: 13px; overflow-wrap: anywhere; }
@@ -3188,7 +3218,12 @@
       }
 
       function isTemplateComment(text) {
-        return normalizePlain(text).includes('plantilla');
+        const normalized = normalizePlain(text);
+        if (!normalized) return false;
+        if (normalized.includes('plantilla') || normalized.includes('plantillas')) return true;
+        if (normalized.includes('plantila') || normalized.includes('platilla')) return true;
+        if (normalized.includes('pkantilla') || normalized.includes('template')) return true;
+        return false;
       }
 
       function isTemplateOfficialType(typeName) {
@@ -3257,6 +3292,8 @@
         const comments = (state.commentsByIssue[issueKey] || [])
           .slice()
           .sort((a, b) => new Date(a.created || 0).getTime() - new Date(b.created || 0).getTime());
+        const worklogs = state.worklogsByIssue[issueKey] || [];
+        const links = state.timelineLinksByIssue[issueKey] || { commentToWorklogIds: {} };
         if (!comments.length) {
           state.selectedCommentId = '';
           hideInlineRegistrar();
@@ -3267,12 +3304,33 @@
           const my = mine(c.author);
           const id = String(c.id || '');
           const selectedClass = state.selectedCommentId && String(state.selectedCommentId) === id ? ' selected' : '';
+          const mineClass = my ? ' mine' : '';
           const author = c.author && c.author.displayName ? c.author.displayName : 'Sin autor';
           const txt = commentText(c) || '(sin texto)';
+          const linkedIds = links.commentToWorklogIds && Array.isArray(links.commentToWorklogIds[id])
+            ? links.commentToWorklogIds[id]
+            : [];
+          let linkedActivity = '';
+          if (linkedIds.length) {
+            for (let i = 0; i < linkedIds.length; i += 1) {
+              const candidate = worklogs.find((w) => String(w.id || '') === String(linkedIds[i]));
+              if (candidate) {
+                linkedActivity = activityOf(candidate);
+                break;
+              }
+            }
+          }
+          const accent = linkedActivity ? activityColor(linkedActivity) : '';
+          const linkedClass = accent ? ' linked' : '';
+          const accentAttr = accent ? ` style="--comment-accent:${escapeHtml(accent)}"` : '';
+          const linkedBadge = accent
+            ? `<div class="comment-ref"><span class="comment-ref-dot" style="background:${escapeHtml(accent)};"></span><span>${escapeHtml(linkedActivity)}</span></div>`
+            : '';
           return `
-            <div class="comment ${my ? 'mine' : ''}${selectedClass}" data-comment-id="${escapeHtml(id)}">
+            <div class="comment${mineClass}${selectedClass}${linkedClass}" data-comment-id="${escapeHtml(id)}"${accentAttr}>
               <div class="meta"><span>${escapeHtml(author)}</span><span>${escapeHtml(TimeService.dtLabel(c.created))}</span></div>
               <div class="body">${escapeHtml(txt)}</div>
+              ${linkedBadge}
               <div class="row" style="margin-top:8px;"><button class="btn" data-act="reg-from-comment" data-id="${escapeHtml(id)}">Registrar actividad</button></div>
             </div>
           `;
@@ -3646,6 +3704,7 @@
         el.ganttBox.className = 'hide';
         el.ganttBox.innerHTML = '';
         syncActivityFocusComponent();
+        renderComments(key);
       }
 
       function renderIssueData() {
@@ -4557,27 +4616,36 @@
           if (!state.regCtx) { hideInlineRegistrar(); return; }
           const issueKey = state.regCtx.issueKey;
           syncInlineRegistrarInputs();
-          let activity = buildOfficialActivity(String(el.regTypeSel.value || '').trim(), String(el.regDateInp.value || '').trim());
+          const selectedType = String(el.regTypeSel.value || '').trim();
+          let activity = buildOfficialActivity(selectedType, String(el.regDateInp.value || '').trim());
           let mins = Math.max(1, Math.floor(Number(el.regMinInp.value || 0)));
           if (!parseOfficialActivity(activity)) {
             showMsg('error', 'La actividad debe usar formato oficial: [Tipo de actividad] [DD/MM/AAAA].');
             return;
           }
           let explicitStarted = null;
-          const anchorEndTs = Number(state.regCtx.anchorEndTs || 0);
+          let anchorEndTs = Number(state.regCtx.anchorEndTs || 0);
+          if (!Number.isFinite(anchorEndTs) || anchorEndTs <= 0) {
+            const comments = state.commentsByIssue[issueKey] || [];
+            const sourceComment = comments.find((x) => String(x.id || '') === String(state.regCtx.commentId || ''));
+            const sourceTs = sourceComment && sourceComment.created ? new Date(sourceComment.created) : new Date();
+            anchorEndTs = TimeService.normalizeBusinessCheckpoint(sourceTs).getTime();
+          }
           if (Number.isFinite(anchorEndTs) && anchorEndTs > 0) {
             const anchorEnd = new Date(anchorEndTs);
-            if (state.regCtx.templateMode) {
-              const templateType = isTemplateOfficialType(state.regCtx.templateType)
-                ? String(state.regCtx.templateType)
-                : DOCENTES_TEMPLATE_ACTIVITY;
+            const forceTemplate = isTemplateOfficialType(selectedType);
+            const applyTemplate = state.regCtx.templateMode || forceTemplate;
+            if (applyTemplate) {
+              const templateType = forceTemplate
+                ? selectedType
+                : (isTemplateOfficialType(state.regCtx.templateType) ? String(state.regCtx.templateType) : DOCENTES_TEMPLATE_ACTIVITY);
               const hasSameType = countWorklogsByOfficialType(issueKey, templateType) > 0;
               mins = hasSameType
                 ? 1
                 : Math.max(1, TimeService.businessMinutesBetween(onboardingStartDate(), anchorEnd));
               activity = buildOfficialActivity(templateType, TimeService.toInputDate(anchorEnd));
             }
-            explicitStarted = state.regCtx.templateMode
+            explicitStarted = (state.regCtx.templateMode || forceTemplate)
               ? TimeService.subtractBusinessMinutes(anchorEnd, mins)
               : new Date(anchorEnd.getTime() - (mins * 60000));
           }

@@ -657,6 +657,27 @@
       flex: 0 0 auto;
     }
     .meta { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; margin-bottom: 4px; flex-wrap: wrap; }
+    .comment-meta-right {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .xlsx-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px;
+      height: 16px;
+      border-radius: 4px;
+      border: 1px solid #8bb6a0;
+      background: linear-gradient(180deg, #e8f7ef 0%, #d8f0e4 100%);
+      color: #1b6a46;
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      user-select: none;
+      cursor: help;
+    }
     .body { white-space: pre-wrap; font-size: 13px; overflow-wrap: anywhere; }
     .track {
       height: 12px;
@@ -3565,6 +3586,11 @@
           const existingWorklog = findExistingWorklogForComment(issueKey, c);
           const existingWorklogId = existingWorklog ? String(existingWorklog.id || '').trim() : '';
           const linkedActivity = existingWorklog ? activityOf(existingWorklog) : '';
+          const xlsxNames = xlsxNamesFromComment(c);
+          const xlsxTitle = xlsxNames.join('\n');
+          const xlsxIcon = xlsxNames.length
+            ? `<span class="xlsx-icon" title="${escapeHtml(xlsxTitle)}" aria-label="${escapeHtml(`Comentario con ${xlsxNames.length} archivo(s) xlsx`)}">X</span>`
+            : '';
           const accent = linkedActivity ? activityColor(linkedActivity) : '';
           const linkedClass = accent ? ' linked' : '';
           const accentAttr = accent ? ` style="--comment-accent:${escapeHtml(accent)}"` : '';
@@ -3575,7 +3601,7 @@
             : '';
           return `
             <div class="comment${mineClass}${selectedClass}${linkedClass}" data-comment-id="${escapeHtml(id)}"${accentAttr}>
-              <div class="meta"><span>${escapeHtml(author)}</span><span>${escapeHtml(TimeService.dtLabel(c.created))}</span></div>
+              <div class="meta"><span>${escapeHtml(author)}</span><span class="comment-meta-right">${escapeHtml(TimeService.dtLabel(c.created))}${xlsxIcon}</span></div>
               <div class="body">${escapeHtml(txt)}</div>
               ${linkedBadge}
               <div class="row" style="margin-top:8px;"><button class="${actionClass}" data-act="reg-from-comment" data-id="${escapeHtml(id)}" data-worklog-id="${escapeHtml(existingWorklogId)}">${actionLabel}</button></div>
@@ -4065,6 +4091,26 @@
           m = rg.exec(src);
         }
         return uniqueStrings(out);
+      }
+
+      function normalizeXlsxName(token) {
+        let value = String(token || '').trim();
+        if (!value) return '';
+        value = value.replace(/\\\//g, '/');
+        try { value = decodeURIComponent(value); } catch (_e) {}
+        value = value.replace(/^https?:\/\//i, '');
+        const slash = Math.max(value.lastIndexOf('/'), value.lastIndexOf('\\'));
+        if (slash >= 0 && slash < value.length - 1) {
+          value = value.slice(slash + 1);
+        }
+        return value.trim();
+      }
+
+      function xlsxNamesFromComment(comment) {
+        const fromText = xlsxTokens(commentText(comment)).map(normalizeXlsxName);
+        const rawBody = comment && comment.body ? JSON.stringify(comment.body).replace(/\\\//g, '/') : '';
+        const fromBody = xlsxTokens(rawBody).map(normalizeXlsxName);
+        return uniqueStrings([...fromText, ...fromBody]).filter((name) => /\.xlsx$/i.test(name));
       }
 
       function renderReport() {

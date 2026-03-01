@@ -65,7 +65,7 @@ menu_option = st.radio(
     key="main_top_menu",
 )
 if menu_option == "Jira Focus Web":
-    render_jira_focus_web(height=4600)
+    render_jira_focus_web(height=1400)
     st.stop()
 st.title("Si estás acá es porque eres flojo")
 st.write("El maravilloso mundo de TED :0 automatiza tu chamba por unos buenos días al día ;)")

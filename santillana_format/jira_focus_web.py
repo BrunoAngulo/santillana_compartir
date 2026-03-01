@@ -5,7 +5,7 @@ from pathlib import Path
 import streamlit.components.v1 as components
 
 
-def render_jira_focus_web(height: int = 3200) -> None:
+def render_jira_focus_web(height: int = 1400) -> None:
     components.html(_load_html(), height=height, scrolling=True)
 
 

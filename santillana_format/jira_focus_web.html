@@ -173,6 +173,33 @@
       white-space: nowrap;
       max-width: 250px;
     }
+    .issue-extra {
+      width: 100%;
+      border-top: 1px dashed #c9dbee;
+      padding-top: 7px;
+      margin-top: 2px;
+    }
+    .issue-extra-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: #173b5a;
+      margin-bottom: 4px;
+    }
+    .issue-extra-row {
+      font-size: 12px;
+      color: #2f4e67;
+      line-height: 1.35;
+    }
+    .issue-extra-row + .issue-extra-row {
+      margin-top: 2px;
+    }
+    .issue-extra-row b {
+      color: #173b5a;
+    }
+    .issue-extra-list {
+      white-space: normal;
+      word-break: break-word;
+    }
     .dashboard-grid {
       display: grid;
       grid-template-columns: minmax(0, 1.35fr) minmax(320px, 1fr);
@@ -2729,7 +2756,7 @@
         myself() { return this.req('GET', '/rest/api/3/myself'); },
         searchIssues() {
           const jql = 'assignee = currentUser() AND statusCategory != Done AND issuetype not in subTaskIssueTypes() ORDER BY updated DESC';
-          return this.req('GET', '/rest/api/3/search/jql', { params: { jql, maxResults: 80, fields: 'summary,status,issuetype,attachment' } });
+          return this.req('GET', '/rest/api/3/search/jql', { params: { jql, maxResults: 80, fields: 'summary,status,issuetype,attachment,subtasks' } });
         },
         comments(key) { return this.req('GET', `/rest/api/3/issue/${encodeURIComponent(key)}/comment`, { params: { orderBy: '-created', maxResults: 100 } }); },
         worklogs(key) { return this.req('GET', `/rest/api/3/issue/${encodeURIComponent(key)}/worklog`); },
@@ -3314,6 +3341,10 @@
         const lastComment = commentsCount ? TimeService.dtLabel(comments[commentsCount - 1].created || new Date()) : 'Sin comentarios';
         const templateCount = countTemplateWorklogs(key);
         const summary = issue && issue.summary ? issue.summary : '-';
+        const subtaskNames = issue && Array.isArray(issue.subtasks) ? issue.subtasks : [];
+        const subtasksLabel = subtaskNames.length ? subtaskNames.join(' | ') : 'Sin subtareas';
+        const lastPlantillaEstudiantes = lastWorklogLabelByOfficialType(key, ESTUDIANTES_TEMPLATE_ACTIVITY);
+        const lastPlantillaDocentes = lastWorklogLabelByOfficialType(key, DOCENTES_TEMPLATE_ACTIVITY);
         el.issueInsight.className = 'issue-insight';
         el.issueInsight.innerHTML = `
           <span class="issue-chip"><b>Ticket</b><span class="value">${escapeHtml(key)}</span></span>
@@ -3323,6 +3354,12 @@
           <span class="issue-chip"><b>Total</b><span class="value">${escapeHtml(TimeService.jiraDuration(totalMins))}</span></span>
           <span class="issue-chip"><b>Plantillas</b><span class="value">${escapeHtml(String(templateCount))}</span></span>
           <span class="issue-chip"><b>Ult. comentario</b><span class="value">${escapeHtml(lastComment)}</span></span>
+          <div class="issue-extra">
+            <div class="issue-extra-title">Informacion extra</div>
+            <div class="issue-extra-row"><b>Subtareas:</b> <span class="issue-extra-list">${escapeHtml(subtasksLabel)}</span></div>
+            <div class="issue-extra-row"><b>Ult. registro plantilla estudiantes:</b> <span>${escapeHtml(lastPlantillaEstudiantes)}</span></div>
+            <div class="issue-extra-row"><b>Ult. registro plantilla docentes:</b> <span>${escapeHtml(lastPlantillaDocentes)}</span></div>
+          </div>
         `;
       }
 
@@ -3560,11 +3597,20 @@
           : (Array.isArray(payload.values) ? payload.values : []);
         return list
           .filter((it) => it && it.key && it.fields && !(it.fields.issuetype && it.fields.issuetype.subtask))
-          .map((it) => ({
-            key: it.key,
-            summary: String(it.fields.summary || ''),
-            attachments: Array.isArray(it.fields.attachment) ? it.fields.attachment : []
-          }));
+          .map((it) => {
+            const subtasksRaw = Array.isArray(it.fields.subtasks) ? it.fields.subtasks : [];
+            const subtasks = uniqueStrings(
+              subtasksRaw
+                .map((sub) => (sub && sub.fields ? String(sub.fields.summary || '').trim() : ''))
+                .filter((name) => !!name)
+            );
+            return {
+              key: it.key,
+              summary: String(it.fields.summary || ''),
+              attachments: Array.isArray(it.fields.attachment) ? it.fields.attachment : [],
+              subtasks
+            };
+          });
       }
 
       function renderIssueSelect() {
@@ -3802,16 +3848,45 @@
         const rows = state.worklogsByIssue[key] || [];
         let count = 0;
         rows.forEach((w) => {
-          const rawActivity = activityOf(w);
-          const parsed = parseOfficialActivity(rawActivity);
-          const official = parsed && parsed.type
-            ? String(parsed.type).trim()
-            : String(suggestOfficialActivityType(rawActivity) || '').trim();
+          const official = officialTypeOfWorklog(w);
           if (official === target) {
             count += 1;
           }
         });
         return count;
+      }
+
+      function officialTypeOfWorklog(worklog) {
+        const rawActivity = activityOf(worklog);
+        const parsed = parseOfficialActivity(rawActivity);
+        return parsed && parsed.type
+          ? String(parsed.type).trim()
+          : String(suggestOfficialActivityType(rawActivity) || '').trim();
+      }
+
+      function lastWorklogByOfficialType(issueKey, typeName) {
+        const key = String(issueKey || '').trim();
+        const target = String(typeName || '').trim();
+        if (!key || !target) return null;
+        const rows = state.worklogsByIssue[key] || [];
+        let newest = null;
+        let newestTs = Number.NEGATIVE_INFINITY;
+        rows.forEach((w) => {
+          if (officialTypeOfWorklog(w) !== target) return;
+          const ts = tsOf(w && (w.started || w.created || 0));
+          if (!Number.isFinite(ts)) return;
+          if (!newest || ts > newestTs) {
+            newest = w;
+            newestTs = ts;
+          }
+        });
+        return newest;
+      }
+
+      function lastWorklogLabelByOfficialType(issueKey, typeName) {
+        const row = lastWorklogByOfficialType(issueKey, typeName);
+        if (!row) return 'Sin registro';
+        return TimeService.dtLabel(row.started || row.created || new Date());
       }
 
       function countTemplateWorklogs(issueKey) {

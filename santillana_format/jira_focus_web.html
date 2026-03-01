@@ -1778,16 +1778,7 @@
           <div class="panel-head">
             <div>
               <h3>Comentarios del ticket</h3>
-              <div class="panel-meta" id="commentsMeta">Sin comentarios.</div>
             </div>
-          </div>
-          <div class="panel-tools">
-            <input class="inp" id="commentSearchInp" type="text" placeholder="Buscar por autor, texto o archivo .xlsx">
-            <select class="sel" id="commentFilterSel">
-              <option value="all">Todos</option>
-              <option value="linked">Con actividad</option>
-              <option value="pending">Pendientes</option>
-            </select>
           </div>
           <div id="commentsBox" class="comments"></div>
           <div id="regInlineBox" class="edit-inline hide" style="margin-top:10px;">
@@ -2021,8 +2012,6 @@
         regCtx: null,
         editCtx: null,
         selectedCommentId: '',
-        commentSearch: '',
-        commentFilterMode: 'all',
         selectedTimelineActivity: '',
         selectedTimelineMinutes: 0,
         selectedWorklogId: '',
@@ -3156,7 +3145,7 @@
           'loginView','urlInp','clientIdInp','clientSecretInp','redirectUriInp','callbackUrlInp','connectBtn','processCallbackBtn','clearOAuthBtn',
           'mainView','issueSel','issueInsight','activityTypeSel','activityDueInp','activityInp','minutesInp','registerBtn','jiraDurationPill','timerVal','timerState','startBtn','pauseBtn',
           'resetBtn','applyTimerBtn','suggestionBox','applySugActBtn','applySugTimeBtn','registerSugBtn','todayTotal','weekTotal','issueCount','dashMeta',
-          'refreshDashBtn','recentBox','commentsBox','commentsMeta','commentSearchInp','commentFilterSel','worklogBody','worklogsMeta','worklogSearchInp','worklogOwnerSel','deleteAllWorklogsBtn','timelineBox','timelineMeta','ganttBox','genReportBtn','exportReportBtn','reportMeta',
+          'refreshDashBtn','recentBox','commentsBox','worklogBody','worklogsMeta','worklogSearchInp','worklogOwnerSel','deleteAllWorklogsBtn','timelineBox','timelineMeta','ganttBox','genReportBtn','exportReportBtn','reportMeta',
           'reportBody','timelinePanel','chartDesignSel','chartDesignHelp','activityFocusBox','activityQuickSel','activityQuickMeta','compactBtn','floatBox','floatIssue','floatTimer','floatState','floatStartBtn','floatPauseBtn','floatExpandBtn',
           'regInlineBox','regInlineMeta','regTypeSel','regDateInp','regMinInp','regInlineOkBtn','regInlineCancelBtn',
           'editInlineBox','editMeta','editTypeSel','editActInp','editDateInp','editTimeInp','editMinInp','editSaveBtn','editDeleteBtn','editCancelBtn','activityList'
@@ -3324,7 +3313,7 @@
         const totalMins = worklogs.reduce((acc, w) => acc + minutesOf(w), 0);
         const lastComment = commentsCount ? TimeService.dtLabel(comments[commentsCount - 1].created || new Date()) : 'Sin comentarios';
         const templateCount = countTemplateWorklogs(key);
-        const summary = issue && issue.summary ? issue.summary : '-';
+        const summary = issue && (issue.shortSummary || issue.summary) ? (issue.shortSummary || issue.summary) : '-';
         el.issueInsight.className = 'issue-insight';
         el.issueInsight.innerHTML = `
           <span class="issue-chip"><b>Ticket</b><span class="value">${escapeHtml(key)}</span></span>
@@ -3565,17 +3554,34 @@
         return state.issues.find((it) => it.key === key) || null;
       }
 
+      function compactIssueSummary(summaryIn) {
+        const raw = String(summaryIn || '').replace(/\s+/g, ' ').trim();
+        if (!raw) return '';
+        let short = raw;
+        const colegioMatch = short.match(/\bcolegio\s*:/i);
+        if (colegioMatch && Number.isFinite(Number(colegioMatch.index)) && colegioMatch.index > 0) {
+          short = short.slice(0, colegioMatch.index).trim();
+        }
+        short = short.replace(/\bCompartir aprendizajes\b/gi, 'Compartir aprendizaje');
+        short = short.replace(/\s*[-|:;/]+\s*$/g, '').replace(/\s+/g, ' ').trim();
+        return short || raw;
+      }
+
       function parseIssues(payload) {
         const list = Array.isArray(payload.issues)
           ? payload.issues
           : (Array.isArray(payload.values) ? payload.values : []);
         return list
           .filter((it) => it && it.key && it.fields && !(it.fields.issuetype && it.fields.issuetype.subtask))
-          .map((it) => ({
-            key: it.key,
-            summary: String(it.fields.summary || ''),
-            attachments: Array.isArray(it.fields.attachment) ? it.fields.attachment : []
-          }));
+          .map((it) => {
+            const summary = String(it.fields.summary || '');
+            return {
+              key: it.key,
+              summary,
+              shortSummary: compactIssueSummary(summary),
+              attachments: Array.isArray(it.fields.attachment) ? it.fields.attachment : []
+            };
+          });
       }
 
       function renderIssueSelect() {
@@ -3590,7 +3596,7 @@
         state.issues.forEach((it) => {
           const opt = document.createElement('option');
           opt.value = it.key;
-          opt.textContent = `${it.key} - ${it.summary}`;
+          opt.textContent = `${it.key} - ${it.shortSummary || it.summary}`;
           el.issueSel.appendChild(opt);
         });
         if (!state.issues.some((it) => it.key === state.selectedIssueKey)) {
@@ -3933,16 +3939,9 @@
         if (!comments.length) {
           state.selectedCommentId = '';
           hideInlineRegistrar();
-          if (el.commentsMeta) {
-            el.commentsMeta.textContent = 'Sin comentarios.';
-          }
           el.commentsBox.innerHTML = '<div class="empty">Sin comentarios.</div>';
           return;
         }
-        const mode = ['all', 'linked', 'pending'].includes(String(state.commentFilterMode || '').trim())
-          ? String(state.commentFilterMode || '').trim()
-          : 'all';
-        const query = normalizePlain(state.commentSearch || '').trim();
         const prepared = comments.map((c) => {
           const my = mine(c.author);
           const id = String(c.id || '');
@@ -3988,35 +3987,10 @@
             c
           };
         });
-        const linkedCount = prepared.filter((item) => !!item.existingWorklogId).length;
-        const pendingCount = prepared.length - linkedCount;
-        const filtered = prepared.filter((item) => {
-          if (mode === 'linked' && !item.existingWorklogId) return false;
-          if (mode === 'pending' && item.existingWorklogId) return false;
-          if (!query) return true;
-          const haystack = normalizePlain([
-            item.author,
-            item.txt,
-            item.linkedActivity,
-            item.xlsxNames.join(' ')
-          ].join(' '));
-          return haystack.includes(query);
-        });
-        if (el.commentsMeta) {
-          const base = `${filtered.length}/${prepared.length} visibles | ${linkedCount} con actividad | ${pendingCount} pendientes`;
-          const rawQuery = String(state.commentSearch || '').trim();
-          const clipped = rawQuery.length > 28 ? `${rawQuery.slice(0, 28)}...` : rawQuery;
-          el.commentsMeta.textContent = rawQuery ? `${base} | filtro: "${clipped}"` : base;
-        }
-        if (state.selectedCommentId && !filtered.some((item) => String(item.id) === String(state.selectedCommentId))) {
+        if (state.selectedCommentId && !prepared.some((item) => String(item.id) === String(state.selectedCommentId))) {
           state.selectedCommentId = '';
         }
-        if (!filtered.length) {
-          hideInlineRegistrar();
-          el.commentsBox.innerHTML = '<div class="empty">No hay comentarios que coincidan con el filtro actual.</div>';
-          return;
-        }
-        el.commentsBox.innerHTML = filtered.map((item) => {
+        el.commentsBox.innerHTML = prepared.map((item) => {
           return `
             <div class="comment${item.mineClass}${item.selectedClass}${item.linkedClass}" data-comment-id="${escapeHtml(item.id)}"${item.accentAttr}>
               <div class="meta"><span>${escapeHtml(item.author)}</span><span>${escapeHtml(TimeService.dtLabel(item.c.created))}</span></div>
@@ -5345,23 +5319,6 @@
           catch (e) { applyError(e, `No se pudo cargar detalle de ${state.selectedIssueKey}.`); }
           renderCompact();
         });
-        if (el.commentSearchInp) {
-          el.commentSearchInp.value = state.commentSearch;
-          el.commentSearchInp.addEventListener('input', () => {
-            state.commentSearch = String(el.commentSearchInp.value || '');
-            renderComments(state.selectedIssueKey);
-          });
-        }
-        if (el.commentFilterSel) {
-          el.commentFilterSel.value = ['all', 'linked', 'pending'].includes(state.commentFilterMode)
-            ? state.commentFilterMode
-            : 'all';
-          el.commentFilterSel.addEventListener('change', () => {
-            const mode = String(el.commentFilterSel.value || '').trim();
-            state.commentFilterMode = ['all', 'linked', 'pending'].includes(mode) ? mode : 'all';
-            renderComments(state.selectedIssueKey);
-          });
-        }
         if (el.worklogSearchInp) {
           el.worklogSearchInp.value = state.worklogSearch;
           el.worklogSearchInp.addEventListener('input', () => {

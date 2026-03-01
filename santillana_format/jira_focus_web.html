@@ -656,6 +656,29 @@
       border-radius: 50%;
       flex: 0 0 auto;
     }
+    .comment-activity-line {
+      margin-top: 6px;
+      padding: 4px 8px;
+      border-radius: 8px;
+      border: 1px solid #d4e2f1;
+      font-size: 12px;
+      color: #274760;
+      background: #f7fbff;
+      overflow-wrap: anywhere;
+    }
+    .comment-activity-line strong {
+      color: #123e67;
+      font-weight: 700;
+    }
+    .comment-activity-line.linked-line {
+      border-color: #b8d1ea;
+      background: #edf6ff;
+    }
+    .comment-activity-line.suggested-line {
+      border-color: #d6e3d9;
+      background: #f4fbf5;
+      color: #2c5a40;
+    }
     .meta { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; margin-bottom: 4px; flex-wrap: wrap; }
     .body { white-space: pre-wrap; font-size: 13px; overflow-wrap: anywhere; }
     .track {
@@ -3394,7 +3417,7 @@
         return t === DOCENTES_TEMPLATE_ACTIVITY || t === ESTUDIANTES_TEMPLATE_ACTIVITY;
       }
 
-      function inferOfficialActivityType(sourceText) {
+      function suggestOfficialActivityType(sourceText) {
         const normalized = normalizePlain(sourceText);
         for (const name of OFFICIAL_ACTIVITY_TYPES) {
           const n = normalizePlain(name);
@@ -3415,6 +3438,12 @@
         if (normalized.includes('configuracion') && normalized.includes('docente')) return 'Configuración de docentes';
         if (normalized.includes('configuracion') && normalized.includes('estudiante')) return 'Configuración de estudiantes';
         if (normalized.includes('plantilla')) return 'Entrega de plantillas DOCENTES Coach/Farmer/Hunter';
+        return '';
+      }
+
+      function inferOfficialActivityType(sourceText) {
+        const suggested = suggestOfficialActivityType(sourceText);
+        if (suggested) return suggested;
         return OFFICIAL_ACTIVITY_TYPES[0];
       }
 
@@ -3460,19 +3489,31 @@
           const existingWorklog = findExistingWorklogForComment(issueKey, c);
           const existingWorklogId = existingWorklog ? String(existingWorklog.id || '').trim() : '';
           const linkedActivity = existingWorklog ? activityOf(existingWorklog) : '';
+          const suggestedType = !existingWorklog ? suggestOfficialActivityType(txt) : '';
           const accent = linkedActivity ? activityColor(linkedActivity) : '';
           const linkedClass = accent ? ' linked' : '';
           const accentAttr = accent ? ` style="--comment-accent:${escapeHtml(accent)}"` : '';
           const actionClass = existingWorklogId ? 'btn edit' : 'btn';
           const actionLabel = existingWorklogId ? 'Editar' : 'Registrar actividad';
+          const linkedWin = existingWorklog ? windowOf(existingWorklog) : null;
+          const commentMinute = minuteBucket(c.created);
+          const endsAtCommentMinute = linkedWin
+            ? minuteBucket(linkedWin.endTs) === commentMinute
+            : false;
           const linkedBadge = accent
             ? `<div class="comment-ref"><span class="comment-ref-dot" style="background:${escapeHtml(accent)};"></span><span>${escapeHtml(linkedActivity)}</span></div>`
             : '';
+          const activityInfo = linkedActivity
+            ? `<div class="comment-activity-line linked-line">Actividad vinculada: <strong>${escapeHtml(linkedActivity)}</strong>${endsAtCommentMinute ? ' (fin coincide con hora del comentario)' : ''}</div>`
+            : (suggestedType
+              ? `<div class="comment-activity-line suggested-line">Actividad sugerida: <strong>${escapeHtml(suggestedType)}</strong></div>`
+              : '');
           return `
             <div class="comment${mineClass}${selectedClass}${linkedClass}" data-comment-id="${escapeHtml(id)}"${accentAttr}>
               <div class="meta"><span>${escapeHtml(author)}</span><span>${escapeHtml(TimeService.dtLabel(c.created))}</span></div>
               <div class="body">${escapeHtml(txt)}</div>
               ${linkedBadge}
+              ${activityInfo}
               <div class="row" style="margin-top:8px;"><button class="${actionClass}" data-act="reg-from-comment" data-id="${escapeHtml(id)}" data-worklog-id="${escapeHtml(existingWorklogId)}">${actionLabel}</button></div>
             </div>
           `;

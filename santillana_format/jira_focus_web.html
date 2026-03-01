@@ -1389,9 +1389,6 @@
       gap: 8px;
       align-items: center;
     }
-    .timeline-lane.comments-only {
-      grid-template-columns: 1fr;
-    }
     .timeline-lane-label {
       display: flex;
       justify-content: space-between;
@@ -1456,23 +1453,6 @@
     .timeline-worklog-bar.unlinked {
       border-style: dashed;
       border-color: #ad6d3e;
-    }
-    .timeline-comment-dot {
-      position: absolute;
-      width: 12px;
-      height: 12px;
-      top: 9px;
-      margin-left: -6px;
-      border-radius: 50%;
-      border: 2px solid #fff;
-      box-shadow: 0 0 0 1px rgba(9, 30, 50, 0.2);
-      cursor: pointer;
-      z-index: 3;
-    }
-    .timeline-comment-dot.matched { background: #1f9c6a; }
-    .timeline-comment-dot.missing { background: #cc5d22; }
-    .timeline-comment-dot.active {
-      box-shadow: 0 0 0 2px rgba(11, 80, 140, 0.38);
     }
     .worklog-row {
       cursor: pointer;
@@ -3287,27 +3267,18 @@
         const commentsCount = comments.length;
         const worklogsCount = worklogs.length;
         const totalMins = worklogs.reduce((acc, w) => acc + minutesOf(w), 0);
-        const lastComment = commentsCount ? TimeService.dtLabel(comments[commentsCount - 1].created || new Date()) : 'Sin comentarios';
         const templateCount = countTemplateWorklogs(key);
-        const summary = issue && issue.summary ? issue.summary : '-';
         const subtaskNames = issue && Array.isArray(issue.subtasks) ? issue.subtasks : [];
         const subtasksLabel = subtaskNames.length ? subtaskNames.join(' | ') : 'Sin subtareas';
         const lastPlantillaEstudiantes = lastWorklogLabelByOfficialType(key, ESTUDIANTES_TEMPLATE_ACTIVITY);
         const lastPlantillaDocentes = lastWorklogLabelByOfficialType(key, DOCENTES_TEMPLATE_ACTIVITY);
         el.issueInsight.className = 'issue-insight';
         el.issueInsight.innerHTML = `
-          <span class="issue-chip"><b>Ticket:</b><span class="value">${escapeHtml(key)}</span></span>
-          <span class="issue-chip wide"><b>Resumen:</b><span class="value">${escapeHtml(summary)}</span></span>
           <span class="issue-chip"><b>Comentarios:</b><span class="value">${escapeHtml(String(commentsCount))}</span></span>
           <span class="issue-chip"><b>Worklogs:</b><span class="value">${escapeHtml(String(worklogsCount))}</span></span>
           <span class="issue-chip"><b>Total:</b><span class="value">${escapeHtml(TimeService.jiraDuration(totalMins))}</span></span>
           <span class="issue-chip"><b>Plantillas:</b><span class="value">${escapeHtml(String(templateCount))}</span></span>
-          <span class="issue-chip"><b>Ult. comentario:</b><span class="value">${escapeHtml(lastComment)}</span></span>
-          <span class="issue-divider"></span>
-          <span class="issue-chip section"><b>Informacion extra</b></span>
-          <span class="issue-chip wide"><b>Subtareas:</b><span class="value">${escapeHtml(subtasksLabel)}</span></span>
-          <span class="issue-chip"><b>Ult. registro plantilla estudiantes:</b><span class="value">${escapeHtml(lastPlantillaEstudiantes)}</span></span>
-          <span class="issue-chip"><b>Ult. registro plantilla docentes:</b><span class="value">${escapeHtml(lastPlantillaDocentes)}</span></span>
+          <span class="issue-chip wide"><b>Seguimiento:</b><span class="value">${escapeHtml(`Subtareas: ${subtasksLabel} | Ult. registro plantilla estudiantes: ${lastPlantillaEstudiantes} | Ult. registro plantilla docentes: ${lastPlantillaDocentes}`)}</span></span>
         `;
       }
 
@@ -4450,25 +4421,6 @@
           ? `<div class="timeline-summary"><div class="timeline-summary-head">Resumen por actividad</div>${summaryRows}</div>`
           : '';
 
-        const commentLaneDots = data.commentsAsc.map((c) => {
-          const cId = String(c.id || '');
-          const cTs = new Date(c.created || 0).getTime();
-          if (!Number.isFinite(cTs)) return '';
-          const left = ((cTs - data.start) / data.range) * 100;
-          const linked = data.links.commentToWorklogIds[cId] || [];
-          const linkedWorklogId = linked.length ? String(linked[0]) : '';
-          const statusClass = linked.length ? 'matched' : 'missing';
-          const active = state.selectedCommentId && String(state.selectedCommentId) === cId ? ' active' : '';
-          const title = linked.length ? `Comentario con ${linked.length} worklog(s)` : 'Comentario sin worklog relacionado';
-          return `<span class="timeline-comment-dot ${statusClass}${active}" style="left:${left.toFixed(3)}%;" data-comment-id="${escapeHtml(cId)}" data-worklog-id="${escapeHtml(linkedWorklogId)}" title="${escapeHtml(title)}"></span>`;
-        }).join('');
-
-        const commentLane = `
-          <div class="timeline-lane comments-only">
-            <div class="timeline-lane-track">${commentLaneDots}</div>
-          </div>
-        `;
-
         const activityLanes = data.lanes.map((lane) => {
           const laneSelected = selectedActivityKey && activityKey(lane.activity) === selectedActivityKey;
           const bars = lane.items.map((r) => {
@@ -4496,7 +4448,6 @@
             ${metaHtml}
             ${summaryHtml}
             <div class="timeline-lane-list">
-              ${commentLane}
               ${activityLanes || '<div class="chart-note">Aun no hay worklogs en el ticket.</div>'}
             </div>
           </div>

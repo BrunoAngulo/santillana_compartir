@@ -1706,41 +1706,44 @@
     <section class="card" id="loginView">
       <h3>Conectar Jira Cloud</h3>
       <div class="muted">OAuth 2.0 PKCE. Configuracion local en <code>jira_config</code> (sin exponer tokens en UI).</div>
-      <div class="grid3" style="margin-top:8px;">
-        <div>
-          <label for="urlInp">URL Jira</label>
-          <input class="inp" id="urlInp" type="url" placeholder="https://tu-dominio.atlassian.net" autocomplete="off">
-        </div>
-        <div>
-          <label for="clientIdInp">Atlassian OAuth Client ID</label>
-          <input class="inp" id="clientIdInp" type="text" placeholder="Tu client id 3LO" autocomplete="off">
-        </div>
-        <div>
-          <label for="clientSecretInp">Atlassian OAuth Client Secret</label>
-          <input class="inp" id="clientSecretInp" type="password" placeholder="Tu client secret 3LO" autocomplete="new-password">
-        </div>
-      </div>
-      <div class="grid3" style="margin-top:8px;">
-        <div>
-          <label for="redirectUriInp">Redirect URI</label>
-          <input class="inp" id="redirectUriInp" type="url" placeholder="https://tu-app/">
-        </div>
-      </div>
-      <div class="muted" style="margin-top:8px;">
-        Registra este Redirect URI en tu app OAuth de Atlassian. Si no se detecta callback automatico, pega la URL retornada:
-      </div>
-      <div class="grid2" style="margin-top:8px;">
-        <div>
-          <label for="callbackUrlInp">URL de callback (manual)</label>
-          <input class="inp" id="callbackUrlInp" type="text" placeholder="https://tu-app/?code=...&state=...">
-        </div>
-        <div class="row" style="align-items:flex-end;">
-          <button class="btn" id="processCallbackBtn" type="button">Procesar callback</button>
-        </div>
-      </div>
       <div class="row" style="margin-top:10px;">
-        <button class="btn primary" id="connectBtn" type="button">Conectar con OAuth</button>
+        <button class="btn primary" id="connectBtn" type="button">Acceder a cuenta Jira</button>
+        <button class="btn" id="toggleOAuthCfgBtn" type="button">Configuracion avanzada</button>
         <button class="btn danger" id="clearOAuthBtn" type="button">Limpiar sesion OAuth local</button>
+      </div>
+      <div class="hide" id="oauthAdvancedBox" style="margin-top:8px;">
+        <div class="grid3" style="margin-top:8px;">
+          <div>
+            <label for="urlInp">URL Jira</label>
+            <input class="inp" id="urlInp" type="url" placeholder="https://tu-dominio.atlassian.net" autocomplete="off">
+          </div>
+          <div>
+            <label for="clientIdInp">Atlassian OAuth Client ID</label>
+            <input class="inp" id="clientIdInp" type="text" placeholder="Tu client id 3LO" autocomplete="off">
+          </div>
+          <div>
+            <label for="clientSecretInp">Atlassian OAuth Client Secret</label>
+            <input class="inp" id="clientSecretInp" type="password" placeholder="Tu client secret 3LO" autocomplete="new-password">
+          </div>
+        </div>
+        <div class="grid3" style="margin-top:8px;">
+          <div>
+            <label for="redirectUriInp">Redirect URI</label>
+            <input class="inp" id="redirectUriInp" type="url" placeholder="https://tu-app/">
+          </div>
+        </div>
+        <div class="muted" style="margin-top:8px;">
+          Registra este Redirect URI en tu app OAuth de Atlassian. Si no se detecta callback automatico, pega la URL retornada:
+        </div>
+        <div class="grid2" style="margin-top:8px;">
+          <div>
+            <label for="callbackUrlInp">URL de callback (manual)</label>
+            <input class="inp" id="callbackUrlInp" type="text" placeholder="https://tu-app/?code=...&state=...">
+          </div>
+          <div class="row" style="align-items:flex-end;">
+            <button class="btn" id="processCallbackBtn" type="button">Procesar callback</button>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -1974,10 +1977,10 @@
         ]
       };
       const BASE_OAUTH_CONFIG = {
-        url: 'https://project-tools-santillana.atlassian.net/',
-        client_id: 'u6QCVXJ1fJpuflQxoeTuNdzN6nkVriIo',
-        client_secret: '',
-        redirect_uri: 'https://santed.streamlit.app/'
+        url: __BASE_OAUTH_URL__,
+        client_id: __BASE_OAUTH_CLIENT_ID__,
+        client_secret: __BASE_OAUTH_CLIENT_SECRET__,
+        redirect_uri: __BASE_OAUTH_REDIRECT_URI__
       };
       const DEBUG_MAX = 140;
       const LABOR = {
@@ -3188,7 +3191,7 @@
         [
           'connPill','syncPill','userPill','refreshIssuesBtn','disconnectBtn','msg','idleMsg',
           'debugLogBox','debugCopyBtn','debugClearBtn',
-          'loginView','urlInp','clientIdInp','clientSecretInp','redirectUriInp','callbackUrlInp','connectBtn','processCallbackBtn','clearOAuthBtn',
+          'loginView','urlInp','clientIdInp','clientSecretInp','redirectUriInp','callbackUrlInp','connectBtn','processCallbackBtn','clearOAuthBtn','toggleOAuthCfgBtn','oauthAdvancedBox',
           'mainView','issueSel','issueInsight','activityTypeSel','activityDueInp','activityInp','minutesInp','registerBtn','jiraDurationPill','timerVal','timerState','startBtn','pauseBtn',
           'resetBtn','applyTimerBtn','suggestionBox','applySugActBtn','applySugTimeBtn','registerSugBtn','todayTotal','weekTotal','issueCount','dashMeta',
           'refreshDashBtn','recentBox','commentsBox','worklogBody','worklogsMeta','worklogOwnerSel','deleteAllWorklogsBtn','timelineBox','timelineMeta','ganttBox','genReportBtn','exportReportBtn','reportMeta',
@@ -3196,6 +3199,15 @@
           'regInlineBox','regInlineMeta','regTypeSel','regDateInp','regMinInp','regInlineOkBtn','regInlineCancelBtn',
           'editInlineBox','editMeta','editTypeSel','editActInp','editDateInp','editTimeInp','editMinInp','editSaveBtn','editDeleteBtn','editCancelBtn','activityList'
         ].forEach((id) => { el[id] = document.getElementById(id); });
+      }
+
+      function setOAuthAdvancedVisible(visible) {
+        if (!el.oauthAdvancedBox) return;
+        const show = !!visible;
+        el.oauthAdvancedBox.classList.toggle('hide', !show);
+        if (el.toggleOAuthCfgBtn) {
+          el.toggleOAuthCfgBtn.textContent = show ? 'Ocultar configuracion avanzada' : 'Configuracion avanzada';
+        }
       }
 
       function uiStateSave() {
@@ -5291,6 +5303,7 @@
             el.redirectUriInp.value = cfg.redirect_uri;
           }
           if (!cfg.url || !cfg.client_id || !cfg.client_secret || !cfg.redirect_uri) {
+            setOAuthAdvancedVisible(true);
             showMsg('error', 'Completa URL Jira, Client ID, Client Secret y Redirect URI.');
             return;
           }
@@ -5325,6 +5338,13 @@
             applyError(e, 'No fue posible iniciar OAuth.');
           }
         });
+
+        if (el.toggleOAuthCfgBtn) {
+          el.toggleOAuthCfgBtn.addEventListener('click', () => {
+            const isHidden = el.oauthAdvancedBox ? el.oauthAdvancedBox.classList.contains('hide') : true;
+            setOAuthAdvancedVisible(isHidden);
+          });
+        }
 
         el.clearOAuthBtn.addEventListener('click', () => {
           clearPopupWatcher();
@@ -5904,6 +5924,7 @@
           top_href_available: !!getTopLocationHref()
         });
         cacheElements();
+        setOAuthAdvancedVisible(false);
         bind();
         uiStateLoad();
         timerLoad();

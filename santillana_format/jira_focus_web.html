@@ -1605,6 +1605,7 @@
       const INACTIVITY_MS = 2 * 60 * 60 * 1000;
       const SUGGESTION_MS = 3 * 24 * 60 * 60 * 1000;
       const COMMENT_LINK_NEAR_MINUTES = 120;
+      const ONBOARDING_START = { year: 2025, month: 12, day: 15, hour: 8, minute: 30 };
       const OFFICIAL_ACTIVITY_TYPES = [
         'Configuración Agente de Éxito',
         'Estandarización de plantillas',
@@ -1819,6 +1820,27 @@
             if (w) return new Date(w.end);
           }
         },
+        nextBusinessStart(dateIn) {
+          const d = new Date(dateIn);
+          d.setHours(0, 0, 0, 0);
+          while (true) {
+            const w = this.dayWindow(d);
+            if (w) return new Date(w.start);
+            d.setDate(d.getDate() + 1);
+          }
+        },
+        normalizeBusinessCheckpoint(dateIn) {
+          const d = new Date(dateIn);
+          if (Number.isNaN(d.getTime())) return this.nextBusinessStart(new Date());
+          const w = this.dayWindow(d);
+          if (w && d >= w.start && d <= w.end) {
+            return d;
+          }
+          const nextDay = new Date(d);
+          nextDay.setDate(nextDay.getDate() + 1);
+          nextDay.setHours(0, 0, 0, 0);
+          return this.nextBusinessStart(nextDay);
+        },
         subtractBusinessMinutes(endIn, minsIn) {
           let remain = Math.max(0, Math.floor(Number(minsIn || 0)));
           let cur = new Date(endIn);
@@ -1903,6 +1925,18 @@
           return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
         }
       };
+
+      function onboardingStartDate() {
+        return new Date(
+          ONBOARDING_START.year,
+          ONBOARDING_START.month - 1,
+          ONBOARDING_START.day,
+          ONBOARDING_START.hour,
+          ONBOARDING_START.minute,
+          0,
+          0
+        );
+      }
 
       function isValidInputDate(value) {
         const text = String(value || '').trim();
@@ -3092,6 +3126,10 @@
           .toLowerCase();
       }
 
+      function isTemplateComment(text) {
+        return normalizePlain(text).includes('plantilla');
+      }
+
       function inferOfficialActivityType(sourceText) {
         const normalized = normalizePlain(sourceText);
         for (const name of OFFICIAL_ACTIVITY_TYPES) {
@@ -3112,7 +3150,24 @@
         if (normalized.includes('configuracion') && normalized.includes('colegio')) return 'Configuración de colegio';
         if (normalized.includes('configuracion') && normalized.includes('docente')) return 'Configuración de docentes';
         if (normalized.includes('configuracion') && normalized.includes('estudiante')) return 'Configuración de estudiantes';
+        if (normalized.includes('plantilla')) return 'Entrega de plantillas DOCENTES Coach/Farmer/Hunter';
         return OFFICIAL_ACTIVITY_TYPES[0];
+      }
+
+      function registrationPlanFromComment(comment) {
+        const createdAt = comment && comment.created ? new Date(comment.created) : new Date();
+        const text = commentText(comment);
+        const templateMode = isTemplateComment(text);
+        const anchorEnd = TimeService.normalizeBusinessCheckpoint(createdAt);
+
+        if (templateMode) {
+          const start = onboardingStartDate();
+          const minutes = Math.max(1, TimeService.businessMinutesBetween(start, anchorEnd));
+          return { templateMode: true, minutes, anchorEndTs: anchorEnd.getTime() };
+        }
+
+        const minutes = Math.max(5, Math.min(480, TimeService.businessMinutesBetween(createdAt, new Date())));
+        return { templateMode: false, minutes, anchorEndTs: anchorEnd.getTime() };
       }
 
       function sortDesc(items, dateFn) {
@@ -3120,7 +3175,9 @@
       }
 
       function renderComments(issueKey) {
-        const comments = state.commentsByIssue[issueKey] || [];
+        const comments = (state.commentsByIssue[issueKey] || [])
+          .slice()
+          .sort((a, b) => new Date(a.created || 0).getTime() - new Date(b.created || 0).getTime());
         if (!comments.length) {
           state.selectedCommentId = '';
           hideInlineRegistrar();
@@ -3742,7 +3799,9 @@
       async function loadIssueData(issueKey) {
         if (!issueKey) return;
         const [c, w] = await Promise.all([JiraService.comments(issueKey), JiraService.worklogs(issueKey)]);
-        const comments = sortDesc(Array.isArray(c.comments) ? c.comments : [], (x) => x.created || '');
+        const comments = (Array.isArray(c.comments) ? c.comments : [])
+          .slice()
+          .sort((a, b) => new Date(a.created || 0).getTime() - new Date(b.created || 0).getTime());
         const worklogs = sortDesc(Array.isArray(w.worklogs) ? w.worklogs : [], (x) => x.started || x.created || '');
         state.commentsByIssue[issueKey] = comments;
         state.worklogsByIssue[issueKey] = worklogs;
@@ -4322,8 +4381,13 @@
           const comments = state.commentsByIssue[state.selectedIssueKey] || [];
           const c = comments.find((x) => String(x.id) === String(commentId));
           if (!c) return;
-          const mins = Math.max(5, Math.min(480, TimeService.businessMinutesBetween(new Date(c.created), new Date())));
-          state.regCtx = { issueKey: state.selectedIssueKey, commentId: String(c.id) };
+          const plan = registrationPlanFromComment(c);
+          state.regCtx = {
+            issueKey: state.selectedIssueKey,
+            commentId: String(c.id),
+            templateMode: !!plan.templateMode,
+            anchorEndTs: Number(plan.anchorEndTs || 0)
+          };
           const inferredType = inferOfficialActivityType(commentText(c));
           const inferredDue = TimeService.toInputDate(c.created || new Date());
           el.regTypeSel.value = OFFICIAL_ACTIVITY_TYPES.includes(inferredType)
@@ -4332,8 +4396,14 @@
           el.regDateInp.value = isValidInputDate(inferredDue)
             ? inferredDue
             : TimeService.toInputDate(new Date());
-          el.regMinInp.value = String(mins);
-          el.regInlineMeta.textContent = `${state.selectedIssueKey} | ${TimeService.dtLabel(c.created)}`;
+          el.regMinInp.value = String(plan.minutes);
+          const createdLabel = TimeService.dtLabel(c.created);
+          const anchorLabel = Number.isFinite(Number(plan.anchorEndTs || 0))
+            ? TimeService.dtLabel(Number(plan.anchorEndTs))
+            : '';
+          el.regInlineMeta.textContent = (anchorLabel && anchorLabel !== createdLabel)
+            ? `${state.selectedIssueKey} | ${createdLabel} -> ${anchorLabel} (fuera de horario)`
+            : `${state.selectedIssueKey} | ${createdLabel}`;
           syncInlineRegistrarInputs();
           showInlineRegistrar();
         });
@@ -4368,9 +4438,6 @@
         el.regInlineOkBtn.addEventListener('click', async () => {
           if (!state.regCtx) { hideInlineRegistrar(); return; }
           const issueKey = state.regCtx.issueKey;
-          const commentId = String(state.regCtx.commentId || '');
-          const comments = state.commentsByIssue[issueKey] || [];
-          const sourceComment = comments.find((x) => String(x.id || '') === commentId) || null;
           syncInlineRegistrarInputs();
           const activity = buildOfficialActivity(String(el.regTypeSel.value || '').trim(), String(el.regDateInp.value || '').trim());
           const mins = Math.max(1, Math.floor(Number(el.regMinInp.value || 0)));
@@ -4379,11 +4446,12 @@
             return;
           }
           let explicitStarted = null;
-          if (sourceComment && sourceComment.created) {
-            const commentTs = new Date(sourceComment.created);
-            if (!Number.isNaN(commentTs.getTime())) {
-              explicitStarted = new Date(commentTs.getTime() - (mins * 60000));
-            }
+          const anchorEndTs = Number(state.regCtx.anchorEndTs || 0);
+          if (Number.isFinite(anchorEndTs) && anchorEndTs > 0) {
+            const anchorEnd = new Date(anchorEndTs);
+            explicitStarted = state.regCtx.templateMode
+              ? TimeService.subtractBusinessMinutes(anchorEnd, mins)
+              : new Date(anchorEnd.getTime() - (mins * 60000));
           }
           hideInlineRegistrar();
           try { await createWorklog(issueKey, activity, mins, explicitStarted); }

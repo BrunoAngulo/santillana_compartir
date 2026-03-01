@@ -1022,7 +1022,8 @@ with tab_alumnos:
 
         st.success(
             "Listo. Base: {base_total}, Actualizada: {actualizados_total}, "
-            "Match NUIP: {nuip_match}, Nuevos: {nuevos_total}.".format(**summary)
+            "Match NUIP: {nuip_match}, Nuevos: {nuevos_total}, "
+            "Inactivados: {inactivados_total}.".format(**summary)
         )
         download_name = f"alumnos_resultados_{Path(uploaded_compare.name).stem}.xlsx"
         st.download_button(

@@ -189,6 +189,11 @@
       border-style: dashed;
       background: #f6f9fe;
     }
+    .issue-chip.extra {
+      flex: 1 1 100%;
+      border-style: dashed;
+      background: #f6f9fe;
+    }
     .dashboard-grid {
       display: grid;
       grid-template-columns: minmax(0, 1.35fr) minmax(320px, 1fr);
@@ -1441,6 +1446,7 @@
       top: 4px;
       bottom: 4px;
       border-radius: 999px;
+      box-sizing: border-box;
       min-width: 3px;
       border: 1px solid rgba(9, 24, 39, 0.18);
       cursor: pointer;
@@ -3276,7 +3282,9 @@
           <span class="issue-chip metric"><b>Worklogs:</b><span class="value">${escapeHtml(String(worklogsCount))}</span></span>
           <span class="issue-chip metric"><b>Total:</b><span class="value">${escapeHtml(TimeService.jiraDuration(totalMins))}</span></span>
           <span class="issue-chip metric"><b>Plantillas:</b><span class="value">${escapeHtml(String(templateCount))}</span></span>
-          <span class="issue-chip wide"><b>Subtareas:</b><span class="value">${escapeHtml(`${subtasksLabel} | Ult. registro plantilla estudiantes: ${lastPlantillaEstudiantes} | Ult. registro plantilla docentes: ${lastPlantillaDocentes}`)}</span></span>
+          <span class="issue-chip extra"><b>Subtareas:</b><span class="value">${escapeHtml(subtasksLabel)}</span></span>
+          <span class="issue-chip extra"><b>Ult. registro plantilla estudiantes:</b><span class="value">${escapeHtml(lastPlantillaEstudiantes)}</span></span>
+          <span class="issue-chip extra"><b>Ult. registro plantilla docentes:</b><span class="value">${escapeHtml(lastPlantillaDocentes)}</span></span>
         `;
       }
 
@@ -4410,8 +4418,12 @@
         const activityLanes = data.lanes.map((lane) => {
           const laneSelected = selectedActivityKey && activityKey(lane.activity) === selectedActivityKey;
           const bars = lane.items.map((r) => {
-            const left = ((r.startTs - data.start) / data.range) * 100;
-            const width = Math.max(1.8, ((r.endTs - r.startTs) / data.range) * 100);
+            const minWidth = 1.8;
+            const rawLeft = ((r.startTs - data.start) / data.range) * 100;
+            const rawWidth = ((r.endTs - r.startTs) / data.range) * 100;
+            const width = Math.min(100, Math.max(minWidth, rawWidth));
+            const maxLeft = Math.max(0, 100 - width);
+            const left = Math.min(Math.max(0, rawLeft), maxLeft);
             const active = state.selectedWorklogId && String(state.selectedWorklogId) === r.id ? ' active' : '';
             const unlinked = !r.linkedCommentId ? ' unlinked' : '';
             const title = `${r.activity} | ${TimeService.jiraDuration(r.mins)} | ${r.author} | ${TimeService.dtLabel(r.startTs)}${r.linkedCommentId ? ` | Comentario ${r.linkedCommentId}` : ' | Sin comentario vinculado'}`;

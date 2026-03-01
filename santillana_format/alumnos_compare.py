@@ -130,6 +130,7 @@ def comparar_plantillas(
             "base_total": len(df_bd),
             "archivo_base": output,
             "nuevos_total": len(nuevos),
+            "inactivados_total": _count_inactivos(comparacion),
         }
     )
     return output_bytes, summary
@@ -659,29 +660,35 @@ def _pick_best_match(
 def _build_comparacion_bd(
     df_bd: pd.DataFrame, df_act: pd.DataFrame
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    if df_bd.empty or df_act.empty:
+    if df_bd.empty and df_act.empty:
         return (
             pd.DataFrame(columns=ALUMNOS_COMPARACION_COLUMNS),
             pd.DataFrame(columns=ALUMNOS_CREAR_COLUMNS),
         )
-    nuip_index = _build_nuip_index(df_bd)
-    nombre_ap_pat_index = _build_nombre_ap_pat_index(df_bd)
-    apellidos_cache = _build_apellidos_cache(df_bd)
+
+    nuip_index = _build_nuip_index(df_bd) if not df_bd.empty else {}
+    nombre_ap_pat_index = (
+        _build_nombre_ap_pat_index(df_bd) if not df_bd.empty else {}
+    )
+    apellidos_cache = _build_apellidos_cache(df_bd) if not df_bd.empty else []
     rows: List[Dict[str, object]] = []
     nuevos_rows: List[pd.Series] = []
+    bd_matched_indices = set()
 
     for _idx, act_row in df_act.iterrows():
         bd_idx: Optional[int] = None
-        bd_idx = _resolve_apellidos_match(act_row, df_bd, apellidos_cache)
-        if bd_idx is None:
-            nuip_norm = _normalize_nuip(act_row.get("nuip"))
-            if nuip_norm:
-                bd_idx = nuip_index.get(nuip_norm)
-        if bd_idx is None:
-            bd_idx = _resolve_nombre_ap_pat_match(act_row, df_bd, nombre_ap_pat_index)
+        if not df_bd.empty:
+            bd_idx = _resolve_apellidos_match(act_row, df_bd, apellidos_cache)
+            if bd_idx is None:
+                nuip_norm = _normalize_nuip(act_row.get("nuip"))
+                if nuip_norm:
+                    bd_idx = nuip_index.get(nuip_norm)
+            if bd_idx is None:
+                bd_idx = _resolve_nombre_ap_pat_match(act_row, df_bd, nombre_ap_pat_index)
         if bd_idx is None:
             nuevos_rows.append(act_row)
             continue
+        bd_matched_indices.add(int(bd_idx))
         bd_row = df_bd.loc[bd_idx]
 
         row_out: Dict[str, object] = {}
@@ -715,6 +722,26 @@ def _build_comparacion_bd(
 
         rows.append(row_out)
 
+    # Todo alumno existente en BD que no aparezca en la plantilla actualizada
+    # se envía como actualización de estado inactivo.
+    if not df_bd.empty:
+        for bd_idx, bd_row in df_bd.iterrows():
+            if int(bd_idx) in bd_matched_indices:
+                continue
+            row_out: Dict[str, object] = {}
+            for source, target in BASE_OUTPUT_MAP.items():
+                row_out[target] = _clean_cell_value(bd_row.get(source, ""))
+
+            # Mantener datos base; solo cambia el estado.
+            for source, target in ACTUALIZADA_BASE_FIELDS.items():
+                row_out[target] = _clean_cell_value(bd_row.get(source, ""))
+
+            row_out["Activo"] = "No"
+            row_out["Nuevo Nivel"] = ""
+            row_out["Nuevo Grado"] = ""
+            row_out["Nuevo Grupo"] = ""
+            rows.append(row_out)
+
     df_out = pd.DataFrame(rows, columns=ALUMNOS_COMPARACION_COLUMNS)
     cleaned = df_out.astype(str).apply(lambda col: col.str.strip().replace("nan", ""))
     mask = (cleaned != "").any(axis=1)
@@ -725,6 +752,13 @@ def _build_comparacion_bd(
         )
     nuevos_df = _build_alumnos_crear(pd.DataFrame(nuevos_rows))
     return df_out, nuevos_df
+
+
+def _count_inactivos(comparacion: pd.DataFrame) -> int:
+    if comparacion.empty or "Activo" not in comparacion.columns:
+        return 0
+    normalized = comparacion["Activo"].astype(str).apply(_normalize_text)
+    return int((normalized == "no").sum())
 
 
 def _parse_fecha_excel(value: object):

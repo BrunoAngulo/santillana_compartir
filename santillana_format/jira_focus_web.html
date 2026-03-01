@@ -552,6 +552,7 @@
     }
     .btn.warn { background: #fff7e8; border-color: #efcd8f; color: var(--warn); }
     .btn.danger { background: #fff1f1; border-color: #e6b2b2; color: var(--danger); }
+    .btn.edit { background: #e9f3ff; border-color: #a9c7ea; color: #114d86; }
     .inp, .sel, .txt {
       width: 100%;
       border: 1px solid #c5d4e6;
@@ -1444,8 +1445,8 @@
             <input class="inp" id="activityDueInp" type="date">
           </div>
           <div>
-            <label for="minutesInp">Duracion (min)</label>
-            <input class="inp" id="minutesInp" type="number" min="1" step="1" value="30">
+            <label for="minutesInp">Duracion (formato Jira)</label>
+            <input class="inp" id="minutesInp" type="text" value="30m" placeholder="2w 4d 6h 45m">
           </div>
           <div class="row" style="margin-top:22px;">
             <button class="btn primary" id="registerBtn" type="button">Registrar worklog</button>
@@ -1502,7 +1503,7 @@
                 <select id="regTypeSel" class="sel"></select>
               </div>
               <div><label for="regDateInp">Fecha fin</label><input id="regDateInp" class="inp" type="date"></div>
-              <div><label for="regMinInp">Duracion (min)</label><input id="regMinInp" class="inp" type="number" min="1" step="1"></div>
+              <div><label for="regMinInp">Duracion (formato Jira)</label><input id="regMinInp" class="inp" type="text" placeholder="2w 4d 6h 45m"></div>
             </div>
             <div class="row" style="margin-top:10px;">
               <button class="btn primary" id="regInlineOkBtn" type="button">Registrar</button>
@@ -1533,7 +1534,7 @@
               <div><label for="editTimeInp">Hora</label><input id="editTimeInp" class="inp" type="time" step="60"></div>
             </div>
             <div class="grid2" style="margin-top:8px;">
-              <div><label for="editMinInp">Duracion (min)</label><input id="editMinInp" class="inp" type="number" min="1" step="1"></div>
+              <div><label for="editMinInp">Duracion (formato Jira)</label><input id="editMinInp" class="inp" type="text" placeholder="2w 4d 6h 45m"></div>
               <div><label for="editActInp">Actividad final</label><input id="editActInp" class="inp" type="text" readonly></div>
             </div>
             <div class="row" style="margin-top:10px;">
@@ -1652,6 +1653,7 @@
       const ONBOARDING_START = { year: 2025, month: 12, day: 15, hour: 8, minute: 30 };
       const DOCENTES_TEMPLATE_ACTIVITY = 'Entrega de plantillas DOCENTES Coach/Farmer/Hunter';
       const ESTUDIANTES_TEMPLATE_ACTIVITY = 'Entrega de plantillas ESTUDIANTES Coach/Farmer/Hunter';
+      const TEMPLATE_MONTH_WEEKS = 4;
       const OFFICIAL_ACTIVITY_TYPES = [
         'Configuración Agente de Éxito',
         'Estandarización de plantillas',
@@ -2024,6 +2026,16 @@
           0,
           0
         );
+      }
+
+      function templateMonthMinutes() {
+        return LABOR.weekMinutes * TEMPLATE_MONTH_WEEKS;
+      }
+
+      function isAfterOnboardingStart(dateIn) {
+        const currentTs = new Date(dateIn).getTime();
+        const startTs = onboardingStartDate().getTime();
+        return Number.isFinite(currentTs) && Number.isFinite(startTs) && currentTs >= startTs;
       }
 
       function isValidInputDate(value) {
@@ -3012,6 +3024,30 @@
         }
       }
 
+      function openInlineEditorForWorklog(issueKey, worklog) {
+        const key = String(issueKey || '').trim();
+        if (!key || !worklog) return false;
+        const id = String(worklog.id || '').trim();
+        if (!id) return false;
+        state.editCtx = { issueKey: key, id };
+        const d = new Date(worklog.started || worklog.created || new Date());
+        el.editMeta.textContent = `${key} | Worklog ${id}`;
+        const currentAct = activityOf(worklog);
+        const parsed = parseOfficialActivity(currentAct);
+        const inferredType = parsed && OFFICIAL_ACTIVITY_TYPES.includes(parsed.type)
+          ? parsed.type
+          : inferOfficialActivityType(currentAct);
+        el.editTypeSel.value = OFFICIAL_ACTIVITY_TYPES.includes(inferredType)
+          ? inferredType
+          : OFFICIAL_ACTIVITY_TYPES[0];
+        el.editDateInp.value = TimeService.toInputDate(d);
+        el.editTimeInp.value = TimeService.toInputTime(d);
+        el.editMinInp.value = TimeService.jiraDuration(minutesOf(worklog));
+        syncEditActivityPreview();
+        showInlineEditor();
+        return true;
+      }
+
       function activityKey(text) {
         return String(text || '').trim().toLowerCase();
       }
@@ -3180,9 +3216,37 @@
       function applyTimerToMinutes() {
         const mins = Math.max(1, Math.ceil(timerBusinessMsNow() / 60000));
         state.durationMinutes = mins;
-        el.minutesInp.value = String(mins);
+        el.minutesInp.value = TimeService.jiraDuration(mins);
         renderDurationPill();
         uiStateSave();
+      }
+
+      function parseDurationInput(value) {
+        const raw = String(value || '').trim().toLowerCase();
+        if (!raw) return NaN;
+        if (/^\d+$/.test(raw)) {
+          return Math.max(1, Math.floor(Number(raw)));
+        }
+        let total = 0;
+        let matched = false;
+        const rg = /(\d+)\s*([wdhm])/g;
+        let m = rg.exec(raw);
+        while (m) {
+          matched = true;
+          const n = Math.floor(Number(m[1] || 0));
+          const unit = String(m[2] || '');
+          if (n > 0) {
+            if (unit === 'w') total += n * LABOR.weekMinutes;
+            if (unit === 'd') total += n * LABOR.dayMinutes;
+            if (unit === 'h') total += n * 60;
+            if (unit === 'm') total += n;
+          }
+          m = rg.exec(raw);
+        }
+        const rest = raw.replace(/(\d+)\s*[wdhm]/g, '').replace(/\s+/g, '');
+        if (!matched || rest) return NaN;
+        if (!Number.isFinite(total) || total <= 0) return NaN;
+        return Math.floor(total);
       }
 
       function renderDurationPill() {
@@ -3200,6 +3264,64 @@
       function worklogText(w) { return adfToText(w && w.comment ? w.comment : ''); }
       function mine(author) { return !!(author && state.me && String(author.accountId || '') === String(state.me.accountId || '')); }
       function minutesOf(worklog) { return Math.max(1, Math.round(Number(worklog && worklog.timeSpentSeconds ? worklog.timeSpentSeconds : 0) / 60)); }
+      function tsOf(value) {
+        const ts = new Date(value || 0).getTime();
+        return Number.isFinite(ts) ? ts : NaN;
+      }
+      function minuteBucket(value) {
+        const ts = tsOf(value);
+        return Number.isFinite(ts) ? Math.floor(ts / 60000) : NaN;
+      }
+      function linkedWorklogIdsForComment(issueKey, commentId) {
+        const links = state.timelineLinksByIssue[issueKey] || { commentToWorklogIds: {} };
+        const ids = links.commentToWorklogIds && Array.isArray(links.commentToWorklogIds[commentId])
+          ? links.commentToWorklogIds[commentId]
+          : [];
+        return ids
+          .map((id) => String(id || '').trim())
+          .filter((id) => !!id);
+      }
+      function findExistingWorklogForComment(issueKey, comment) {
+        const key = String(issueKey || '').trim();
+        if (!key || !comment) return null;
+        const rows = state.worklogsByIssue[key] || [];
+        if (!rows.length) return null;
+
+        const commentId = String(comment.id || '').trim();
+        if (commentId) {
+          const linkedIds = linkedWorklogIdsForComment(key, commentId);
+          if (linkedIds.length) {
+            const linkedRows = linkedIds
+              .map((id) => rows.find((w) => String(w.id || '') === id))
+              .filter((w) => !!w);
+            if (linkedRows.length) {
+              linkedRows.sort((a, b) => {
+                const mineA = mine(a.author) ? 0 : 1;
+                const mineB = mine(b.author) ? 0 : 1;
+                return mineA - mineB;
+              });
+              return linkedRows[0];
+            }
+          }
+        }
+
+        const commentMinute = minuteBucket(comment.created);
+        const commentTs = tsOf(comment.created);
+        if (!Number.isFinite(commentMinute)) return null;
+        const sameMinute = rows
+          .map((w) => ({ row: w, ts: tsOf(w.started || w.created || 0) }))
+          .filter((it) => Number.isFinite(it.ts) && minuteBucket(it.ts) === commentMinute);
+        if (!sameMinute.length) return null;
+        sameMinute.sort((a, b) => {
+          const mineA = mine(a.row.author) ? 0 : 1;
+          const mineB = mine(b.row.author) ? 0 : 1;
+          if (mineA !== mineB) return mineA - mineB;
+          const distA = Math.abs(a.ts - commentTs);
+          const distB = Math.abs(b.ts - commentTs);
+          return distA - distB;
+        });
+        return sameMinute[0].row;
+      }
 
       function activityFromText(text) {
         const t = String(text || '').trim();
@@ -3234,21 +3356,6 @@
         return t === DOCENTES_TEMPLATE_ACTIVITY || t === ESTUDIANTES_TEMPLATE_ACTIVITY;
       }
 
-      function countWorklogsByOfficialType(issueKey, typeName) {
-        const key = String(issueKey || '').trim();
-        const target = String(typeName || '').trim();
-        if (!key || !target) return 0;
-        const rows = state.worklogsByIssue[key] || [];
-        let count = 0;
-        rows.forEach((w) => {
-          const parsed = parseOfficialActivity(activityOf(w));
-          if (parsed && parsed.type === target) {
-            count += 1;
-          }
-        });
-        return count;
-      }
-
       function inferOfficialActivityType(sourceText) {
         const normalized = normalizePlain(sourceText);
         for (const name of OFFICIAL_ACTIVITY_TYPES) {
@@ -3280,7 +3387,13 @@
         const anchorEnd = TimeService.normalizeBusinessCheckpoint(createdAt);
 
         if (templateMode) {
-          return { templateMode: true, minutes: 0, anchorEndTs: anchorEnd.getTime() };
+          const afterStart = isAfterOnboardingStart(anchorEnd);
+          return {
+            templateMode: true,
+            templateAfterStart: afterStart,
+            minutes: afterStart ? templateMonthMinutes() : 1,
+            anchorEndTs: anchorEnd.getTime()
+          };
         }
 
         const minutes = Math.max(5, Math.min(480, TimeService.businessMinutesBetween(createdAt, new Date())));
@@ -3295,8 +3408,6 @@
         const comments = (state.commentsByIssue[issueKey] || [])
           .slice()
           .sort((a, b) => new Date(a.created || 0).getTime() - new Date(b.created || 0).getTime());
-        const worklogs = state.worklogsByIssue[issueKey] || [];
-        const links = state.timelineLinksByIssue[issueKey] || { commentToWorklogIds: {} };
         if (!comments.length) {
           state.selectedCommentId = '';
           hideInlineRegistrar();
@@ -3310,22 +3421,14 @@
           const mineClass = my ? ' mine' : '';
           const author = c.author && c.author.displayName ? c.author.displayName : 'Sin autor';
           const txt = commentText(c) || '(sin texto)';
-          const linkedIds = links.commentToWorklogIds && Array.isArray(links.commentToWorklogIds[id])
-            ? links.commentToWorklogIds[id]
-            : [];
-          let linkedActivity = '';
-          if (linkedIds.length) {
-            for (let i = 0; i < linkedIds.length; i += 1) {
-              const candidate = worklogs.find((w) => String(w.id || '') === String(linkedIds[i]));
-              if (candidate) {
-                linkedActivity = activityOf(candidate);
-                break;
-              }
-            }
-          }
+          const existingWorklog = findExistingWorklogForComment(issueKey, c);
+          const existingWorklogId = existingWorklog ? String(existingWorklog.id || '').trim() : '';
+          const linkedActivity = existingWorklog ? activityOf(existingWorklog) : '';
           const accent = linkedActivity ? activityColor(linkedActivity) : '';
           const linkedClass = accent ? ' linked' : '';
           const accentAttr = accent ? ` style="--comment-accent:${escapeHtml(accent)}"` : '';
+          const actionClass = existingWorklogId ? 'btn edit' : 'btn';
+          const actionLabel = existingWorklogId ? 'Editar' : 'Registrar actividad';
           const linkedBadge = accent
             ? `<div class="comment-ref"><span class="comment-ref-dot" style="background:${escapeHtml(accent)};"></span><span>${escapeHtml(linkedActivity)}</span></div>`
             : '';
@@ -3334,7 +3437,7 @@
               <div class="meta"><span>${escapeHtml(author)}</span><span>${escapeHtml(TimeService.dtLabel(c.created))}</span></div>
               <div class="body">${escapeHtml(txt)}</div>
               ${linkedBadge}
-              <div class="row" style="margin-top:8px;"><button class="btn" data-act="reg-from-comment" data-id="${escapeHtml(id)}">Registrar actividad</button></div>
+              <div class="row" style="margin-top:8px;"><button class="${actionClass}" data-act="reg-from-comment" data-id="${escapeHtml(id)}" data-worklog-id="${escapeHtml(existingWorklogId)}">${actionLabel}</button></div>
             </div>
           `;
         }).join('');
@@ -4405,8 +4508,10 @@
           syncOfficialActivityToState(true);
         });
         el.minutesInp.addEventListener('input', () => {
-          state.durationMinutes = Math.max(1, Math.floor(Number(el.minutesInp.value || 0)));
-          el.minutesInp.value = String(state.durationMinutes);
+          const parsed = parseDurationInput(el.minutesInp.value);
+          if (Number.isFinite(parsed) && parsed > 0) {
+            state.durationMinutes = Math.max(1, Math.floor(parsed));
+          }
           uiStateSave();
           renderDurationPill();
         });
@@ -4466,7 +4571,13 @@
             showMsg('error', 'Selecciona un tipo de actividad oficial y una fecha fin valida.');
             return;
           }
-          state.durationMinutes = Math.max(1, Math.floor(Number(el.minutesInp.value || 0)));
+          const parsedMinutes = parseDurationInput(el.minutesInp.value);
+          if (!Number.isFinite(parsedMinutes) || parsedMinutes <= 0) {
+            showMsg('error', 'Duracion invalida. Usa formato Jira como 2w 4d 6h 45m o minutos.');
+            return;
+          }
+          state.durationMinutes = Math.max(1, Math.floor(parsedMinutes));
+          el.minutesInp.value = TimeService.jiraDuration(state.durationMinutes);
           uiStateSave();
           renderDurationPill();
           try { await createWorklog(state.selectedIssueKey, state.activity, state.durationMinutes); }
@@ -4501,7 +4612,7 @@
         el.applySugTimeBtn.addEventListener('click', () => {
           if (!state.suggestion) return;
           state.durationMinutes = state.suggestion.minutes;
-          el.minutesInp.value = String(state.durationMinutes);
+          el.minutesInp.value = TimeService.jiraDuration(state.durationMinutes);
           uiStateSave();
           renderDurationPill();
         });
@@ -4524,7 +4635,7 @@
           el.activityTypeSel.value = state.activityType;
           el.activityDueInp.value = state.activityDueDate;
           el.activityInp.value = state.activity;
-          el.minutesInp.value = String(state.durationMinutes);
+          el.minutesInp.value = TimeService.jiraDuration(state.durationMinutes);
           renderDurationPill();
           uiStateSave();
           try { await createWorklog(state.selectedIssueKey, state.activity, state.durationMinutes); }
@@ -4578,30 +4689,42 @@
           const comments = state.commentsByIssue[issueKey] || [];
           const c = comments.find((x) => String(x.id) === String(commentId));
           if (!c) return;
+          const existingWorklog = findExistingWorklogForComment(issueKey, c);
+          if (existingWorklog) {
+            hideInlineRegistrar();
+            const existingId = String(existingWorklog.id || '').trim();
+            focusTimelineSelection(
+              issueKey,
+              String(c.id || ''),
+              existingId,
+              activityOf(existingWorklog),
+              minutesOf(existingWorklog)
+            );
+            const opened = openInlineEditorForWorklog(issueKey, existingWorklog);
+            if (opened) {
+              showMsg('info', 'Ya existe una actividad para este comentario. Abierta en modo edicion.');
+            } else {
+              showMsg('info', 'Ya existe una actividad para este comentario.');
+            }
+            return;
+          }
           const plan = registrationPlanFromComment(c);
           const inferredType = inferOfficialActivityType(commentText(c));
           const templateType = (inferredType === ESTUDIANTES_TEMPLATE_ACTIVITY)
             ? ESTUDIANTES_TEMPLATE_ACTIVITY
             : DOCENTES_TEMPLATE_ACTIVITY;
-          const existingTemplateCount = isTemplateOfficialType(templateType)
-            ? countWorklogsByOfficialType(issueKey, templateType)
-            : 0;
-          const isFirstTemplate = plan.templateMode && existingTemplateCount === 0;
           const anchorEndTs = Number(plan.anchorEndTs || 0);
           const anchorEnd = Number.isFinite(anchorEndTs) && anchorEndTs > 0
             ? new Date(anchorEndTs)
             : new Date();
-          const templateMinutes = isFirstTemplate
-            ? Math.max(1, TimeService.businessMinutesBetween(onboardingStartDate(), anchorEnd))
-            : 1;
-          const resolvedMinutes = plan.templateMode ? templateMinutes : plan.minutes;
+          const resolvedMinutes = Math.max(1, Math.floor(Number(plan.minutes || 0)));
           state.regCtx = {
             issueKey,
             commentId: String(c.id),
             templateMode: !!plan.templateMode,
             anchorEndTs,
             templateType,
-            templateFirst: isFirstTemplate
+            templateAfterStart: !!plan.templateAfterStart
           };
           const inferredDue = TimeService.toInputDate(c.created || new Date());
           const anchorDue = Number.isFinite(anchorEndTs)
@@ -4613,22 +4736,22 @@
           el.regDateInp.value = plan.templateMode
             ? anchorDue
             : (isValidInputDate(inferredDue) ? inferredDue : TimeService.toInputDate(new Date()));
-          el.regMinInp.value = String(resolvedMinutes);
+          el.regMinInp.value = TimeService.jiraDuration(resolvedMinutes);
           const createdLabel = TimeService.dtLabel(c.created);
           const anchorLabel = Number.isFinite(anchorEndTs)
             ? TimeService.dtLabel(anchorEndTs)
             : '';
-          const autoLabel = TimeService.jiraDuration(resolvedMinutes);
           if (plan.templateMode) {
-            if (isFirstTemplate) {
-              el.regInlineMeta.textContent = `${issueKey} | ${templateType} | primer registro | ${autoLabel} (auto desde 15/12/2025 08:30 hasta ${anchorLabel || createdLabel})`;
+            if (plan.templateAfterStart) {
+              const monthLabel = TimeService.jiraDuration(templateMonthMinutes());
+              el.regInlineMeta.textContent = `${issueKey} | ${templateType} | 1 mes (${monthLabel}) (auto por regla de plantilla desde 15/12/2025 08:30)`;
             } else {
-              el.regInlineMeta.textContent = `${issueKey} | ${templateType} | registro adicional | 1m (auto por regla de plantilla)`;
+              el.regInlineMeta.textContent = `${issueKey} | ${templateType} | 1m (comentario antes de 15/12/2025 08:30)`;
             }
-            el.regTypeSel.disabled = true;
-            el.regDateInp.disabled = true;
-            el.regMinInp.readOnly = true;
-            el.regMinInp.disabled = true;
+            el.regTypeSel.disabled = false;
+            el.regDateInp.disabled = false;
+            el.regMinInp.readOnly = false;
+            el.regMinInp.disabled = false;
           } else {
             el.regInlineMeta.textContent = (anchorLabel && anchorLabel !== createdLabel)
               ? `${state.selectedIssueKey} | ${createdLabel} -> ${anchorLabel} (fuera de horario)`
@@ -4650,16 +4773,14 @@
           if (!commentId) return;
           const key = state.selectedIssueKey;
           if (!key) return;
-          const links = state.timelineLinksByIssue[key] || { commentToWorklogIds: {} };
-          const worklogIds = links.commentToWorklogIds && links.commentToWorklogIds[commentId]
-            ? links.commentToWorklogIds[commentId]
-            : [];
-          const worklogId = worklogIds.length ? String(worklogIds[0]) : '';
+          const comments = state.commentsByIssue[key] || [];
+          const sourceComment = comments.find((x) => String(x.id || '') === commentId) || null;
+          const existingWorklog = sourceComment ? findExistingWorklogForComment(key, sourceComment) : null;
+          const worklogId = existingWorklog ? String(existingWorklog.id || '').trim() : '';
           let activity = '';
           let mins = 0;
           if (worklogId) {
-            const worklogs = state.worklogsByIssue[key] || [];
-            const w = worklogs.find((x) => String(x.id) === worklogId);
+            const w = existingWorklog;
             if (w) {
               activity = activityOf(w);
               mins = minutesOf(w);
@@ -4675,7 +4796,12 @@
           syncInlineRegistrarInputs();
           const selectedType = String(el.regTypeSel.value || '').trim();
           let activity = buildOfficialActivity(selectedType, String(el.regDateInp.value || '').trim());
-          let mins = Math.max(1, Math.floor(Number(el.regMinInp.value || 0)));
+          let mins = parseDurationInput(el.regMinInp.value);
+          if (!Number.isFinite(mins) || mins <= 0) {
+            showMsg('error', 'Duracion invalida. Usa formato Jira como 2w 4d 6h 45m o minutos.');
+            return;
+          }
+          mins = Math.max(1, Math.floor(mins));
           if (!parseOfficialActivity(activity)) {
             showMsg('error', 'La actividad debe usar formato oficial: [Tipo de actividad] [DD/MM/AAAA].');
             return;
@@ -4691,18 +4817,15 @@
           if (Number.isFinite(anchorEndTs) && anchorEndTs > 0) {
             const anchorEnd = new Date(anchorEndTs);
             const forceTemplate = isTemplateOfficialType(selectedType);
-            const applyTemplate = state.regCtx.templateMode || forceTemplate;
+            const applyTemplate = forceTemplate;
             if (applyTemplate) {
-              const templateType = forceTemplate
-                ? selectedType
-                : (isTemplateOfficialType(state.regCtx.templateType) ? String(state.regCtx.templateType) : DOCENTES_TEMPLATE_ACTIVITY);
-              const hasSameType = countWorklogsByOfficialType(issueKey, templateType) > 0;
-              mins = hasSameType
-                ? 1
-                : Math.max(1, TimeService.businessMinutesBetween(onboardingStartDate(), anchorEnd));
+              const templateType = selectedType;
+              mins = isAfterOnboardingStart(anchorEnd)
+                ? templateMonthMinutes()
+                : 1;
               activity = buildOfficialActivity(templateType, TimeService.toInputDate(anchorEnd));
             }
-            explicitStarted = (state.regCtx.templateMode || forceTemplate)
+            explicitStarted = applyTemplate
               ? TimeService.subtractBusinessMinutes(anchorEnd, mins)
               : new Date(anchorEnd.getTime() - (mins * 60000));
           }
@@ -4726,22 +4849,7 @@
             return;
           }
           if (action === 'edit-worklog') {
-            state.editCtx = { issueKey: key, id: String(id) };
-            const d = new Date(w.started || w.created || new Date());
-            el.editMeta.textContent = `${key} | Worklog ${id}`;
-            const currentAct = activityOf(w);
-            const parsed = parseOfficialActivity(currentAct);
-            const inferredType = parsed && OFFICIAL_ACTIVITY_TYPES.includes(parsed.type)
-              ? parsed.type
-              : inferOfficialActivityType(currentAct);
-            el.editTypeSel.value = OFFICIAL_ACTIVITY_TYPES.includes(inferredType)
-              ? inferredType
-              : OFFICIAL_ACTIVITY_TYPES[0];
-            el.editDateInp.value = TimeService.toInputDate(d);
-            el.editTimeInp.value = TimeService.toInputTime(d);
-            el.editMinInp.value = String(minutesOf(w));
-            syncEditActivityPreview();
-            showInlineEditor();
+            openInlineEditorForWorklog(key, w);
           }
           if (action === 'del-worklog') {
             if (!window.confirm(`Eliminar worklog ${id}?`)) return;
@@ -4769,7 +4877,12 @@
           if (!state.editCtx) { hideInlineEditor(); return; }
           syncEditActivityPreview();
           const act = String(el.editActInp.value || '').trim();
-          const mins = Math.max(1, Math.floor(Number(el.editMinInp.value || 0)));
+          const minsParsed = parseDurationInput(el.editMinInp.value);
+          if (!Number.isFinite(minsParsed) || minsParsed <= 0) {
+            showMsg('error', 'Duracion invalida. Usa formato Jira como 2w 4d 6h 45m o minutos.');
+            return;
+          }
+          const mins = Math.max(1, Math.floor(minsParsed));
           const date = String(el.editDateInp.value || '');
           const time = String(el.editTimeInp.value || '08:30');
           const dt = new Date(`${date}T${time}:00`);
@@ -4870,7 +4983,7 @@
         applyChartDesign();
         hideInlineRegistrar();
         hideInlineEditor();
-        el.minutesInp.value = String(state.durationMinutes);
+        el.minutesInp.value = TimeService.jiraDuration(state.durationMinutes);
         renderActivitiesList();
         renderDurationPill();
         renderTop();

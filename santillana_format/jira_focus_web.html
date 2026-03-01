@@ -1606,6 +1606,8 @@
       const SUGGESTION_MS = 3 * 24 * 60 * 60 * 1000;
       const COMMENT_LINK_NEAR_MINUTES = 120;
       const ONBOARDING_START = { year: 2025, month: 12, day: 15, hour: 8, minute: 30 };
+      const DOCENTES_TEMPLATE_ACTIVITY = 'Entrega de plantillas DOCENTES Coach/Farmer/Hunter';
+      const ESTUDIANTES_TEMPLATE_ACTIVITY = 'Entrega de plantillas ESTUDIANTES Coach/Farmer/Hunter';
       const OFFICIAL_ACTIVITY_TYPES = [
         'Configuración Agente de Éxito',
         'Estandarización de plantillas',
@@ -2875,6 +2877,12 @@
 
       function hideInlineRegistrar() {
         state.regCtx = null;
+        if (el.regTypeSel) el.regTypeSel.disabled = false;
+        if (el.regDateInp) el.regDateInp.disabled = false;
+        if (el.regMinInp) {
+          el.regMinInp.disabled = false;
+          el.regMinInp.readOnly = false;
+        }
         if (el.regInlineBox) {
           el.regInlineBox.classList.add('hide');
         }
@@ -3130,6 +3138,26 @@
         return normalizePlain(text).includes('plantilla');
       }
 
+      function isTemplateOfficialType(typeName) {
+        const t = String(typeName || '').trim();
+        return t === DOCENTES_TEMPLATE_ACTIVITY || t === ESTUDIANTES_TEMPLATE_ACTIVITY;
+      }
+
+      function countWorklogsByOfficialType(issueKey, typeName) {
+        const key = String(issueKey || '').trim();
+        const target = String(typeName || '').trim();
+        if (!key || !target) return 0;
+        const rows = state.worklogsByIssue[key] || [];
+        let count = 0;
+        rows.forEach((w) => {
+          const parsed = parseOfficialActivity(activityOf(w));
+          if (parsed && parsed.type === target) {
+            count += 1;
+          }
+        });
+        return count;
+      }
+
       function inferOfficialActivityType(sourceText) {
         const normalized = normalizePlain(sourceText);
         for (const name of OFFICIAL_ACTIVITY_TYPES) {
@@ -3161,9 +3189,7 @@
         const anchorEnd = TimeService.normalizeBusinessCheckpoint(createdAt);
 
         if (templateMode) {
-          const start = onboardingStartDate();
-          const minutes = Math.max(1, TimeService.businessMinutesBetween(start, anchorEnd));
-          return { templateMode: true, minutes, anchorEndTs: anchorEnd.getTime() };
+          return { templateMode: true, minutes: 0, anchorEndTs: anchorEnd.getTime() };
         }
 
         const minutes = Math.max(5, Math.min(480, TimeService.businessMinutesBetween(createdAt, new Date())));
@@ -4378,32 +4404,71 @@
           const btn = ev.target;
           if (!btn || btn.dataset.act !== 'reg-from-comment') return;
           const commentId = btn.dataset.id;
-          const comments = state.commentsByIssue[state.selectedIssueKey] || [];
+          const issueKey = String(state.selectedIssueKey || '').trim();
+          if (!issueKey) return;
+          const comments = state.commentsByIssue[issueKey] || [];
           const c = comments.find((x) => String(x.id) === String(commentId));
           if (!c) return;
           const plan = registrationPlanFromComment(c);
+          const inferredType = inferOfficialActivityType(commentText(c));
+          const templateType = (inferredType === ESTUDIANTES_TEMPLATE_ACTIVITY)
+            ? ESTUDIANTES_TEMPLATE_ACTIVITY
+            : DOCENTES_TEMPLATE_ACTIVITY;
+          const existingTemplateCount = isTemplateOfficialType(templateType)
+            ? countWorklogsByOfficialType(issueKey, templateType)
+            : 0;
+          const isFirstTemplate = plan.templateMode && existingTemplateCount === 0;
+          const anchorEndTs = Number(plan.anchorEndTs || 0);
+          const anchorEnd = Number.isFinite(anchorEndTs) && anchorEndTs > 0
+            ? new Date(anchorEndTs)
+            : new Date();
+          const templateMinutes = isFirstTemplate
+            ? Math.max(1, TimeService.businessMinutesBetween(onboardingStartDate(), anchorEnd))
+            : 1;
+          const resolvedMinutes = plan.templateMode ? templateMinutes : plan.minutes;
           state.regCtx = {
-            issueKey: state.selectedIssueKey,
+            issueKey,
             commentId: String(c.id),
             templateMode: !!plan.templateMode,
-            anchorEndTs: Number(plan.anchorEndTs || 0)
+            anchorEndTs,
+            templateType,
+            templateFirst: isFirstTemplate
           };
-          const inferredType = inferOfficialActivityType(commentText(c));
           const inferredDue = TimeService.toInputDate(c.created || new Date());
-          el.regTypeSel.value = OFFICIAL_ACTIVITY_TYPES.includes(inferredType)
-            ? inferredType
-            : OFFICIAL_ACTIVITY_TYPES[0];
-          el.regDateInp.value = isValidInputDate(inferredDue)
-            ? inferredDue
+          const anchorDue = Number.isFinite(anchorEndTs)
+            ? TimeService.toInputDate(anchorEndTs)
             : TimeService.toInputDate(new Date());
-          el.regMinInp.value = String(plan.minutes);
+          el.regTypeSel.value = plan.templateMode
+            ? templateType
+            : (OFFICIAL_ACTIVITY_TYPES.includes(inferredType) ? inferredType : OFFICIAL_ACTIVITY_TYPES[0]);
+          el.regDateInp.value = plan.templateMode
+            ? anchorDue
+            : (isValidInputDate(inferredDue) ? inferredDue : TimeService.toInputDate(new Date()));
+          el.regMinInp.value = String(resolvedMinutes);
           const createdLabel = TimeService.dtLabel(c.created);
-          const anchorLabel = Number.isFinite(Number(plan.anchorEndTs || 0))
-            ? TimeService.dtLabel(Number(plan.anchorEndTs))
+          const anchorLabel = Number.isFinite(anchorEndTs)
+            ? TimeService.dtLabel(anchorEndTs)
             : '';
-          el.regInlineMeta.textContent = (anchorLabel && anchorLabel !== createdLabel)
-            ? `${state.selectedIssueKey} | ${createdLabel} -> ${anchorLabel} (fuera de horario)`
-            : `${state.selectedIssueKey} | ${createdLabel}`;
+          const autoLabel = TimeService.jiraDuration(resolvedMinutes);
+          if (plan.templateMode) {
+            if (isFirstTemplate) {
+              el.regInlineMeta.textContent = `${issueKey} | ${templateType} | primer registro | ${autoLabel} (auto desde 15/12/2025 08:30 hasta ${anchorLabel || createdLabel})`;
+            } else {
+              el.regInlineMeta.textContent = `${issueKey} | ${templateType} | registro adicional | 1m (auto por regla de plantilla)`;
+            }
+            el.regTypeSel.disabled = true;
+            el.regDateInp.disabled = true;
+            el.regMinInp.readOnly = true;
+            el.regMinInp.disabled = true;
+          } else {
+            el.regInlineMeta.textContent = (anchorLabel && anchorLabel !== createdLabel)
+              ? `${state.selectedIssueKey} | ${createdLabel} -> ${anchorLabel} (fuera de horario)`
+              : `${state.selectedIssueKey} | ${createdLabel}`;
+            el.regTypeSel.disabled = false;
+            el.regDateInp.disabled = false;
+            el.regMinInp.disabled = false;
+            el.regMinInp.readOnly = false;
+          }
           syncInlineRegistrarInputs();
           showInlineRegistrar();
         });
@@ -4439,8 +4504,8 @@
           if (!state.regCtx) { hideInlineRegistrar(); return; }
           const issueKey = state.regCtx.issueKey;
           syncInlineRegistrarInputs();
-          const activity = buildOfficialActivity(String(el.regTypeSel.value || '').trim(), String(el.regDateInp.value || '').trim());
-          const mins = Math.max(1, Math.floor(Number(el.regMinInp.value || 0)));
+          let activity = buildOfficialActivity(String(el.regTypeSel.value || '').trim(), String(el.regDateInp.value || '').trim());
+          let mins = Math.max(1, Math.floor(Number(el.regMinInp.value || 0)));
           if (!parseOfficialActivity(activity)) {
             showMsg('error', 'La actividad debe usar formato oficial: [Tipo de actividad] [DD/MM/AAAA].');
             return;
@@ -4449,6 +4514,16 @@
           const anchorEndTs = Number(state.regCtx.anchorEndTs || 0);
           if (Number.isFinite(anchorEndTs) && anchorEndTs > 0) {
             const anchorEnd = new Date(anchorEndTs);
+            if (state.regCtx.templateMode) {
+              const templateType = isTemplateOfficialType(state.regCtx.templateType)
+                ? String(state.regCtx.templateType)
+                : DOCENTES_TEMPLATE_ACTIVITY;
+              const hasSameType = countWorklogsByOfficialType(issueKey, templateType) > 0;
+              mins = hasSameType
+                ? 1
+                : Math.max(1, TimeService.businessMinutesBetween(onboardingStartDate(), anchorEnd));
+              activity = buildOfficialActivity(templateType, TimeService.toInputDate(anchorEnd));
+            }
             explicitStarted = state.regCtx.templateMode
               ? TimeService.subtractBusinessMinutes(anchorEnd, mins)
               : new Date(anchorEnd.getTime() - (mins * 60000));

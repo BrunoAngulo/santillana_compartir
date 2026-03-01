@@ -85,10 +85,10 @@ with global_col_colegio:
         placeholder="2326",
         help="Se reutiliza en las funciones que requieren colegio.",
     )
-tab_crud_clases, tab_profesores_clases, tab_crud_alumnos = st.tabs(
+tab_crud_clases, tab_crud_profesores, tab_crud_alumnos = st.tabs(
     [
         "CRUD Clases",
-        "Profesores con clases",
+        "CRUD Profesores",
         "CRUD Alumnos",
     ]
 )
@@ -580,16 +580,11 @@ with tab_crud_clases:
             st.error(f"Error: {exc}")
 
 
-with tab_profesores_clases:
-    st.subheader("Profesores con clases")
+with tab_crud_profesores:
+    st.subheader("CRUD Profesores")
     st.caption("Flujo: genera base, luego simula y aplica asignaciones.")
     st.caption("Usando el token global configurado arriba.")
-    colegio_id_raw = st.text_input(
-        "Colegio Clave",
-        key="profesores_colegio_text",
-        placeholder="2326",
-        help="Acepta texto o número. Debe ser un ID numérico de colegio.",
-    )
+    colegio_id_raw = str(st.session_state.get("shared_colegio_id", "")).strip()
 
     with st.expander("Opciones avanzadas", expanded=False):
         ciclo_id = st.number_input(
@@ -609,13 +604,20 @@ with tab_profesores_clases:
             key="profesores_timeout",
         )
 
-    st.subheader("1) Generar Excel base de profesores")
-    st.caption("Incluye profesores activos e inactivos.")
-    persona_ids_raw = st.text_input(
-        "Filtrar por personaId (opcional, separado por coma)",
-        key="profesores_ids",
-    )
-    if st.button("Generar Excel base", type="primary", key="profesores_generar"):
+    with st.container(border=True):
+        st.markdown("**1) Generar Excel base de profesores**")
+        st.caption("Incluye profesores activos e inactivos.")
+        persona_ids_raw = st.text_input(
+            "Filtrar por personaId (opcional, separado por coma)",
+            key="profesores_ids",
+        )
+        run_generar_base = st.button(
+            "Generar Excel base",
+            type="primary",
+            key="profesores_generar",
+        )
+
+    if run_generar_base:
         token = _get_shared_token()
         if not token:
             st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")

@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Jira Focus Web</title>
   <style>
+    @import url('https://fonts.googleapis.com/css2?family=Lexend:wght@500;600;700&family=Source+Sans+3:wght@400;500;600;700&display=swap');
     :root {
       --bg: #edf2f8;
       --bg-soft: #f8fbff;
@@ -31,10 +32,12 @@
     body {
       margin: 0;
       padding: 12px;
-      font-family: "Trebuchet MS", "Gill Sans", "Verdana", sans-serif;
+      font-family: "Source Sans 3", "Segoe UI", "Tahoma", sans-serif;
       color: var(--text);
+      line-height: 1.35;
       background:
         radial-gradient(circle at 8% -20%, #ffffff 0, var(--bg-soft) 34%, transparent 58%),
+        radial-gradient(circle at 98% 8%, #e5f1ff 0%, transparent 42%),
         linear-gradient(180deg, #eef3f9 0%, var(--bg) 100%);
     }
     .app {
@@ -43,6 +46,7 @@
       width: 100%;
       max-width: 1320px;
       margin: 0 auto;
+      padding-bottom: 18px;
     }
     .card {
       background: var(--card);
@@ -51,14 +55,24 @@
       padding: 14px;
       box-shadow: var(--shadow);
       overflow: hidden;
+      transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+    }
+    .card:hover {
+      border-color: var(--line-strong);
+      box-shadow: 0 14px 30px rgba(14, 42, 74, 0.11);
     }
     .topbar {
       border: 0;
       background: linear-gradient(120deg, #0e518f 0%, #1973ba 70%, #2f8bcb 100%);
       color: #ffffff;
+      position: sticky;
+      top: 10px;
+      z-index: 40;
+      box-shadow: 0 12px 26px rgba(10, 41, 71, 0.24);
     }
     .topbar h2 {
       color: #ffffff;
+      font-family: "Lexend", "Segoe UI", sans-serif;
       letter-spacing: 0.2px;
     }
     .topbar .muted { color: rgba(235, 245, 255, 0.9); }
@@ -87,6 +101,24 @@
       border-color: rgba(255, 209, 209, 0.75);
       background: rgba(173, 46, 46, 0.45);
     }
+    .pill.busy {
+      border-color: rgba(255, 241, 171, 0.72);
+      background: rgba(196, 148, 31, 0.46);
+      color: #fff;
+      position: relative;
+      overflow: hidden;
+    }
+    .pill.busy::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      transform: translateX(-100%);
+      background: linear-gradient(110deg, transparent 0%, rgba(255, 255, 255, 0.55) 52%, transparent 100%);
+      animation: shimmer 1.35s linear infinite;
+    }
+    @keyframes shimmer {
+      100% { transform: translateX(100%); }
+    }
     .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
     .grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
     .activity-config-grid {
@@ -103,6 +135,43 @@
     .board-ticket-picker {
       width: 100%;
       max-width: 100%;
+    }
+    .issue-insight {
+      margin-top: 9px;
+      border: 1px solid #d7e4f2;
+      border-radius: 10px;
+      padding: 8px;
+      background: linear-gradient(180deg, #f8fbff 0%, #f1f7ff 100%);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      align-items: center;
+    }
+    .issue-insight.empty {
+      color: #567089;
+      font-size: 12px;
+    }
+    .issue-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid #c9dbee;
+      background: #ffffff;
+      color: #2f4e67;
+      font-size: 12px;
+      max-width: 100%;
+    }
+    .issue-chip b {
+      font-weight: 700;
+      color: #173b5a;
+    }
+    .issue-chip .value {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 250px;
     }
     .dashboard-grid {
       display: grid;
@@ -486,6 +555,30 @@
       flex-direction: column;
       align-self: start;
     }
+    .panel-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+    .panel-meta {
+      font-size: 12px;
+      color: #516b83;
+      margin-top: 2px;
+    }
+    .panel-tools {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(140px, auto);
+      gap: 8px;
+      margin-bottom: 10px;
+      align-items: center;
+    }
+    .panel-tools .inp,
+    .panel-tools .sel {
+      width: 100%;
+    }
     .dashboard-grid > .card.panel-worklogs {
       min-height: 0;
     }
@@ -511,7 +604,7 @@
       margin-bottom: 4px;
     }
     .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-    h2, h3, h4 { margin: 0 0 8px 0; }
+    h2, h3, h4 { margin: 0 0 8px 0; font-family: "Lexend", "Segoe UI", sans-serif; }
     h3 { font-size: 17px; letter-spacing: 0.15px; }
     .muted { color: var(--muted); font-size: 12px; }
     .pill {
@@ -574,11 +667,24 @@
     }
     .txt { min-height: 90px; resize: vertical; }
     label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
-    .msg { display: none; padding: 9px 10px; border-radius: 9px; border: 1px solid transparent; font-size: 13px; }
+    .msg {
+      display: none;
+      padding: 10px 11px;
+      border-radius: 10px;
+      border: 1px solid transparent;
+      font-size: 13px;
+      font-weight: 600;
+      box-shadow: 0 6px 16px rgba(12, 40, 68, 0.08);
+      animation: msgIn .2s ease;
+    }
     .msg.show { display: block; }
     .msg.error { background: #ffeaea; border-color: #edb8b8; color: var(--danger); }
     .msg.ok { background: #ebfaf1; border-color: #b7dfc8; color: var(--ok); }
     .msg.info { background: #eaf4ff; border-color: #bad6f6; color: #23527d; }
+    @keyframes msgIn {
+      from { opacity: 0; transform: translateY(-2px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
     .empty {
       border: 1px dashed #c8d6e7;
       border-radius: 10px;
@@ -619,7 +725,19 @@
       background: #f3f8ff;
     }
     .comments { display: grid; gap: 8px; max-height: 360px; overflow: auto; }
-    .comment { border: 1px solid var(--line); border-radius: 9px; padding: 8px; background: #fff; }
+    .comment {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 9px;
+      background: #fff;
+      transition: border-color .14s ease, box-shadow .14s ease, transform .14s ease;
+      scroll-margin-top: 84px;
+    }
+    .comment:hover {
+      border-color: #b4cde5;
+      box-shadow: 0 3px 10px rgba(18, 57, 93, 0.08);
+      transform: translateY(-1px);
+    }
     .comment.mine { background: #f7fbff; border: 2px solid #2f8bcb; }
     .comment.linked {
       border-left: 5px solid var(--comment-accent, #5d99cf);
@@ -1168,6 +1286,91 @@
       color: #264760;
       overflow-wrap: anywhere;
     }
+    .timeline-summary {
+      border: 1px solid #d6e4f3;
+      border-radius: 9px;
+      padding: 8px;
+      background: #f7fbff;
+      margin-bottom: 10px;
+      display: grid;
+      gap: 6px;
+    }
+    .timeline-summary-head {
+      font-size: 11px;
+      color: #46627d;
+      font-weight: 700;
+      letter-spacing: .03em;
+      text-transform: uppercase;
+    }
+    .timeline-summary-item {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 6px;
+      border: 1px solid #dde9f6;
+      border-radius: 8px;
+      background: #fff;
+      cursor: pointer;
+      transition: border-color .12s ease, background .12s ease, transform .12s ease;
+    }
+    .timeline-summary-item:hover {
+      border-color: #9fc1e1;
+      background: #f0f7ff;
+      transform: translateY(-1px);
+    }
+    .timeline-summary-item.active {
+      border-color: #5d99cf;
+      background: #e9f4ff;
+      box-shadow: inset 0 0 0 1px rgba(22, 111, 188, 0.14);
+    }
+    .timeline-summary-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      border: 1px solid rgba(9, 24, 39, 0.2);
+      flex: 0 0 auto;
+    }
+    .timeline-summary-main {
+      min-width: 0;
+      display: grid;
+      gap: 4px;
+    }
+    .timeline-summary-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+      color: #1f3f5a;
+      font-weight: 700;
+    }
+    .timeline-summary-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .timeline-summary-time {
+      color: #335a7d;
+      white-space: nowrap;
+      font-weight: 700;
+    }
+    .timeline-summary-bar {
+      height: 6px;
+      border-radius: 999px;
+      background: #e5eef8;
+      overflow: hidden;
+    }
+    .timeline-summary-fill {
+      height: 100%;
+      border-radius: 999px;
+      min-width: 2px;
+    }
+    .timeline-summary-pct {
+      font-size: 11px;
+      color: #46627d;
+      font-weight: 700;
+      white-space: nowrap;
+    }
     .timeline-lane-list {
       display: grid;
       gap: 8px;
@@ -1182,10 +1385,35 @@
       grid-template-columns: 1fr;
     }
     .timeline-lane-label {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
       font-size: 12px;
       color: #2a4861;
       font-weight: 700;
       overflow-wrap: anywhere;
+    }
+    .timeline-lane-label.active .timeline-lane-duration {
+      border-color: #7fb0dd;
+      background: #e3f0ff;
+      color: #1d4e7d;
+    }
+    .timeline-lane-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
+    }
+    .timeline-lane-duration {
+      font-size: 11px;
+      color: #406180;
+      background: #eaf2fb;
+      border: 1px solid #d0deed;
+      border-radius: 999px;
+      padding: 2px 7px;
+      white-space: nowrap;
+      flex: 0 0 auto;
     }
     .timeline-lane-track {
       position: relative;
@@ -1241,6 +1469,7 @@
     .worklog-row {
       cursor: pointer;
       transition: background .12s ease;
+      scroll-margin-top: 84px;
     }
     .worklog-row:hover td {
       background: #f7fbff;
@@ -1358,6 +1587,8 @@
       .grid2, .grid3 { grid-template-columns: 1fr; }
       .activity-config-grid { grid-template-columns: 1fr; }
       .dashboard-grid { grid-template-columns: 1fr; }
+      .panel-head { align-items: stretch; }
+      .panel-tools { grid-template-columns: 1fr; }
       .panel-timeline,
       .panel-comments,
       .panel-worklogs {
@@ -1378,8 +1609,13 @@
       .chart-donut-wrap { grid-template-columns: 1fr; }
       .chart-donut { width: 180px; height: 180px; }
       .timeline-meta { grid-template-columns: 1fr; }
+      .timeline-summary-item { grid-template-columns: auto minmax(0, 1fr); }
+      .timeline-summary-pct { display: none; }
+      .timeline-summary-name { white-space: normal; }
       .timeline-lane { grid-template-columns: 1fr; }
       .timeline-lane-track { height: 34px; }
+      .timeline-lane-label { align-items: flex-start; }
+      .timeline-lane-name { white-space: normal; }
       .float { left: 10px; right: 10px; width: auto; }
       .topbar { gap: 10px; }
       #userPill { max-width: 100%; }
@@ -1402,6 +1638,7 @@
       </div>
       <div class="row" style="margin-left:auto;">
         <span class="pill" id="connPill">Sin conexion</span>
+        <span class="pill" id="syncPill">Listo</span>
         <span class="pill" id="userPill">Usuario: -</span>
         <button class="btn" id="refreshIssuesBtn" type="button" disabled>Recargar tickets</button>
         <button class="btn danger" id="disconnectBtn" type="button" disabled>Desconectar</button>
@@ -1471,6 +1708,7 @@
           <label for="issueSel">Ticket actual</label>
           <select class="sel" id="issueSel"></select>
         </div>
+        <div id="issueInsight" class="issue-insight empty">Selecciona un ticket para ver contexto rapido.</div>
       </div>
 
       <div class="hide" aria-hidden="true">
@@ -1514,7 +1752,12 @@
 
       <div class="dashboard-grid">
         <div class="card panel-timeline" id="timelinePanel">
-          <h3>Timeline continuo por actividad</h3>
+          <div class="panel-head">
+            <div>
+              <h3>Timeline continuo por actividad</h3>
+              <div class="panel-meta" id="timelineMeta">Sin datos del ticket.</div>
+            </div>
+          </div>
           <div class="activity-focus hide" id="activityFocusBox" aria-hidden="true">
             <label for="activityQuickSel"></label>
             <select class="sel" id="activityQuickSel"></select>
@@ -1532,7 +1775,20 @@
           </div>
         </div>
         <div class="card panel-comments">
-          <h3>Comentarios del ticket</h3>
+          <div class="panel-head">
+            <div>
+              <h3>Comentarios del ticket</h3>
+              <div class="panel-meta" id="commentsMeta">Sin comentarios.</div>
+            </div>
+          </div>
+          <div class="panel-tools">
+            <input class="inp" id="commentSearchInp" type="text" placeholder="Buscar por autor, texto o archivo .xlsx">
+            <select class="sel" id="commentFilterSel">
+              <option value="all">Todos</option>
+              <option value="linked">Con actividad</option>
+              <option value="pending">Pendientes</option>
+            </select>
+          </div>
           <div id="commentsBox" class="comments"></div>
           <div id="regInlineBox" class="edit-inline hide" style="margin-top:10px;">
             <div class="edit-inline-title">Registrar actividad</div>
@@ -1552,9 +1808,20 @@
           </div>
         </div>
         <div class="card panel-worklogs">
-          <div class="row" style="justify-content:space-between;align-items:center;">
-            <h3 style="margin:0;">Historial editable por ticket</h3>
+          <div class="panel-head">
+            <div>
+              <h3 style="margin:0;">Historial editable por ticket</h3>
+              <div class="panel-meta" id="worklogsMeta">Sin worklogs.</div>
+            </div>
             <button class="btn danger" id="deleteAllWorklogsBtn" type="button" disabled>Eliminar todo</button>
+          </div>
+          <div class="panel-tools">
+            <input class="inp" id="worklogSearchInp" type="text" placeholder="Filtrar por actividad o autor">
+            <select class="sel" id="worklogOwnerSel">
+              <option value="all">Todos</option>
+              <option value="mine">Solo mios</option>
+              <option value="readonly">Solo lectura</option>
+            </select>
           </div>
           <div class="tbl-wrap">
             <table>
@@ -1754,9 +2021,13 @@
         regCtx: null,
         editCtx: null,
         selectedCommentId: '',
+        commentSearch: '',
+        commentFilterMode: 'all',
         selectedTimelineActivity: '',
         selectedTimelineMinutes: 0,
         selectedWorklogId: '',
+        worklogSearch: '',
+        worklogOwnerMode: 'all',
         timelineLinksByIssue: {},
         manualWorklogToCommentByIssue: {},
         chartDesign: DEFAULT_CHART_DESIGN,
@@ -1764,10 +2035,12 @@
         debugLogs: [],
         popupWatchTimer: 0,
         popupProcessing: false,
-        oauthCallbackInProgress: false
+        oauthCallbackInProgress: false,
+        netPendingCount: 0
       };
 
       const el = {};
+      let msgTimer = 0;
       const StorageService = {
         parse(raw, fb) { try { return raw ? JSON.parse(raw) : fb; } catch (_e) { return fb; } },
         get(key) { try { return localStorage.getItem(key); } catch (_e) { return null; } },
@@ -2249,32 +2522,37 @@
         },
         async tokenRequest(payload) {
           dbg('oauth_token_request', { grant_type: payload && payload.grant_type ? payload.grant_type : '' });
-          let res;
+          setNetBusy(1);
           try {
-            res = await fetch(OAUTH.tokenUrl, {
-              method: 'POST',
-              headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload || {})
-            });
-          } catch (_e) {
-            const err = new Error('No se pudo llegar a auth.atlassian.com (posible bloqueo de red/CORS).');
-            err.kind = 'cors';
-            throw err;
+            let res;
+            try {
+              res = await fetch(OAUTH.tokenUrl, {
+                method: 'POST',
+                headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload || {})
+              });
+            } catch (_e) {
+              const err = new Error('No se pudo llegar a auth.atlassian.com (posible bloqueo de red/CORS).');
+              err.kind = 'cors';
+              throw err;
+            }
+            const raw = await res.text();
+            let data = null;
+            if (raw) {
+              try { data = JSON.parse(raw); } catch (_e) { data = null; }
+            }
+            dbg('oauth_token_response', { status: res.status, ok: res.ok });
+            if (!res.ok) {
+              dbg('oauth_token_error_payload', data && typeof data === 'object' ? data : { raw: raw ? raw.slice(0, 200) : '' });
+              const err = new Error(httpMessage(data, res.status));
+              err.kind = 'oauth';
+              err.status = res.status;
+              throw err;
+            }
+            return data || {};
+          } finally {
+            setNetBusy(-1);
           }
-          const raw = await res.text();
-          let data = null;
-          if (raw) {
-            try { data = JSON.parse(raw); } catch (_e) { data = null; }
-          }
-          dbg('oauth_token_response', { status: res.status, ok: res.ok });
-          if (!res.ok) {
-            dbg('oauth_token_error_payload', data && typeof data === 'object' ? data : { raw: raw ? raw.slice(0, 200) : '' });
-            const err = new Error(httpMessage(data, res.status));
-            err.kind = 'oauth';
-            err.status = res.status;
-            throw err;
-          }
-          return data || {};
         },
         async exchangeCode(cfg, code, codeVerifier) {
           const data = await this.tokenRequest({
@@ -2337,32 +2615,37 @@
           return refreshed;
         },
         async getResources(accessToken) {
-          let res;
+          setNetBusy(1);
           try {
-            res = await fetch(OAUTH.resourcesUrl, {
-              method: 'GET',
-              headers: {
-                Accept: 'application/json',
-                Authorization: `Bearer ${accessToken}`
-              }
-            });
-          } catch (_e) {
-            const err = new Error('No se pudo consultar accessible-resources (CORS/red).');
-            err.kind = 'cors';
-            throw err;
+            let res;
+            try {
+              res = await fetch(OAUTH.resourcesUrl, {
+                method: 'GET',
+                headers: {
+                  Accept: 'application/json',
+                  Authorization: `Bearer ${accessToken}`
+                }
+              });
+            } catch (_e) {
+              const err = new Error('No se pudo consultar accessible-resources (CORS/red).');
+              err.kind = 'cors';
+              throw err;
+            }
+            const raw = await res.text();
+            let data = null;
+            if (raw) {
+              try { data = JSON.parse(raw); } catch (_e) { data = null; }
+            }
+            if (!res.ok) {
+              const err = new Error(httpMessage(data, res.status));
+              err.kind = 'oauth';
+              err.status = res.status;
+              throw err;
+            }
+            return Array.isArray(data) ? data : [];
+          } finally {
+            setNetBusy(-1);
           }
-          const raw = await res.text();
-          let data = null;
-          if (raw) {
-            try { data = JSON.parse(raw); } catch (_e) { data = null; }
-          }
-          if (!res.ok) {
-            const err = new Error(httpMessage(data, res.status));
-            err.kind = 'oauth';
-            err.status = res.status;
-            throw err;
-          }
-          return Array.isArray(data) ? data : [];
         },
         pickCloudResource(resources, jiraUrl) {
           const site = sanitizeUrl(jiraUrl);
@@ -2402,52 +2685,57 @@
           return u.toString();
         },
         async req(method, path, opts = {}, retried = false) {
-          const cfg = StorageService.getConfig();
-          if (!cfg) {
-            const err = new Error('No existe configuracion OAuth.');
-            err.kind = 'oauth';
-            err.status = 401;
-            throw err;
-          }
-          const tokens = await OAuthService.ensureValidTokens(cfg);
-          const init = {
-            method,
-            headers: {
-              Accept: 'application/json',
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${tokens.access_token}`
-            }
-          };
-          if (opts.body !== undefined) init.body = JSON.stringify(opts.body);
-          let res;
+          setNetBusy(1);
           try {
-            res = await fetch(this.url(path, opts.params || {}), init);
-          } catch (_e) {
-            const err = new Error('No se pudo conectar directo a Jira Cloud (posible CORS/red).');
-            err.kind = 'cors';
-            throw err;
-          }
-          const raw = await res.text();
-          let payload = null;
-          if (raw) { try { payload = JSON.parse(raw); } catch (_e) { payload = null; } }
-          if (!res.ok) {
-            if (res.status === 401 && !retried) {
-              try {
-                await OAuthService.refresh(cfg, tokens.refresh_token).then((newTokens) => {
-                  StorageService.saveOAuthTokens(newTokens);
-                  state.oauthTokens = newTokens;
-                });
-                return this.req(method, path, opts, true);
-              } catch (_refreshError) {
-                StorageService.clearOAuthTokens();
-              }
+            const cfg = StorageService.getConfig();
+            if (!cfg) {
+              const err = new Error('No existe configuracion OAuth.');
+              err.kind = 'oauth';
+              err.status = 401;
+              throw err;
             }
-            const err = new Error(httpMessage(payload, res.status));
-            err.kind = 'http';
-            err.status = res.status;
-            throw err;
+            const tokens = await OAuthService.ensureValidTokens(cfg);
+            const init = {
+              method,
+              headers: {
+                Accept: 'application/json',
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${tokens.access_token}`
+              }
+            };
+            if (opts.body !== undefined) init.body = JSON.stringify(opts.body);
+            let res;
+            try {
+              res = await fetch(this.url(path, opts.params || {}), init);
+            } catch (_e) {
+              const err = new Error('No se pudo conectar directo a Jira Cloud (posible CORS/red).');
+              err.kind = 'cors';
+              throw err;
+            }
+            const raw = await res.text();
+            let payload = null;
+            if (raw) { try { payload = JSON.parse(raw); } catch (_e) { payload = null; } }
+            if (!res.ok) {
+              if (res.status === 401 && !retried) {
+                try {
+                  await OAuthService.refresh(cfg, tokens.refresh_token).then((newTokens) => {
+                    StorageService.saveOAuthTokens(newTokens);
+                    state.oauthTokens = newTokens;
+                  });
+                  return this.req(method, path, opts, true);
+                } catch (_refreshError) {
+                  StorageService.clearOAuthTokens();
+                }
+              }
+              const err = new Error(httpMessage(payload, res.status));
+              err.kind = 'http';
+              err.status = res.status;
+              throw err;
+            }
+            return payload || {};
+          } finally {
+            setNetBusy(-1);
           }
-          return payload || {};
         },
         myself() { return this.req('GET', '/rest/api/3/myself'); },
         searchIssues() {
@@ -2863,12 +3151,12 @@
       }
       function cacheElements() {
         [
-          'connPill','userPill','refreshIssuesBtn','disconnectBtn','msg','idleMsg',
+          'connPill','syncPill','userPill','refreshIssuesBtn','disconnectBtn','msg','idleMsg',
           'debugLogBox','debugCopyBtn','debugClearBtn',
           'loginView','urlInp','clientIdInp','clientSecretInp','redirectUriInp','callbackUrlInp','connectBtn','processCallbackBtn','clearOAuthBtn',
-          'mainView','issueSel','activityTypeSel','activityDueInp','activityInp','minutesInp','registerBtn','jiraDurationPill','timerVal','timerState','startBtn','pauseBtn',
+          'mainView','issueSel','issueInsight','activityTypeSel','activityDueInp','activityInp','minutesInp','registerBtn','jiraDurationPill','timerVal','timerState','startBtn','pauseBtn',
           'resetBtn','applyTimerBtn','suggestionBox','applySugActBtn','applySugTimeBtn','registerSugBtn','todayTotal','weekTotal','issueCount','dashMeta',
-          'refreshDashBtn','recentBox','commentsBox','worklogBody','deleteAllWorklogsBtn','timelineBox','ganttBox','genReportBtn','exportReportBtn','reportMeta',
+          'refreshDashBtn','recentBox','commentsBox','commentsMeta','commentSearchInp','commentFilterSel','worklogBody','worklogsMeta','worklogSearchInp','worklogOwnerSel','deleteAllWorklogsBtn','timelineBox','timelineMeta','ganttBox','genReportBtn','exportReportBtn','reportMeta',
           'reportBody','timelinePanel','chartDesignSel','chartDesignHelp','activityFocusBox','activityQuickSel','activityQuickMeta','compactBtn','floatBox','floatIssue','floatTimer','floatState','floatStartBtn','floatPauseBtn','floatExpandBtn',
           'regInlineBox','regInlineMeta','regTypeSel','regDateInp','regMinInp','regInlineOkBtn','regInlineCancelBtn',
           'editInlineBox','editMeta','editTypeSel','editActInp','editDateInp','editTimeInp','editMinInp','editSaveBtn','editDeleteBtn','editCancelBtn','activityList'
@@ -2927,13 +3215,34 @@
       function timerSave() { StorageService.saveTimer(state.timer); }
 
       function showMsg(type, text) {
+        if (msgTimer) {
+          clearTimeout(msgTimer);
+          msgTimer = 0;
+        }
         el.msg.className = `msg show ${type}`;
         el.msg.textContent = text;
+        const ttl = type === 'error' ? 9000 : 4800;
+        msgTimer = window.setTimeout(() => {
+          const sameText = String(el.msg.textContent || '') === String(text || '');
+          if (sameText) {
+            clearMsg();
+          }
+        }, ttl);
       }
 
       function clearMsg() {
+        if (msgTimer) {
+          clearTimeout(msgTimer);
+          msgTimer = 0;
+        }
         el.msg.className = 'msg';
         el.msg.textContent = '';
+      }
+
+      function setNetBusy(delta) {
+        const next = Math.max(0, Number(state.netPendingCount || 0) + Number(delta || 0));
+        state.netPendingCount = next;
+        renderTop();
       }
 
       function applyError(err, fallback) {
@@ -2987,6 +3296,9 @@
       function renderTop() {
         el.connPill.textContent = state.connected ? 'Conectado' : 'Sin conexion';
         el.connPill.className = `pill ${state.connected ? 'ok' : ''}`;
+        const isBusy = Number(state.netPendingCount || 0) > 0;
+        el.syncPill.textContent = isBusy ? 'Sincronizando...' : 'Listo';
+        el.syncPill.className = `pill ${isBusy ? 'busy' : ''}`;
         el.userPill.textContent = state.connected
           ? `Usuario: ${state.me && state.me.displayName ? state.me.displayName : (state.config && state.config.url ? state.config.url : '-')}`
           : 'Usuario: -';
@@ -2994,6 +3306,35 @@
         el.refreshIssuesBtn.disabled = !state.connected;
         el.loginView.classList.toggle('hide', state.connected);
         el.mainView.classList.toggle('hide', !state.connected);
+      }
+
+      function renderIssueInsight() {
+        if (!el.issueInsight) return;
+        const key = String(state.selectedIssueKey || '').trim();
+        if (!key) {
+          el.issueInsight.className = 'issue-insight empty';
+          el.issueInsight.textContent = 'Selecciona un ticket para ver contexto rapido.';
+          return;
+        }
+        const issue = issueByKey(key);
+        const comments = state.commentsByIssue[key] || [];
+        const worklogs = state.worklogsByIssue[key] || [];
+        const commentsCount = comments.length;
+        const worklogsCount = worklogs.length;
+        const totalMins = worklogs.reduce((acc, w) => acc + minutesOf(w), 0);
+        const lastComment = commentsCount ? TimeService.dtLabel(comments[commentsCount - 1].created || new Date()) : 'Sin comentarios';
+        const templateCount = countTemplateWorklogs(key);
+        const summary = issue && issue.summary ? issue.summary : '-';
+        el.issueInsight.className = 'issue-insight';
+        el.issueInsight.innerHTML = `
+          <span class="issue-chip"><b>Ticket</b><span class="value">${escapeHtml(key)}</span></span>
+          <span class="issue-chip"><b>Resumen</b><span class="value">${escapeHtml(summary)}</span></span>
+          <span class="issue-chip"><b>Comentarios</b><span class="value">${escapeHtml(String(commentsCount))}</span></span>
+          <span class="issue-chip"><b>Worklogs</b><span class="value">${escapeHtml(String(worklogsCount))}</span></span>
+          <span class="issue-chip"><b>Total</b><span class="value">${escapeHtml(TimeService.jiraDuration(totalMins))}</span></span>
+          <span class="issue-chip"><b>Plantillas</b><span class="value">${escapeHtml(String(templateCount))}</span></span>
+          <span class="issue-chip"><b>Ult. comentario</b><span class="value">${escapeHtml(lastComment)}</span></span>
+        `;
       }
 
       function renderActivitiesList() {
@@ -3592,10 +3933,17 @@
         if (!comments.length) {
           state.selectedCommentId = '';
           hideInlineRegistrar();
+          if (el.commentsMeta) {
+            el.commentsMeta.textContent = 'Sin comentarios.';
+          }
           el.commentsBox.innerHTML = '<div class="empty">Sin comentarios.</div>';
           return;
         }
-        el.commentsBox.innerHTML = comments.map((c) => {
+        const mode = ['all', 'linked', 'pending'].includes(String(state.commentFilterMode || '').trim())
+          ? String(state.commentFilterMode || '').trim()
+          : 'all';
+        const query = normalizePlain(state.commentSearch || '').trim();
+        const prepared = comments.map((c) => {
           const my = mine(c.author);
           const id = String(c.id || '');
           const selectedClass = state.selectedCommentId && String(state.selectedCommentId) === id ? ' selected' : '';
@@ -3621,13 +3969,61 @@
           const linkedBadge = accent
             ? `<div class="comment-ref"><span class="comment-ref-dot" style="background:${escapeHtml(accent)};"></span><span>${escapeHtml(linkedActivity)}</span></div>`
             : '';
+          return {
+            id,
+            selectedClass,
+            mineClass,
+            author,
+            txt,
+            existingWorklogId,
+            linkedActivity,
+            xlsxNames,
+            xlsxChip,
+            accent,
+            linkedClass,
+            accentAttr,
+            actionClass,
+            actionLabel,
+            linkedBadge,
+            c
+          };
+        });
+        const linkedCount = prepared.filter((item) => !!item.existingWorklogId).length;
+        const pendingCount = prepared.length - linkedCount;
+        const filtered = prepared.filter((item) => {
+          if (mode === 'linked' && !item.existingWorklogId) return false;
+          if (mode === 'pending' && item.existingWorklogId) return false;
+          if (!query) return true;
+          const haystack = normalizePlain([
+            item.author,
+            item.txt,
+            item.linkedActivity,
+            item.xlsxNames.join(' ')
+          ].join(' '));
+          return haystack.includes(query);
+        });
+        if (el.commentsMeta) {
+          const base = `${filtered.length}/${prepared.length} visibles | ${linkedCount} con actividad | ${pendingCount} pendientes`;
+          const rawQuery = String(state.commentSearch || '').trim();
+          const clipped = rawQuery.length > 28 ? `${rawQuery.slice(0, 28)}...` : rawQuery;
+          el.commentsMeta.textContent = rawQuery ? `${base} | filtro: "${clipped}"` : base;
+        }
+        if (state.selectedCommentId && !filtered.some((item) => String(item.id) === String(state.selectedCommentId))) {
+          state.selectedCommentId = '';
+        }
+        if (!filtered.length) {
+          hideInlineRegistrar();
+          el.commentsBox.innerHTML = '<div class="empty">No hay comentarios que coincidan con el filtro actual.</div>';
+          return;
+        }
+        el.commentsBox.innerHTML = filtered.map((item) => {
           return `
-            <div class="comment${mineClass}${selectedClass}${linkedClass}" data-comment-id="${escapeHtml(id)}"${accentAttr}>
-              <div class="meta"><span>${escapeHtml(author)}</span><span>${escapeHtml(TimeService.dtLabel(c.created))}</span></div>
-              <div class="body">${escapeHtml(txt)}</div>
-              ${xlsxChip}
-              ${linkedBadge}
-              <div class="row" style="margin-top:8px;"><button class="${actionClass}" data-act="reg-from-comment" data-id="${escapeHtml(id)}" data-worklog-id="${escapeHtml(existingWorklogId)}">${actionLabel}</button></div>
+            <div class="comment${item.mineClass}${item.selectedClass}${item.linkedClass}" data-comment-id="${escapeHtml(item.id)}"${item.accentAttr}>
+              <div class="meta"><span>${escapeHtml(item.author)}</span><span>${escapeHtml(TimeService.dtLabel(item.c.created))}</span></div>
+              <div class="body">${escapeHtml(item.txt)}</div>
+              ${item.xlsxChip}
+              ${item.linkedBadge}
+              <div class="row" style="margin-top:8px;"><button class="${item.actionClass}" data-act="reg-from-comment" data-id="${escapeHtml(item.id)}" data-worklog-id="${escapeHtml(item.existingWorklogId)}">${item.actionLabel}</button></div>
             </div>
           `;
         }).join('');
@@ -3639,21 +4035,53 @@
         }
         if (!rows.length) {
           state.selectedWorklogId = '';
+          if (el.worklogsMeta) {
+            el.worklogsMeta.textContent = 'Sin worklogs.';
+          }
           el.worklogBody.innerHTML = '<tr><td colspan="4"><div class="empty">Sin worklogs.</div></td></tr>';
           return;
         }
-        el.worklogBody.innerHTML = rows.map((w) => {
+        const ownerMode = ['all', 'mine', 'readonly'].includes(String(state.worklogOwnerMode || '').trim())
+          ? String(state.worklogOwnerMode || '').trim()
+          : 'all';
+        const query = normalizePlain(state.worklogSearch || '').trim();
+        const prepared = rows.map((w) => {
           const my = mine(w.author);
           const id = String(w.id || '');
           const date = TimeService.dtLabel(w.started || w.created || new Date());
           const act = activityOf(w);
           const mins = TimeService.jiraDuration(minutesOf(w));
+          const author = w.author && w.author.displayName ? w.author.displayName : 'Sin autor';
           const actions = my
             ? `<button class="btn" data-act="view-worklog" data-id="${escapeHtml(id)}">Ver dashboard</button> <button class="btn" data-act="edit-worklog" data-id="${escapeHtml(id)}">Editar</button> <button class="btn danger" data-act="del-worklog" data-id="${escapeHtml(id)}">Eliminar</button>`
             : `<button class="btn" data-act="view-worklog" data-id="${escapeHtml(id)}">Ver dashboard</button> <span class="pill">Solo lectura</span>`;
           const selectedClass = state.selectedWorklogId && String(state.selectedWorklogId) === id ? ' selected' : '';
-          return `<tr class="worklog-row${selectedClass}" data-worklog-id="${escapeHtml(id)}"><td>${escapeHtml(date)}</td><td>${escapeHtml(act)}</td><td>${escapeHtml(mins)}</td><td>${actions}</td></tr>`;
-        }).join('');
+          return { w, my, id, date, act, mins, author, actions, selectedClass };
+        });
+        const mineCount = prepared.filter((item) => item.my).length;
+        const filtered = prepared.filter((item) => {
+          if (ownerMode === 'mine' && !item.my) return false;
+          if (ownerMode === 'readonly' && item.my) return false;
+          if (!query) return true;
+          const haystack = normalizePlain([item.act, item.author, item.date].join(' '));
+          return haystack.includes(query);
+        });
+        if (el.worklogsMeta) {
+          const base = `${filtered.length}/${prepared.length} visibles | ${mineCount} editables`;
+          const rawQuery = String(state.worklogSearch || '').trim();
+          const clipped = rawQuery.length > 24 ? `${rawQuery.slice(0, 24)}...` : rawQuery;
+          el.worklogsMeta.textContent = rawQuery ? `${base} | filtro: "${clipped}"` : base;
+        }
+        if (state.selectedWorklogId && !filtered.some((item) => String(item.id) === String(state.selectedWorklogId))) {
+          state.selectedWorklogId = '';
+        }
+        if (!filtered.length) {
+          el.worklogBody.innerHTML = '<tr><td colspan="4"><div class="empty">No hay worklogs que coincidan con el filtro actual.</div></td></tr>';
+          return;
+        }
+        el.worklogBody.innerHTML = filtered.map((item) => (
+          `<tr class="worklog-row${item.selectedClass}" data-worklog-id="${escapeHtml(item.id)}"><td>${escapeHtml(item.date)}</td><td>${escapeHtml(item.act)}</td><td>${escapeHtml(item.mins)}</td><td>${item.actions}</td></tr>`
+        )).join('');
       }
 
       function focusWorklogInDashboard(issueKey, worklog) {
@@ -3943,6 +4371,9 @@
           state.selectedTimelineActivity = '';
           state.selectedTimelineMinutes = 0;
           state.timelineLinksByIssue[key] = { commentToWorklogIds: {}, worklogToCommentId: {} };
+          if (el.timelineMeta) {
+            el.timelineMeta.textContent = 'Sin datos del ticket.';
+          }
           el.timelineBox.className = 'empty';
           el.timelineBox.textContent = 'Sin ticket seleccionado.';
           el.ganttBox.className = 'hide';
@@ -3956,6 +4387,9 @@
           state.selectedTimelineActivity = '';
           state.selectedTimelineMinutes = 0;
           state.timelineLinksByIssue[key] = { commentToWorklogIds: {}, worklogToCommentId: {} };
+          if (el.timelineMeta) {
+            el.timelineMeta.textContent = 'Sin comentarios ni worklogs en este ticket.';
+          }
           el.timelineBox.className = 'empty';
           el.timelineBox.textContent = 'Sin comentarios ni worklogs para este ticket.';
           el.ganttBox.className = 'hide';
@@ -3965,6 +4399,9 @@
         }
 
         state.timelineLinksByIssue[key] = data.links;
+        if (el.timelineMeta) {
+          el.timelineMeta.textContent = `${data.logsAsc.length} worklogs | ${data.commentsAsc.length} comentarios | ${data.commentsWithWorklog} vinculados`;
+        }
         if (state.selectedWorklogId && !data.logsAsc.some((r) => r.id === String(state.selectedWorklogId))) {
           state.selectedWorklogId = '';
         }
@@ -3981,7 +4418,50 @@
           state.selectedTimelineMinutes = selectedLane.totalMinutes;
         }
 
-        const metaHtml = '';
+        const metaHtml = `
+          <div class="timeline-meta">
+            <div class="timeline-meta-item">
+              <div class="k">Inicio</div>
+              <div class="v">${escapeHtml(TimeService.dtLabel(data.start))}</div>
+            </div>
+            <div class="timeline-meta-item">
+              <div class="k">Fin</div>
+              <div class="v">${escapeHtml(TimeService.dtLabel(data.end))}</div>
+            </div>
+            <div class="timeline-meta-item">
+              <div class="k">Total Actividad</div>
+              <div class="v">${escapeHtml(TimeService.jiraDuration(data.totalMinutes))}</div>
+            </div>
+            <div class="timeline-meta-item">
+              <div class="k">Actividades</div>
+              <div class="v">${escapeHtml(String(data.lanes.length))}</div>
+            </div>
+          </div>
+        `;
+        const summaryRows = data.lanes.map((lane) => {
+          const laneKey = activityKey(lane.activity);
+          const selected = selectedActivityKey && laneKey === selectedActivityKey;
+          const pct = data.totalMinutes > 0 ? (lane.totalMinutes * 100 / data.totalMinutes) : 0;
+          const pctLabel = `${pct.toFixed(1)}%`;
+          const barWidth = Math.max(2, Math.min(100, pct));
+          const itemTitle = `${lane.activity} | ${TimeService.jiraDuration(lane.totalMinutes)} | ${pctLabel} del total`;
+          return `
+            <div class="timeline-summary-item${selected ? ' active' : ''}" data-activity="${escapeHtml(lane.activity)}" data-minutes="${lane.totalMinutes}" title="${escapeHtml(itemTitle)}">
+              <span class="timeline-summary-dot" style="background:${escapeHtml(lane.color)};"></span>
+              <div class="timeline-summary-main">
+                <div class="timeline-summary-title">
+                  <span class="timeline-summary-name">${escapeHtml(lane.activity)}</span>
+                  <span class="timeline-summary-time">${escapeHtml(TimeService.jiraDuration(lane.totalMinutes))}</span>
+                </div>
+                <div class="timeline-summary-bar"><span class="timeline-summary-fill" style="width:${barWidth.toFixed(2)}%;background:${escapeHtml(lane.color)};"></span></div>
+              </div>
+              <span class="timeline-summary-pct">${escapeHtml(pctLabel)}</span>
+            </div>
+          `;
+        }).join('');
+        const summaryHtml = summaryRows
+          ? `<div class="timeline-summary"><div class="timeline-summary-head">Resumen por actividad</div>${summaryRows}</div>`
+          : '';
 
         const commentLaneDots = data.commentsAsc.map((c) => {
           const cId = String(c.id || '');
@@ -4014,8 +4494,9 @@
           }).join('');
           return `
             <div class="timeline-lane">
-              <div class="timeline-lane-label${laneSelected ? ' chart-clickable' : ''}" data-activity="${escapeHtml(lane.activity)}" data-minutes="${lane.totalMinutes}">
-                ${escapeHtml(lane.activity)} (${escapeHtml(TimeService.jiraDuration(lane.totalMinutes))})
+              <div class="timeline-lane-label chart-clickable${laneSelected ? ' active' : ''}" data-activity="${escapeHtml(lane.activity)}" data-minutes="${lane.totalMinutes}">
+                <span class="timeline-lane-name">${escapeHtml(lane.activity)}</span>
+                <span class="timeline-lane-duration">${escapeHtml(TimeService.jiraDuration(lane.totalMinutes))}</span>
               </div>
               <div class="timeline-lane-track">${bars}</div>
             </div>
@@ -4026,6 +4507,7 @@
         el.timelineBox.innerHTML = `
           <div class="timeline-continuous">
             ${metaHtml}
+            ${summaryHtml}
             <div class="timeline-lane-list">
               ${commentLane}
               ${activityLanes || '<div class="chart-note">Aun no hay worklogs en el ticket.</div>'}
@@ -4049,6 +4531,7 @@
           renderWorklogs('');
           renderSuggestion('');
           renderTimeline('');
+          renderIssueInsight();
           return;
         }
         if (state.editCtx && state.editCtx.issueKey !== key) {
@@ -4061,6 +4544,7 @@
         renderWorklogs(key);
         renderSuggestion(key);
         renderTimeline(key);
+        renderIssueInsight();
       }
 
       function renderDashboard() {
@@ -4559,6 +5043,7 @@
         state.selectedTimelineMinutes = 0;
         state.report = { detail: [], grouped: [] };
         state.dash = { logs: [], today: 0, week: 0, issueCount: 0, refreshedAt: null };
+        state.netPendingCount = 0;
         JiraService.setCloudId('');
       }
 
@@ -4860,6 +5345,40 @@
           catch (e) { applyError(e, `No se pudo cargar detalle de ${state.selectedIssueKey}.`); }
           renderCompact();
         });
+        if (el.commentSearchInp) {
+          el.commentSearchInp.value = state.commentSearch;
+          el.commentSearchInp.addEventListener('input', () => {
+            state.commentSearch = String(el.commentSearchInp.value || '');
+            renderComments(state.selectedIssueKey);
+          });
+        }
+        if (el.commentFilterSel) {
+          el.commentFilterSel.value = ['all', 'linked', 'pending'].includes(state.commentFilterMode)
+            ? state.commentFilterMode
+            : 'all';
+          el.commentFilterSel.addEventListener('change', () => {
+            const mode = String(el.commentFilterSel.value || '').trim();
+            state.commentFilterMode = ['all', 'linked', 'pending'].includes(mode) ? mode : 'all';
+            renderComments(state.selectedIssueKey);
+          });
+        }
+        if (el.worklogSearchInp) {
+          el.worklogSearchInp.value = state.worklogSearch;
+          el.worklogSearchInp.addEventListener('input', () => {
+            state.worklogSearch = String(el.worklogSearchInp.value || '');
+            renderWorklogs(state.selectedIssueKey);
+          });
+        }
+        if (el.worklogOwnerSel) {
+          el.worklogOwnerSel.value = ['all', 'mine', 'readonly'].includes(state.worklogOwnerMode)
+            ? state.worklogOwnerMode
+            : 'all';
+          el.worklogOwnerSel.addEventListener('change', () => {
+            const mode = String(el.worklogOwnerSel.value || '').trim();
+            state.worklogOwnerMode = ['all', 'mine', 'readonly'].includes(mode) ? mode : 'all';
+            renderWorklogs(state.selectedIssueKey);
+          });
+        }
 
         el.activityTypeSel.addEventListener('change', () => {
           syncOfficialActivityToState(true);

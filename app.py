@@ -69,13 +69,22 @@ if menu_option == "Jira Focus Web":
     st.stop()
 st.title("Si estás acá es porque eres flojo")
 st.write("El maravilloso mundo de TED :0 automatiza tu chamba por unos buenos días al día ;)")
-st.markdown("**Token global Pegasus**")
-st.text_input(
-    "Token (sin Bearer)",
-    type="password",
-    key="shared_pegasus_token",
-    help="Se usa en todas las funciones. Si queda vacio, se usa PEGASUS_TOKEN.",
-)
+st.markdown("**ConfiguraciÃ³n global**")
+global_col_token, global_col_colegio = st.columns([2.3, 1.1])
+with global_col_token:
+    st.text_input(
+        "Token (sin Bearer)",
+        type="password",
+        key="shared_pegasus_token",
+        help="Se usa en todas las funciones. Si queda vacio, se usa PEGASUS_TOKEN.",
+    )
+with global_col_colegio:
+    st.text_input(
+        "Colegio Clave (global)",
+        key="shared_colegio_id",
+        placeholder="2326",
+        help="Se reutiliza en CRUD Alumnos para no volver a pedirlo.",
+    )
 tab_clases, tab_profesores_clases, tab_crud_alumnos, tab_clases_api = st.tabs(
     [
         "Crear clases",
@@ -914,114 +923,118 @@ with tab_profesores_clases:
 with tab_crud_alumnos:
     st.subheader("CRUD Alumnos")
     st.caption("Flujo unificado y compacto para alumnos.")
-    st.subheader("1) Plantilla de alumnos registrados")
-    st.caption("Descarga la plantilla base. Esta configuracion se reutiliza abajo.")
-    colegio_id_raw = st.text_input(
-        "Colegio Clave",
-        key="alumnos_colegio_text",
-        placeholder="2326",
-        help="Acepta texto o número. Debe ser un ID numérico de colegio.",
-    )
-    with st.expander("Opciones avanzadas", expanded=False):
-        ciclo_id = st.number_input(
-            "Ciclo ID",
-            min_value=1,
-            step=1,
-            value=ALUMNOS_CICLO_ID_DEFAULT,
-            format="%d",
-            key="alumnos_ciclo",
+    crud_col_left, crud_col_right = st.columns(2, gap="large")
+    with crud_col_left:
+        st.subheader("1) Plantilla de alumnos registrados")
+        st.caption("Descarga la plantilla base. Esta configuracion se reutiliza abajo.")
+        colegio_id_raw = str(
+            st.session_state.get("shared_colegio_id", "")
+            or st.session_state.get("alumnos_colegio_text", "")
+        ).strip()
+        if colegio_id_raw:
+            st.session_state["alumnos_colegio_text"] = colegio_id_raw
+        st.caption(f"Colegio global: `{colegio_id_raw or '-'}`")
+        with st.expander("Opciones avanzadas", expanded=False):
+            ciclo_id = st.number_input(
+                "Ciclo ID",
+                min_value=1,
+                step=1,
+                value=ALUMNOS_CICLO_ID_DEFAULT,
+                format="%d",
+                key="alumnos_ciclo",
+            )
+            empresa_id = st.number_input(
+                "Empresa ID",
+                min_value=1,
+                step=1,
+                value=DEFAULT_EMPRESA_ID,
+                format="%d",
+                key="alumnos_empresa",
+            )
+            timeout = st.number_input(
+                "Timeout (seg)",
+                min_value=5,
+                step=5,
+                value=30,
+                format="%d",
+                key="alumnos_timeout",
+            )
+    
+        if st.button("Descargar plantilla", type="primary", key="alumnos_descargar"):
+            token = _get_shared_token()
+            if not token:
+                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                st.stop()
+            try:
+                colegio_id_int = _parse_colegio_id(colegio_id_raw)
+            except ValueError as exc:
+                st.error(f"Error: {exc}")
+                st.stop()
+            try:
+                with st.spinner("Descargando plantilla..."):
+                    output_bytes, summary = descargar_plantilla_edicion_masiva(
+                        token=token,
+                        colegio_id=colegio_id_int,
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                    )
+            except Exception as exc:  # pragma: no cover - UI
+                st.error(f"Error: {exc}")
+                st.stop()
+    
+            file_name = f"plantilla_edicion_alumnos_{colegio_id_int}.xlsx"
+            st.success(f"Listo. Alumnos: {summary['alumnos_total']}.")
+            st.download_button(
+                label="Descargar plantilla",
+                data=output_bytes,
+                file_name=file_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+    
+    with crud_col_right:
+        st.divider()
+        st.subheader("2) Comparar Plantilla_BD vs Plantilla_Actualizada")
+        st.caption("Sube el .xlsx con hojas Plantilla_BD y Plantilla_Actualizada.")
+        uploaded_compare = st.file_uploader(
+            "Excel con Plantilla_BD y Plantilla_Actualizada",
+            type=["xlsx"],
+            key="alumnos_compare_excel",
         )
-        empresa_id = st.number_input(
-            "Empresa ID",
-            min_value=1,
-            step=1,
-            value=DEFAULT_EMPRESA_ID,
-            format="%d",
-            key="alumnos_empresa",
-        )
-        timeout = st.number_input(
-            "Timeout (seg)",
-            min_value=5,
-            step=5,
-            value=30,
-            format="%d",
-            key="alumnos_timeout",
-        )
-
-    if st.button("Descargar plantilla", type="primary", key="alumnos_descargar"):
-        token = _get_shared_token()
-        if not token:
-            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-            st.stop()
-        try:
-            colegio_id_int = _parse_colegio_id(colegio_id_raw)
-        except ValueError as exc:
-            st.error(f"Error: {exc}")
-            st.stop()
-        try:
-            with st.spinner("Descargando plantilla..."):
-                output_bytes, summary = descargar_plantilla_edicion_masiva(
-                    token=token,
-                    colegio_id=colegio_id_int,
-                    empresa_id=int(empresa_id),
-                    ciclo_id=int(ciclo_id),
-                    timeout=int(timeout),
-                )
-        except Exception as exc:  # pragma: no cover - UI
-            st.error(f"Error: {exc}")
-            st.stop()
-
-        file_name = f"plantilla_edicion_alumnos_{colegio_id_int}.xlsx"
-        st.success(f"Listo. Alumnos: {summary['alumnos_total']}.")
-        st.download_button(
-            label="Descargar plantilla",
-            data=output_bytes,
-            file_name=file_name,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-
-    st.divider()
-    st.subheader("2) Comparar Plantilla_BD vs Plantilla_Actualizada")
-    st.caption("Sube el .xlsx con hojas Plantilla_BD y Plantilla_Actualizada.")
-    uploaded_compare = st.file_uploader(
-        "Excel con Plantilla_BD y Plantilla_Actualizada",
-        type=["xlsx"],
-        key="alumnos_compare_excel",
-    )
-    if st.button("Generar alumnos_resultados", type="primary", key="alumnos_compare"):
-        if not uploaded_compare:
-            st.error("Sube un Excel .xlsx con Plantilla_BD y Plantilla_Actualizada.")
-            st.stop()
-        suffix = Path(uploaded_compare.name).suffix or ".xlsx"
-        tmp_path = None
-        try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                tmp.write(uploaded_compare.read())
-                tmp_path = Path(tmp.name)
-            output_bytes, summary = comparar_plantillas(excel_path=tmp_path)
-        except Exception as exc:  # pragma: no cover - UI
-            st.error(f"Error: {exc}")
-            st.stop()
-        finally:
-            if tmp_path:
-                try:
-                    tmp_path.unlink()
-                except OSError:
-                    pass
-
-        st.success(
-            "Listo. Base: {base_total}, Actualizada: {actualizados_total}, "
-            "Match NUIP: {nuip_match}, Nuevos: {nuevos_total}, "
-            "Inactivados: {inactivados_total}.".format(**summary)
-        )
-        download_name = f"alumnos_resultados_{Path(uploaded_compare.name).stem}.xlsx"
-        st.download_button(
-            label="Descargar alumnos_resultados",
-            data=output_bytes,
-            file_name=download_name,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
-
+        if st.button("Generar alumnos_resultados", type="primary", key="alumnos_compare"):
+            if not uploaded_compare:
+                st.error("Sube un Excel .xlsx con Plantilla_BD y Plantilla_Actualizada.")
+                st.stop()
+            suffix = Path(uploaded_compare.name).suffix or ".xlsx"
+            tmp_path = None
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                    tmp.write(uploaded_compare.read())
+                    tmp_path = Path(tmp.name)
+                output_bytes, summary = comparar_plantillas(excel_path=tmp_path)
+            except Exception as exc:  # pragma: no cover - UI
+                st.error(f"Error: {exc}")
+                st.stop()
+            finally:
+                if tmp_path:
+                    try:
+                        tmp_path.unlink()
+                    except OSError:
+                        pass
+    
+            st.success(
+                "Listo. Base: {base_total}, Actualizada: {actualizados_total}, "
+                "Match NUIP: {nuip_match}, Nuevos: {nuevos_total}, "
+                "Inactivados: {inactivados_total}.".format(**summary)
+            )
+            download_name = f"alumnos_resultados_{Path(uploaded_compare.name).stem}.xlsx"
+            st.download_button(
+                label="Descargar alumnos_resultados",
+                data=output_bytes,
+                file_name=download_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+    
 with tab_clases_api:
     st.subheader("Listar y eliminar clases")
     st.write("Lista y elimina clases del API de gestión escolar.")
@@ -1029,7 +1042,8 @@ with tab_clases_api:
         "Eliminar clases es irreversible. Revisa el listado antes de confirmar."
     )
     st.caption("Usando el token global configurado arriba.")
-    colegio_id = st.number_input("Colegio Clave", min_value=1, step=1, format="%d")
+    colegio_id_raw = str(st.session_state.get("shared_colegio_id", "")).strip()
+    st.caption(f"Colegio global: `{colegio_id_raw or '-'}`")
     with st.expander("Opciones avanzadas", expanded=False):
         ciclo_id = st.number_input(
             "Ciclo ID",
@@ -1049,9 +1063,14 @@ with tab_clases_api:
             st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
         else:
             try:
+                colegio_id_int = _parse_colegio_id(colegio_id_raw)
+            except ValueError as exc:
+                st.error(f"Error: {exc}")
+                st.stop()
+            try:
                 clases = _fetch_clases_gestion_escolar(
                     token=token,
-                    colegio_id=int(colegio_id),
+                    colegio_id=colegio_id_int,
                     empresa_id=int(empresa_id),
                     ciclo_id=int(ciclo_id),
                     timeout=int(timeout),
@@ -1084,9 +1103,14 @@ with tab_clases_api:
             st.error("Debes confirmar antes de eliminar.")
             st.stop()
         try:
+            colegio_id_int = _parse_colegio_id(colegio_id_raw)
+        except ValueError as exc:
+            st.error(f"Error: {exc}")
+            st.stop()
+        try:
             clases = _fetch_clases_gestion_escolar(
                 token=token,
-                colegio_id=int(colegio_id),
+                colegio_id=colegio_id_int,
                 empresa_id=int(empresa_id),
                 ciclo_id=int(ciclo_id),
                 timeout=int(timeout),
@@ -1128,516 +1152,420 @@ with tab_clases_api:
 
 with tab_crud_alumnos:
     st.divider()
-    st.subheader("3) Listar clases con todos sus alumnos")
-    colegio_id_raw = str(st.session_state.get("alumnos_colegio_text", "")).strip()
-    ciclo_id = int(st.session_state.get("alumnos_ciclo", ALUMNOS_CICLO_ID_DEFAULT))
-    empresa_id = int(st.session_state.get("alumnos_empresa", DEFAULT_EMPRESA_ID))
-    timeout = int(st.session_state.get("alumnos_timeout", 30))
-    st.caption(
-        f"Colegio: `{colegio_id_raw or '-'}` | Ciclo: `{ciclo_id}` | "
-        f"Empresa: `{empresa_id}` | Timeout: `{timeout}s`"
-    )
-    solo_activos = st.checkbox(
-        "Solo alumnos activos",
-        value=False,
-        key="clases_alumnos_solo_activos",
-    )
-
-    if st.button(
-        "Listar clases con alumnos",
-        type="primary",
-        key="clases_alumnos_listar",
-    ):
-        token = _get_shared_token()
-        if not token:
-            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-            st.stop()
-        try:
-            colegio_id_int = _parse_colegio_id(colegio_id_raw)
-        except ValueError as exc:
-            st.error(f"Error: {exc}")
-            st.stop()
-
-        try:
-            with st.spinner("Listando clases..."):
-                clases = _fetch_clases_gestion_escolar(
-                    token=token,
-                    colegio_id=colegio_id_int,
-                    empresa_id=int(empresa_id),
-                    ciclo_id=int(ciclo_id),
-                    timeout=int(timeout),
-                )
-        except Exception as exc:  # pragma: no cover - UI
-            st.error(f"Error: {exc}")
-            st.stop()
-
-        if not clases:
-            st.info("No se encontraron clases para ese colegio/ciclo.")
-            st.stop()
-
-        detalle_rows: List[Dict[str, object]] = []
-        resumen_rows: List[Dict[str, object]] = []
-        errores: List[str] = []
-        total = len(clases)
-        progress = st.progress(0)
-        status = st.empty()
-
-        for index, item in enumerate(clases, start=1):
-            progress.progress(int((index / total) * 100))
-
-            if not isinstance(item, dict):
-                errores.append("Clase con formato inválido.")
-                continue
-
-            clase_id_raw = item.get("geClaseId")
-            if clase_id_raw is None:
-                errores.append("Clase sin geClaseId.")
-                continue
-            try:
-                clase_id = int(clase_id_raw)
-            except (TypeError, ValueError):
-                errores.append(f"Clase con geClaseId inválido: {clase_id_raw}")
-                continue
-
-            clase_name = str(item.get("geClase") or item.get("geClaseClave") or "")
-            status.write(f"Revisando {index}/{total}: {clase_id} {clase_name}".strip())
-
-            try:
-                clase_data = _fetch_alumnos_clase_gestion_escolar(
-                    token=token,
-                    clase_id=clase_id,
-                    empresa_id=int(empresa_id),
-                    ciclo_id=int(ciclo_id),
-                    timeout=int(timeout),
-                )
-            except Exception as exc:  # pragma: no cover - UI
-                errores.append(f"{clase_id}: {exc}")
-                continue
-
-            alumnos_data = clase_data.get("claseAlumnos") or []
-            if not isinstance(alumnos_data, list):
-                errores.append(f"{clase_id}: campo claseAlumnos no es lista")
-                continue
-
-            cgg = clase_data.get("colegioGradoGrupo") if isinstance(clase_data, dict) else None
-            grado_info = cgg.get("grado") if isinstance(cgg, dict) else None
-            grupo_info = cgg.get("grupo") if isinstance(cgg, dict) else None
-            grado = str(grado_info.get("grado") or "") if isinstance(grado_info, dict) else ""
-            grupo = str(grupo_info.get("grupo") or "") if isinstance(grupo_info, dict) else ""
-
-            total_api = len(alumnos_data)
-            listados = 0
-
-            for entry in alumnos_data:
-                if not isinstance(entry, dict):
-                    continue
-                alumno = entry.get("alumno")
-                if not isinstance(alumno, dict):
-                    continue
-                persona = alumno.get("persona")
-                if not isinstance(persona, dict):
-                    continue
-                persona_login = persona.get("personaLogin")
-                if not isinstance(persona_login, dict):
-                    persona_login = {}
-
-                activo_en_clase = bool(entry.get("activo", False))
-                activo_en_censo = bool(alumno.get("activo", False))
-                if solo_activos and (not activo_en_clase or not activo_en_censo):
-                    continue
-
-                listados += 1
-                detalle_rows.append(
-                    {
-                        "Clase ID": clase_id,
-                        "Clase": clase_name,
-                        "Grado": grado,
-                        "Grupo": grupo,
-                        "Alumno ID": alumno.get("alumnoId", ""),
-                        "Persona ID": persona.get("personaId", ""),
-                        "Login": persona_login.get("login", ""),
-                        "Nombre completo": persona.get("nombreCompleto", ""),
-                        "Activo censo": activo_en_censo,
-                        "Activo clase": activo_en_clase,
-                    }
-                )
-
-            resumen_rows.append(
-                {
-                    "Clase ID": clase_id,
-                    "Clase": clase_name,
-                    "Alumnos API": total_api,
-                    "Alumnos listados": listados,
-                }
-            )
-
-            if listados == 0:
-                detalle_rows.append(
-                    {
-                        "Clase ID": clase_id,
-                        "Clase": clase_name,
-                        "Grado": grado,
-                        "Grupo": grupo,
-                        "Alumno ID": "",
-                        "Persona ID": "",
-                        "Login": "",
-                        "Nombre completo": "(sin alumnos)",
-                        "Activo censo": "",
-                        "Activo clase": "",
-                    }
-                )
-
-        progress.progress(100)
-        status.empty()
-
-        st.success("Listado generado.")
-        st.markdown(f"- Clases evaluadas: `{total}`")
-        st.markdown(f"- Clases con error: `{len(errores)}`")
-        st.markdown(f"- Registros listados: `{len(detalle_rows)}`")
-
-        if resumen_rows:
-            resumen_rows = sorted(resumen_rows, key=lambda row: int(row.get("Clase ID", 0)))
-            st.subheader("Resumen por clase")
-            st.dataframe(resumen_rows, use_container_width=True)
-
-        if detalle_rows:
-            detalle_rows = sorted(
-                detalle_rows,
-                key=lambda row: (
-                    int(row.get("Clase ID", 0)),
-                    str(row.get("Nombre completo", "")),
-                ),
-            )
-            st.subheader("Detalle de alumnos por clase")
-            st.dataframe(detalle_rows, use_container_width=True)
-        else:
-            st.info("No hay alumnos para mostrar.")
-
-        if errores:
-            st.warning("Hubo errores en algunas clases.")
-            st.write("\n".join(f"- {item}" for item in errores[:20]))
-            restantes = len(errores) - 20
-            if restantes > 0:
-                st.caption(f"... y {restantes} errores más.")
-
-    st.divider()
-    st.subheader("4) Generar Excel por niveles, grados y secciones (Censo)")
-    st.caption("Genera Excel desde censo por nivel/grado/seccion.")
-    solo_activos_censo = st.checkbox(
-        "Solo alumnos activos en censo",
-        value=False,
-        key="clases_alumnos_excel_solo_activos",
-    )
-    excluir_5to_sec_z = st.checkbox(
-        "Excluir 5to Sec Z del Excel",
-        value=True,
-        key="clases_alumnos_excel_excluir_5to_sec_z",
-        help="Cuando esta activo, no se incluye la seccion Z de 5to de Secundaria.",
-    )
-    if st.button(
-        "Generar Excel alumnos (Censo)",
-        type="primary",
-        key="clases_alumnos_excel_generar",
-    ):
-        token = _get_shared_token()
-        if not token:
-            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-            st.stop()
-        try:
-            colegio_id_int = _parse_colegio_id(colegio_id_raw)
-        except ValueError as exc:
-            st.error(f"Error: {exc}")
-            st.stop()
-
-        try:
-            with st.spinner("Consultando niveles/grados/grupos..."):
-                niveles_data = _fetch_niveles_grados_grupos_censo(
-                    token=token,
-                    colegio_id=colegio_id_int,
-                    empresa_id=int(empresa_id),
-                    ciclo_id=int(ciclo_id),
-                    timeout=int(timeout),
-                )
-        except Exception as exc:  # pragma: no cover - UI
-            st.error(f"Error: {exc}")
-            st.stop()
-
-        contexts: List[Dict[str, object]] = []
-        seen_contexts = set()
-        for nivel_entry in niveles_data:
-            if not isinstance(nivel_entry, dict):
-                continue
-            nivel = nivel_entry.get("nivel") if isinstance(nivel_entry.get("nivel"), dict) else {}
-            nivel_id = nivel.get("nivelId")
-            if nivel_id is None:
-                continue
-            try:
-                nivel_id_int = int(nivel_id)
-            except (TypeError, ValueError):
-                continue
-            nivel_name = str(nivel.get("nivel") or "")
-            nivel_order = _to_int_or_default(nivel.get("nivel_orden"), 9999)
-            grados = nivel_entry.get("grados") or []
-            if not isinstance(grados, list):
-                continue
-
-            for grado_entry in grados:
-                if not isinstance(grado_entry, dict):
-                    continue
-                grado = (
-                    grado_entry.get("grado")
-                    if isinstance(grado_entry.get("grado"), dict)
-                    else {}
-                )
-                grado_id = grado.get("gradoId")
-                if grado_id is None:
-                    continue
-                try:
-                    grado_id_int = int(grado_id)
-                except (TypeError, ValueError):
-                    continue
-                grado_name = str(grado.get("grado") or "")
-                grado_order = _to_int_or_default(grado_id, 9999)
-                grupos = grado_entry.get("grupos") or []
-                if not isinstance(grupos, list):
-                    continue
-
-                for grupo_entry in grupos:
-                    if not isinstance(grupo_entry, dict):
-                        continue
-                    grupo = (
-                        grupo_entry.get("grupo")
-                        if isinstance(grupo_entry.get("grupo"), dict)
-                        else {}
-                    )
-                    grupo_id = grupo.get("grupoId")
-                    if grupo_id is None:
-                        continue
-                    try:
-                        grupo_id_int = int(grupo_id)
-                    except (TypeError, ValueError):
-                        continue
-
-                    grupo_name = str(grupo.get("grupo") or "")
-                    grupo_clave = str(grupo.get("grupoClave") or "")
-                    key = (nivel_id_int, grado_id_int, grupo_id_int)
-                    if key in seen_contexts:
-                        continue
-                    seen_contexts.add(key)
-                    contexts.append(
-                        {
-                            "nivel_id": nivel_id_int,
-                            "nivel": nivel_name,
-                            "nivel_order": nivel_order,
-                            "grado_id": grado_id_int,
-                            "grado": grado_name,
-                            "grado_order": grado_order,
-                            "grupo_id": grupo_id_int,
-                            "grupo": grupo_name,
-                            "grupo_clave": grupo_clave,
-                        }
-                    )
-
-        if not contexts:
-            st.warning("No se encontraron niveles/grados/grupos para el colegio.")
-            st.stop()
-
-        contexts = sorted(
-            contexts,
-            key=lambda ctx: (
-                int(ctx.get("nivel_order", 9999)),
-                int(ctx.get("grado_order", 9999)),
-                _grupo_sort_key(
-                    str(ctx.get("grupo_clave", "")),
-                    str(ctx.get("grupo", "")),
-                ),
-            ),
+    crud_col_bottom_left, crud_col_bottom_right = st.columns(2, gap="large")
+    with crud_col_bottom_left:
+        st.subheader("3) Listar clases con todos sus alumnos")
+        colegio_id_raw = str(
+            st.session_state.get("shared_colegio_id", "")
+            or st.session_state.get("alumnos_colegio_text", "")
+        ).strip()
+        ciclo_id = int(st.session_state.get("alumnos_ciclo", ALUMNOS_CICLO_ID_DEFAULT))
+        empresa_id = int(st.session_state.get("alumnos_empresa", DEFAULT_EMPRESA_ID))
+        timeout = int(st.session_state.get("alumnos_timeout", 30))
+        st.caption(
+            f"Colegio: `{colegio_id_raw or '-'}` | Ciclo: `{ciclo_id}` | "
+            f"Empresa: `{empresa_id}` | Timeout: `{timeout}s`"
         )
-        if excluir_5to_sec_z:
-            before_count = len(contexts)
-            contexts = [
-                ctx
-                for ctx in contexts
-                if not _is_quinto_secundaria_z(
-                    int(ctx.get("nivel_id", 0)),
-                    ctx.get("nivel", ""),
-                    ctx.get("grado", ""),
-                    ctx.get("grupo_clave") or ctx.get("grupo") or "",
-                )
-            ]
-            excluded_count = before_count - len(contexts)
-            if excluded_count > 0:
-                st.info(f"Se excluyeron {excluded_count} combinaciones de 5to Sec Z.")
-            if not contexts:
-                st.warning("No quedaron combinaciones para consultar despues del filtro.")
+        solo_activos = st.checkbox(
+            "Solo alumnos activos",
+            value=False,
+            key="clases_alumnos_solo_activos",
+        )
+    
+        if st.button(
+            "Listar clases con alumnos",
+            type="primary",
+            key="clases_alumnos_listar",
+        ):
+            token = _get_shared_token()
+            if not token:
+                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
                 st.stop()
-
-        by_alumno_id: Dict[str, Dict[str, str]] = {}
-        by_persona_id: Dict[str, Dict[str, str]] = {}
-        try:
-            by_alumno_id, by_persona_id = _fetch_login_password_lookup_censo(
-                token=token,
-                colegio_id=colegio_id_int,
-                empresa_id=int(empresa_id),
-                ciclo_id=int(ciclo_id),
-                timeout=int(timeout),
-            )
-        except Exception as exc:  # pragma: no cover - UI
-            st.warning(
-                "No se pudo cargar lookup de login/password desde plantilla de "
-                f"edición masiva: {exc}"
-            )
-
-        rows_excel: List[Dict[str, object]] = []
-        errores_excel: List[str] = []
-        total = len(contexts)
-        progress = st.progress(0)
-        status = st.empty()
-
-        for index, ctx in enumerate(contexts, start=1):
-            progress.progress(int((index / total) * 100))
-            status.write(
-                "Consultando {idx}/{total}: N{nivel} G{grado} S{seccion}".format(
-                    idx=index,
-                    total=total,
-                    nivel=ctx["nivel_id"],
-                    grado=ctx["grado_id"],
-                    seccion=ctx["grupo_id"],
-                )
-            )
             try:
-                alumnos_data = _fetch_alumnos_censo(
-                    token=token,
-                    colegio_id=colegio_id_int,
-                    nivel_id=int(ctx["nivel_id"]),
-                    grado_id=int(ctx["grado_id"]),
-                    grupo_id=int(ctx["grupo_id"]),
-                    empresa_id=int(empresa_id),
-                    ciclo_id=int(ciclo_id),
-                    timeout=int(timeout),
-                )
-            except Exception as exc:  # pragma: no cover - UI
-                errores_excel.append(
-                    "nivelId={nivel} gradoId={grado} grupoId={grupo}: {error}".format(
-                        nivel=ctx["nivel_id"],
-                        grado=ctx["grado_id"],
-                        grupo=ctx["grupo_id"],
-                        error=exc,
-                    )
-                )
-                continue
-
-            for item in alumnos_data:
-                if not isinstance(item, dict):
-                    continue
-                source = _extract_alumno_payload(item)
-                activo_value = source.get("activo", item.get("activo"))
-                if solo_activos_censo and not _to_bool(activo_value):
-                    continue
-
-                persona = source.get("persona") if isinstance(source.get("persona"), dict) else {}
-                login, password = _resolve_alumno_login_password(
-                    item=item,
-                    by_alumno_id=by_alumno_id,
-                    by_persona_id=by_persona_id,
-                )
-                rows_excel.append(
-                    {
-                        "_nivel_order": int(ctx["nivel_order"]),
-                        "_grado_order": int(ctx["grado_order"]),
-                        "_grupo_sort": _grupo_sort_key(
-                            str(ctx.get("grupo_clave", "")),
-                            str(ctx.get("grupo", "")),
-                        ),
-                        "Nivel": str(ctx.get("nivel", "")),
-                        "Grado": str(ctx.get("grado", "")),
-                        "Seccion": str(ctx.get("grupo_clave") or ctx.get("grupo") or ""),
-                        "Nombre": str(persona.get("nombre") or ""),
-                        "Apellido Paterno": str(persona.get("apellidoPaterno") or ""),
-                        "Apellido Materno": str(persona.get("apellidoMaterno") or ""),
-                        "Login": login,
-                        "Password": password,
-                    }
-                )
-
-        if not rows_excel and contexts:
-            status.write(
-                "Sin filas en consulta por grupo. Reintentando por nivel/grado..."
-            )
-            fallback_pairs = sorted(
-                {
-                    (
-                        int(ctx["nivel_id"]),
-                        int(ctx["grado_id"]),
-                        str(ctx.get("nivel", "")),
-                        str(ctx.get("grado", "")),
-                        int(ctx["nivel_order"]),
-                        int(ctx["grado_order"]),
-                    )
-                    for ctx in contexts
-                },
-                key=lambda item: (item[4], item[5]),
-            )
-            for (
-                nivel_id_fb,
-                grado_id_fb,
-                nivel_name_fb,
-                grado_name_fb,
-                nivel_order_fb,
-                grado_order_fb,
-            ) in fallback_pairs:
-                try:
-                    alumnos_fallback = _fetch_alumnos_censo(
+                colegio_id_int = _parse_colegio_id(colegio_id_raw)
+            except ValueError as exc:
+                st.error(f"Error: {exc}")
+                st.stop()
+    
+            try:
+                with st.spinner("Listando clases..."):
+                    clases = _fetch_clases_gestion_escolar(
                         token=token,
                         colegio_id=colegio_id_int,
-                        nivel_id=nivel_id_fb,
-                        grado_id=grado_id_fb,
-                        grupo_id=None,
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                    )
+            except Exception as exc:  # pragma: no cover - UI
+                st.error(f"Error: {exc}")
+                st.stop()
+    
+            if not clases:
+                st.info("No se encontraron clases para ese colegio/ciclo.")
+                st.stop()
+    
+            detalle_rows: List[Dict[str, object]] = []
+            resumen_rows: List[Dict[str, object]] = []
+            errores: List[str] = []
+            total = len(clases)
+            progress = st.progress(0)
+            status = st.empty()
+    
+            for index, item in enumerate(clases, start=1):
+                progress.progress(int((index / total) * 100))
+    
+                if not isinstance(item, dict):
+                    errores.append("Clase con formato inválido.")
+                    continue
+    
+                clase_id_raw = item.get("geClaseId")
+                if clase_id_raw is None:
+                    errores.append("Clase sin geClaseId.")
+                    continue
+                try:
+                    clase_id = int(clase_id_raw)
+                except (TypeError, ValueError):
+                    errores.append(f"Clase con geClaseId inválido: {clase_id_raw}")
+                    continue
+    
+                clase_name = str(item.get("geClase") or item.get("geClaseClave") or "")
+                status.write(f"Revisando {index}/{total}: {clase_id} {clase_name}".strip())
+    
+                try:
+                    clase_data = _fetch_alumnos_clase_gestion_escolar(
+                        token=token,
+                        clase_id=clase_id,
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                    )
+                except Exception as exc:  # pragma: no cover - UI
+                    errores.append(f"{clase_id}: {exc}")
+                    continue
+    
+                alumnos_data = clase_data.get("claseAlumnos") or []
+                if not isinstance(alumnos_data, list):
+                    errores.append(f"{clase_id}: campo claseAlumnos no es lista")
+                    continue
+    
+                cgg = clase_data.get("colegioGradoGrupo") if isinstance(clase_data, dict) else None
+                grado_info = cgg.get("grado") if isinstance(cgg, dict) else None
+                grupo_info = cgg.get("grupo") if isinstance(cgg, dict) else None
+                grado = str(grado_info.get("grado") or "") if isinstance(grado_info, dict) else ""
+                grupo = str(grupo_info.get("grupo") or "") if isinstance(grupo_info, dict) else ""
+    
+                total_api = len(alumnos_data)
+                listados = 0
+    
+                for entry in alumnos_data:
+                    if not isinstance(entry, dict):
+                        continue
+                    alumno = entry.get("alumno")
+                    if not isinstance(alumno, dict):
+                        continue
+                    persona = alumno.get("persona")
+                    if not isinstance(persona, dict):
+                        continue
+                    persona_login = persona.get("personaLogin")
+                    if not isinstance(persona_login, dict):
+                        persona_login = {}
+    
+                    activo_en_clase = bool(entry.get("activo", False))
+                    activo_en_censo = bool(alumno.get("activo", False))
+                    if solo_activos and (not activo_en_clase or not activo_en_censo):
+                        continue
+    
+                    listados += 1
+                    detalle_rows.append(
+                        {
+                            "Clase ID": clase_id,
+                            "Clase": clase_name,
+                            "Grado": grado,
+                            "Grupo": grupo,
+                            "Alumno ID": alumno.get("alumnoId", ""),
+                            "Persona ID": persona.get("personaId", ""),
+                            "Login": persona_login.get("login", ""),
+                            "Nombre completo": persona.get("nombreCompleto", ""),
+                            "Activo censo": activo_en_censo,
+                            "Activo clase": activo_en_clase,
+                        }
+                    )
+    
+                resumen_rows.append(
+                    {
+                        "Clase ID": clase_id,
+                        "Clase": clase_name,
+                        "Alumnos API": total_api,
+                        "Alumnos listados": listados,
+                    }
+                )
+    
+                if listados == 0:
+                    detalle_rows.append(
+                        {
+                            "Clase ID": clase_id,
+                            "Clase": clase_name,
+                            "Grado": grado,
+                            "Grupo": grupo,
+                            "Alumno ID": "",
+                            "Persona ID": "",
+                            "Login": "",
+                            "Nombre completo": "(sin alumnos)",
+                            "Activo censo": "",
+                            "Activo clase": "",
+                        }
+                    )
+    
+            progress.progress(100)
+            status.empty()
+    
+            st.success("Listado generado.")
+            st.markdown(f"- Clases evaluadas: `{total}`")
+            st.markdown(f"- Clases con error: `{len(errores)}`")
+            st.markdown(f"- Registros listados: `{len(detalle_rows)}`")
+    
+            if resumen_rows:
+                resumen_rows = sorted(resumen_rows, key=lambda row: int(row.get("Clase ID", 0)))
+                st.subheader("Resumen por clase")
+                st.dataframe(resumen_rows, use_container_width=True)
+    
+            if detalle_rows:
+                detalle_rows = sorted(
+                    detalle_rows,
+                    key=lambda row: (
+                        int(row.get("Clase ID", 0)),
+                        str(row.get("Nombre completo", "")),
+                    ),
+                )
+                st.subheader("Detalle de alumnos por clase")
+                st.dataframe(detalle_rows, use_container_width=True)
+            else:
+                st.info("No hay alumnos para mostrar.")
+    
+            if errores:
+                st.warning("Hubo errores en algunas clases.")
+                st.write("\n".join(f"- {item}" for item in errores[:20]))
+                restantes = len(errores) - 20
+                if restantes > 0:
+                    st.caption(f"... y {restantes} errores más.")
+    
+    with crud_col_bottom_right:
+        st.divider()
+        st.subheader("4) Generar Excel por niveles, grados y secciones (Censo)")
+        st.caption("Genera Excel desde censo por nivel/grado/seccion.")
+        solo_activos_censo = st.checkbox(
+            "Solo alumnos activos en censo",
+            value=False,
+            key="clases_alumnos_excel_solo_activos",
+        )
+        excluir_5to_sec_z = st.checkbox(
+            "Excluir 5to Sec Z del Excel",
+            value=True,
+            key="clases_alumnos_excel_excluir_5to_sec_z",
+            help="Cuando esta activo, no se incluye la seccion Z de 5to de Secundaria.",
+        )
+        if st.button(
+            "Generar Excel alumnos (Censo)",
+            type="primary",
+            key="clases_alumnos_excel_generar",
+        ):
+            token = _get_shared_token()
+            if not token:
+                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                st.stop()
+            try:
+                colegio_id_int = _parse_colegio_id(colegio_id_raw)
+            except ValueError as exc:
+                st.error(f"Error: {exc}")
+                st.stop()
+    
+            try:
+                with st.spinner("Consultando niveles/grados/grupos..."):
+                    niveles_data = _fetch_niveles_grados_grupos_censo(
+                        token=token,
+                        colegio_id=colegio_id_int,
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                    )
+            except Exception as exc:  # pragma: no cover - UI
+                st.error(f"Error: {exc}")
+                st.stop()
+    
+            contexts: List[Dict[str, object]] = []
+            seen_contexts = set()
+            for nivel_entry in niveles_data:
+                if not isinstance(nivel_entry, dict):
+                    continue
+                nivel = nivel_entry.get("nivel") if isinstance(nivel_entry.get("nivel"), dict) else {}
+                nivel_id = nivel.get("nivelId")
+                if nivel_id is None:
+                    continue
+                try:
+                    nivel_id_int = int(nivel_id)
+                except (TypeError, ValueError):
+                    continue
+                nivel_name = str(nivel.get("nivel") or "")
+                nivel_order = _to_int_or_default(nivel.get("nivel_orden"), 9999)
+                grados = nivel_entry.get("grados") or []
+                if not isinstance(grados, list):
+                    continue
+    
+                for grado_entry in grados:
+                    if not isinstance(grado_entry, dict):
+                        continue
+                    grado = (
+                        grado_entry.get("grado")
+                        if isinstance(grado_entry.get("grado"), dict)
+                        else {}
+                    )
+                    grado_id = grado.get("gradoId")
+                    if grado_id is None:
+                        continue
+                    try:
+                        grado_id_int = int(grado_id)
+                    except (TypeError, ValueError):
+                        continue
+                    grado_name = str(grado.get("grado") or "")
+                    grado_order = _to_int_or_default(grado_id, 9999)
+                    grupos = grado_entry.get("grupos") or []
+                    if not isinstance(grupos, list):
+                        continue
+    
+                    for grupo_entry in grupos:
+                        if not isinstance(grupo_entry, dict):
+                            continue
+                        grupo = (
+                            grupo_entry.get("grupo")
+                            if isinstance(grupo_entry.get("grupo"), dict)
+                            else {}
+                        )
+                        grupo_id = grupo.get("grupoId")
+                        if grupo_id is None:
+                            continue
+                        try:
+                            grupo_id_int = int(grupo_id)
+                        except (TypeError, ValueError):
+                            continue
+    
+                        grupo_name = str(grupo.get("grupo") or "")
+                        grupo_clave = str(grupo.get("grupoClave") or "")
+                        key = (nivel_id_int, grado_id_int, grupo_id_int)
+                        if key in seen_contexts:
+                            continue
+                        seen_contexts.add(key)
+                        contexts.append(
+                            {
+                                "nivel_id": nivel_id_int,
+                                "nivel": nivel_name,
+                                "nivel_order": nivel_order,
+                                "grado_id": grado_id_int,
+                                "grado": grado_name,
+                                "grado_order": grado_order,
+                                "grupo_id": grupo_id_int,
+                                "grupo": grupo_name,
+                                "grupo_clave": grupo_clave,
+                            }
+                        )
+    
+            if not contexts:
+                st.warning("No se encontraron niveles/grados/grupos para el colegio.")
+                st.stop()
+    
+            contexts = sorted(
+                contexts,
+                key=lambda ctx: (
+                    int(ctx.get("nivel_order", 9999)),
+                    int(ctx.get("grado_order", 9999)),
+                    _grupo_sort_key(
+                        str(ctx.get("grupo_clave", "")),
+                        str(ctx.get("grupo", "")),
+                    ),
+                ),
+            )
+            if excluir_5to_sec_z:
+                before_count = len(contexts)
+                contexts = [
+                    ctx
+                    for ctx in contexts
+                    if not _is_quinto_secundaria_z(
+                        int(ctx.get("nivel_id", 0)),
+                        ctx.get("nivel", ""),
+                        ctx.get("grado", ""),
+                        ctx.get("grupo_clave") or ctx.get("grupo") or "",
+                    )
+                ]
+                excluded_count = before_count - len(contexts)
+                if excluded_count > 0:
+                    st.info(f"Se excluyeron {excluded_count} combinaciones de 5to Sec Z.")
+                if not contexts:
+                    st.warning("No quedaron combinaciones para consultar despues del filtro.")
+                    st.stop()
+    
+            by_alumno_id: Dict[str, Dict[str, str]] = {}
+            by_persona_id: Dict[str, Dict[str, str]] = {}
+            try:
+                by_alumno_id, by_persona_id = _fetch_login_password_lookup_censo(
+                    token=token,
+                    colegio_id=colegio_id_int,
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                )
+            except Exception as exc:  # pragma: no cover - UI
+                st.warning(
+                    "No se pudo cargar lookup de login/password desde plantilla de "
+                    f"edición masiva: {exc}"
+                )
+    
+            rows_excel: List[Dict[str, object]] = []
+            errores_excel: List[str] = []
+            total = len(contexts)
+            progress = st.progress(0)
+            status = st.empty()
+    
+            for index, ctx in enumerate(contexts, start=1):
+                progress.progress(int((index / total) * 100))
+                status.write(
+                    "Consultando {idx}/{total}: N{nivel} G{grado} S{seccion}".format(
+                        idx=index,
+                        total=total,
+                        nivel=ctx["nivel_id"],
+                        grado=ctx["grado_id"],
+                        seccion=ctx["grupo_id"],
+                    )
+                )
+                try:
+                    alumnos_data = _fetch_alumnos_censo(
+                        token=token,
+                        colegio_id=colegio_id_int,
+                        nivel_id=int(ctx["nivel_id"]),
+                        grado_id=int(ctx["grado_id"]),
+                        grupo_id=int(ctx["grupo_id"]),
                         empresa_id=int(empresa_id),
                         ciclo_id=int(ciclo_id),
                         timeout=int(timeout),
                     )
                 except Exception as exc:  # pragma: no cover - UI
                     errores_excel.append(
-                        "fallback nivelId={nivel} gradoId={grado}: {error}".format(
-                            nivel=nivel_id_fb,
-                            grado=grado_id_fb,
+                        "nivelId={nivel} gradoId={grado} grupoId={grupo}: {error}".format(
+                            nivel=ctx["nivel_id"],
+                            grado=ctx["grado_id"],
+                            grupo=ctx["grupo_id"],
                             error=exc,
                         )
                     )
                     continue
-
-                for item in alumnos_fallback:
+    
+                for item in alumnos_data:
                     if not isinstance(item, dict):
                         continue
                     source = _extract_alumno_payload(item)
                     activo_value = source.get("activo", item.get("activo"))
                     if solo_activos_censo and not _to_bool(activo_value):
                         continue
-
-                    persona = (
-                        source.get("persona")
-                        if isinstance(source.get("persona"), dict)
-                        else {}
-                    )
-                    grupo_info = (
-                        source.get("grupo")
-                        if isinstance(source.get("grupo"), dict)
-                        else (
-                            item.get("grupo")
-                            if isinstance(item.get("grupo"), dict)
-                            else {}
-                        )
-                    )
-                    grupo_clave = str(grupo_info.get("grupoClave") or "")
-                    grupo_nombre = str(grupo_info.get("grupo") or "")
-                    if excluir_5to_sec_z and _is_quinto_secundaria_z(
-                        int(nivel_id_fb),
-                        nivel_name_fb,
-                        grado_name_fb,
-                        grupo_clave or grupo_nombre,
-                    ):
-                        continue
+    
+                    persona = source.get("persona") if isinstance(source.get("persona"), dict) else {}
                     login, password = _resolve_alumno_login_password(
                         item=item,
                         by_alumno_id=by_alumno_id,
@@ -1645,12 +1573,15 @@ with tab_crud_alumnos:
                     )
                     rows_excel.append(
                         {
-                            "_nivel_order": nivel_order_fb,
-                            "_grado_order": grado_order_fb,
-                            "_grupo_sort": _grupo_sort_key(grupo_clave, grupo_nombre),
-                            "Nivel": nivel_name_fb,
-                            "Grado": grado_name_fb,
-                            "Seccion": grupo_clave or grupo_nombre,
+                            "_nivel_order": int(ctx["nivel_order"]),
+                            "_grado_order": int(ctx["grado_order"]),
+                            "_grupo_sort": _grupo_sort_key(
+                                str(ctx.get("grupo_clave", "")),
+                                str(ctx.get("grupo", "")),
+                            ),
+                            "Nivel": str(ctx.get("nivel", "")),
+                            "Grado": str(ctx.get("grado", "")),
+                            "Seccion": str(ctx.get("grupo_clave") or ctx.get("grupo") or ""),
                             "Nombre": str(persona.get("nombre") or ""),
                             "Apellido Paterno": str(persona.get("apellidoPaterno") or ""),
                             "Apellido Materno": str(persona.get("apellidoMaterno") or ""),
@@ -1658,72 +1589,171 @@ with tab_crud_alumnos:
                             "Password": password,
                         }
                     )
-
-        progress.progress(100)
-        status.empty()
-
-        if rows_excel:
-            rows_excel = sorted(
-                rows_excel,
-                key=lambda row: (
-                    row["_nivel_order"],
-                    row["_grado_order"],
-                    row["_grupo_sort"],
-                    str(row.get("Apellido Paterno", "")).lower(),
-                    str(row.get("Apellido Materno", "")).lower(),
-                    str(row.get("Nombre", "")).lower(),
-                ),
-            )
-
-        output = BytesIO()
-        excel_columns = [
-            "Nivel",
-            "Grado",
-            "Seccion",
-            "Nombre",
-            "Apellido Paterno",
-            "Apellido Materno",
-            "Login",
-            "Password",
-        ]
-        df_excel = pd.DataFrame(rows_excel)
-        if df_excel.empty:
-            df_excel = pd.DataFrame(columns=excel_columns)
-        else:
-            df_excel = df_excel.drop(
-                columns=["_nivel_order", "_grado_order", "_grupo_sort"], errors="ignore"
-            )
-            df_excel = df_excel.reindex(columns=excel_columns)
-
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            df_excel.to_excel(writer, index=False, sheet_name="Alumnos")
-            if errores_excel:
-                pd.DataFrame({"error": errores_excel}).to_excel(
-                    writer, index=False, sheet_name="Errores"
+    
+            if not rows_excel and contexts:
+                status.write(
+                    "Sin filas en consulta por grupo. Reintentando por nivel/grado..."
                 )
-            ws = writer.book["Alumnos"]
-            ws.freeze_panes = "A2"
-            ws.auto_filter.ref = ws.dimensions
-
-        output.seek(0)
-        file_name = f"alumnos_censo_{colegio_id_int}_{int(ciclo_id)}.xlsx"
-        st.success("Excel generado.")
-        st.markdown(f"- Combinaciones evaluadas: `{total}`")
-        st.markdown(f"- Filas en Excel: `{len(df_excel)}`")
-        st.markdown(f"- Errores: `{len(errores_excel)}`")
-        st.download_button(
-            label="Descargar Excel alumnos",
-            data=output.getvalue(),
-            file_name=file_name,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="clases_alumnos_excel_download",
-        )
-
-        if not df_excel.empty:
-            st.dataframe(df_excel, use_container_width=True)
-        if errores_excel:
-            st.warning("Hubo errores en algunas combinaciones.")
-            st.write("\n".join(f"- {item}" for item in errores_excel[:20]))
-            restantes = len(errores_excel) - 20
-            if restantes > 0:
-                st.caption(f"... y {restantes} errores más.")
+                fallback_pairs = sorted(
+                    {
+                        (
+                            int(ctx["nivel_id"]),
+                            int(ctx["grado_id"]),
+                            str(ctx.get("nivel", "")),
+                            str(ctx.get("grado", "")),
+                            int(ctx["nivel_order"]),
+                            int(ctx["grado_order"]),
+                        )
+                        for ctx in contexts
+                    },
+                    key=lambda item: (item[4], item[5]),
+                )
+                for (
+                    nivel_id_fb,
+                    grado_id_fb,
+                    nivel_name_fb,
+                    grado_name_fb,
+                    nivel_order_fb,
+                    grado_order_fb,
+                ) in fallback_pairs:
+                    try:
+                        alumnos_fallback = _fetch_alumnos_censo(
+                            token=token,
+                            colegio_id=colegio_id_int,
+                            nivel_id=nivel_id_fb,
+                            grado_id=grado_id_fb,
+                            grupo_id=None,
+                            empresa_id=int(empresa_id),
+                            ciclo_id=int(ciclo_id),
+                            timeout=int(timeout),
+                        )
+                    except Exception as exc:  # pragma: no cover - UI
+                        errores_excel.append(
+                            "fallback nivelId={nivel} gradoId={grado}: {error}".format(
+                                nivel=nivel_id_fb,
+                                grado=grado_id_fb,
+                                error=exc,
+                            )
+                        )
+                        continue
+    
+                    for item in alumnos_fallback:
+                        if not isinstance(item, dict):
+                            continue
+                        source = _extract_alumno_payload(item)
+                        activo_value = source.get("activo", item.get("activo"))
+                        if solo_activos_censo and not _to_bool(activo_value):
+                            continue
+    
+                        persona = (
+                            source.get("persona")
+                            if isinstance(source.get("persona"), dict)
+                            else {}
+                        )
+                        grupo_info = (
+                            source.get("grupo")
+                            if isinstance(source.get("grupo"), dict)
+                            else (
+                                item.get("grupo")
+                                if isinstance(item.get("grupo"), dict)
+                                else {}
+                            )
+                        )
+                        grupo_clave = str(grupo_info.get("grupoClave") or "")
+                        grupo_nombre = str(grupo_info.get("grupo") or "")
+                        if excluir_5to_sec_z and _is_quinto_secundaria_z(
+                            int(nivel_id_fb),
+                            nivel_name_fb,
+                            grado_name_fb,
+                            grupo_clave or grupo_nombre,
+                        ):
+                            continue
+                        login, password = _resolve_alumno_login_password(
+                            item=item,
+                            by_alumno_id=by_alumno_id,
+                            by_persona_id=by_persona_id,
+                        )
+                        rows_excel.append(
+                            {
+                                "_nivel_order": nivel_order_fb,
+                                "_grado_order": grado_order_fb,
+                                "_grupo_sort": _grupo_sort_key(grupo_clave, grupo_nombre),
+                                "Nivel": nivel_name_fb,
+                                "Grado": grado_name_fb,
+                                "Seccion": grupo_clave or grupo_nombre,
+                                "Nombre": str(persona.get("nombre") or ""),
+                                "Apellido Paterno": str(persona.get("apellidoPaterno") or ""),
+                                "Apellido Materno": str(persona.get("apellidoMaterno") or ""),
+                                "Login": login,
+                                "Password": password,
+                            }
+                        )
+    
+            progress.progress(100)
+            status.empty()
+    
+            if rows_excel:
+                rows_excel = sorted(
+                    rows_excel,
+                    key=lambda row: (
+                        row["_nivel_order"],
+                        row["_grado_order"],
+                        row["_grupo_sort"],
+                        str(row.get("Apellido Paterno", "")).lower(),
+                        str(row.get("Apellido Materno", "")).lower(),
+                        str(row.get("Nombre", "")).lower(),
+                    ),
+                )
+    
+            output = BytesIO()
+            excel_columns = [
+                "Nivel",
+                "Grado",
+                "Seccion",
+                "Nombre",
+                "Apellido Paterno",
+                "Apellido Materno",
+                "Login",
+                "Password",
+            ]
+            df_excel = pd.DataFrame(rows_excel)
+            if df_excel.empty:
+                df_excel = pd.DataFrame(columns=excel_columns)
+            else:
+                df_excel = df_excel.drop(
+                    columns=["_nivel_order", "_grado_order", "_grupo_sort"], errors="ignore"
+                )
+                df_excel = df_excel.reindex(columns=excel_columns)
+    
+            with pd.ExcelWriter(output, engine="openpyxl") as writer:
+                df_excel.to_excel(writer, index=False, sheet_name="Alumnos")
+                if errores_excel:
+                    pd.DataFrame({"error": errores_excel}).to_excel(
+                        writer, index=False, sheet_name="Errores"
+                    )
+                ws = writer.book["Alumnos"]
+                ws.freeze_panes = "A2"
+                ws.auto_filter.ref = ws.dimensions
+    
+            output.seek(0)
+            file_name = f"alumnos_censo_{colegio_id_int}_{int(ciclo_id)}.xlsx"
+            st.success("Excel generado.")
+            st.markdown(f"- Combinaciones evaluadas: `{total}`")
+            st.markdown(f"- Filas en Excel: `{len(df_excel)}`")
+            st.markdown(f"- Errores: `{len(errores_excel)}`")
+            st.download_button(
+                label="Descargar Excel alumnos",
+                data=output.getvalue(),
+                file_name=file_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="clases_alumnos_excel_download",
+            )
+    
+            if not df_excel.empty:
+                st.dataframe(df_excel, use_container_width=True)
+            if errores_excel:
+                st.warning("Hubo errores en algunas combinaciones.")
+                st.write("\n".join(f"- {item}" for item in errores_excel[:20]))
+                restantes = len(errores_excel) - 20
+                if restantes > 0:
+                    st.caption(f"... y {restantes} errores más.")

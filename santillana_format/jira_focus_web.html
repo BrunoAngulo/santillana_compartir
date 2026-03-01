@@ -3313,7 +3313,7 @@
         const totalMins = worklogs.reduce((acc, w) => acc + minutesOf(w), 0);
         const lastComment = commentsCount ? TimeService.dtLabel(comments[commentsCount - 1].created || new Date()) : 'Sin comentarios';
         const templateCount = countTemplateWorklogs(key);
-        const summary = issue && (issue.shortSummary || issue.summary) ? (issue.shortSummary || issue.summary) : '-';
+        const summary = issue && issue.summary ? issue.summary : '-';
         el.issueInsight.className = 'issue-insight';
         el.issueInsight.innerHTML = `
           <span class="issue-chip"><b>Ticket</b><span class="value">${escapeHtml(key)}</span></span>
@@ -3554,34 +3554,17 @@
         return state.issues.find((it) => it.key === key) || null;
       }
 
-      function compactIssueSummary(summaryIn) {
-        const raw = String(summaryIn || '').replace(/\s+/g, ' ').trim();
-        if (!raw) return '';
-        let short = raw;
-        const colegioMatch = short.match(/\bcolegio\s*:/i);
-        if (colegioMatch && Number.isFinite(Number(colegioMatch.index)) && colegioMatch.index > 0) {
-          short = short.slice(0, colegioMatch.index).trim();
-        }
-        short = short.replace(/\bCompartir aprendizajes\b/gi, 'Compartir aprendizaje');
-        short = short.replace(/\s*[-|:;/]+\s*$/g, '').replace(/\s+/g, ' ').trim();
-        return short || raw;
-      }
-
       function parseIssues(payload) {
         const list = Array.isArray(payload.issues)
           ? payload.issues
           : (Array.isArray(payload.values) ? payload.values : []);
         return list
           .filter((it) => it && it.key && it.fields && !(it.fields.issuetype && it.fields.issuetype.subtask))
-          .map((it) => {
-            const summary = String(it.fields.summary || '');
-            return {
-              key: it.key,
-              summary,
-              shortSummary: compactIssueSummary(summary),
-              attachments: Array.isArray(it.fields.attachment) ? it.fields.attachment : []
-            };
-          });
+          .map((it) => ({
+            key: it.key,
+            summary: String(it.fields.summary || ''),
+            attachments: Array.isArray(it.fields.attachment) ? it.fields.attachment : []
+          }));
       }
 
       function renderIssueSelect() {
@@ -3596,7 +3579,7 @@
         state.issues.forEach((it) => {
           const opt = document.createElement('option');
           opt.value = it.key;
-          opt.textContent = `${it.key} - ${it.shortSummary || it.summary}`;
+          opt.textContent = `${it.key} - ${it.summary}`;
           el.issueSel.appendChild(opt);
         });
         if (!state.issues.some((it) => it.key === state.selectedIssueKey)) {

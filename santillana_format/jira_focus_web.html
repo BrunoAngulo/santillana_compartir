@@ -31,75 +31,72 @@
     }
     body {
       margin: 0;
-      padding: 12px;
+      padding: 0;
       font-family: "Source Sans 3", "Segoe UI", "Tahoma", sans-serif;
       color: var(--text);
       line-height: 1.35;
-      background:
-        radial-gradient(circle at 8% -20%, #ffffff 0, var(--bg-soft) 34%, transparent 58%),
-        radial-gradient(circle at 98% 8%, #e5f1ff 0%, transparent 42%),
-        linear-gradient(180deg, #eef3f9 0%, var(--bg) 100%);
+      background: transparent;
     }
     .app {
       display: grid;
-      gap: 12px;
+      gap: 10px;
       width: 100%;
-      max-width: 1320px;
-      margin: 0 auto;
-      padding-bottom: 18px;
+      max-width: 100%;
+      margin: 0;
+      padding: 0;
     }
     .card {
-      background: var(--card);
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      padding: 14px;
-      box-shadow: var(--shadow);
+      background: #ffffff;
+      border: 1px solid #dfe5ee;
+      border-radius: 8px;
+      padding: 10px;
+      box-shadow: none;
       overflow: hidden;
-      transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+      transition: none;
     }
     .card:hover {
-      border-color: var(--line-strong);
-      box-shadow: 0 14px 30px rgba(14, 42, 74, 0.11);
+      border-color: #dfe5ee;
+      box-shadow: none;
     }
     .topbar {
-      border: 0;
-      background: linear-gradient(120deg, #0e518f 0%, #1973ba 70%, #2f8bcb 100%);
-      color: #ffffff;
-      position: sticky;
-      top: 10px;
-      z-index: 40;
-      box-shadow: 0 12px 26px rgba(10, 41, 71, 0.24);
+      position: static;
+      top: auto;
+      z-index: auto;
+      background: #ffffff;
+      color: var(--text);
+      border: 1px solid #dfe5ee;
+      box-shadow: none;
     }
     .topbar h2 {
-      color: #ffffff;
+      color: var(--text);
       font-family: "Lexend", "Segoe UI", sans-serif;
-      letter-spacing: 0.2px;
+      letter-spacing: 0;
     }
-    .topbar .muted { color: rgba(235, 245, 255, 0.9); }
+    .topbar .muted { color: var(--muted); }
     .topbar .pill {
-      color: #ffffff;
-      border-color: rgba(255, 255, 255, 0.5);
-      background: rgba(255, 255, 255, 0.18);
-      backdrop-filter: blur(3px);
+      color: var(--text);
+      border-color: #d5e2f1;
+      background: #f5f8fc;
+      backdrop-filter: none;
     }
     .topbar .pill.ok {
-      color: #ffffff;
-      border-color: rgba(196, 255, 215, 0.65);
-      background: rgba(55, 154, 95, 0.45);
+      color: #0f6a40;
+      border-color: #b5dcc9;
+      background: #ecf8f1;
     }
     .topbar .btn {
-      color: #ffffff;
-      border-color: rgba(255, 255, 255, 0.45);
-      background: rgba(255, 255, 255, 0.16);
+      color: var(--text);
+      border-color: #d5e2f1;
+      background: #ffffff;
     }
     .topbar .btn:hover:not(:disabled) {
-      border-color: rgba(255, 255, 255, 0.7);
-      background: rgba(255, 255, 255, 0.24);
+      border-color: #9fc1e1;
+      background: #eef5fd;
     }
     .topbar .btn.danger {
-      color: #ffffff;
-      border-color: rgba(255, 209, 209, 0.75);
-      background: rgba(173, 46, 46, 0.45);
+      color: #9a2020;
+      border-color: #e7c3c3;
+      background: #fff6f6;
     }
     .pill.busy {
       border-color: rgba(255, 241, 171, 0.72);
@@ -168,52 +165,21 @@
       color: #173b5a;
     }
     .issue-chip .value {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      max-width: 250px;
+      overflow: visible;
+      text-overflow: clip;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      max-width: 520px;
     }
-    .issue-extra {
+    .issue-chip.wide { flex: 1 1 420px; }
+    .issue-divider {
       width: 100%;
       border-top: 1px dashed #c9dbee;
-      padding-top: 7px;
-      margin-top: 2px;
+      margin: 2px 0;
     }
-    .issue-extra-title {
-      font-size: 12px;
-      font-weight: 700;
-      color: #173b5a;
-      margin-bottom: 4px;
-    }
-    .issue-extra-row {
-      font-size: 12px;
-      color: #2f4e67;
-      line-height: 1.35;
-    }
-    .issue-extra-row + .issue-extra-row {
-      margin-top: 2px;
-    }
-    .issue-extra-row b {
-      color: #173b5a;
-    }
-    .issue-extra-list {
-      white-space: normal;
-      word-break: break-word;
-    }
-    .issue-insight.stack {
-      display: block;
-    }
-    .issue-insight-list {
-      width: 100%;
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-    }
-    .issue-insight-section {
-      margin-top: 4px;
-      font-size: 12px;
-      font-weight: 700;
-      color: #173b5a;
+    .issue-chip.section {
+      border-style: dashed;
+      background: #f6f9fe;
     }
     .dashboard-grid {
       display: grid;
@@ -1676,7 +1642,6 @@
     <div class="card row topbar">
       <div>
         <h2>Jira Focus Web</h2>
-        <div class="muted">Trabajo en Jira Cloud, frontend puro, persistencia local.</div>
       </div>
       <div class="row" style="margin-left:auto;">
         <span class="pill" id="connPill">Sin conexion</span>
@@ -1704,9 +1669,7 @@
     </details>
 
     <section class="card" id="loginView">
-      <h3>Iniciar sesion con Jira</h3>
-      <div class="muted">OAuth 2.0 PKCE.</div>
-      <div class="row" style="margin-top:10px;">
+      <div class="row">
         <button class="btn primary" id="connectBtn" type="button">Acceder a cuenta Jira</button>
       </div>
     </section>
@@ -3331,21 +3294,20 @@
         const subtasksLabel = subtaskNames.length ? subtaskNames.join(' | ') : 'Sin subtareas';
         const lastPlantillaEstudiantes = lastWorklogLabelByOfficialType(key, ESTUDIANTES_TEMPLATE_ACTIVITY);
         const lastPlantillaDocentes = lastWorklogLabelByOfficialType(key, DOCENTES_TEMPLATE_ACTIVITY);
-        el.issueInsight.className = 'issue-insight stack';
+        el.issueInsight.className = 'issue-insight';
         el.issueInsight.innerHTML = `
-          <div class="issue-insight-list">
-            <div class="issue-extra-row"><b>Ticket:</b> <span>${escapeHtml(key)}</span></div>
-            <div class="issue-extra-row"><b>Resumen:</b> <span>${escapeHtml(summary)}</span></div>
-            <div class="issue-extra-row"><b>Comentarios:</b> <span>${escapeHtml(String(commentsCount))}</span></div>
-            <div class="issue-extra-row"><b>Worklogs:</b> <span>${escapeHtml(String(worklogsCount))}</span></div>
-            <div class="issue-extra-row"><b>Total:</b> <span>${escapeHtml(TimeService.jiraDuration(totalMins))}</span></div>
-            <div class="issue-extra-row"><b>Plantillas:</b> <span>${escapeHtml(String(templateCount))}</span></div>
-            <div class="issue-extra-row"><b>Ult. comentario:</b> <span>${escapeHtml(lastComment)}</span></div>
-            <div class="issue-insight-section">Informacion extra</div>
-            <div class="issue-extra-row"><b>Subtareas:</b> <span class="issue-extra-list">${escapeHtml(subtasksLabel)}</span></div>
-            <div class="issue-extra-row"><b>Ult. registro plantilla estudiantes:</b> <span>${escapeHtml(lastPlantillaEstudiantes)}</span></div>
-            <div class="issue-extra-row"><b>Ult. registro plantilla docentes:</b> <span>${escapeHtml(lastPlantillaDocentes)}</span></div>
-          </div>
+          <span class="issue-chip"><b>Ticket:</b><span class="value">${escapeHtml(key)}</span></span>
+          <span class="issue-chip wide"><b>Resumen:</b><span class="value">${escapeHtml(summary)}</span></span>
+          <span class="issue-chip"><b>Comentarios:</b><span class="value">${escapeHtml(String(commentsCount))}</span></span>
+          <span class="issue-chip"><b>Worklogs:</b><span class="value">${escapeHtml(String(worklogsCount))}</span></span>
+          <span class="issue-chip"><b>Total:</b><span class="value">${escapeHtml(TimeService.jiraDuration(totalMins))}</span></span>
+          <span class="issue-chip"><b>Plantillas:</b><span class="value">${escapeHtml(String(templateCount))}</span></span>
+          <span class="issue-chip"><b>Ult. comentario:</b><span class="value">${escapeHtml(lastComment)}</span></span>
+          <span class="issue-divider"></span>
+          <span class="issue-chip section"><b>Informacion extra</b></span>
+          <span class="issue-chip wide"><b>Subtareas:</b><span class="value">${escapeHtml(subtasksLabel)}</span></span>
+          <span class="issue-chip"><b>Ult. registro plantilla estudiantes:</b><span class="value">${escapeHtml(lastPlantillaEstudiantes)}</span></span>
+          <span class="issue-chip"><b>Ult. registro plantilla docentes:</b><span class="value">${escapeHtml(lastPlantillaDocentes)}</span></span>
         `;
       }
 

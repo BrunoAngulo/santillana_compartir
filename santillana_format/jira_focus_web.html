@@ -171,6 +171,14 @@
       overflow-wrap: anywhere;
       max-width: 520px;
     }
+    .issue-chip.metric {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 1px;
+      border-radius: 10px;
+      padding: 6px 10px;
+      min-width: 120px;
+    }
     .issue-chip.wide { flex: 1 1 420px; }
     .issue-divider {
       width: 100%;
@@ -1423,11 +1431,9 @@
     .timeline-lane-track {
       position: relative;
       height: 30px;
-      border: 1px solid #d4e2f1;
+      border: 1px solid var(--tl-track-border);
       border-radius: 999px;
-      background:
-        repeating-linear-gradient(90deg, rgba(178, 201, 227, 0.18) 0, rgba(178, 201, 227, 0.18) 10%, rgba(255, 255, 255, 0.02) 10%, rgba(255, 255, 255, 0.02) 20%),
-        linear-gradient(180deg, #f4f8fd 0%, #eaf2fb 100%);
+      background: var(--tl-track-bg);
       overflow: hidden;
     }
     .timeline-worklog-bar {
@@ -1758,13 +1764,6 @@
             </div>
             <button class="btn danger" id="deleteAllWorklogsBtn" type="button" disabled>Eliminar todo</button>
           </div>
-          <div class="panel-tools">
-            <select class="sel" id="worklogOwnerSel">
-              <option value="all">Todos</option>
-              <option value="mine">Solo mios</option>
-              <option value="readonly">Solo lectura</option>
-            </select>
-          </div>
           <div class="tbl-wrap">
             <table>
               <thead><tr><th>Fecha</th><th>Actividad</th><th>Duracion</th><th>Acciones</th></tr></thead>
@@ -1972,7 +1971,6 @@
         selectedTimelineActivity: '',
         selectedTimelineMinutes: 0,
         selectedWorklogId: '',
-        worklogOwnerMode: 'all',
         timelineLinksByIssue: {},
         manualWorklogToCommentByIssue: {},
         chartDesign: DEFAULT_CHART_DESIGN,
@@ -3101,7 +3099,7 @@
           'loginView','connectBtn',
           'mainView','issueSel','issueInsight','activityTypeSel','activityDueInp','activityInp','minutesInp','registerBtn','jiraDurationPill','timerVal','timerState','startBtn','pauseBtn',
           'resetBtn','applyTimerBtn','suggestionBox','applySugActBtn','applySugTimeBtn','registerSugBtn','todayTotal','weekTotal','issueCount','dashMeta',
-          'refreshDashBtn','recentBox','commentsBox','worklogBody','worklogsMeta','worklogOwnerSel','deleteAllWorklogsBtn','timelineBox','timelineMeta','ganttBox','genReportBtn','exportReportBtn','reportMeta',
+          'refreshDashBtn','recentBox','commentsBox','worklogBody','worklogsMeta','deleteAllWorklogsBtn','timelineBox','timelineMeta','ganttBox','genReportBtn','exportReportBtn','reportMeta',
           'reportBody','timelinePanel','chartDesignSel','chartDesignHelp','activityFocusBox','activityQuickSel','activityQuickMeta','compactBtn','floatBox','floatIssue','floatTimer','floatState','floatStartBtn','floatPauseBtn','floatExpandBtn',
           'regInlineBox','regInlineMeta','regTypeSel','regDateInp','regMinInp','regInlineOkBtn','regInlineCancelBtn',
           'editInlineBox','editMeta','editTypeSel','editActInp','editDateInp','editTimeInp','editMinInp','editSaveBtn','editDeleteBtn','editCancelBtn','activityList'
@@ -3274,11 +3272,11 @@
         const lastPlantillaDocentes = lastWorklogLabelByOfficialType(key, DOCENTES_TEMPLATE_ACTIVITY);
         el.issueInsight.className = 'issue-insight';
         el.issueInsight.innerHTML = `
-          <span class="issue-chip"><b>Comentarios:</b><span class="value">${escapeHtml(String(commentsCount))}</span></span>
-          <span class="issue-chip"><b>Worklogs:</b><span class="value">${escapeHtml(String(worklogsCount))}</span></span>
-          <span class="issue-chip"><b>Total:</b><span class="value">${escapeHtml(TimeService.jiraDuration(totalMins))}</span></span>
-          <span class="issue-chip"><b>Plantillas:</b><span class="value">${escapeHtml(String(templateCount))}</span></span>
-          <span class="issue-chip wide"><b>Seguimiento:</b><span class="value">${escapeHtml(`Subtareas: ${subtasksLabel} | Ult. registro plantilla estudiantes: ${lastPlantillaEstudiantes} | Ult. registro plantilla docentes: ${lastPlantillaDocentes}`)}</span></span>
+          <span class="issue-chip metric"><b>Comentarios:</b><span class="value">${escapeHtml(String(commentsCount))}</span></span>
+          <span class="issue-chip metric"><b>Worklogs:</b><span class="value">${escapeHtml(String(worklogsCount))}</span></span>
+          <span class="issue-chip metric"><b>Total:</b><span class="value">${escapeHtml(TimeService.jiraDuration(totalMins))}</span></span>
+          <span class="issue-chip metric"><b>Plantillas:</b><span class="value">${escapeHtml(String(templateCount))}</span></span>
+          <span class="issue-chip wide"><b>Subtareas:</b><span class="value">${escapeHtml(`${subtasksLabel} | Ult. registro plantilla estudiantes: ${lastPlantillaEstudiantes} | Ult. registro plantilla docentes: ${lastPlantillaDocentes}`)}</span></span>
         `;
       }
 
@@ -4004,9 +4002,6 @@
           el.worklogBody.innerHTML = '<tr><td colspan="4"><div class="empty">Sin worklogs.</div></td></tr>';
           return;
         }
-        const ownerMode = ['all', 'mine', 'readonly'].includes(String(state.worklogOwnerMode || '').trim())
-          ? String(state.worklogOwnerMode || '').trim()
-          : 'all';
         const prepared = rows.map((w) => {
           const my = mine(w.author);
           const id = String(w.id || '');
@@ -4021,23 +4016,14 @@
           return { w, my, id, date, act, mins, author, actions, selectedClass };
         });
         const mineCount = prepared.filter((item) => item.my).length;
-        const filtered = prepared.filter((item) => {
-          if (ownerMode === 'mine' && !item.my) return false;
-          if (ownerMode === 'readonly' && item.my) return false;
-          return true;
-        });
         if (el.worklogsMeta) {
-          const base = `${filtered.length}/${prepared.length} visibles | ${mineCount} editables`;
+          const base = `${prepared.length} registros | ${mineCount} editables`;
           el.worklogsMeta.textContent = base;
         }
-        if (state.selectedWorklogId && !filtered.some((item) => String(item.id) === String(state.selectedWorklogId))) {
+        if (state.selectedWorklogId && !prepared.some((item) => String(item.id) === String(state.selectedWorklogId))) {
           state.selectedWorklogId = '';
         }
-        if (!filtered.length) {
-          el.worklogBody.innerHTML = '<tr><td colspan="4"><div class="empty">No hay worklogs para la vista actual.</div></td></tr>';
-          return;
-        }
-        el.worklogBody.innerHTML = filtered.map((item) => (
+        el.worklogBody.innerHTML = prepared.map((item) => (
           `<tr class="worklog-row${item.selectedClass}" data-worklog-id="${escapeHtml(item.id)}"><td>${escapeHtml(item.date)}</td><td>${escapeHtml(item.act)}</td><td>${escapeHtml(item.mins)}</td><td>${item.actions}</td></tr>`
         )).join('');
       }
@@ -5230,16 +5216,6 @@
           catch (e) { applyError(e, `No se pudo cargar detalle de ${state.selectedIssueKey}.`); }
           renderCompact();
         });
-        if (el.worklogOwnerSel) {
-          el.worklogOwnerSel.value = ['all', 'mine', 'readonly'].includes(state.worklogOwnerMode)
-            ? state.worklogOwnerMode
-            : 'all';
-          el.worklogOwnerSel.addEventListener('change', () => {
-            const mode = String(el.worklogOwnerSel.value || '').trim();
-            state.worklogOwnerMode = ['all', 'mine', 'readonly'].includes(mode) ? mode : 'all';
-            renderWorklogs(state.selectedIssueKey);
-          });
-        }
 
         el.activityTypeSel.addEventListener('change', () => {
           syncOfficialActivityToState(true);

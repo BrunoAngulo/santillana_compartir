@@ -1704,46 +1704,10 @@
     </details>
 
     <section class="card" id="loginView">
-      <h3>Conectar Jira Cloud</h3>
-      <div class="muted">OAuth 2.0 PKCE. Configuracion local en <code>jira_config</code> (sin exponer tokens en UI).</div>
+      <h3>Iniciar sesion con Jira</h3>
+      <div class="muted">OAuth 2.0 PKCE.</div>
       <div class="row" style="margin-top:10px;">
         <button class="btn primary" id="connectBtn" type="button">Acceder a cuenta Jira</button>
-        <button class="btn" id="toggleOAuthCfgBtn" type="button">Configuracion avanzada</button>
-        <button class="btn danger" id="clearOAuthBtn" type="button">Limpiar sesion OAuth local</button>
-      </div>
-      <div class="hide" id="oauthAdvancedBox" style="margin-top:8px;">
-        <div class="grid3" style="margin-top:8px;">
-          <div>
-            <label for="urlInp">URL Jira</label>
-            <input class="inp" id="urlInp" type="url" placeholder="https://tu-dominio.atlassian.net" autocomplete="off">
-          </div>
-          <div>
-            <label for="clientIdInp">Atlassian OAuth Client ID</label>
-            <input class="inp" id="clientIdInp" type="text" placeholder="Tu client id 3LO" autocomplete="off">
-          </div>
-          <div>
-            <label for="clientSecretInp">Atlassian OAuth Client Secret</label>
-            <input class="inp" id="clientSecretInp" type="password" placeholder="Tu client secret 3LO" autocomplete="new-password">
-          </div>
-        </div>
-        <div class="grid3" style="margin-top:8px;">
-          <div>
-            <label for="redirectUriInp">Redirect URI</label>
-            <input class="inp" id="redirectUriInp" type="url" placeholder="https://tu-app/">
-          </div>
-        </div>
-        <div class="muted" style="margin-top:8px;">
-          Registra este Redirect URI en tu app OAuth de Atlassian. Si no se detecta callback automatico, pega la URL retornada:
-        </div>
-        <div class="grid2" style="margin-top:8px;">
-          <div>
-            <label for="callbackUrlInp">URL de callback (manual)</label>
-            <input class="inp" id="callbackUrlInp" type="text" placeholder="https://tu-app/?code=...&state=...">
-          </div>
-          <div class="row" style="align-items:flex-end;">
-            <button class="btn" id="processCallbackBtn" type="button">Procesar callback</button>
-          </div>
-        </div>
       </div>
     </section>
 
@@ -3191,7 +3155,7 @@
         [
           'connPill','syncPill','userPill','refreshIssuesBtn','disconnectBtn','msg','idleMsg',
           'debugLogBox','debugCopyBtn','debugClearBtn',
-          'loginView','urlInp','clientIdInp','clientSecretInp','redirectUriInp','callbackUrlInp','connectBtn','processCallbackBtn','clearOAuthBtn','toggleOAuthCfgBtn','oauthAdvancedBox',
+          'loginView','connectBtn',
           'mainView','issueSel','issueInsight','activityTypeSel','activityDueInp','activityInp','minutesInp','registerBtn','jiraDurationPill','timerVal','timerState','startBtn','pauseBtn',
           'resetBtn','applyTimerBtn','suggestionBox','applySugActBtn','applySugTimeBtn','registerSugBtn','todayTotal','weekTotal','issueCount','dashMeta',
           'refreshDashBtn','recentBox','commentsBox','worklogBody','worklogsMeta','worklogOwnerSel','deleteAllWorklogsBtn','timelineBox','timelineMeta','ganttBox','genReportBtn','exportReportBtn','reportMeta',
@@ -3199,15 +3163,6 @@
           'regInlineBox','regInlineMeta','regTypeSel','regDateInp','regMinInp','regInlineOkBtn','regInlineCancelBtn',
           'editInlineBox','editMeta','editTypeSel','editActInp','editDateInp','editTimeInp','editMinInp','editSaveBtn','editDeleteBtn','editCancelBtn','activityList'
         ].forEach((id) => { el[id] = document.getElementById(id); });
-      }
-
-      function setOAuthAdvancedVisible(visible) {
-        if (!el.oauthAdvancedBox) return;
-        const show = !!visible;
-        el.oauthAdvancedBox.classList.toggle('hide', !show);
-        if (el.toggleOAuthCfgBtn) {
-          el.toggleOAuthCfgBtn.textContent = show ? 'Ocultar configuracion avanzada' : 'Configuracion avanzada';
-        }
       }
 
       function uiStateSave() {
@@ -5074,26 +5029,18 @@
 
       function readConfigInputs() {
         const base = BASE_OAUTH_CONFIG || {};
-        const rawUrl = String(el.urlInp.value || '').trim();
-        const rawClientId = String(el.clientIdInp.value || '').trim();
-        const rawClientSecret = String(el.clientSecretInp.value || '');
-        const rawRedirectUri = String(el.redirectUriInp.value || '').trim();
         return {
-          url: sanitizeUrl(rawUrl || base.url || ''),
-          client_id: String(rawClientId || base.client_id || '').trim(),
-          client_secret: String(rawClientSecret || base.client_secret || ''),
-          redirect_uri: String(rawRedirectUri || base.redirect_uri || '').trim(),
+          url: sanitizeUrl(base.url || ''),
+          client_id: String(base.client_id || '').trim(),
+          client_secret: String(base.client_secret || ''),
+          redirect_uri: String(base.redirect_uri || '').trim(),
           cloud_id: ''
         };
       }
 
       function applyConfigToInputs(cfg) {
-        const source = cfg && typeof cfg === 'object' ? cfg : {};
-        const base = BASE_OAUTH_CONFIG || {};
-        el.urlInp.value = sanitizeUrl(source.url || base.url || '');
-        el.clientIdInp.value = String(source.client_id || base.client_id || '');
-        el.clientSecretInp.value = String(source.client_secret || base.client_secret || '');
-        el.redirectUriInp.value = String(source.redirect_uri || base.redirect_uri || deriveDefaultRedirectUri() || '').trim();
+        // No UI fields to sync in login mode simplificado (solo boton).
+        if (!cfg || typeof cfg !== 'object') return;
       }
 
       function isLikelyWrongRedirectUri(jiraUrl, redirectUri) {
@@ -5298,13 +5245,8 @@
         el.connectBtn.addEventListener('click', async () => {
           clearMsg();
           const cfg = readConfigInputs();
-          if (!cfg.redirect_uri) {
-            cfg.redirect_uri = String(BASE_OAUTH_CONFIG.redirect_uri || deriveDefaultRedirectUri() || '').trim();
-            el.redirectUriInp.value = cfg.redirect_uri;
-          }
           if (!cfg.url || !cfg.client_id || !cfg.client_secret || !cfg.redirect_uri) {
-            setOAuthAdvancedVisible(true);
-            showMsg('error', 'Completa URL Jira, Client ID, Client Secret y Redirect URI.');
+            showMsg('error', 'Falta configuracion OAuth en servidor. Revisa JIRA_OAUTH_* en secrets/env.');
             return;
           }
           if (isLikelyWrongRedirectUri(cfg.url, cfg.redirect_uri)) {
@@ -5336,60 +5278,6 @@
             try { popupWindow.close(); } catch (_closeErr) { /* ignore */ }
             clearPopupWatcher();
             applyError(e, 'No fue posible iniciar OAuth.');
-          }
-        });
-
-        if (el.toggleOAuthCfgBtn) {
-          el.toggleOAuthCfgBtn.addEventListener('click', () => {
-            const isHidden = el.oauthAdvancedBox ? el.oauthAdvancedBox.classList.contains('hide') : true;
-            setOAuthAdvancedVisible(isHidden);
-          });
-        }
-
-        el.clearOAuthBtn.addEventListener('click', () => {
-          clearPopupWatcher();
-          StorageService.clearOAuthTokens();
-          StorageService.clearOAuthPending();
-          StorageService.clearOAuthDone();
-          StorageService.del(STORAGE.config);
-          resetConnectionState();
-          renderTop();
-          renderIssueSelect();
-          renderIssueData();
-          renderDashboard();
-          renderReport();
-          showMsg('info', 'Sesion OAuth local limpiada.');
-        });
-
-        el.processCallbackBtn.addEventListener('click', async () => {
-          clearMsg();
-          const raw = String(el.callbackUrlInp.value || '').trim();
-          dbg('oauth_process_callback_clicked', { has_url: !!raw });
-          if (!raw) {
-            showMsg('error', 'Pega la URL completa de callback para procesarla.');
-            return;
-          }
-          if (!StorageService.getConfig()) {
-            const cfg = readConfigInputs();
-            if (!cfg.redirect_uri) {
-              cfg.redirect_uri = String(BASE_OAUTH_CONFIG.redirect_uri || deriveDefaultRedirectUri() || '').trim();
-              el.redirectUriInp.value = cfg.redirect_uri;
-            }
-            if (cfg.url && cfg.client_id && cfg.client_secret && cfg.redirect_uri) {
-              StorageService.saveConfig(cfg);
-            }
-          }
-          try {
-            const processed = await processOAuthCallback(raw, false);
-            if (!processed) {
-              showMsg('error', 'La URL no contiene parametros OAuth (code/state/error). Pega la URL completa de retorno.');
-              return;
-            }
-            showMsg('ok', 'Callback OAuth procesado correctamente.');
-          } catch (e) {
-            resetConnectionState();
-            renderTop();
-            applyError(e, 'No se pudo procesar el callback OAuth.');
           }
         });
 
@@ -5865,10 +5753,6 @@
       async function autoReconnect() {
         dbg('auto_reconnect_start');
         clearPopupWatcher();
-        const defaultRedirectUri = String(BASE_OAUTH_CONFIG.redirect_uri || deriveDefaultRedirectUri() || '').trim();
-        if (!el.redirectUriInp.value && defaultRedirectUri) {
-          el.redirectUriInp.value = defaultRedirectUri;
-        }
 
         const cfg = StorageService.getConfig();
         if (cfg) {
@@ -5879,12 +5763,6 @@
 
         const topHref = getTopLocationHref();
         const params = parseUrlParams(topHref);
-        const manualCallbackSeed = (params.code || params.error)
-          ? topHref
-          : String(BASE_OAUTH_CONFIG.redirect_uri || topHref || '').trim();
-        if (manualCallbackSeed) {
-          el.callbackUrlInp.value = manualCallbackSeed;
-        }
         if (params.code || params.error) {
           dbg('auto_reconnect_callback_in_url', { has_code: !!params.code, has_error: !!params.error });
           try {
@@ -5924,7 +5802,6 @@
           top_href_available: !!getTopLocationHref()
         });
         cacheElements();
-        setOAuthAdvancedVisible(false);
         bind();
         uiStateLoad();
         timerLoad();

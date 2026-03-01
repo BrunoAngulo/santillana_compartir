@@ -3440,6 +3440,15 @@
         return count;
       }
 
+      function isFirstTemplateFromStart(issueKey, templateType, anchorEnd) {
+        const key = String(issueKey || '').trim();
+        const type = String(templateType || '').trim();
+        const end = anchorEnd instanceof Date ? anchorEnd : new Date(anchorEnd || 0);
+        if (!key || !isTemplateOfficialType(type)) return false;
+        if (Number.isNaN(end.getTime()) || !isAfterOnboardingStart(end)) return false;
+        return countWorklogsByOfficialType(key, type) === 0;
+      }
+
       function activityFromText(text) {
         const t = String(text || '').trim();
         if (!t) return '';
@@ -4893,14 +4902,11 @@
           const anchorEnd = Number.isFinite(anchorEndTs) && anchorEndTs > 0
             ? new Date(anchorEndTs)
             : new Date();
-          const docentesCount = countWorklogsByOfficialType(issueKey, DOCENTES_TEMPLATE_ACTIVITY);
-          const firstDocentesFromStart = !!(
+          const firstTemplateFromStart = !!(
             plan.templateMode
-            && templateType === DOCENTES_TEMPLATE_ACTIVITY
-            && docentesCount === 0
-            && isAfterOnboardingStart(anchorEnd)
+            && isFirstTemplateFromStart(issueKey, templateType, anchorEnd)
           );
-          const resolvedMinutes = firstDocentesFromStart
+          const resolvedMinutes = firstTemplateFromStart
             ? Math.max(1, TimeService.businessMinutesBetween(onboardingStartDate(), anchorEnd))
             : Math.max(1, Math.floor(Number(plan.minutes || 0)));
           state.regCtx = {
@@ -4926,7 +4932,7 @@
             ? TimeService.dtLabel(anchorEndTs)
             : '';
           if (plan.templateMode) {
-            if (firstDocentesFromStart) {
+            if (firstTemplateFromStart) {
               el.regInlineMeta.textContent = `${issueKey} | ${templateType} | primer registro | ${TimeService.jiraDuration(resolvedMinutes)} (auto desde 15/12/2025 08:30 hasta ${anchorLabel || createdLabel})`;
             } else {
               el.regInlineMeta.textContent = `${issueKey} | ${templateType} | 1m (registro adicional de plantilla)`;
@@ -5003,12 +5009,8 @@
             const applyTemplate = forceTemplate;
             if (applyTemplate) {
               const templateType = selectedType;
-              const isFirstDocentes = (
-                templateType === DOCENTES_TEMPLATE_ACTIVITY
-                && countWorklogsByOfficialType(issueKey, DOCENTES_TEMPLATE_ACTIVITY) === 0
-                && isAfterOnboardingStart(anchorEnd)
-              );
-              mins = isFirstDocentes
+              const isFirstTemplate = isFirstTemplateFromStart(issueKey, templateType, anchorEnd);
+              mins = isFirstTemplate
                 ? Math.max(1, TimeService.businessMinutesBetween(onboardingStartDate(), anchorEnd))
                 : 1;
               activity = buildOfficialActivity(templateType, TimeService.toInputDate(anchorEnd));

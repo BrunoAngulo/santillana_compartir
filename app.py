@@ -67,23 +67,23 @@ menu_option = st.radio(
 if menu_option == "Jira Focus Web":
     render_jira_focus_web(height=1400)
     st.stop()
-st.title("Si estás acá es porque eres flojo")
-st.write("El maravilloso mundo de TED :0 automatiza tu chamba por unos buenos días al día ;)")
-st.markdown("**ConfiguraciÃ³n global**")
+st.title("Procesos Pegasus")
+st.caption("Gestion rapida de clases, profesores y alumnos.")
+st.markdown("**Configuracion global**")
 global_col_token, global_col_colegio = st.columns([2.3, 1.1])
 with global_col_token:
     st.text_input(
         "Token (sin Bearer)",
         type="password",
         key="shared_pegasus_token",
-        help="Se usa en todas las funciones. Si queda vacio, se usa PEGASUS_TOKEN.",
+        help="Se usa en todas las funciones. Si queda vacio, toma PEGASUS_TOKEN.",
     )
 with global_col_colegio:
     st.text_input(
         "Colegio Clave (global)",
         key="shared_colegio_id",
         placeholder="2326",
-        help="Se reutiliza en CRUD Alumnos para no volver a pedirlo.",
+        help="Se reutiliza en las funciones que requieren colegio.",
     )
 tab_crud_clases, tab_profesores_clases, tab_crud_alumnos = st.tabs(
     [
@@ -106,6 +106,16 @@ def _get_shared_token() -> str:
     if token:
         return token
     return _clean_token(os.environ.get("PEGASUS_TOKEN", ""))
+
+
+def _show_dataframe(data: object, use_container_width: bool = True) -> None:
+    if isinstance(data, pd.DataFrame):
+        df_view = data.copy()
+    else:
+        df_view = pd.DataFrame(data)
+    if not df_view.empty:
+        df_view.index = range(1, len(df_view) + 1)
+    st.dataframe(df_view, use_container_width=use_container_width)
 
 def _parse_persona_ids(raw: str) -> List[int]:
     if not raw:
@@ -511,10 +521,7 @@ def _collect_colegios(clases: List[Dict[str, object]]) -> List[Dict[str, object]
 with tab_crud_clases:
     st.subheader("CRUD Clases")
     st.markdown("**1) Crear clases**")
-    st.info(
-        "Flujo sugerido: 1) Sube el Excel de detalle, 2) Ingresa el código CRM "
-        "exacto (respeta ceros), 3) Define secciones (A,B,C...)."
-    )
+    st.caption("Carga Excel, codigo CRM y secciones.")
     with st.expander("Opciones de entrada", expanded=True):
         uploaded_excel = st.file_uploader(
             "Excel de entrada",
@@ -535,7 +542,7 @@ with tab_crud_clases:
             help="Letras separadas por coma para crear secciones.",
         )
 
-    if st.button("Generar", type="primary"):
+    if st.button("Generar clases", type="primary"):
         if not uploaded_excel:
             st.error("Sube un Excel de entrada.")
             st.stop()
@@ -575,14 +582,7 @@ with tab_crud_clases:
 
 with tab_profesores_clases:
     st.subheader("Profesores con clases")
-    st.write(
-        "Genera el Excel base de profesores (activos e inactivos) y luego asígnalos a clases."
-    )
-    st.warning(
-        "Recomendación: primero usa 'Simular' para revisar el resumen antes de aplicar "
-        "cambios reales."
-    )
-
+    st.caption("Flujo: genera base, luego simula y aplica asignaciones.")
     st.caption("Usando el token global configurado arriba.")
     colegio_id_raw = st.text_input(
         "Colegio Clave",
@@ -609,11 +609,8 @@ with tab_profesores_clases:
             key="profesores_timeout",
         )
 
-    st.subheader("Generar Excel base de profesores (activos e inactivos)")
-    st.write(
-        "Crea un Excel listo con columnas Id, Nombre, Apellido, Estado, Sexo, DNI, "
-        "E-mail, Login y Password (en blanco)."
-    )
+    st.subheader("1) Generar Excel base de profesores")
+    st.caption("Incluye profesores activos e inactivos.")
     persona_ids_raw = st.text_input(
         "Filtrar por personaId (opcional, separado por coma)",
         key="profesores_ids",
@@ -703,7 +700,7 @@ with tab_profesores_clases:
             )
             if errores:
                 st.error("Errores al obtener profesores:")
-                st.dataframe(errores, use_container_width=True)
+                _show_dataframe(errores, use_container_width=True)
 
     if st.session_state.get("profesores_excel_base"):
         st.download_button(
@@ -713,18 +710,9 @@ with tab_profesores_clases:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
-    st.subheader("Asignar profesores a clases")
-    st.write(
-        "Sube un Excel con columnas persona_id y CURSO, más niveles/grados "
-        "(Inicial/Primaria/Secundaria o I3, P1, S2...). "
-        "Opcional: columna Secciones con valores como 1PA,2PB,3SB para asignar solo esas secciones. "
-        "Si incluyes la columna Estado (Activo/Inactivo), se sincroniza por nivel al aplicar."
-    )
-    st.markdown("**Procesos a ejecutar**")
-    st.caption(
-        "Niveles = acceso por nivel (Inicial/Primaria/Secundaria). "
-        "Clases/Secciones = asignación directa a clases específicas (incluye grupos)."
-    )
+    st.subheader("2) Asignar profesores a clases")
+    st.caption("Sube la hoja con persona_id y CURSO. Secciones y Estado son opcionales.")
+    st.markdown("**Procesos**")
     col_proc1, col_proc2 = st.columns(2)
     do_password = col_proc1.checkbox("Actualizar login/password", value=True)
     do_niveles = col_proc1.checkbox("Asignar niveles (asignarNivel)", value=True)
@@ -775,10 +763,7 @@ with tab_profesores_clases:
     run_apply = col_apply.button(
         "Aplicar cambios", type="secondary", key="profesores_apply"
     )
-    st.info(
-        "Para aplicar cambios debes marcar 'Confirmo aplicar cambios'. "
-        "Si no confirmas, se ejecuta en modo simulación."
-    )
+    st.info("Para aplicar cambios, marca 'Confirmo aplicar cambios'.")
 
     if run_sim or run_apply:
         if not uploaded_profesores:
@@ -846,7 +831,7 @@ with tab_profesores_clases:
                     st.markdown("\n".join(f"- {item}" for item in pwd_warnings))
                 if pwd_errors:
                     st.error("Errores passwords:")
-                    st.dataframe(pwd_errors, use_container_width=True)
+                    _show_dataframe(pwd_errors, use_container_width=True)
 
             run_asignacion = any([do_niveles, do_estado, do_clases])
             if run_asignacion:
@@ -905,7 +890,7 @@ with tab_profesores_clases:
                 st.markdown("\n".join(f"- {item}" for item in warnings))
             if errors:
                 st.error("Errores al asignar profesores:")
-                st.dataframe(errors, use_container_width=True)
+                _show_dataframe(errors, use_container_width=True)
             if logs:
                 display_logs = [line for line in logs if line is not None]
                 while display_logs and not str(display_logs[0]).strip():
@@ -922,19 +907,18 @@ with tab_profesores_clases:
 
 with tab_crud_alumnos:
     st.subheader("CRUD Alumnos")
-    st.caption("Flujo unificado y compacto para alumnos.")
+    st.caption("Funciones principales de alumnos en tarjetas.")
     crud_col_left, crud_col_right = st.columns(2, gap="large")
     with crud_col_left:
         with st.container(border=True):
             st.markdown("**1) Plantilla de alumnos registrados**")
-            st.caption("Descarga la plantilla base. Esta configuracion se reutiliza abajo.")
+            st.caption("Descarga la plantilla de edicion masiva.")
             colegio_id_raw = str(
                 st.session_state.get("shared_colegio_id", "")
                 or st.session_state.get("alumnos_colegio_text", "")
             ).strip()
             if colegio_id_raw:
                 st.session_state["alumnos_colegio_text"] = colegio_id_raw
-            st.caption(f"Colegio global: `{colegio_id_raw or '-'}`")
             with st.expander("Opciones avanzadas", expanded=False):
                 ciclo_id = st.number_input(
                     "Ciclo ID",
@@ -996,13 +980,13 @@ with tab_crud_alumnos:
     with crud_col_right:
         with st.container(border=True):
             st.markdown("**2) Comparar Plantilla_BD vs Plantilla_Actualizada**")
-            st.caption("Sube el .xlsx con hojas Plantilla_BD y Plantilla_Actualizada.")
+            st.caption("Genera altas, match e inactivados.")
             uploaded_compare = st.file_uploader(
-                "Excel con Plantilla_BD y Plantilla_Actualizada",
+                "Archivo .xlsx",
                 type=["xlsx"],
                 key="alumnos_compare_excel",
             )
-            if st.button("Generar alumnos_resultados", type="primary", key="alumnos_compare"):
+            if st.button("Generar resultado", type="primary", key="alumnos_compare"):
                 if not uploaded_compare:
                     st.error("Sube un Excel .xlsx con Plantilla_BD y Plantilla_Actualizada.")
                     st.stop()
@@ -1038,13 +1022,8 @@ with tab_crud_alumnos:
     
 with tab_crud_clases:
     st.markdown("**2) Listar y eliminar clases**")
-    st.write("Lista y elimina clases del API de gestión escolar.")
-    st.warning(
-        "Eliminar clases es irreversible. Revisa el listado antes de confirmar."
-    )
-    st.caption("Usando el token global configurado arriba.")
+    st.caption("Usa token global y colegio global.")
     colegio_id_raw = str(st.session_state.get("shared_colegio_id", "")).strip()
-    st.caption(f"Colegio global: `{colegio_id_raw or '-'}`")
     with st.expander("Opciones avanzadas", expanded=False):
         ciclo_id = st.number_input(
             "Ciclo ID",
@@ -1058,8 +1037,22 @@ with tab_crud_clases:
     empresa_id = DEFAULT_EMPRESA_ID
     timeout = 30
 
-    col_list, col_delete = st.columns(2)
-    if col_list.button("Listar clases"):
+    col_list, col_delete = st.columns(2, gap="large")
+    with col_list:
+        with st.container(border=True):
+            st.markdown("**Listar clases**")
+            run_listar_clases = st.button("Listar clases", key="clases_listar_btn")
+    with col_delete:
+        with st.container(border=True):
+            st.markdown("**Eliminar clases**")
+            st.caption("Accion irreversible.")
+            confirm_delete = st.checkbox(
+                "Confirmo eliminar todas las clases listadas.",
+                key="clases_confirm_delete",
+            )
+            run_eliminar_clases = st.button("Eliminar clases", key="clases_eliminar_btn")
+
+    if run_listar_clases:
         if not token:
             st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
         else:
@@ -1093,10 +1086,9 @@ with tab_crud_clases:
                         if isinstance(item, dict)
                     ]
                     st.write(f"Clases encontradas: {len(tabla)}")
-                    st.dataframe(tabla, use_container_width=True)
+                    _show_dataframe(tabla, use_container_width=True)
 
-    confirm_delete = st.checkbox("Confirmo eliminar todas las clases listadas.")
-    if col_delete.button("Eliminar clases"):
+    if run_eliminar_clases:
         if not token:
             st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
             st.stop()
@@ -1144,7 +1136,7 @@ with tab_crud_clases:
         colegios = _collect_colegios(clases)
         if colegios:
             st.write("Colegios eliminados (id, nombre):")
-            st.dataframe(colegios, use_container_width=True)
+            _show_dataframe(colegios, use_container_width=True)
         eliminadas = len(clases) - len(errores)
         st.success(f"Clases eliminadas: {eliminadas}")
         if errores:
@@ -1153,219 +1145,25 @@ with tab_crud_clases:
 
 with tab_crud_alumnos:
 
-    crud_col_bottom_left, crud_col_bottom_right = st.columns(2, gap="large")
-    with crud_col_bottom_left:
-        with st.container(border=True):
-            st.markdown("**3) Listar clases con todos sus alumnos**")
-            colegio_id_raw = str(
-                st.session_state.get("shared_colegio_id", "")
-                or st.session_state.get("alumnos_colegio_text", "")
-            ).strip()
-            ciclo_id = int(st.session_state.get("alumnos_ciclo", ALUMNOS_CICLO_ID_DEFAULT))
-            empresa_id = int(st.session_state.get("alumnos_empresa", DEFAULT_EMPRESA_ID))
-            timeout = int(st.session_state.get("alumnos_timeout", 30))
-            st.caption(
-                f"Colegio: `{colegio_id_raw or '-'}` | Ciclo: `{ciclo_id}` | "
-                f"Empresa: `{empresa_id}` | Timeout: `{timeout}s`"
-            )
-            solo_activos = st.checkbox(
-                "Solo alumnos activos",
-                value=False,
-                key="clases_alumnos_solo_activos",
-            )
-    
-            if st.button(
-                "Listar clases con alumnos",
-                type="primary",
-                key="clases_alumnos_listar",
-            ):
-                token = _get_shared_token()
-                if not token:
-                    st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-                    st.stop()
-                try:
-                    colegio_id_int = _parse_colegio_id(colegio_id_raw)
-                except ValueError as exc:
-                    st.error(f"Error: {exc}")
-                    st.stop()
-    
-                try:
-                    with st.spinner("Listando clases..."):
-                        clases = _fetch_clases_gestion_escolar(
-                            token=token,
-                            colegio_id=colegio_id_int,
-                            empresa_id=int(empresa_id),
-                            ciclo_id=int(ciclo_id),
-                            timeout=int(timeout),
-                        )
-                except Exception as exc:  # pragma: no cover - UI
-                    st.error(f"Error: {exc}")
-                    st.stop()
-    
-                if not clases:
-                    st.info("No se encontraron clases para ese colegio/ciclo.")
-                    st.stop()
-    
-                detalle_rows: List[Dict[str, object]] = []
-                resumen_rows: List[Dict[str, object]] = []
-                errores: List[str] = []
-                total = len(clases)
-                progress = st.progress(0)
-                status = st.empty()
-    
-                for index, item in enumerate(clases, start=1):
-                    progress.progress(int((index / total) * 100))
-    
-                    if not isinstance(item, dict):
-                        errores.append("Clase con formato inválido.")
-                        continue
-    
-                    clase_id_raw = item.get("geClaseId")
-                    if clase_id_raw is None:
-                        errores.append("Clase sin geClaseId.")
-                        continue
-                    try:
-                        clase_id = int(clase_id_raw)
-                    except (TypeError, ValueError):
-                        errores.append(f"Clase con geClaseId inválido: {clase_id_raw}")
-                        continue
-    
-                    clase_name = str(item.get("geClase") or item.get("geClaseClave") or "")
-                    status.write(f"Revisando {index}/{total}: {clase_id} {clase_name}".strip())
-    
-                    try:
-                        clase_data = _fetch_alumnos_clase_gestion_escolar(
-                            token=token,
-                            clase_id=clase_id,
-                            empresa_id=int(empresa_id),
-                            ciclo_id=int(ciclo_id),
-                            timeout=int(timeout),
-                        )
-                    except Exception as exc:  # pragma: no cover - UI
-                        errores.append(f"{clase_id}: {exc}")
-                        continue
-    
-                    alumnos_data = clase_data.get("claseAlumnos") or []
-                    if not isinstance(alumnos_data, list):
-                        errores.append(f"{clase_id}: campo claseAlumnos no es lista")
-                        continue
-    
-                    cgg = clase_data.get("colegioGradoGrupo") if isinstance(clase_data, dict) else None
-                    grado_info = cgg.get("grado") if isinstance(cgg, dict) else None
-                    grupo_info = cgg.get("grupo") if isinstance(cgg, dict) else None
-                    grado = str(grado_info.get("grado") or "") if isinstance(grado_info, dict) else ""
-                    grupo = str(grupo_info.get("grupo") or "") if isinstance(grupo_info, dict) else ""
-    
-                    total_api = len(alumnos_data)
-                    listados = 0
-    
-                    for entry in alumnos_data:
-                        if not isinstance(entry, dict):
-                            continue
-                        alumno = entry.get("alumno")
-                        if not isinstance(alumno, dict):
-                            continue
-                        persona = alumno.get("persona")
-                        if not isinstance(persona, dict):
-                            continue
-                        persona_login = persona.get("personaLogin")
-                        if not isinstance(persona_login, dict):
-                            persona_login = {}
-    
-                        activo_en_clase = bool(entry.get("activo", False))
-                        activo_en_censo = bool(alumno.get("activo", False))
-                        if solo_activos and (not activo_en_clase or not activo_en_censo):
-                            continue
-    
-                        listados += 1
-                        detalle_rows.append(
-                            {
-                                "Clase ID": clase_id,
-                                "Clase": clase_name,
-                                "Grado": grado,
-                                "Grupo": grupo,
-                                "Alumno ID": alumno.get("alumnoId", ""),
-                                "Persona ID": persona.get("personaId", ""),
-                                "Login": persona_login.get("login", ""),
-                                "Nombre completo": persona.get("nombreCompleto", ""),
-                                "Activo censo": activo_en_censo,
-                                "Activo clase": activo_en_clase,
-                            }
-                        )
-    
-                    resumen_rows.append(
-                        {
-                            "Clase ID": clase_id,
-                            "Clase": clase_name,
-                            "Alumnos API": total_api,
-                            "Alumnos listados": listados,
-                        }
-                    )
-    
-                    if listados == 0:
-                        detalle_rows.append(
-                            {
-                                "Clase ID": clase_id,
-                                "Clase": clase_name,
-                                "Grado": grado,
-                                "Grupo": grupo,
-                                "Alumno ID": "",
-                                "Persona ID": "",
-                                "Login": "",
-                                "Nombre completo": "(sin alumnos)",
-                                "Activo censo": "",
-                                "Activo clase": "",
-                            }
-                        )
-    
-                progress.progress(100)
-                status.empty()
-    
-                st.success("Listado generado.")
-                st.markdown(f"- Clases evaluadas: `{total}`")
-                st.markdown(f"- Clases con error: `{len(errores)}`")
-                st.markdown(f"- Registros listados: `{len(detalle_rows)}`")
-    
-                if resumen_rows:
-                    resumen_rows = sorted(resumen_rows, key=lambda row: int(row.get("Clase ID", 0)))
-                    st.subheader("Resumen por clase")
-                    st.dataframe(resumen_rows, use_container_width=True)
-    
-                if detalle_rows:
-                    detalle_rows = sorted(
-                        detalle_rows,
-                        key=lambda row: (
-                            int(row.get("Clase ID", 0)),
-                            str(row.get("Nombre completo", "")),
-                        ),
-                    )
-                    st.subheader("Detalle de alumnos por clase")
-                    st.dataframe(detalle_rows, use_container_width=True)
-                else:
-                    st.info("No hay alumnos para mostrar.")
-    
-                if errores:
-                    st.warning("Hubo errores en algunas clases.")
-                    st.write("\n".join(f"- {item}" for item in errores[:20]))
-                    restantes = len(errores) - 20
-                    if restantes > 0:
-                        st.caption(f"... y {restantes} errores más.")
-    
-    with crud_col_bottom_right:
+    colegio_id_raw = str(
+        st.session_state.get("shared_colegio_id", "")
+        or st.session_state.get("alumnos_colegio_text", "")
+    ).strip()
+    ciclo_id = int(st.session_state.get("alumnos_ciclo", ALUMNOS_CICLO_ID_DEFAULT))
+    empresa_id = int(st.session_state.get("alumnos_empresa", DEFAULT_EMPRESA_ID))
+    timeout = int(st.session_state.get("alumnos_timeout", 30))
+
+    full_width_col = st.columns(1)[0]
+    with full_width_col:
         with st.container(border=True):
             st.markdown("**4) Generar Excel por niveles, grados y secciones (Censo)**")
-            st.caption("Genera Excel desde censo por nivel/grado/seccion.")
+            st.caption("Exporta alumnos desde Censo.")
             solo_activos_censo = st.checkbox(
                 "Solo alumnos activos en censo",
                 value=False,
                 key="clases_alumnos_excel_solo_activos",
             )
-            excluir_5to_sec_z = st.checkbox(
-                "Excluir 5to Sec Z del Excel",
-                value=True,
-                key="clases_alumnos_excel_excluir_5to_sec_z",
-                help="Cuando esta activo, no se incluye la seccion Z de 5to de Secundaria.",
-            )
+            excluir_5to_sec_z = True
             if st.button(
                 "Generar Excel alumnos (Censo)",
                 type="primary",
@@ -1752,7 +1550,7 @@ with tab_crud_alumnos:
                 )
     
                 if not df_excel.empty:
-                    st.dataframe(df_excel, use_container_width=True)
+                    _show_dataframe(df_excel, use_container_width=True)
                 if errores_excel:
                     st.warning("Hubo errores en algunas combinaciones.")
                     st.write("\n".join(f"- {item}" for item in errores_excel[:20]))

@@ -1653,7 +1653,6 @@
       const ONBOARDING_START = { year: 2025, month: 12, day: 15, hour: 8, minute: 30 };
       const DOCENTES_TEMPLATE_ACTIVITY = 'Entrega de plantillas DOCENTES Coach/Farmer/Hunter';
       const ESTUDIANTES_TEMPLATE_ACTIVITY = 'Entrega de plantillas ESTUDIANTES Coach/Farmer/Hunter';
-      const TEMPLATE_MONTH_WEEKS = 4;
       const OFFICIAL_ACTIVITY_TYPES = [
         'Configuración Agente de Éxito',
         'Estandarización de plantillas',
@@ -2026,10 +2025,6 @@
           0,
           0
         );
-      }
-
-      function templateMonthMinutes() {
-        return LABOR.weekMinutes * TEMPLATE_MONTH_WEEKS;
       }
 
       function isAfterOnboardingStart(dateIn) {
@@ -3264,6 +3259,12 @@
       function worklogText(w) { return adfToText(w && w.comment ? w.comment : ''); }
       function mine(author) { return !!(author && state.me && String(author.accountId || '') === String(state.me.accountId || '')); }
       function minutesOf(worklog) { return Math.max(1, Math.round(Number(worklog && worklog.timeSpentSeconds ? worklog.timeSpentSeconds : 0) / 60)); }
+      function windowOf(worklog) {
+        const startTs = tsOf(worklog && (worklog.started || worklog.created || 0));
+        if (!Number.isFinite(startTs)) return { startTs: NaN, endTs: NaN, mins: 0 };
+        const mins = Math.max(1, minutesOf(worklog));
+        return { startTs, endTs: startTs + (mins * 60000), mins };
+      }
       function tsOf(value) {
         const ts = new Date(value || 0).getTime();
         return Number.isFinite(ts) ? ts : NaN;
@@ -3308,19 +3309,56 @@
         const commentMinute = minuteBucket(comment.created);
         const commentTs = tsOf(comment.created);
         if (!Number.isFinite(commentMinute)) return null;
-        const sameMinute = rows
-          .map((w) => ({ row: w, ts: tsOf(w.started || w.created || 0) }))
-          .filter((it) => Number.isFinite(it.ts) && minuteBucket(it.ts) === commentMinute);
-        if (!sameMinute.length) return null;
-        sameMinute.sort((a, b) => {
+        const nearMs = COMMENT_LINK_NEAR_MINUTES * 60000;
+        const candidates = rows
+          .map((w) => ({ row: w, win: windowOf(w) }))
+          .filter((it) => Number.isFinite(it.win.startTs) && Number.isFinite(it.win.endTs))
+          .map((it) => {
+            const endMinute = minuteBucket(it.win.endTs);
+            const startMinute = minuteBucket(it.win.startTs);
+            const endsAtCommentMinute = endMinute === commentMinute;
+            const startsAtCommentMinute = startMinute === commentMinute;
+            const insideRange = Number.isFinite(commentTs) && commentTs >= it.win.startTs && commentTs <= it.win.endTs;
+            const nearComment = Number.isFinite(commentTs) && Math.abs(it.win.endTs - commentTs) <= nearMs;
+            if (!endsAtCommentMinute && !startsAtCommentMinute && !insideRange && !nearComment) {
+              return null;
+            }
+            const modeRank = endsAtCommentMinute
+              ? 0
+              : (startsAtCommentMinute ? 1 : (insideRange ? 2 : 3));
+            return {
+              row: it.row,
+              modeRank,
+              distEnd: Number.isFinite(commentTs) ? Math.abs(it.win.endTs - commentTs) : Number.POSITIVE_INFINITY,
+              distStart: Number.isFinite(commentTs) ? Math.abs(it.win.startTs - commentTs) : Number.POSITIVE_INFINITY
+            };
+          })
+          .filter((it) => !!it);
+        if (!candidates.length) return null;
+        candidates.sort((a, b) => {
           const mineA = mine(a.row.author) ? 0 : 1;
           const mineB = mine(b.row.author) ? 0 : 1;
           if (mineA !== mineB) return mineA - mineB;
-          const distA = Math.abs(a.ts - commentTs);
-          const distB = Math.abs(b.ts - commentTs);
-          return distA - distB;
+          if (a.modeRank !== b.modeRank) return a.modeRank - b.modeRank;
+          if (a.distEnd !== b.distEnd) return a.distEnd - b.distEnd;
+          return a.distStart - b.distStart;
         });
-        return sameMinute[0].row;
+        return candidates[0].row;
+      }
+
+      function countWorklogsByOfficialType(issueKey, typeName) {
+        const key = String(issueKey || '').trim();
+        const target = String(typeName || '').trim();
+        if (!key || !target) return 0;
+        const rows = state.worklogsByIssue[key] || [];
+        let count = 0;
+        rows.forEach((w) => {
+          const parsed = parseOfficialActivity(activityOf(w));
+          if (parsed && parsed.type === target) {
+            count += 1;
+          }
+        });
+        return count;
       }
 
       function activityFromText(text) {
@@ -3387,11 +3425,9 @@
         const anchorEnd = TimeService.normalizeBusinessCheckpoint(createdAt);
 
         if (templateMode) {
-          const afterStart = isAfterOnboardingStart(anchorEnd);
           return {
             templateMode: true,
-            templateAfterStart: afterStart,
-            minutes: afterStart ? templateMonthMinutes() : 1,
+            minutes: 1,
             anchorEndTs: anchorEnd.getTime()
           };
         }
@@ -3576,6 +3612,7 @@
           const c = commentsAsc[i];
           const cId = String(c.id || '');
           const cTs = new Date(c.created || 0).getTime();
+          const cMinute = Number.isFinite(cTs) ? Math.floor(cTs / 60000) : NaN;
           const nextTs = i < commentsAsc.length - 1
             ? new Date(commentsAsc[i + 1].created || 0).getTime()
             : Number.POSITIVE_INFINITY;
@@ -3585,12 +3622,20 @@
               const startTs = Number(r.startTs || 0);
               const endTs = Number(r.endTs || (startTs + Math.max(1, Number(r.mins || 1)) * 60000));
               if (!Number.isFinite(startTs) || !Number.isFinite(endTs)) return;
+              const startMinute = Number.isFinite(startTs) ? Math.floor(startTs / 60000) : NaN;
+              const endMinute = Number.isFinite(endTs) ? Math.floor(endTs / 60000) : NaN;
+              const endsAtCommentMinute = Number.isFinite(cMinute) && endMinute === cMinute;
+              const startsAtCommentMinute = Number.isFinite(cMinute) && startMinute === cMinute;
               const insideRange = cTs >= startTs && cTs <= endTs;
               const startsAfterComment = startTs >= cTs && startTs < nextTs;
               const dist = distanceToRange(cTs, startTs, endTs);
               const nearComment = dist <= nearMs;
-              if (!insideRange && !startsAfterComment && !nearComment) return;
-              const score = insideRange ? 0 : (startsAfterComment ? 1 : 2);
+              if (!endsAtCommentMinute && !startsAtCommentMinute && !insideRange && !startsAfterComment && !nearComment) return;
+              const score = endsAtCommentMinute
+                ? 0
+                : (startsAtCommentMinute
+                  ? 1
+                  : (insideRange ? 2 : (startsAfterComment ? 3 : 4)));
               candidates.push({
                 id: String(r.id || ''),
                 dist,
@@ -4717,14 +4762,22 @@
           const anchorEnd = Number.isFinite(anchorEndTs) && anchorEndTs > 0
             ? new Date(anchorEndTs)
             : new Date();
-          const resolvedMinutes = Math.max(1, Math.floor(Number(plan.minutes || 0)));
+          const docentesCount = countWorklogsByOfficialType(issueKey, DOCENTES_TEMPLATE_ACTIVITY);
+          const firstDocentesFromStart = !!(
+            plan.templateMode
+            && templateType === DOCENTES_TEMPLATE_ACTIVITY
+            && docentesCount === 0
+            && isAfterOnboardingStart(anchorEnd)
+          );
+          const resolvedMinutes = firstDocentesFromStart
+            ? Math.max(1, TimeService.businessMinutesBetween(onboardingStartDate(), anchorEnd))
+            : Math.max(1, Math.floor(Number(plan.minutes || 0)));
           state.regCtx = {
             issueKey,
             commentId: String(c.id),
             templateMode: !!plan.templateMode,
             anchorEndTs,
-            templateType,
-            templateAfterStart: !!plan.templateAfterStart
+            templateType
           };
           const inferredDue = TimeService.toInputDate(c.created || new Date());
           const anchorDue = Number.isFinite(anchorEndTs)
@@ -4742,11 +4795,10 @@
             ? TimeService.dtLabel(anchorEndTs)
             : '';
           if (plan.templateMode) {
-            if (plan.templateAfterStart) {
-              const monthLabel = TimeService.jiraDuration(templateMonthMinutes());
-              el.regInlineMeta.textContent = `${issueKey} | ${templateType} | 1 mes (${monthLabel}) (auto por regla de plantilla desde 15/12/2025 08:30)`;
+            if (firstDocentesFromStart) {
+              el.regInlineMeta.textContent = `${issueKey} | ${templateType} | primer registro | ${TimeService.jiraDuration(resolvedMinutes)} (auto desde 15/12/2025 08:30 hasta ${anchorLabel || createdLabel})`;
             } else {
-              el.regInlineMeta.textContent = `${issueKey} | ${templateType} | 1m (comentario antes de 15/12/2025 08:30)`;
+              el.regInlineMeta.textContent = `${issueKey} | ${templateType} | 1m (registro adicional de plantilla)`;
             }
             el.regTypeSel.disabled = false;
             el.regDateInp.disabled = false;
@@ -4820,8 +4872,13 @@
             const applyTemplate = forceTemplate;
             if (applyTemplate) {
               const templateType = selectedType;
-              mins = isAfterOnboardingStart(anchorEnd)
-                ? templateMonthMinutes()
+              const isFirstDocentes = (
+                templateType === DOCENTES_TEMPLATE_ACTIVITY
+                && countWorklogsByOfficialType(issueKey, DOCENTES_TEMPLATE_ACTIVITY) === 0
+                && isAfterOnboardingStart(anchorEnd)
+              );
+              mins = isFirstDocentes
+                ? Math.max(1, TimeService.businessMinutesBetween(onboardingStartDate(), anchorEnd))
                 : 1;
               activity = buildOfficialActivity(templateType, TimeService.toInputDate(anchorEnd));
             }

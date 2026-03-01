@@ -1718,6 +1718,7 @@
         selectedTimelineMinutes: 0,
         selectedWorklogId: '',
         timelineLinksByIssue: {},
+        manualWorklogToCommentByIssue: {},
         chartDesign: DEFAULT_CHART_DESIGN,
         activities: [],
         debugLogs: [],
@@ -3681,8 +3682,8 @@
         return d.getTime();
       }
 
-      function buildCommentWorklogLinks(commentsAsc, logsAsc) {
-        const commentToWorklogIds = {};
+      function buildCommentWorklogLinks(issueKey, commentsAsc, logsAsc) {
+        const key = String(issueKey || '').trim();
         const worklogToCommentId = {};
         const worklogToBest = {};
         const nearMs = COMMENT_LINK_NEAR_MINUTES * 60000;
@@ -3739,14 +3740,32 @@
               worklogToBest[item.id] = { commentId: cId, dist: item.dist, score: item.score };
             }
           });
-          commentToWorklogIds[cId] = matched;
         }
         Object.entries(worklogToBest).forEach(([worklogId, best]) => {
           worklogToCommentId[worklogId] = String(best.commentId || '');
         });
-        Object.keys(commentToWorklogIds).forEach((commentId) => {
-          const current = Array.isArray(commentToWorklogIds[commentId]) ? commentToWorklogIds[commentId] : [];
-          commentToWorklogIds[commentId] = current.filter((worklogId) => String(worklogToCommentId[worklogId] || '') === String(commentId));
+        const manual = key && state.manualWorklogToCommentByIssue[key] && typeof state.manualWorklogToCommentByIssue[key] === 'object'
+          ? state.manualWorklogToCommentByIssue[key]
+          : {};
+        const validWorklogIds = new Set(logsAsc.map((r) => String(r.id || '').trim()).filter((id) => !!id));
+        const validCommentIds = new Set(commentsAsc.map((c) => String(c && c.id ? c.id : '').trim()).filter((id) => !!id));
+        Object.entries(manual).forEach(([worklogIdRaw, commentIdRaw]) => {
+          const worklogId = String(worklogIdRaw || '').trim();
+          const commentId = String(commentIdRaw || '').trim();
+          if (!worklogId || !commentId) return;
+          if (!validWorklogIds.has(worklogId) || !validCommentIds.has(commentId)) return;
+          worklogToCommentId[worklogId] = commentId;
+        });
+        const commentToWorklogIds = {};
+        commentsAsc.forEach((c) => {
+          const cId = String(c && c.id ? c.id : '').trim();
+          if (!cId) return;
+          commentToWorklogIds[cId] = [];
+        });
+        Object.entries(worklogToCommentId).forEach(([worklogId, commentId]) => {
+          const cId = String(commentId || '').trim();
+          if (!cId || !commentToWorklogIds[cId]) return;
+          commentToWorklogIds[cId].push(String(worklogId || '').trim());
         });
         return { commentToWorklogIds, worklogToCommentId };
       }
@@ -3797,7 +3816,7 @@
         if (end <= start) end = start + 3600000;
         const range = Math.max(60000, end - start);
 
-        const links = buildCommentWorklogLinks(commentsAsc, logsAsc);
+        const links = buildCommentWorklogLinks(issueKey, commentsAsc, logsAsc);
         const lanesMap = {};
         logsAsc.forEach((r) => {
           if (!lanesMap[r.activity]) {
@@ -4186,6 +4205,20 @@
         const worklogs = sortDesc(Array.isArray(w.worklogs) ? w.worklogs : [], (x) => x.started || x.created || '');
         state.commentsByIssue[issueKey] = comments;
         state.worklogsByIssue[issueKey] = worklogs;
+        const manual = state.manualWorklogToCommentByIssue[issueKey] && typeof state.manualWorklogToCommentByIssue[issueKey] === 'object'
+          ? state.manualWorklogToCommentByIssue[issueKey]
+          : {};
+        const validWorklogIds = new Set(worklogs.map((row) => String(row && row.id ? row.id : '').trim()).filter((id) => !!id));
+        const validCommentIds = new Set(comments.map((row) => String(row && row.id ? row.id : '').trim()).filter((id) => !!id));
+        const cleaned = {};
+        Object.entries(manual).forEach(([worklogIdRaw, commentIdRaw]) => {
+          const worklogId = String(worklogIdRaw || '').trim();
+          const commentId = String(commentIdRaw || '').trim();
+          if (!worklogId || !commentId) return;
+          if (!validWorklogIds.has(worklogId) || !validCommentIds.has(commentId)) return;
+          cleaned[worklogId] = commentId;
+        });
+        state.manualWorklogToCommentByIssue[issueKey] = cleaned;
         renderIssueData();
       }
 
@@ -4197,7 +4230,7 @@
         else renderIssueData();
       }
 
-      async function createWorklog(issueKey, activity, minutes, explicitStarted = null) {
+      async function createWorklog(issueKey, activity, minutes, explicitStarted = null, linkedCommentId = '') {
         const key = String(issueKey || '').trim();
         const act = String(activity || '').trim();
         const mins = Math.max(0, Math.floor(Number(minutes || 0)));
@@ -4210,7 +4243,15 @@
           timeSpentSeconds: mins * 60,
           comment: toAdf(worklogCommentFromActivity(act, started))
         };
-        await JiraService.addWorklog(key, payload);
+        const created = await JiraService.addWorklog(key, payload);
+        const forcedCommentId = String(linkedCommentId || '').trim();
+        const createdId = created && created.id ? String(created.id || '').trim() : '';
+        if (forcedCommentId && createdId) {
+          if (!state.manualWorklogToCommentByIssue[key] || typeof state.manualWorklogToCommentByIssue[key] !== 'object') {
+            state.manualWorklogToCommentByIssue[key] = {};
+          }
+          state.manualWorklogToCommentByIssue[key][createdId] = forcedCommentId;
+        }
         pushActivity(act);
         markActivity();
         timerReset();
@@ -4327,6 +4368,7 @@
         state.commentsByIssue = {};
         state.worklogsByIssue = {};
         state.timelineLinksByIssue = {};
+        state.manualWorklogToCommentByIssue = {};
         state.selectedCommentId = '';
         state.selectedWorklogId = '';
         state.selectedTimelineActivity = '';
@@ -4975,8 +5017,9 @@
               ? TimeService.subtractBusinessMinutes(anchorEnd, mins)
               : new Date(anchorEnd.getTime() - (mins * 60000));
           }
+          const sourceCommentId = state.regCtx && state.regCtx.commentId ? String(state.regCtx.commentId) : '';
           hideInlineRegistrar();
-          try { await createWorklog(issueKey, activity, mins, explicitStarted); }
+          try { await createWorklog(issueKey, activity, mins, explicitStarted, sourceCommentId); }
           catch (e) { applyError(e, 'No se pudo registrar actividad desde comentario.'); }
         });
 

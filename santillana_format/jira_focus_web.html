@@ -472,10 +472,16 @@
       --tl-picker-bg: #f4f8fc;
       --tl-picker-label: #18374f;
     }
-    .panel-comments { grid-column: 1; grid-row: 2; }
-    .panel-worklogs {
+    .panel-comments {
       grid-column: 2;
       grid-row: 1 / span 2;
+      display: flex;
+      flex-direction: column;
+      align-self: start;
+    }
+    .panel-worklogs {
+      grid-column: 1;
+      grid-row: 2;
       display: flex;
       flex-direction: column;
       align-self: start;
@@ -483,7 +489,9 @@
     .dashboard-grid > .card.panel-worklogs {
       min-height: 0;
     }
-    .panel-comments .comments { max-height: 430px; }
+    .panel-comments .comments {
+      max-height: min(56vh, 620px);
+    }
     .panel-worklogs .tbl-wrap {
       flex: 1 1 auto;
       max-height: min(56vh, 620px);
@@ -1596,6 +1604,7 @@
       const LABOR = { startHour: 8, startMinute: 30, endHour: 18, endMinute: 0, dayMinutes: 570, weekMinutes: 2850 };
       const INACTIVITY_MS = 2 * 60 * 60 * 1000;
       const SUGGESTION_MS = 3 * 24 * 60 * 60 * 1000;
+      const COMMENT_LINK_NEAR_MINUTES = 120;
       const OFFICIAL_ACTIVITY_TYPES = [
         'Configuración Agente de Éxito',
         'Estandarización de plantillas',
@@ -3252,6 +3261,14 @@
       function buildCommentWorklogLinks(commentsAsc, logsAsc) {
         const commentToWorklogIds = {};
         const worklogToCommentId = {};
+        const worklogToBest = {};
+        const nearMs = COMMENT_LINK_NEAR_MINUTES * 60000;
+        const distanceToRange = (ts, startTs, endTs) => {
+          if (!Number.isFinite(ts) || !Number.isFinite(startTs) || !Number.isFinite(endTs)) return Number.POSITIVE_INFINITY;
+          if (ts < startTs) return startTs - ts;
+          if (ts > endTs) return ts - endTs;
+          return 0;
+        };
         for (let i = 0; i < commentsAsc.length; i += 1) {
           const c = commentsAsc[i];
           const cId = String(c.id || '');
@@ -3259,19 +3276,42 @@
           const nextTs = i < commentsAsc.length - 1
             ? new Date(commentsAsc[i + 1].created || 0).getTime()
             : Number.POSITIVE_INFINITY;
-          const matched = [];
+          const candidates = [];
           if (Number.isFinite(cTs)) {
             logsAsc.forEach((r) => {
-              const ts = Number(r.startTs || 0);
-              if (!Number.isFinite(ts)) return;
-              if (ts >= cTs && ts < nextTs) {
-                matched.push(r.id);
-                if (!worklogToCommentId[r.id]) worklogToCommentId[r.id] = cId;
-              }
+              const startTs = Number(r.startTs || 0);
+              const endTs = Number(r.endTs || (startTs + Math.max(1, Number(r.mins || 1)) * 60000));
+              if (!Number.isFinite(startTs) || !Number.isFinite(endTs)) return;
+              const insideRange = cTs >= startTs && cTs <= endTs;
+              const startsAfterComment = startTs >= cTs && startTs < nextTs;
+              const dist = distanceToRange(cTs, startTs, endTs);
+              const nearComment = dist <= nearMs;
+              if (!insideRange && !startsAfterComment && !nearComment) return;
+              const score = insideRange ? 0 : (startsAfterComment ? 1 : 2);
+              candidates.push({
+                id: String(r.id || ''),
+                dist,
+                score,
+                startTs
+              });
             });
           }
+          candidates.sort((a, b) => (a.score - b.score) || (a.dist - b.dist) || (a.startTs - b.startTs));
+          const matched = [];
+          candidates.forEach((item) => {
+            if (!item.id || matched.includes(item.id)) return;
+            if (item.score >= 2 && matched.length) return;
+            matched.push(item.id);
+            const prev = worklogToBest[item.id];
+            if (!prev || item.dist < prev.dist || (item.dist === prev.dist && item.score < prev.score)) {
+              worklogToBest[item.id] = { commentId: cId, dist: item.dist, score: item.score };
+            }
+          });
           commentToWorklogIds[cId] = matched;
         }
+        Object.entries(worklogToBest).forEach(([worklogId, best]) => {
+          worklogToCommentId[worklogId] = String(best.commentId || '');
+        });
         return { commentToWorklogIds, worklogToCommentId };
       }
 
@@ -4328,6 +4368,9 @@
         el.regInlineOkBtn.addEventListener('click', async () => {
           if (!state.regCtx) { hideInlineRegistrar(); return; }
           const issueKey = state.regCtx.issueKey;
+          const commentId = String(state.regCtx.commentId || '');
+          const comments = state.commentsByIssue[issueKey] || [];
+          const sourceComment = comments.find((x) => String(x.id || '') === commentId) || null;
           syncInlineRegistrarInputs();
           const activity = buildOfficialActivity(String(el.regTypeSel.value || '').trim(), String(el.regDateInp.value || '').trim());
           const mins = Math.max(1, Math.floor(Number(el.regMinInp.value || 0)));
@@ -4335,8 +4378,15 @@
             showMsg('error', 'La actividad debe usar formato oficial: [Tipo de actividad] [DD/MM/AAAA].');
             return;
           }
+          let explicitStarted = null;
+          if (sourceComment && sourceComment.created) {
+            const commentTs = new Date(sourceComment.created);
+            if (!Number.isNaN(commentTs.getTime())) {
+              explicitStarted = new Date(commentTs.getTime() - (mins * 60000));
+            }
+          }
           hideInlineRegistrar();
-          try { await createWorklog(issueKey, activity, mins); }
+          try { await createWorklog(issueKey, activity, mins, explicitStarted); }
           catch (e) { applyError(e, 'No se pudo registrar actividad desde comentario.'); }
         });
 

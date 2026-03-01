@@ -3432,12 +3432,23 @@
         const rows = state.worklogsByIssue[key] || [];
         let count = 0;
         rows.forEach((w) => {
-          const parsed = parseOfficialActivity(activityOf(w));
-          if (parsed && parsed.type === target) {
+          const rawActivity = activityOf(w);
+          const parsed = parseOfficialActivity(rawActivity);
+          const official = parsed && parsed.type
+            ? String(parsed.type).trim()
+            : String(suggestOfficialActivityType(rawActivity) || '').trim();
+          if (official === target) {
             count += 1;
           }
         });
         return count;
+      }
+
+      function countTemplateWorklogs(issueKey) {
+        const key = String(issueKey || '').trim();
+        if (!key) return 0;
+        return countWorklogsByOfficialType(key, DOCENTES_TEMPLATE_ACTIVITY)
+          + countWorklogsByOfficialType(key, ESTUDIANTES_TEMPLATE_ACTIVITY);
       }
 
       function isFirstTemplateFromStart(issueKey, templateType, anchorEnd) {
@@ -3446,7 +3457,7 @@
         const end = anchorEnd instanceof Date ? anchorEnd : new Date(anchorEnd || 0);
         if (!key || !isTemplateOfficialType(type)) return false;
         if (Number.isNaN(end.getTime()) || !isAfterOnboardingStart(end)) return false;
-        return countWorklogsByOfficialType(key, type) === 0;
+        return countTemplateWorklogs(key) === 0;
       }
 
       function activityFromText(text) {

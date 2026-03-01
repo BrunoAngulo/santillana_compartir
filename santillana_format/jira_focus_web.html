@@ -596,6 +596,11 @@
     .comments { display: grid; gap: 8px; max-height: 360px; overflow: auto; }
     .comment { border: 1px solid var(--line); border-radius: 9px; padding: 8px; background: #fff; }
     .comment.mine { background: #f7fbff; border: 2px solid #2f8bcb; }
+    .comment.selected {
+      border-color: #5d99cf;
+      box-shadow: 0 0 0 2px rgba(22, 111, 188, 0.14);
+      background: #eef6ff;
+    }
     .meta { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; margin-bottom: 4px; flex-wrap: wrap; }
     .body { white-space: pre-wrap; font-size: 13px; overflow-wrap: anywhere; }
     .track {
@@ -1037,6 +1042,104 @@
       color: #5a7188;
       background: #f9fcff;
     }
+    .timeline-continuous {
+      border: 1px solid #d8e5f3;
+      border-radius: 10px;
+      padding: 10px;
+      background: #fbfdff;
+    }
+    .timeline-meta {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .timeline-meta-item {
+      border: 1px solid #dae7f4;
+      border-radius: 9px;
+      padding: 6px 8px;
+      background: #fff;
+    }
+    .timeline-meta-item .k {
+      font-size: 10px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      margin-bottom: 2px;
+    }
+    .timeline-meta-item .v {
+      font-size: 12px;
+      font-weight: 700;
+      color: #264760;
+      overflow-wrap: anywhere;
+    }
+    .timeline-lane-list {
+      display: grid;
+      gap: 8px;
+    }
+    .timeline-lane {
+      display: grid;
+      grid-template-columns: minmax(210px, 1.6fr) minmax(0, 4fr);
+      gap: 8px;
+      align-items: center;
+    }
+    .timeline-lane-label {
+      font-size: 12px;
+      color: #2a4861;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+    .timeline-lane-track {
+      position: relative;
+      height: 30px;
+      border: 1px solid #d4e2f1;
+      border-radius: 999px;
+      background:
+        repeating-linear-gradient(90deg, rgba(178, 201, 227, 0.18) 0, rgba(178, 201, 227, 0.18) 10%, rgba(255, 255, 255, 0.02) 10%, rgba(255, 255, 255, 0.02) 20%),
+        linear-gradient(180deg, #f4f8fd 0%, #eaf2fb 100%);
+      overflow: hidden;
+    }
+    .timeline-worklog-bar {
+      position: absolute;
+      top: 4px;
+      bottom: 4px;
+      border-radius: 999px;
+      min-width: 3px;
+      border: 1px solid rgba(9, 24, 39, 0.18);
+      cursor: pointer;
+      opacity: 0.88;
+      transition: transform .12s ease, opacity .12s ease, box-shadow .12s ease;
+    }
+    .timeline-worklog-bar:hover {
+      opacity: 1;
+      transform: scaleY(1.06);
+    }
+    .timeline-worklog-bar.active {
+      opacity: 1;
+      box-shadow: 0 0 0 2px rgba(11, 80, 140, 0.38);
+      z-index: 2;
+    }
+    .timeline-worklog-bar.unlinked {
+      border-style: dashed;
+      border-color: #ad6d3e;
+    }
+    .timeline-comment-dot {
+      position: absolute;
+      width: 12px;
+      height: 12px;
+      top: 9px;
+      margin-left: -6px;
+      border-radius: 50%;
+      border: 2px solid #fff;
+      box-shadow: 0 0 0 1px rgba(9, 30, 50, 0.2);
+      cursor: pointer;
+      z-index: 3;
+    }
+    .timeline-comment-dot.matched { background: #1f9c6a; }
+    .timeline-comment-dot.missing { background: #cc5d22; }
+    .timeline-comment-dot.active {
+      box-shadow: 0 0 0 2px rgba(11, 80, 140, 0.38);
+    }
     .worklog-row {
       cursor: pointer;
       transition: background .12s ease;
@@ -1173,6 +1276,9 @@
       .chart-cards { grid-template-columns: 1fr; }
       .chart-donut-wrap { grid-template-columns: 1fr; }
       .chart-donut { width: 180px; height: 180px; }
+      .timeline-meta { grid-template-columns: 1fr; }
+      .timeline-lane { grid-template-columns: 1fr; }
+      .timeline-lane-track { height: 34px; }
       .float { left: 10px; right: 10px; width: auto; }
       .topbar { gap: 10px; }
       #userPill { max-width: 100%; }
@@ -1307,19 +1413,21 @@
 
       <div class="dashboard-grid">
         <div class="card panel-timeline" id="timelinePanel">
-          <h3>Linea de tiempo / Gantt</h3>
+          <h3>Timeline continuo por actividad</h3>
           <div class="activity-focus" id="activityFocusBox">
             <label for="activityQuickSel">Componente de actividades</label>
             <select class="sel" id="activityQuickSel"></select>
             <div class="muted" id="activityQuickMeta">Haz clic en una actividad del grafico para resaltarla aqui.</div>
           </div>
           <div id="timelineBox" class="empty">Sin registros.</div>
-          <h4 style="margin-top:10px;">Gantt por actividad</h4>
-          <div id="ganttBox" class="empty">Sin registros.</div>
-          <div class="chart-design-picker">
-            <label for="chartDesignSel">Tipo de grafico (10 disenos)</label>
-            <select class="sel" id="chartDesignSel"></select>
-            <div class="muted" id="chartDesignHelp"></div>
+          <div class="hide" aria-hidden="true">
+            <h4 style="margin-top:10px;">Gantt por actividad</h4>
+            <div id="ganttBox"></div>
+            <div class="chart-design-picker">
+              <label for="chartDesignSel">Tipo de grafico (10 disenos)</label>
+              <select class="sel" id="chartDesignSel"></select>
+              <div class="muted" id="chartDesignHelp"></div>
+            </div>
           </div>
         </div>
         <div class="card panel-comments">
@@ -1522,9 +1630,11 @@
         lastReminderTs: 0,
         regCtx: null,
         editCtx: null,
+        selectedCommentId: '',
         selectedTimelineActivity: '',
         selectedTimelineMinutes: 0,
         selectedWorklogId: '',
+        timelineLinksByIssue: {},
         chartDesign: DEFAULT_CHART_DESIGN,
         activities: [],
         debugLogs: [],
@@ -2900,18 +3010,21 @@
       function renderComments(issueKey) {
         const comments = state.commentsByIssue[issueKey] || [];
         if (!comments.length) {
+          state.selectedCommentId = '';
           el.commentsBox.innerHTML = '<div class="empty">Sin comentarios.</div>';
           return;
         }
         el.commentsBox.innerHTML = comments.map((c) => {
           const my = mine(c.author);
+          const id = String(c.id || '');
+          const selectedClass = state.selectedCommentId && String(state.selectedCommentId) === id ? ' selected' : '';
           const author = c.author && c.author.displayName ? c.author.displayName : 'Sin autor';
           const txt = commentText(c) || '(sin texto)';
           return `
-            <div class="comment ${my ? 'mine' : ''}">
+            <div class="comment ${my ? 'mine' : ''}${selectedClass}" data-comment-id="${escapeHtml(id)}">
               <div class="meta"><span>${escapeHtml(author)}</span><span>${escapeHtml(TimeService.dtLabel(c.created))}</span></div>
               <div class="body">${escapeHtml(txt)}</div>
-              <div class="row" style="margin-top:8px;"><button class="btn" data-act="reg-from-comment" data-id="${escapeHtml(String(c.id))}">Registrar actividad</button></div>
+              <div class="row" style="margin-top:8px;"><button class="btn" data-act="reg-from-comment" data-id="${escapeHtml(id)}">Registrar actividad</button></div>
             </div>
           `;
         }).join('');
@@ -2940,9 +3053,23 @@
 
       function focusWorklogInDashboard(issueKey, worklog) {
         if (!worklog) return;
-        state.selectedWorklogId = String(worklog.id || '');
-        selectActivityFromCharts(activityOf(worklog), minutesOf(worklog), true);
+        const worklogId = String(worklog.id || '');
+        const links = state.timelineLinksByIssue[issueKey] || { worklogToCommentId: {} };
+        const commentId = links.worklogToCommentId && links.worklogToCommentId[worklogId]
+          ? String(links.worklogToCommentId[worklogId])
+          : '';
+        state.selectedCommentId = commentId;
+        state.selectedWorklogId = worklogId;
+        selectActivityFromCharts(activityOf(worklog), minutesOf(worklog), false);
+        renderComments(issueKey);
         renderWorklogs(issueKey);
+        renderTimeline(issueKey);
+        if (state.selectedCommentId) {
+          const commentEl = el.commentsBox.querySelector(`.comment[data-comment-id="${String(state.selectedCommentId)}"]`);
+          if (commentEl && typeof commentEl.scrollIntoView === 'function') {
+            commentEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
+        }
         if (el.timelinePanel && typeof el.timelinePanel.scrollIntoView === 'function') {
           el.timelinePanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
@@ -3430,9 +3557,241 @@
         syncActivityFocusComponent();
       }
 
+      function buildCommentWorklogLinks(commentsAsc, logsAsc) {
+        const commentToWorklogIds = {};
+        const worklogToCommentId = {};
+        for (let i = 0; i < commentsAsc.length; i += 1) {
+          const c = commentsAsc[i];
+          const cId = String(c.id || '');
+          const cTs = new Date(c.created || 0).getTime();
+          const nextTs = i < commentsAsc.length - 1
+            ? new Date(commentsAsc[i + 1].created || 0).getTime()
+            : Number.POSITIVE_INFINITY;
+          const matched = [];
+          if (Number.isFinite(cTs)) {
+            logsAsc.forEach((r) => {
+              const ts = Number(r.startTs || 0);
+              if (!Number.isFinite(ts)) return;
+              if (ts >= cTs && ts < nextTs) {
+                matched.push(r.id);
+                if (!worklogToCommentId[r.id]) worklogToCommentId[r.id] = cId;
+              }
+            });
+          }
+          commentToWorklogIds[cId] = matched;
+        }
+        return { commentToWorklogIds, worklogToCommentId };
+      }
+
+      function buildContinuousTimelineData(issueKey) {
+        const commentsAsc = sortDesc((state.commentsByIssue[issueKey] || []).slice(), (x) => x.created || '').reverse();
+        const logsAsc = sortDesc((state.worklogsByIssue[issueKey] || []).slice(), (x) => x.started || x.created || '').reverse()
+          .map((w) => {
+            const startTs = new Date(w.started || w.created).getTime();
+            const mins = minutesOf(w);
+            const endTs = startTs + Math.max(60000, mins * 60000);
+            const activity = activityOf(w) || 'Sin actividad';
+            return {
+              id: String(w.id || ''),
+              worklog: w,
+              startTs,
+              endTs,
+              mins,
+              activity,
+              color: activityColor(activity),
+              author: w.author && w.author.displayName ? w.author.displayName : 'Sin autor'
+            };
+          })
+          .filter((r) => Number.isFinite(r.startTs) && Number.isFinite(r.endTs));
+
+        if (!commentsAsc.length && !logsAsc.length) return null;
+
+        const startCandidates = [];
+        const endCandidates = [];
+        logsAsc.forEach((r) => {
+          startCandidates.push(r.startTs);
+          endCandidates.push(r.endTs);
+        });
+        commentsAsc.forEach((c) => {
+          const ts = new Date(c.created || 0).getTime();
+          if (!Number.isFinite(ts)) return;
+          startCandidates.push(ts);
+          endCandidates.push(ts + 60000);
+        });
+
+        let start = Math.min(...startCandidates);
+        let end = Math.max(...endCandidates);
+        if (!Number.isFinite(start) || !Number.isFinite(end)) {
+          start = Date.now() - 3600000;
+          end = Date.now();
+        }
+        if (end <= start) end = start + 3600000;
+        const range = Math.max(60000, end - start);
+
+        const links = buildCommentWorklogLinks(commentsAsc, logsAsc);
+        const lanesMap = {};
+        logsAsc.forEach((r) => {
+          if (!lanesMap[r.activity]) {
+            lanesMap[r.activity] = { activity: r.activity, color: r.color, totalMinutes: 0, items: [] };
+          }
+          const linkedCommentId = links.worklogToCommentId[r.id] || '';
+          lanesMap[r.activity].items.push(Object.assign({}, r, { linkedCommentId }));
+          lanesMap[r.activity].totalMinutes += r.mins;
+        });
+        const lanes = Object.values(lanesMap).sort((a, b) => b.totalMinutes - a.totalMinutes || a.activity.localeCompare(b.activity));
+        const totalMinutes = logsAsc.reduce((acc, r) => acc + r.mins, 0);
+        const commentsWithWorklog = commentsAsc.filter((c) => (links.commentToWorklogIds[String(c.id || '')] || []).length > 0).length;
+
+        return { issueKey, start, end, range, commentsAsc, logsAsc, lanes, totalMinutes, commentsWithWorklog, links };
+      }
+
+      function focusTimelineSelection(issueKey, commentId, worklogId, activity, minutes) {
+        if (!issueKey) return;
+        state.selectedCommentId = commentId ? String(commentId) : '';
+        state.selectedWorklogId = worklogId ? String(worklogId) : '';
+        if (activity) {
+          state.selectedTimelineActivity = String(activity);
+          if (Number.isFinite(Number(minutes))) {
+            state.selectedTimelineMinutes = Math.max(0, Math.floor(Number(minutes)));
+          }
+          const official = inferOfficialActivityType(activity);
+          if (OFFICIAL_ACTIVITY_TYPES.includes(official)) {
+            state.activityType = official;
+            el.activityTypeSel.value = state.activityType;
+            syncOfficialActivityToState(true);
+          } else {
+            syncActivityFocusComponent();
+          }
+        }
+        renderComments(issueKey);
+        renderWorklogs(issueKey);
+        renderTimeline(issueKey);
+        if (state.selectedCommentId) {
+          const commentEl = el.commentsBox.querySelector(`.comment[data-comment-id="${String(state.selectedCommentId)}"]`);
+          if (commentEl && typeof commentEl.scrollIntoView === 'function') {
+            commentEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
+        }
+        if (state.selectedWorklogId) {
+          const worklogEl = el.worklogBody.querySelector(`tr[data-worklog-id="${String(state.selectedWorklogId)}"]`);
+          if (worklogEl && typeof worklogEl.scrollIntoView === 'function') {
+            worklogEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
+        }
+      }
+
+      function renderTimeline(issueKey) {
+        const key = String(issueKey || '').trim();
+        if (!key) {
+          state.selectedTimelineActivity = '';
+          state.selectedTimelineMinutes = 0;
+          state.timelineLinksByIssue[key] = { commentToWorklogIds: {}, worklogToCommentId: {} };
+          el.timelineBox.className = 'empty';
+          el.timelineBox.textContent = 'Sin ticket seleccionado.';
+          el.ganttBox.className = 'hide';
+          el.ganttBox.innerHTML = '';
+          syncActivityFocusComponent();
+          return;
+        }
+
+        const data = buildContinuousTimelineData(key);
+        if (!data) {
+          state.selectedTimelineActivity = '';
+          state.selectedTimelineMinutes = 0;
+          state.timelineLinksByIssue[key] = { commentToWorklogIds: {}, worklogToCommentId: {} };
+          el.timelineBox.className = 'empty';
+          el.timelineBox.textContent = 'Sin comentarios ni worklogs para este ticket.';
+          el.ganttBox.className = 'hide';
+          el.ganttBox.innerHTML = '';
+          syncActivityFocusComponent();
+          return;
+        }
+
+        state.timelineLinksByIssue[key] = data.links;
+        if (state.selectedWorklogId && !data.logsAsc.some((r) => r.id === String(state.selectedWorklogId))) {
+          state.selectedWorklogId = '';
+        }
+        if (state.selectedCommentId && !data.commentsAsc.some((c) => String(c.id || '') === String(state.selectedCommentId))) {
+          state.selectedCommentId = '';
+        }
+
+        const selectedActivityKey = activityKey(state.selectedTimelineActivity);
+        const selectedLane = data.lanes.find((l) => activityKey(l.activity) === selectedActivityKey) || null;
+        if (!selectedLane) {
+          state.selectedTimelineActivity = '';
+          state.selectedTimelineMinutes = 0;
+        } else {
+          state.selectedTimelineMinutes = selectedLane.totalMinutes;
+        }
+
+        const metaHtml = `
+          <div class="timeline-meta">
+            <div class="timeline-meta-item"><div class="k">Inicio</div><div class="v">${escapeHtml(TimeService.dtLabel(data.start))}</div></div>
+            <div class="timeline-meta-item"><div class="k">Fin</div><div class="v">${escapeHtml(TimeService.dtLabel(data.end))}</div></div>
+            <div class="timeline-meta-item"><div class="k">Comentarios con worklog</div><div class="v">${data.commentsWithWorklog} / ${data.commentsAsc.length}</div></div>
+            <div class="timeline-meta-item"><div class="k">Total worklog</div><div class="v">${escapeHtml(TimeService.jiraDuration(data.totalMinutes))}</div></div>
+          </div>
+        `;
+
+        const commentLaneDots = data.commentsAsc.map((c) => {
+          const cId = String(c.id || '');
+          const cTs = new Date(c.created || 0).getTime();
+          if (!Number.isFinite(cTs)) return '';
+          const left = ((cTs - data.start) / data.range) * 100;
+          const linked = data.links.commentToWorklogIds[cId] || [];
+          const linkedWorklogId = linked.length ? String(linked[0]) : '';
+          const statusClass = linked.length ? 'matched' : 'missing';
+          const active = state.selectedCommentId && String(state.selectedCommentId) === cId ? ' active' : '';
+          const title = linked.length ? `Comentario con ${linked.length} worklog(s)` : 'Comentario sin worklog relacionado';
+          return `<span class="timeline-comment-dot ${statusClass}${active}" style="left:${left.toFixed(3)}%;" data-comment-id="${escapeHtml(cId)}" data-worklog-id="${escapeHtml(linkedWorklogId)}" title="${escapeHtml(title)}"></span>`;
+        }).join('');
+
+        const commentLane = `
+          <div class="timeline-lane">
+            <div class="timeline-lane-label">Comentarios (${data.commentsAsc.length})</div>
+            <div class="timeline-lane-track">${commentLaneDots}</div>
+          </div>
+        `;
+
+        const activityLanes = data.lanes.map((lane) => {
+          const laneSelected = selectedActivityKey && activityKey(lane.activity) === selectedActivityKey;
+          const bars = lane.items.map((r) => {
+            const left = ((r.startTs - data.start) / data.range) * 100;
+            const width = Math.max(1.8, ((r.endTs - r.startTs) / data.range) * 100);
+            const active = state.selectedWorklogId && String(state.selectedWorklogId) === r.id ? ' active' : '';
+            const unlinked = !r.linkedCommentId ? ' unlinked' : '';
+            const title = `${r.activity} | ${TimeService.jiraDuration(r.mins)} | ${r.author} | ${TimeService.dtLabel(r.startTs)}${r.linkedCommentId ? ` | Comentario ${r.linkedCommentId}` : ' | Sin comentario vinculado'}`;
+            return `<span class="timeline-worklog-bar${active}${unlinked}" style="left:${left.toFixed(3)}%;width:${width.toFixed(3)}%;background:${escapeHtml(r.color)};" data-worklog-id="${escapeHtml(r.id)}" data-comment-id="${escapeHtml(r.linkedCommentId || '')}" data-activity="${escapeHtml(r.activity)}" data-minutes="${r.mins}" title="${escapeHtml(title)}"></span>`;
+          }).join('');
+          return `
+            <div class="timeline-lane">
+              <div class="timeline-lane-label${laneSelected ? ' chart-clickable' : ''}" data-activity="${escapeHtml(lane.activity)}" data-minutes="${lane.totalMinutes}">
+                ${escapeHtml(lane.activity)} (${escapeHtml(TimeService.jiraDuration(lane.totalMinutes))})
+              </div>
+              <div class="timeline-lane-track">${bars}</div>
+            </div>
+          `;
+        }).join('');
+
+        el.timelineBox.className = '';
+        el.timelineBox.innerHTML = `
+          <div class="timeline-continuous">
+            ${metaHtml}
+            <div class="timeline-lane-list">
+              ${commentLane}
+              ${activityLanes || '<div class="chart-note">Aun no hay worklogs en el ticket.</div>'}
+            </div>
+          </div>
+        `;
+        el.ganttBox.className = 'hide';
+        el.ganttBox.innerHTML = '';
+        syncActivityFocusComponent();
+      }
+
       function renderIssueData() {
         const key = state.selectedIssueKey;
         if (!key) {
+          state.selectedCommentId = '';
           state.selectedWorklogId = '';
           renderComments('');
           renderWorklogs('');
@@ -3751,6 +4110,11 @@
         state.selectedIssueKey = '';
         state.commentsByIssue = {};
         state.worklogsByIssue = {};
+        state.timelineLinksByIssue = {};
+        state.selectedCommentId = '';
+        state.selectedWorklogId = '';
+        state.selectedTimelineActivity = '';
+        state.selectedTimelineMinutes = 0;
         state.report = { detail: [], grouped: [] };
         state.dash = { logs: [], today: 0, week: 0, issueCount: 0, refreshedAt: null };
         JiraService.setCloudId('');
@@ -4170,10 +4534,16 @@
         });
 
         el.timelineBox.addEventListener('click', (ev) => {
-          const node = ev.target.closest('[data-activity]');
+          const node = ev.target.closest('[data-worklog-id], [data-comment-id], [data-activity]');
           if (!node) return;
           const activity = String(node.getAttribute('data-activity') || '').trim();
           const mins = Number(node.getAttribute('data-minutes') || 0);
+          const worklogId = String(node.getAttribute('data-worklog-id') || '').trim();
+          const commentId = String(node.getAttribute('data-comment-id') || '').trim();
+          if (worklogId || commentId) {
+            focusTimelineSelection(state.selectedIssueKey, commentId, worklogId, activity, mins);
+            return;
+          }
           if (!activity) return;
           selectActivityFromCharts(activity, mins, true);
         });
@@ -4216,6 +4586,32 @@
           el.regMinInp.value = String(mins);
           el.regModalMeta.textContent = `${state.selectedIssueKey} | ${TimeService.dtLabel(c.created)}`;
           el.regModal.classList.add('show');
+        });
+        el.commentsBox.addEventListener('click', (ev) => {
+          const target = ev.target;
+          if (target.closest('button')) return;
+          const card = target.closest('.comment[data-comment-id]');
+          if (!card) return;
+          const commentId = String(card.getAttribute('data-comment-id') || '').trim();
+          if (!commentId) return;
+          const key = state.selectedIssueKey;
+          if (!key) return;
+          const links = state.timelineLinksByIssue[key] || { commentToWorklogIds: {} };
+          const worklogIds = links.commentToWorklogIds && links.commentToWorklogIds[commentId]
+            ? links.commentToWorklogIds[commentId]
+            : [];
+          const worklogId = worklogIds.length ? String(worklogIds[0]) : '';
+          let activity = '';
+          let mins = 0;
+          if (worklogId) {
+            const worklogs = state.worklogsByIssue[key] || [];
+            const w = worklogs.find((x) => String(x.id) === worklogId);
+            if (w) {
+              activity = activityOf(w);
+              mins = minutesOf(w);
+            }
+          }
+          focusTimelineSelection(key, commentId, worklogId, activity, mins);
         });
 
         el.regModalCancelBtn.addEventListener('click', () => { state.regCtx = null; el.regModal.classList.remove('show'); });

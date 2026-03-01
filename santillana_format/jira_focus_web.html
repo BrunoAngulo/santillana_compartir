@@ -656,24 +656,6 @@
       border-radius: 50%;
       flex: 0 0 auto;
     }
-    .comment-activity-line {
-      margin-top: 6px;
-      padding: 4px 8px;
-      border-radius: 8px;
-      border: 1px solid #d4e2f1;
-      font-size: 12px;
-      color: #274760;
-      background: #f7fbff;
-      overflow-wrap: anywhere;
-    }
-    .comment-activity-line strong {
-      color: #123e67;
-      font-weight: 700;
-    }
-    .comment-activity-line.linked-line {
-      border-color: #b8d1ea;
-      background: #edf6ff;
-    }
     .meta { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 11px; margin-bottom: 4px; flex-wrap: wrap; }
     .body { white-space: pre-wrap; font-size: 13px; overflow-wrap: anywhere; }
     .track {
@@ -1964,6 +1946,67 @@
               cur = new Date(blocks[chosenIdx - 1].end);
             } else {
               cur = this.prevBusinessEnd(cur);
+            }
+          }
+          return cur;
+        },
+        addBusinessMinutes(startIn, minsIn) {
+          let remain = Math.max(0, Math.floor(Number(minsIn || 0)));
+          let cur = new Date(startIn);
+          if (!remain) return cur;
+          while (remain > 0) {
+            const blocks = this.dayWorkBlocks(cur);
+            if (!blocks.length) {
+              cur = this.nextBusinessStart(cur);
+              continue;
+            }
+            const firstStart = blocks[0].start;
+            const lastEnd = blocks[blocks.length - 1].end;
+            if (cur < firstStart) {
+              cur = new Date(firstStart);
+            }
+            if (cur >= lastEnd) {
+              const nextDay = new Date(cur);
+              nextDay.setDate(nextDay.getDate() + 1);
+              nextDay.setHours(0, 0, 0, 0);
+              cur = this.nextBusinessStart(nextDay);
+              continue;
+            }
+
+            let chosenIdx = -1;
+            for (let i = 0; i < blocks.length; i += 1) {
+              const block = blocks[i];
+              if (cur < block.end) {
+                if (cur < block.start) {
+                  cur = new Date(block.start);
+                }
+                chosenIdx = i;
+                break;
+              }
+            }
+            if (chosenIdx < 0) {
+              const nextDay = new Date(cur);
+              nextDay.setDate(nextDay.getDate() + 1);
+              nextDay.setHours(0, 0, 0, 0);
+              cur = this.nextBusinessStart(nextDay);
+              continue;
+            }
+
+            const chosen = blocks[chosenIdx];
+            const available = Math.floor((chosen.end.getTime() - cur.getTime()) / 60000);
+            if (available >= remain) {
+              cur = new Date(cur.getTime() + (remain * 60000));
+              remain = 0;
+              continue;
+            }
+            remain -= Math.max(0, available);
+            if (chosenIdx < blocks.length - 1) {
+              cur = new Date(blocks[chosenIdx + 1].start);
+            } else {
+              const nextDay = new Date(cur);
+              nextDay.setDate(nextDay.getDate() + 1);
+              nextDay.setHours(0, 0, 0, 0);
+              cur = this.nextBusinessStart(nextDay);
             }
           }
           return cur;
@@ -3281,7 +3324,9 @@
         const startTs = tsOf(worklog && (worklog.started || worklog.created || 0));
         if (!Number.isFinite(startTs)) return { startTs: NaN, endTs: NaN, mins: 0 };
         const mins = Math.max(1, minutesOf(worklog));
-        return { startTs, endTs: startTs + (mins * 60000), mins };
+        const endDate = TimeService.addBusinessMinutes(startTs, mins);
+        const endTs = endDate instanceof Date ? endDate.getTime() : NaN;
+        return { startTs, endTs, mins };
       }
       function tsOf(value) {
         const ts = new Date(value || 0).getTime();
@@ -3504,23 +3549,14 @@
           const accentAttr = accent ? ` style="--comment-accent:${escapeHtml(accent)}"` : '';
           const actionClass = existingWorklogId ? 'btn edit' : 'btn';
           const actionLabel = existingWorklogId ? 'Editar' : 'Registrar actividad';
-          const linkedWin = existingWorklog ? windowOf(existingWorklog) : null;
-          const commentMinute = minuteBucket(c.created);
-          const endsAtCommentMinute = linkedWin
-            ? minuteBucket(linkedWin.endTs) === commentMinute
-            : false;
           const linkedBadge = accent
             ? `<div class="comment-ref"><span class="comment-ref-dot" style="background:${escapeHtml(accent)};"></span><span>${escapeHtml(linkedActivity)}</span></div>`
-            : '';
-          const activityInfo = linkedActivity
-            ? `<div class="comment-activity-line linked-line">Actividad vinculada: <strong>${escapeHtml(linkedActivity)}</strong>${endsAtCommentMinute ? ' (fin coincide con hora del comentario)' : ''}</div>`
             : '';
           return `
             <div class="comment${mineClass}${selectedClass}${linkedClass}" data-comment-id="${escapeHtml(id)}"${accentAttr}>
               <div class="meta"><span>${escapeHtml(author)}</span><span>${escapeHtml(TimeService.dtLabel(c.created))}</span></div>
               <div class="body">${escapeHtml(txt)}</div>
               ${linkedBadge}
-              ${activityInfo}
               <div class="row" style="margin-top:8px;"><button class="${actionClass}" data-act="reg-from-comment" data-id="${escapeHtml(id)}" data-worklog-id="${escapeHtml(existingWorklogId)}">${actionLabel}</button></div>
             </div>
           `;
@@ -3719,9 +3755,10 @@
         const commentsAsc = sortDesc((state.commentsByIssue[issueKey] || []).slice(), (x) => x.created || '').reverse();
         const logsAsc = sortDesc((state.worklogsByIssue[issueKey] || []).slice(), (x) => x.started || x.created || '').reverse()
           .map((w) => {
-            const startTs = new Date(w.started || w.created).getTime();
-            const mins = minutesOf(w);
-            const endTs = startTs + Math.max(60000, mins * 60000);
+            const win = windowOf(w);
+            const startTs = win.startTs;
+            const mins = win.mins;
+            const endTs = win.endTs;
             const activity = activityOf(w) || 'Sin actividad';
             return {
               id: String(w.id || ''),

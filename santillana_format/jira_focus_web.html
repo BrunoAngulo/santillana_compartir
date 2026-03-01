@@ -200,6 +200,21 @@
       white-space: normal;
       word-break: break-word;
     }
+    .issue-insight.stack {
+      display: block;
+    }
+    .issue-insight-list {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .issue-insight-section {
+      margin-top: 4px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #173b5a;
+    }
     .dashboard-grid {
       display: grid;
       grid-template-columns: minmax(0, 1.35fr) minmax(320px, 1fr);
@@ -1834,7 +1849,6 @@
             <button class="btn danger" id="deleteAllWorklogsBtn" type="button" disabled>Eliminar todo</button>
           </div>
           <div class="panel-tools">
-            <input class="inp" id="worklogSearchInp" type="text" placeholder="Filtrar por actividad o autor">
             <select class="sel" id="worklogOwnerSel">
               <option value="all">Todos</option>
               <option value="mine">Solo mios</option>
@@ -1959,6 +1973,12 @@
           'offline_access'
         ]
       };
+      const BASE_OAUTH_CONFIG = {
+        url: 'https://project-tools-santillana.atlassian.net/',
+        client_id: 'u6QCVXJ1fJpuflQxoeTuNdzN6nkVriIo',
+        client_secret: '',
+        redirect_uri: 'https://santed.streamlit.app/'
+      };
       const DEBUG_MAX = 140;
       const LABOR = {
         startHour: 8,
@@ -2042,7 +2062,6 @@
         selectedTimelineActivity: '',
         selectedTimelineMinutes: 0,
         selectedWorklogId: '',
-        worklogSearch: '',
         worklogOwnerMode: 'all',
         timelineLinksByIssue: {},
         manualWorklogToCommentByIssue: {},
@@ -3172,7 +3191,7 @@
           'loginView','urlInp','clientIdInp','clientSecretInp','redirectUriInp','callbackUrlInp','connectBtn','processCallbackBtn','clearOAuthBtn',
           'mainView','issueSel','issueInsight','activityTypeSel','activityDueInp','activityInp','minutesInp','registerBtn','jiraDurationPill','timerVal','timerState','startBtn','pauseBtn',
           'resetBtn','applyTimerBtn','suggestionBox','applySugActBtn','applySugTimeBtn','registerSugBtn','todayTotal','weekTotal','issueCount','dashMeta',
-          'refreshDashBtn','recentBox','commentsBox','worklogBody','worklogsMeta','worklogSearchInp','worklogOwnerSel','deleteAllWorklogsBtn','timelineBox','timelineMeta','ganttBox','genReportBtn','exportReportBtn','reportMeta',
+          'refreshDashBtn','recentBox','commentsBox','worklogBody','worklogsMeta','worklogOwnerSel','deleteAllWorklogsBtn','timelineBox','timelineMeta','ganttBox','genReportBtn','exportReportBtn','reportMeta',
           'reportBody','timelinePanel','chartDesignSel','chartDesignHelp','activityFocusBox','activityQuickSel','activityQuickMeta','compactBtn','floatBox','floatIssue','floatTimer','floatState','floatStartBtn','floatPauseBtn','floatExpandBtn',
           'regInlineBox','regInlineMeta','regTypeSel','regDateInp','regMinInp','regInlineOkBtn','regInlineCancelBtn',
           'editInlineBox','editMeta','editTypeSel','editActInp','editDateInp','editTimeInp','editMinInp','editSaveBtn','editDeleteBtn','editCancelBtn','activityList'
@@ -3345,17 +3364,17 @@
         const subtasksLabel = subtaskNames.length ? subtaskNames.join(' | ') : 'Sin subtareas';
         const lastPlantillaEstudiantes = lastWorklogLabelByOfficialType(key, ESTUDIANTES_TEMPLATE_ACTIVITY);
         const lastPlantillaDocentes = lastWorklogLabelByOfficialType(key, DOCENTES_TEMPLATE_ACTIVITY);
-        el.issueInsight.className = 'issue-insight';
+        el.issueInsight.className = 'issue-insight stack';
         el.issueInsight.innerHTML = `
-          <span class="issue-chip"><b>Ticket</b><span class="value">${escapeHtml(key)}</span></span>
-          <span class="issue-chip"><b>Resumen</b><span class="value">${escapeHtml(summary)}</span></span>
-          <span class="issue-chip"><b>Comentarios</b><span class="value">${escapeHtml(String(commentsCount))}</span></span>
-          <span class="issue-chip"><b>Worklogs</b><span class="value">${escapeHtml(String(worklogsCount))}</span></span>
-          <span class="issue-chip"><b>Total</b><span class="value">${escapeHtml(TimeService.jiraDuration(totalMins))}</span></span>
-          <span class="issue-chip"><b>Plantillas</b><span class="value">${escapeHtml(String(templateCount))}</span></span>
-          <span class="issue-chip"><b>Ult. comentario</b><span class="value">${escapeHtml(lastComment)}</span></span>
-          <div class="issue-extra">
-            <div class="issue-extra-title">Informacion extra</div>
+          <div class="issue-insight-list">
+            <div class="issue-extra-row"><b>Ticket:</b> <span>${escapeHtml(key)}</span></div>
+            <div class="issue-extra-row"><b>Resumen:</b> <span>${escapeHtml(summary)}</span></div>
+            <div class="issue-extra-row"><b>Comentarios:</b> <span>${escapeHtml(String(commentsCount))}</span></div>
+            <div class="issue-extra-row"><b>Worklogs:</b> <span>${escapeHtml(String(worklogsCount))}</span></div>
+            <div class="issue-extra-row"><b>Total:</b> <span>${escapeHtml(TimeService.jiraDuration(totalMins))}</span></div>
+            <div class="issue-extra-row"><b>Plantillas:</b> <span>${escapeHtml(String(templateCount))}</span></div>
+            <div class="issue-extra-row"><b>Ult. comentario:</b> <span>${escapeHtml(lastComment)}</span></div>
+            <div class="issue-insight-section">Informacion extra</div>
             <div class="issue-extra-row"><b>Subtareas:</b> <span class="issue-extra-list">${escapeHtml(subtasksLabel)}</span></div>
             <div class="issue-extra-row"><b>Ult. registro plantilla estudiantes:</b> <span>${escapeHtml(lastPlantillaEstudiantes)}</span></div>
             <div class="issue-extra-row"><b>Ult. registro plantilla docentes:</b> <span>${escapeHtml(lastPlantillaDocentes)}</span></div>
@@ -4088,7 +4107,6 @@
         const ownerMode = ['all', 'mine', 'readonly'].includes(String(state.worklogOwnerMode || '').trim())
           ? String(state.worklogOwnerMode || '').trim()
           : 'all';
-        const query = normalizePlain(state.worklogSearch || '').trim();
         const prepared = rows.map((w) => {
           const my = mine(w.author);
           const id = String(w.id || '');
@@ -4106,21 +4124,17 @@
         const filtered = prepared.filter((item) => {
           if (ownerMode === 'mine' && !item.my) return false;
           if (ownerMode === 'readonly' && item.my) return false;
-          if (!query) return true;
-          const haystack = normalizePlain([item.act, item.author, item.date].join(' '));
-          return haystack.includes(query);
+          return true;
         });
         if (el.worklogsMeta) {
           const base = `${filtered.length}/${prepared.length} visibles | ${mineCount} editables`;
-          const rawQuery = String(state.worklogSearch || '').trim();
-          const clipped = rawQuery.length > 24 ? `${rawQuery.slice(0, 24)}...` : rawQuery;
-          el.worklogsMeta.textContent = rawQuery ? `${base} | filtro: "${clipped}"` : base;
+          el.worklogsMeta.textContent = base;
         }
         if (state.selectedWorklogId && !filtered.some((item) => String(item.id) === String(state.selectedWorklogId))) {
           state.selectedWorklogId = '';
         }
         if (!filtered.length) {
-          el.worklogBody.innerHTML = '<tr><td colspan="4"><div class="empty">No hay worklogs que coincidan con el filtro actual.</div></td></tr>';
+          el.worklogBody.innerHTML = '<tr><td colspan="4"><div class="empty">No hay worklogs para la vista actual.</div></td></tr>';
           return;
         }
         el.worklogBody.innerHTML = filtered.map((item) => (
@@ -5047,21 +5061,27 @@
       }
 
       function readConfigInputs() {
+        const base = BASE_OAUTH_CONFIG || {};
+        const rawUrl = String(el.urlInp.value || '').trim();
+        const rawClientId = String(el.clientIdInp.value || '').trim();
+        const rawClientSecret = String(el.clientSecretInp.value || '');
+        const rawRedirectUri = String(el.redirectUriInp.value || '').trim();
         return {
-          url: sanitizeUrl(el.urlInp.value),
-          client_id: String(el.clientIdInp.value || '').trim(),
-          client_secret: String(el.clientSecretInp.value || ''),
-          redirect_uri: String(el.redirectUriInp.value || '').trim(),
+          url: sanitizeUrl(rawUrl || base.url || ''),
+          client_id: String(rawClientId || base.client_id || '').trim(),
+          client_secret: String(rawClientSecret || base.client_secret || ''),
+          redirect_uri: String(rawRedirectUri || base.redirect_uri || '').trim(),
           cloud_id: ''
         };
       }
 
       function applyConfigToInputs(cfg) {
-        if (!cfg) return;
-        el.urlInp.value = cfg.url || '';
-        el.clientIdInp.value = cfg.client_id || '';
-        el.clientSecretInp.value = cfg.client_secret || '';
-        el.redirectUriInp.value = cfg.redirect_uri || deriveDefaultRedirectUri();
+        const source = cfg && typeof cfg === 'object' ? cfg : {};
+        const base = BASE_OAUTH_CONFIG || {};
+        el.urlInp.value = sanitizeUrl(source.url || base.url || '');
+        el.clientIdInp.value = String(source.client_id || base.client_id || '');
+        el.clientSecretInp.value = String(source.client_secret || base.client_secret || '');
+        el.redirectUriInp.value = String(source.redirect_uri || base.redirect_uri || deriveDefaultRedirectUri() || '').trim();
       }
 
       function isLikelyWrongRedirectUri(jiraUrl, redirectUri) {
@@ -5267,7 +5287,7 @@
           clearMsg();
           const cfg = readConfigInputs();
           if (!cfg.redirect_uri) {
-            cfg.redirect_uri = deriveDefaultRedirectUri();
+            cfg.redirect_uri = String(BASE_OAUTH_CONFIG.redirect_uri || deriveDefaultRedirectUri() || '').trim();
             el.redirectUriInp.value = cfg.redirect_uri;
           }
           if (!cfg.url || !cfg.client_id || !cfg.client_secret || !cfg.redirect_uri) {
@@ -5332,7 +5352,7 @@
           if (!StorageService.getConfig()) {
             const cfg = readConfigInputs();
             if (!cfg.redirect_uri) {
-              cfg.redirect_uri = deriveDefaultRedirectUri();
+              cfg.redirect_uri = String(BASE_OAUTH_CONFIG.redirect_uri || deriveDefaultRedirectUri() || '').trim();
               el.redirectUriInp.value = cfg.redirect_uri;
             }
             if (cfg.url && cfg.client_id && cfg.client_secret && cfg.redirect_uri) {
@@ -5389,13 +5409,6 @@
           catch (e) { applyError(e, `No se pudo cargar detalle de ${state.selectedIssueKey}.`); }
           renderCompact();
         });
-        if (el.worklogSearchInp) {
-          el.worklogSearchInp.value = state.worklogSearch;
-          el.worklogSearchInp.addEventListener('input', () => {
-            state.worklogSearch = String(el.worklogSearchInp.value || '');
-            renderWorklogs(state.selectedIssueKey);
-          });
-        }
         if (el.worklogOwnerSel) {
           el.worklogOwnerSel.value = ['all', 'mine', 'readonly'].includes(state.worklogOwnerMode)
             ? state.worklogOwnerMode
@@ -5832,7 +5845,7 @@
       async function autoReconnect() {
         dbg('auto_reconnect_start');
         clearPopupWatcher();
-        const defaultRedirectUri = deriveDefaultRedirectUri();
+        const defaultRedirectUri = String(BASE_OAUTH_CONFIG.redirect_uri || deriveDefaultRedirectUri() || '').trim();
         if (!el.redirectUriInp.value && defaultRedirectUri) {
           el.redirectUriInp.value = defaultRedirectUri;
         }
@@ -5840,13 +5853,18 @@
         const cfg = StorageService.getConfig();
         if (cfg) {
           applyConfigToInputs(cfg);
+        } else {
+          applyConfigToInputs(BASE_OAUTH_CONFIG);
         }
 
         const topHref = getTopLocationHref();
-        if (topHref) {
-          el.callbackUrlInp.value = topHref;
-        }
         const params = parseUrlParams(topHref);
+        const manualCallbackSeed = (params.code || params.error)
+          ? topHref
+          : String(BASE_OAUTH_CONFIG.redirect_uri || topHref || '').trim();
+        if (manualCallbackSeed) {
+          el.callbackUrlInp.value = manualCallbackSeed;
+        }
         if (params.code || params.error) {
           dbg('auto_reconnect_callback_in_url', { has_code: !!params.code, has_error: !!params.error });
           try {

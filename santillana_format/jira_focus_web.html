@@ -3586,7 +3586,7 @@
           const existingWorklog = findExistingWorklogForComment(issueKey, c);
           const existingWorklogId = existingWorklog ? String(existingWorklog.id || '').trim() : '';
           const linkedActivity = existingWorklog ? activityOf(existingWorklog) : '';
-          const xlsxNames = xlsxNamesFromComment(c);
+          const xlsxNames = xlsxNamesFromComment(c, issueKey);
           const xlsxTitle = xlsxNames.join('\n');
           const xlsxIcon = xlsxNames.length
             ? `<span class="xlsx-icon" title="${escapeHtml(xlsxTitle)}" aria-label="${escapeHtml(`Comentario con ${xlsxNames.length} archivo(s) xlsx`)}">X</span>`
@@ -4082,15 +4082,22 @@
       }
 
       function xlsxTokens(text) {
-        const src = String(text || '');
-        const rg = /([A-Za-z0-9_\-./%() ]+\.xlsx)\b/gi;
+        const raw = String(text || '');
+        const sources = [raw];
+        try {
+          const decoded = decodeURIComponent(raw);
+          if (decoded && decoded !== raw) sources.push(decoded);
+        } catch (_e) {}
         const out = [];
-        let m = rg.exec(src);
-        while (m) {
-          out.push(m[1].trim());
-          m = rg.exec(src);
-        }
-        return uniqueStrings(out);
+        sources.forEach((src) => {
+          const rg = /([A-Za-z0-9_\-./%() ]+(?:\.|%2e)xlsx)\b/gi;
+          let m = rg.exec(src);
+          while (m) {
+            out.push(String(m[1] || '').trim().replace(/%2e/ig, '.'));
+            m = rg.exec(src);
+          }
+        });
+        return uniqueStrings(out).filter((name) => /\.xlsx$/i.test(name));
       }
 
       function normalizeXlsxName(token) {
@@ -4106,11 +4113,99 @@
         return value.trim();
       }
 
-      function xlsxNamesFromComment(comment) {
+      function collectXlsxFromAdf(node, out) {
+        if (!node) return;
+        if (Array.isArray(node)) {
+          node.forEach((item) => collectXlsxFromAdf(item, out));
+          return;
+        }
+        if (typeof node !== 'object') return;
+        const pushTokens = (value) => {
+          xlsxTokens(value).forEach((t) => out.push(t));
+        };
+        if (typeof node.text === 'string') pushTokens(node.text);
+        if (typeof node.href === 'string') pushTokens(node.href);
+        if (typeof node.url === 'string') pushTokens(node.url);
+        if (typeof node.src === 'string') pushTokens(node.src);
+        if (typeof node.filename === 'string') pushTokens(node.filename);
+        if (typeof node.title === 'string') pushTokens(node.title);
+        if (typeof node.alt === 'string') pushTokens(node.alt);
+        if (node.attrs && typeof node.attrs === 'object') {
+          if (typeof node.attrs.href === 'string') pushTokens(node.attrs.href);
+          if (typeof node.attrs.url === 'string') pushTokens(node.attrs.url);
+          if (typeof node.attrs.src === 'string') pushTokens(node.attrs.src);
+          if (typeof node.attrs.filename === 'string') pushTokens(node.attrs.filename);
+          if (typeof node.attrs.title === 'string') pushTokens(node.attrs.title);
+          if (typeof node.attrs.alt === 'string') pushTokens(node.attrs.alt);
+          if (typeof node.attrs.text === 'string') pushTokens(node.attrs.text);
+        }
+        if (Array.isArray(node.marks)) {
+          node.marks.forEach((mark) => {
+            if (!mark || typeof mark !== 'object') return;
+            if (mark.attrs && typeof mark.attrs === 'object') {
+              if (typeof mark.attrs.href === 'string') pushTokens(mark.attrs.href);
+              if (typeof mark.attrs.url === 'string') pushTokens(mark.attrs.url);
+              if (typeof mark.attrs.title === 'string') pushTokens(mark.attrs.title);
+            }
+          });
+        }
+        Object.keys(node).forEach((k) => {
+          const v = node[k];
+          if (k === 'text' || k === 'href' || k === 'url' || k === 'src' || k === 'filename' || k === 'title' || k === 'alt' || k === 'marks' || k === 'attrs') return;
+          collectXlsxFromAdf(v, out);
+        });
+      }
+
+      function xlsxIssueAttachmentNamesForComment(issueKey, comment) {
+        const key = String(issueKey || '').trim();
+        const issue = key ? issueByKey(key) : null;
+        const attachments = issue && Array.isArray(issue.attachments) ? issue.attachments : [];
+        if (!attachments.length) return [];
+        const xlsxAttachments = attachments.filter((a) => {
+          const filename = a && a.filename ? String(a.filename) : '';
+          return /\.xlsx$/i.test(filename);
+        });
+        if (!xlsxAttachments.length) return [];
+
+        const rawBody = comment && comment.body ? JSON.stringify(comment.body).replace(/\\\//g, '/') : '';
+        const rawLower = rawBody.toLowerCase();
+        const direct = [];
+        xlsxAttachments.forEach((a) => {
+          const id = String(a && a.id ? a.id : '').trim();
+          const filename = String(a && a.filename ? a.filename : '').trim();
+          const fileLower = filename.toLowerCase();
+          const enc = encodeURIComponent(filename).toLowerCase();
+          const byId = id && (rawLower.includes(`\"id\":\"${id.toLowerCase()}\"`) || rawLower.includes(`/attachment/${id.toLowerCase()}/`) || rawLower.includes(`\"attachmentid\":\"${id.toLowerCase()}\"`));
+          const byName = fileLower && (rawLower.includes(fileLower) || (enc && rawLower.includes(enc)));
+          if (byId || byName) direct.push(filename);
+        });
+        if (direct.length) return uniqueStrings(direct);
+
+        const hasMediaNode = rawLower.includes('"type":"media"') || rawLower.includes('"type":"mediasingle"') || rawLower.includes('"type":"mediaGroup"'.toLowerCase());
+        if (!hasMediaNode) return [];
+
+        const commentTs = tsOf(comment && comment.created ? comment.created : 0);
+        const commentAuthorId = comment && comment.author && comment.author.accountId ? String(comment.author.accountId) : '';
+        const near = xlsxAttachments.filter((a) => {
+          const attTs = tsOf(a && a.created ? a.created : 0);
+          if (!Number.isFinite(attTs) || !Number.isFinite(commentTs)) return false;
+          if (Math.abs(attTs - commentTs) > 30 * 60 * 1000) return false;
+          const attAuthorId = a && a.author && a.author.accountId ? String(a.author.accountId) : '';
+          if (commentAuthorId && attAuthorId && commentAuthorId !== attAuthorId) return false;
+          return true;
+        }).map((a) => String(a.filename || '').trim()).filter((name) => !!name);
+        return uniqueStrings(near);
+      }
+
+      function xlsxNamesFromComment(comment, issueKey = '') {
         const fromText = xlsxTokens(commentText(comment)).map(normalizeXlsxName);
         const rawBody = comment && comment.body ? JSON.stringify(comment.body).replace(/\\\//g, '/') : '';
         const fromBody = xlsxTokens(rawBody).map(normalizeXlsxName);
-        return uniqueStrings([...fromText, ...fromBody]).filter((name) => /\.xlsx$/i.test(name));
+        const fromAdf = [];
+        collectXlsxFromAdf(comment && comment.body ? comment.body : null, fromAdf);
+        const fromAdfNames = fromAdf.map(normalizeXlsxName);
+        const fromIssue = xlsxIssueAttachmentNamesForComment(issueKey, comment).map(normalizeXlsxName);
+        return uniqueStrings([...fromText, ...fromBody, ...fromAdfNames, ...fromIssue]).filter((name) => /\.xlsx$/i.test(name));
       }
 
       function renderReport() {

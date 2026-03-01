@@ -478,13 +478,29 @@
       grid-row: 1 / span 2;
       display: flex;
       flex-direction: column;
-      align-self: stretch;
+      align-self: start;
+    }
+    .dashboard-grid > .card.panel-worklogs {
+      min-height: 0;
     }
     .panel-comments .comments { max-height: 430px; }
     .panel-worklogs .tbl-wrap {
       flex: 1 1 auto;
-      max-height: none;
-      min-height: 620px;
+      max-height: min(56vh, 620px);
+      min-height: 0;
+    }
+    .edit-inline {
+      margin-top: 10px;
+      border: 1px solid #d9e5f2;
+      border-radius: 10px;
+      padding: 10px;
+      background: #f8fbff;
+    }
+    .edit-inline-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #274760;
+      margin-bottom: 4px;
     }
     .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
     h2, h3, h4 { margin: 0 0 8px 0; }
@@ -1269,7 +1285,10 @@
         grid-column: auto;
         grid-row: auto;
       }
-      .panel-worklogs .tbl-wrap { min-height: 0; }
+      .panel-worklogs .tbl-wrap {
+        min-height: 0;
+        max-height: 52vh;
+      }
       .timeline-head { grid-template-columns: 1fr; }
       .gantt-row { grid-template-columns: 1fr; }
       .timeline-ticket-row { grid-template-columns: 1fr; }
@@ -1445,6 +1464,27 @@
               <tbody id="worklogBody"></tbody>
             </table>
           </div>
+          <div id="editInlineBox" class="edit-inline hide">
+            <div class="edit-inline-title">Editar worklog</div>
+            <div class="muted" id="editMeta"></div>
+            <div class="grid3" style="margin-top:8px;">
+              <div>
+                <label for="editTypeSel">Actividad (oficial)</label>
+                <select id="editTypeSel" class="sel"></select>
+              </div>
+              <div><label for="editDateInp">Fecha</label><input id="editDateInp" class="inp" type="date"></div>
+              <div><label for="editTimeInp">Hora</label><input id="editTimeInp" class="inp" type="time" step="60"></div>
+            </div>
+            <div class="grid2" style="margin-top:8px;">
+              <div><label for="editMinInp">Duracion (min)</label><input id="editMinInp" class="inp" type="number" min="1" step="1"></div>
+              <div><label for="editActInp">Actividad final</label><input id="editActInp" class="inp" type="text" readonly></div>
+            </div>
+            <div class="row" style="margin-top:10px;">
+              <button class="btn primary" id="editSaveBtn" type="button">Guardar</button>
+              <button class="btn danger" id="editDeleteBtn" type="button">Eliminar</button>
+              <button class="btn" id="editCancelBtn" type="button">Cancelar</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1522,25 +1562,7 @@
     </div>
   </div>
 
-  <div class="modal" id="editModal">
-    <div class="modal-card">
-      <h3>Editar worklog</h3>
-      <div class="muted" id="editMeta"></div>
-      <div class="grid3" style="margin-top:8px;">
-        <div><label for="editActInp">Actividad</label><input id="editActInp" class="inp" type="text"></div>
-        <div><label for="editDateInp">Fecha</label><input id="editDateInp" class="inp" type="date"></div>
-        <div><label for="editTimeInp">Hora</label><input id="editTimeInp" class="inp" type="time" step="60"></div>
-      </div>
-      <div class="grid2" style="margin-top:8px;">
-        <div><label for="editMinInp">Duracion (min)</label><input id="editMinInp" class="inp" type="number" min="1" step="1"></div>
-      </div>
-      <div class="row" style="margin-top:10px;">
-        <button class="btn primary" id="editSaveBtn" type="button">Guardar</button>
-        <button class="btn danger" id="editDeleteBtn" type="button">Eliminar</button>
-        <button class="btn" id="editCancelBtn" type="button">Cancelar</button>
-      </div>
-    </div>
-  </div>
+  <div class="hide" aria-hidden="true"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script>
@@ -2608,7 +2630,7 @@
           'refreshDashBtn','recentBox','commentsBox','worklogBody','timelineBox','ganttBox','genReportBtn','exportReportBtn','reportMeta',
           'reportBody','timelinePanel','chartDesignSel','chartDesignHelp','activityFocusBox','activityQuickSel','activityQuickMeta','compactBtn','floatBox','floatIssue','floatTimer','floatState','floatStartBtn','floatPauseBtn','floatExpandBtn',
           'regModal','regModalMeta','regActInp','regMinInp','regModalOkBtn','regModalCancelBtn',
-          'editModal','editMeta','editActInp','editDateInp','editTimeInp','editMinInp','editSaveBtn','editDeleteBtn','editCancelBtn','activityList'
+          'editInlineBox','editMeta','editTypeSel','editActInp','editDateInp','editTimeInp','editMinInp','editSaveBtn','editDeleteBtn','editCancelBtn','activityList'
         ].forEach((id) => { el[id] = document.getElementById(id); });
       }
 
@@ -2761,9 +2783,13 @@
       }
 
       function renderOfficialActivityControls() {
-        el.activityTypeSel.innerHTML = OFFICIAL_ACTIVITY_TYPES
+        const optionsHtml = OFFICIAL_ACTIVITY_TYPES
           .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
           .join('');
+        el.activityTypeSel.innerHTML = optionsHtml;
+        if (el.editTypeSel) {
+          el.editTypeSel.innerHTML = optionsHtml;
+        }
         if (!OFFICIAL_ACTIVITY_TYPES.includes(state.activityType)) {
           state.activityType = OFFICIAL_ACTIVITY_TYPES[0];
         }
@@ -2772,7 +2798,43 @@
         }
         el.activityTypeSel.value = state.activityType;
         el.activityDueInp.value = state.activityDueDate;
+        if (el.editTypeSel && el.editTypeSel.options.length && !OFFICIAL_ACTIVITY_TYPES.includes(String(el.editTypeSel.value || '').trim())) {
+          el.editTypeSel.value = state.activityType;
+        }
+        if (el.editDateInp && !isValidInputDate(el.editDateInp.value)) {
+          el.editDateInp.value = state.activityDueDate;
+        }
+        syncEditActivityPreview();
         syncOfficialActivityToState(false);
+      }
+
+      function syncEditActivityPreview() {
+        if (!el.editTypeSel || !el.editActInp || !el.editDateInp) return;
+        const selectedType = OFFICIAL_ACTIVITY_TYPES.includes(String(el.editTypeSel.value || '').trim())
+          ? String(el.editTypeSel.value || '').trim()
+          : OFFICIAL_ACTIVITY_TYPES[0];
+        const dueDate = isValidInputDate(el.editDateInp.value)
+          ? String(el.editDateInp.value)
+          : TimeService.toInputDate(new Date());
+        el.editTypeSel.value = selectedType;
+        el.editDateInp.value = dueDate;
+        el.editActInp.value = buildOfficialActivity(selectedType, dueDate);
+      }
+
+      function hideInlineEditor() {
+        state.editCtx = null;
+        if (el.editInlineBox) {
+          el.editInlineBox.classList.add('hide');
+        }
+      }
+
+      function showInlineEditor() {
+        if (el.editInlineBox) {
+          el.editInlineBox.classList.remove('hide');
+          if (typeof el.editInlineBox.scrollIntoView === 'function') {
+            el.editInlineBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
+        }
       }
 
       function activityKey(text) {
@@ -3374,6 +3436,7 @@
       function renderIssueData() {
         const key = state.selectedIssueKey;
         if (!key) {
+          hideInlineEditor();
           state.selectedCommentId = '';
           state.selectedWorklogId = '';
           renderComments('');
@@ -3381,6 +3444,9 @@
           renderSuggestion('');
           renderTimeline('');
           return;
+        }
+        if (state.editCtx && state.editCtx.issueKey !== key) {
+          hideInlineEditor();
         }
         renderComments(key);
         renderWorklogs(key);
@@ -4035,6 +4101,12 @@
             renderTimeline(state.selectedIssueKey);
           }
         });
+        el.editTypeSel.addEventListener('change', () => {
+          syncEditActivityPreview();
+        });
+        el.editDateInp.addEventListener('change', () => {
+          syncEditActivityPreview();
+        });
         el.chartDesignSel.addEventListener('change', () => {
           const selected = String(el.chartDesignSel.value || '').trim();
           state.chartDesign = CHART_DESIGNS.some((d) => d.id === selected)
@@ -4231,11 +4303,19 @@
             state.editCtx = { issueKey: key, id: String(id) };
             const d = new Date(w.started || w.created || new Date());
             el.editMeta.textContent = `${key} | Worklog ${id}`;
-            el.editActInp.value = activityOf(w);
+            const currentAct = activityOf(w);
+            const parsed = parseOfficialActivity(currentAct);
+            const inferredType = parsed && OFFICIAL_ACTIVITY_TYPES.includes(parsed.type)
+              ? parsed.type
+              : inferOfficialActivityType(currentAct);
+            el.editTypeSel.value = OFFICIAL_ACTIVITY_TYPES.includes(inferredType)
+              ? inferredType
+              : OFFICIAL_ACTIVITY_TYPES[0];
             el.editDateInp.value = TimeService.toInputDate(d);
             el.editTimeInp.value = TimeService.toInputTime(d);
             el.editMinInp.value = String(minutesOf(w));
-            el.editModal.classList.add('show');
+            syncEditActivityPreview();
+            showInlineEditor();
           }
           if (action === 'del-worklog') {
             if (!window.confirm(`Eliminar worklog ${id}?`)) return;
@@ -4258,18 +4338,19 @@
           focusWorklogInDashboard(key, w);
         });
 
-        el.editCancelBtn.addEventListener('click', () => { state.editCtx = null; el.editModal.classList.remove('show'); });
+        el.editCancelBtn.addEventListener('click', () => { hideInlineEditor(); });
         el.editSaveBtn.addEventListener('click', async () => {
-          if (!state.editCtx) { el.editModal.classList.remove('show'); return; }
+          if (!state.editCtx) { hideInlineEditor(); return; }
+          syncEditActivityPreview();
           const act = String(el.editActInp.value || '').trim();
           const mins = Math.max(1, Math.floor(Number(el.editMinInp.value || 0)));
           const date = String(el.editDateInp.value || '');
           const time = String(el.editTimeInp.value || '08:30');
           const dt = new Date(`${date}T${time}:00`);
           if (!act || !date || Number.isNaN(dt.getTime()) || !mins) { showMsg('error', 'Completa actividad, fecha, hora y duracion.'); return; }
+          if (!parseOfficialActivity(act)) { showMsg('error', 'Selecciona una actividad oficial y fecha valida.'); return; }
           const { issueKey, id } = state.editCtx;
-          state.editCtx = null;
-          el.editModal.classList.remove('show');
+          hideInlineEditor();
           try { await updateWorklog(issueKey, id, act, dt, mins); }
           catch (e) { applyError(e, 'No se pudo actualizar worklog.'); }
         });
@@ -4277,8 +4358,7 @@
         el.editDeleteBtn.addEventListener('click', async () => {
           if (!state.editCtx) return;
           const { issueKey, id } = state.editCtx;
-          state.editCtx = null;
-          el.editModal.classList.remove('show');
+          hideInlineEditor();
           if (!window.confirm(`Eliminar worklog ${id}?`)) return;
           try { await deleteWorklog(issueKey, id); }
           catch (e) { applyError(e, 'No se pudo eliminar worklog.'); }
@@ -4362,6 +4442,7 @@
         renderOfficialActivityControls();
         syncActivityFocusComponent();
         applyChartDesign();
+        hideInlineEditor();
         el.minutesInp.value = String(state.durationMinutes);
         renderActivitiesList();
         renderDurationPill();

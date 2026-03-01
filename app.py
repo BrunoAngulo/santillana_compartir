@@ -117,31 +117,6 @@ def _show_dataframe(data: object, use_container_width: bool = True) -> None:
         df_view.index = range(1, len(df_view) + 1)
     st.dataframe(df_view, use_container_width=use_container_width)
 
-def _parse_persona_ids(raw: str) -> List[int]:
-    if not raw:
-        return []
-    tokens = re.split(r"[,\s;]+", raw.strip())
-    ids: List[int] = []
-    invalid: List[str] = []
-    for token in tokens:
-        if not token:
-            continue
-        try:
-            ids.append(int(token))
-        except ValueError:
-            invalid.append(token)
-    if invalid:
-        raise ValueError(f"IDs inválidos: {', '.join(invalid)}")
-    unique: List[int] = []
-    seen = set()
-    for value in ids:
-        if value in seen:
-            continue
-        seen.add(value)
-        unique.append(value)
-    return unique
-
-
 def _parse_colegio_id(raw: object, field_name: str = "Colegio Clave") -> int:
     text = str(raw or "").strip()
     if not text:
@@ -585,32 +560,12 @@ with tab_crud_profesores:
     st.caption("Flujo: genera base, luego simula y aplica asignaciones.")
     st.caption("Usando el token global configurado arriba.")
     colegio_id_raw = str(st.session_state.get("shared_colegio_id", "")).strip()
-
-    with st.expander("Opciones avanzadas", expanded=False):
-        ciclo_id = st.number_input(
-            "Ciclo ID",
-            min_value=1,
-            step=1,
-            value=PROFESORES_CICLO_ID_DEFAULT,
-            format="%d",
-            key="profesores_ciclo",
-        )
-        timeout = st.number_input(
-            "Timeout (seg)",
-            min_value=5,
-            step=5,
-            value=30,
-            format="%d",
-            key="profesores_timeout",
-        )
+    ciclo_id = PROFESORES_CICLO_ID_DEFAULT
+    timeout = 30
 
     with st.container(border=True):
         st.markdown("**1) Generar Excel base de profesores**")
         st.caption("Incluye profesores activos e inactivos.")
-        persona_ids_raw = st.text_input(
-            "Filtrar por personaId (opcional, separado por coma)",
-            key="profesores_ids",
-        )
         run_generar_base = st.button(
             "Generar Excel base",
             type="primary",
@@ -628,11 +583,6 @@ with tab_crud_profesores:
             st.error(f"Error: {exc}")
             st.stop()
         try:
-            persona_ids = _parse_persona_ids(persona_ids_raw)
-        except ValueError as exc:
-            st.error(f"Error: {exc}")
-            st.stop()
-        try:
             data, summary, errores = listar_profesores_data(
                 token=token,
                 colegio_id=colegio_id_int,
@@ -643,11 +593,6 @@ with tab_crud_profesores:
         except Exception as exc:  # pragma: no cover - UI
             st.error(f"Error: {exc}")
             st.stop()
-
-        if persona_ids:
-            data = [
-                item for item in data if int(item.get("persona_id", 0)) in persona_ids
-            ]
 
         filas: List[Dict[str, object]] = []
         for entry in data:
@@ -921,31 +866,9 @@ with tab_crud_alumnos:
             ).strip()
             if colegio_id_raw:
                 st.session_state["alumnos_colegio_text"] = colegio_id_raw
-            with st.expander("Opciones avanzadas", expanded=False):
-                ciclo_id = st.number_input(
-                    "Ciclo ID",
-                    min_value=1,
-                    step=1,
-                    value=ALUMNOS_CICLO_ID_DEFAULT,
-                    format="%d",
-                    key="alumnos_ciclo",
-                )
-                empresa_id = st.number_input(
-                    "Empresa ID",
-                    min_value=1,
-                    step=1,
-                    value=DEFAULT_EMPRESA_ID,
-                    format="%d",
-                    key="alumnos_empresa",
-                )
-                timeout = st.number_input(
-                    "Timeout (seg)",
-                    min_value=5,
-                    step=5,
-                    value=30,
-                    format="%d",
-                    key="alumnos_timeout",
-                )
+            ciclo_id = ALUMNOS_CICLO_ID_DEFAULT
+            empresa_id = DEFAULT_EMPRESA_ID
+            timeout = 30
     
             if st.button("Descargar plantilla", type="primary", key="alumnos_descargar"):
                 token = _get_shared_token()
@@ -1026,14 +949,7 @@ with tab_crud_clases:
     st.markdown("**2) Listar y eliminar clases**")
     st.caption("Usa token global y colegio global.")
     colegio_id_raw = str(st.session_state.get("shared_colegio_id", "")).strip()
-    with st.expander("Opciones avanzadas", expanded=False):
-        ciclo_id = st.number_input(
-            "Ciclo ID",
-            min_value=1,
-            step=1,
-            value=GESTION_ESCOLAR_CICLO_ID_DEFAULT,
-            format="%d",
-        )
+    ciclo_id = GESTION_ESCOLAR_CICLO_ID_DEFAULT
 
     token = _get_shared_token()
     empresa_id = DEFAULT_EMPRESA_ID

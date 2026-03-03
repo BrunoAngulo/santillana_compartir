@@ -477,6 +477,41 @@ def _delete_clase_gestion_escolar(
             raise RuntimeError(message)
 
 
+def _delete_alumno_clase_gestion_escolar(
+    token: str,
+    clase_id: int,
+    alumno_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+) -> None:
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    base_url = GESTION_ESCOLAR_ALUMNOS_CLASE_URL.format(
+        empresa_id=empresa_id,
+        ciclo_id=ciclo_id,
+        clase_id=clase_id,
+    )
+    url = f"{base_url}/{alumno_id}"
+    try:
+        response = requests.delete(url, headers=headers, timeout=timeout)
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Error de red: {exc}") from exc
+
+    status_code = response.status_code
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError(f"Respuesta no JSON (status {status_code})") from exc
+
+    if not response.ok:
+        message = payload.get("message") if isinstance(payload, dict) else ""
+        raise RuntimeError(message or f"HTTP {status_code}")
+
+    if not isinstance(payload, dict) or payload.get("success") is False:
+        message = payload.get("message") if isinstance(payload, dict) else "Respuesta invÃ¡lida"
+        raise RuntimeError(message or "Respuesta invÃ¡lida")
+
+
 def _collect_colegios(clases: List[Dict[str, object]]) -> List[Dict[str, object]]:
     colegios: Dict[int, str] = {}
     for item in clases:
@@ -955,11 +990,31 @@ with tab_crud_clases:
     empresa_id = DEFAULT_EMPRESA_ID
     timeout = 30
 
-    col_list, col_delete = st.columns(2, gap="large")
+    col_list, col_alumnos, col_delete = st.columns(3, gap="large")
     with col_list:
         with st.container(border=True):
             st.markdown("**Listar clases**")
             run_listar_clases = st.button("Listar clases", key="clases_listar_btn")
+    with col_alumnos:
+        with st.container(border=True):
+            st.markdown("**Ver alumnos por clase**")
+            clase_id_raw = st.text_input(
+                "Clase ID (geClaseId)",
+                key="clases_alumnos_clase_id",
+                placeholder="20143933",
+            )
+            run_ver_alumnos_clase = st.button(
+                "Ver alumnos",
+                key="clases_ver_alumnos_btn",
+            )
+            confirm_vaciar_clase = st.checkbox(
+                "Confirmo vaciar la clase (eliminar todos los alumnos).",
+                key="clases_vaciar_confirm",
+            )
+            run_vaciar_clase = st.button(
+                "Vaciar clase",
+                key="clases_vaciar_btn",
+            )
     with col_delete:
         with st.container(border=True):
             st.markdown("**Eliminar clases**")
@@ -1005,6 +1060,178 @@ with tab_crud_clases:
                     ]
                     st.write(f"Clases encontradas: {len(tabla)}")
                     _show_dataframe(tabla, use_container_width=True)
+
+    if run_ver_alumnos_clase:
+        if not token:
+            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+            st.stop()
+        clase_id_text = str(clase_id_raw or "").strip()
+        if not clase_id_text:
+            st.error("Ingresa un Clase ID.")
+            st.stop()
+        try:
+            clase_id_int = int(clase_id_text)
+        except ValueError:
+            st.error("Clase ID invalido. Debe ser numerico.")
+            st.stop()
+        try:
+            clase_data = _fetch_alumnos_clase_gestion_escolar(
+                token=token,
+                clase_id=clase_id_int,
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                timeout=int(timeout),
+            )
+        except Exception as exc:  # pragma: no cover - UI
+            st.error(f"Error: {exc}")
+            st.stop()
+
+        clase_nombre = str(clase_data.get("geClase") or clase_data.get("geClaseClave") or "")
+        alumnos_data = clase_data.get("claseAlumnos") or []
+        if not isinstance(alumnos_data, list):
+            st.error("Respuesta invalida: claseAlumnos no es lista.")
+            st.stop()
+
+        alumnos_rows: List[Dict[str, object]] = []
+        for entry in alumnos_data:
+            if not isinstance(entry, dict):
+                continue
+            alumno = entry.get("alumno")
+            if not isinstance(alumno, dict):
+                alumno = {}
+            persona = alumno.get("persona")
+            if not isinstance(persona, dict):
+                persona = {}
+            persona_login = persona.get("personaLogin")
+            if not isinstance(persona_login, dict):
+                persona_login = {}
+
+            alumnos_rows.append(
+                {
+                    "Alumno ID": alumno.get("alumnoId", ""),
+                    "Persona ID": persona.get("personaId", ""),
+                    "Nombre": persona.get("nombre", ""),
+                    "Apellido Paterno": persona.get("apellidoPaterno", ""),
+                    "Apellido Materno": persona.get("apellidoMaterno", ""),
+                    "Nombre Completo": persona.get("nombreCompleto", ""),
+                    "Login": persona_login.get("login", ""),
+                    "NUIP": persona.get("idOficial", ""),
+                    "Activo censo": bool(alumno.get("activo", False)),
+                    "Activo clase": bool(entry.get("activo", False)),
+                }
+            )
+
+        st.success(
+            f"Clase {clase_id_int} {clase_nombre} - Alumnos: {len(alumnos_rows)}"
+        )
+        if alumnos_rows:
+            _show_dataframe(alumnos_rows, use_container_width=True)
+        else:
+            st.info("No hay alumnos en esta clase.")
+
+    if run_vaciar_clase:
+        if not token:
+            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+            st.stop()
+        if not confirm_vaciar_clase:
+            st.error("Debes confirmar antes de vaciar la clase.")
+            st.stop()
+
+        clase_id_text = str(clase_id_raw or "").strip()
+        if not clase_id_text:
+            st.error("Ingresa un Clase ID.")
+            st.stop()
+        try:
+            clase_id_int = int(clase_id_text)
+        except ValueError:
+            st.error("Clase ID invalido. Debe ser numerico.")
+            st.stop()
+
+        try:
+            clase_data = _fetch_alumnos_clase_gestion_escolar(
+                token=token,
+                clase_id=clase_id_int,
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                timeout=int(timeout),
+            )
+        except Exception as exc:  # pragma: no cover - UI
+            st.error(f"Error: {exc}")
+            st.stop()
+
+        clase_nombre = str(clase_data.get("geClase") or clase_data.get("geClaseClave") or "")
+        alumnos_data = clase_data.get("claseAlumnos") or []
+        if not isinstance(alumnos_data, list):
+            st.error("Respuesta invalida: claseAlumnos no es lista.")
+            st.stop()
+        if not alumnos_data:
+            st.info("No hay alumnos para eliminar en esta clase.")
+            st.stop()
+
+        targets: List[Dict[str, object]] = []
+        seen_ids = set()
+        for entry in alumnos_data:
+            if not isinstance(entry, dict):
+                continue
+            alumno = entry.get("alumno")
+            if not isinstance(alumno, dict):
+                continue
+            alumno_id_raw = alumno.get("alumnoId")
+            if alumno_id_raw is None:
+                continue
+            try:
+                alumno_id = int(alumno_id_raw)
+            except (TypeError, ValueError):
+                continue
+            if alumno_id in seen_ids:
+                continue
+            seen_ids.add(alumno_id)
+            persona = alumno.get("persona") if isinstance(alumno.get("persona"), dict) else {}
+            targets.append(
+                {
+                    "Alumno ID": alumno_id,
+                    "Nombre Completo": str(persona.get("nombreCompleto") or ""),
+                }
+            )
+
+        if not targets:
+            st.info("No se encontraron alumnoId validos para eliminar.")
+            st.stop()
+
+        errores: List[str] = []
+        eliminados: List[Dict[str, object]] = []
+        total = len(targets)
+        progress = st.progress(0)
+        status = st.empty()
+        for idx, target in enumerate(targets, start=1):
+            alumno_id = int(target["Alumno ID"])
+            status.write(f"Eliminando {idx}/{total}: alumnoId {alumno_id}")
+            try:
+                _delete_alumno_clase_gestion_escolar(
+                    token=token,
+                    clase_id=clase_id_int,
+                    alumno_id=alumno_id,
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                )
+                eliminados.append(target)
+            except Exception as exc:  # pragma: no cover - UI
+                errores.append(f"{alumno_id}: {exc}")
+            progress.progress(int((idx / total) * 100))
+        status.empty()
+
+        st.success(
+            f"Clase {clase_id_int} {clase_nombre} - Eliminados: {len(eliminados)} de {total}"
+        )
+        if eliminados:
+            _show_dataframe(eliminados, use_container_width=True)
+        if errores:
+            st.error("Errores al eliminar alumnos:")
+            st.write("\n".join(f"- {item}" for item in errores[:30]))
+            restantes = len(errores) - 30
+            if restantes > 0:
+                st.caption(f"... y {restantes} errores mas.")
 
     if run_eliminar_clases:
         if not token:

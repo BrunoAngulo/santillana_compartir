@@ -481,14 +481,13 @@ def _normalize_grupo(value: object) -> str:
     return text
 
 
-def _build_nuip_index(df: pd.DataFrame) -> Dict[str, int]:
-    index: Dict[str, int] = {}
+def _build_nuip_index(df: pd.DataFrame) -> Dict[str, List[int]]:
+    index: Dict[str, List[int]] = {}
     for idx, row in df.iterrows():
         nuip = _normalize_nuip(row.get("nuip"))
         if not nuip:
             continue
-        if nuip not in index:
-            index[nuip] = idx
+        index.setdefault(nuip, []).append(int(idx))
     return index
 
 
@@ -504,10 +503,19 @@ def _build_nombre_ap_pat_index(df: pd.DataFrame) -> Dict[str, List[int]]:
     return index
 
 
+def _filter_unused_indices(
+    indices: Sequence[int], used_indices: Optional[set]
+) -> List[int]:
+    if not used_indices:
+        return [int(idx) for idx in indices]
+    return [int(idx) for idx in indices if int(idx) not in used_indices]
+
+
 def _resolve_nombre_ap_pat_match(
     act_row: pd.Series,
     df_bd: pd.DataFrame,
     index: Dict[str, List[int]],
+    used_indices: Optional[set] = None,
 ) -> Optional[int]:
     nombre = _normalize_text(act_row.get("nombre"))
     ap_pat = _normalize_text(act_row.get("apellido_paterno"))
@@ -515,7 +523,7 @@ def _resolve_nombre_ap_pat_match(
         return None
 
     key = f"{nombre}|{ap_pat}"
-    candidates = index.get(key) or []
+    candidates = _filter_unused_indices(index.get(key) or [], used_indices)
     if not candidates:
         return None
     if len(candidates) == 1:
@@ -558,6 +566,7 @@ def _resolve_apellidos_match(
     act_row: pd.Series,
     df_bd: pd.DataFrame,
     cache: Sequence[Tuple[int, str, str]],
+    used_indices: Optional[set] = None,
 ) -> Optional[int]:
     ap_pat = _normalize_text(act_row.get("apellido_paterno"))
     ap_mat = _normalize_text(act_row.get("apellido_materno"))
@@ -580,6 +589,7 @@ def _resolve_apellidos_match(
         elif abs(score - best_score) <= 1e-6:
             candidates.append(idx)
 
+    candidates = _filter_unused_indices(candidates, used_indices)
     if not candidates:
         return None
     if len(candidates) == 1:
@@ -634,14 +644,14 @@ def _pick_best_match(
     if not indices:
         return None
     if len(indices) == 1:
-        return indices[0]
+        return int(indices[0])
 
     target_nombre = _normalize_text(base_row.get("nombre"))
     target_fecha = _normalize_date(base_row.get("fecha_nacimiento"))
     target_sexo = _normalize_text(base_row.get("sexo"))
 
-    best_idx = indices[0]
     best_score = -1
+    best_indices: List[int] = []
     for idx in indices:
         candidate = df_act.loc[idx]
         score = 0
@@ -653,8 +663,16 @@ def _pick_best_match(
             score += 1
         if score > best_score:
             best_score = score
-            best_idx = idx
-    return best_idx
+            best_indices = [int(idx)]
+        elif score == best_score:
+            best_indices.append(int(idx))
+
+    # Evita empates ambiguos y matches sin señales de identidad.
+    if best_score <= 0:
+        return None
+    if len(best_indices) != 1:
+        return None
+    return best_indices[0]
 
 
 def _build_comparacion_bd(
@@ -674,18 +692,58 @@ def _build_comparacion_bd(
     rows: List[Dict[str, object]] = []
     nuevos_rows: List[pd.Series] = []
     bd_matched_indices = set()
+    bd_protected_indices = set()
 
     for _idx, act_row in df_act.iterrows():
         bd_idx: Optional[int] = None
+        nuip_norm = ""
         if not df_bd.empty:
-            bd_idx = _resolve_apellidos_match(act_row, df_bd, apellidos_cache)
+            nuip_norm = _normalize_nuip(act_row.get("nuip"))
+            if nuip_norm:
+                nuip_candidates = _filter_unused_indices(
+                    nuip_index.get(nuip_norm) or [],
+                    bd_matched_indices,
+                )
+                bd_idx = _pick_best_match(act_row, df_bd, nuip_candidates)
+
             if bd_idx is None:
-                nuip_norm = _normalize_nuip(act_row.get("nuip"))
-                if nuip_norm:
-                    bd_idx = nuip_index.get(nuip_norm)
+                bd_idx = _resolve_nombre_ap_pat_match(
+                    act_row,
+                    df_bd,
+                    nombre_ap_pat_index,
+                    used_indices=bd_matched_indices,
+                )
+
             if bd_idx is None:
-                bd_idx = _resolve_nombre_ap_pat_match(act_row, df_bd, nombre_ap_pat_index)
+                bd_idx = _resolve_apellidos_match(
+                    act_row,
+                    df_bd,
+                    apellidos_cache,
+                    used_indices=bd_matched_indices,
+                )
         if bd_idx is None:
+            # Si hay candidatos fuertes (NUIP o Nombre+Ap. Paterno) pero ambiguos,
+            # no inactivar esos BD por seguridad.
+            protected_candidates: List[int] = []
+            if nuip_norm:
+                protected_candidates.extend(
+                    _filter_unused_indices(
+                        nuip_index.get(nuip_norm) or [],
+                        bd_matched_indices,
+                    )
+                )
+            nombre_norm = _normalize_text(act_row.get("nombre"))
+            ap_pat_norm = _normalize_text(act_row.get("apellido_paterno"))
+            if nombre_norm and ap_pat_norm:
+                key = f"{nombre_norm}|{ap_pat_norm}"
+                protected_candidates.extend(
+                    _filter_unused_indices(
+                        nombre_ap_pat_index.get(key) or [],
+                        bd_matched_indices,
+                    )
+                )
+            if protected_candidates:
+                bd_protected_indices.update(protected_candidates)
             nuevos_rows.append(act_row)
             continue
         bd_matched_indices.add(int(bd_idx))
@@ -727,6 +785,8 @@ def _build_comparacion_bd(
     if not df_bd.empty:
         for bd_idx, bd_row in df_bd.iterrows():
             if int(bd_idx) in bd_matched_indices:
+                continue
+            if int(bd_idx) in bd_protected_indices:
                 continue
             row_out: Dict[str, object] = {}
             for source, target in BASE_OUTPUT_MAP.items():

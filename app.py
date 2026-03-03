@@ -1487,31 +1487,97 @@ with tab_crud_clases:
         st.session_state["clases_vaciar_all_errores"] = []
         st.session_state["clases_vaciar_all_context"] = {}
 
+    if "clases_auto_group_unlocked" not in st.session_state:
+        st.session_state["clases_auto_group_unlocked"] = False
+
+    @st.dialog("Acceso Admin - Asignacion de Grupos", width="small")
+    def _show_auto_group_unlock_dialog() -> None:
+        col_l, col_c, col_r = st.columns([1, 3, 1])
+        with col_c:
+            st.markdown("### Ingresar clave")
+            pwd_unlock = st.text_input(
+                "Clave admin",
+                type="password",
+                key="clases_auto_group_unlock_input",
+                placeholder="admin",
+            )
+            col_ok, col_cancel = st.columns(2)
+            if col_ok.button("Desbloquear", key="clases_auto_group_unlock_ok"):
+                if str(pwd_unlock or "") == "admin":
+                    st.session_state["clases_auto_group_unlocked"] = True
+                    st.session_state["clases_auto_group_unlock_input"] = ""
+                    st.rerun()
+                else:
+                    st.error("Clave admin incorrecta.")
+            if col_cancel.button("Cancelar", key="clases_auto_group_unlock_cancel"):
+                st.rerun()
+
+    run_cargar_asignacion = False
+    run_guardar_asignacion = False
+    confirm_guardar_asignacion = False
     with st.container(border=True):
         st.markdown("**Asignar grupos por clase (automatico)**")
         st.caption(
-            "Carga clases, revisa el grupo sugerido y guarda cambios. "
-            "Al guardar se formatea: vacia alumnos por clase y reasigna grupo."
+            "Modo formateo: al guardar, vacia alumnos por clase y reasigna grupo."
         )
-        col_auto_load, col_auto_save = st.columns(2)
-        run_cargar_asignacion = col_auto_load.button(
-            "Cargar clases para asignar grupos",
-            key="clases_auto_group_load",
-        )
-        confirm_guardar_asignacion = col_auto_save.checkbox(
-            "Confirmo guardar cambios de grupos en todas las clases listadas.",
-            key="clases_auto_group_confirm",
-        )
-        admin_password_auto_group = col_auto_save.text_input(
-            "Clave admin",
-            type="password",
-            key="clases_auto_group_admin_password",
-            placeholder="admin",
-        )
-        run_guardar_asignacion = col_auto_save.button(
-            "Guardar cambios de grupos",
-            key="clases_auto_group_save",
-        )
+
+        if not st.session_state.get("clases_auto_group_unlocked", False):
+            st.markdown(
+                """
+                <style>
+                .auto-group-blur-box{
+                    filter: blur(3px);
+                    opacity: 0.45;
+                    border: 1px dashed #9aa0a6;
+                    border-radius: 12px;
+                    padding: 16px;
+                    margin: 6px 0 14px 0;
+                    background: linear-gradient(135deg,#f8f9fa,#eef2f6);
+                    text-align:center;
+                }
+                .auto-group-blur-box small{
+                    display:block;
+                    margin-top:4px;
+                }
+                </style>
+                <div class="auto-group-blur-box">
+                    <strong>Funcion protegida</strong>
+                    <small>Se requiere clave admin para ver y ejecutar.</small>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            col_a, col_b, col_c = st.columns([1, 2, 1])
+            with col_b:
+                if st.button(
+                    "Desbloquear funcion",
+                    key="clases_auto_group_unlock_open",
+                    use_container_width=True,
+                ):
+                    _show_auto_group_unlock_dialog()
+        else:
+            col_auto_load, col_auto_save, col_auto_lock = st.columns([1.4, 1.8, 0.8])
+            run_cargar_asignacion = col_auto_load.button(
+                "Cargar clases para asignar grupos",
+                key="clases_auto_group_load",
+                use_container_width=True,
+            )
+            confirm_guardar_asignacion = col_auto_save.checkbox(
+                "Confirmo guardar cambios de grupos en todas las clases listadas.",
+                key="clases_auto_group_confirm",
+            )
+            run_guardar_asignacion = col_auto_save.button(
+                "Guardar cambios de grupos",
+                key="clases_auto_group_save",
+                use_container_width=True,
+            )
+            if col_auto_lock.button(
+                "Bloquear",
+                key="clases_auto_group_lock_btn",
+                use_container_width=True,
+            ):
+                st.session_state["clases_auto_group_unlocked"] = False
+                st.rerun()
 
     if run_cargar_asignacion:
         if not token:
@@ -1601,98 +1667,102 @@ with tab_crud_clases:
 
     auto_rows = st.session_state.get("clases_auto_group_rows") or []
     auto_warnings = st.session_state.get("clases_auto_group_warnings") or []
-    if auto_rows:
-        st.markdown("**Asignacion por clase (agrupada por grado)**")
-        auto_rows = sorted(
-            auto_rows,
-            key=lambda row: (
-                str(row.get("nivel_nombre") or "").upper(),
-                str(row.get("grado_nombre") or "").upper(),
-                int(row.get("nivel_id") or 0),
-                int(row.get("grado_id") or 0),
-                str(row.get("clase_nombre") or "").upper(),
-                int(row.get("clase_id") or 0),
-            ),
-        )
-        grouped_rows: Dict[Tuple[int, int, str, str], List[Dict[str, object]]] = {}
-        for row in auto_rows:
-            key = (
-                int(row.get("nivel_id") or 0),
-                int(row.get("grado_id") or 0),
-                str(row.get("nivel_nombre") or ""),
-                str(row.get("grado_nombre") or ""),
+    if st.session_state.get("clases_auto_group_unlocked", False):
+        if auto_rows:
+            st.markdown("**Asignacion por grado (grilla 4 columnas)**")
+            auto_rows = sorted(
+                auto_rows,
+                key=lambda row: (
+                    str(row.get("nivel_nombre") or "").upper(),
+                    str(row.get("grado_nombre") or "").upper(),
+                    int(row.get("nivel_id") or 0),
+                    int(row.get("grado_id") or 0),
+                    str(row.get("clase_nombre") or "").upper(),
+                    int(row.get("clase_id") or 0),
+                ),
             )
-            grouped_rows.setdefault(key, []).append(row)
+            grouped_rows: Dict[Tuple[int, int, str, str], List[Dict[str, object]]] = {}
+            for row in auto_rows:
+                key = (
+                    int(row.get("nivel_id") or 0),
+                    int(row.get("grado_id") or 0),
+                    str(row.get("nivel_nombre") or ""),
+                    str(row.get("grado_nombre") or ""),
+                )
+                grouped_rows.setdefault(key, []).append(row)
 
-        for group_key in sorted(
-            grouped_rows.keys(),
-            key=lambda item: (
-                item[2].upper(),
-                item[3].upper(),
-                item[0],
-                item[1],
-            ),
-        ):
-            nivel_id, grado_id, nivel_nombre, grado_nombre = group_key
-            rows_group = grouped_rows[group_key]
-            with st.container(border=True):
+            for group_key in sorted(
+                grouped_rows.keys(),
+                key=lambda item: (
+                    item[2].upper(),
+                    item[3].upper(),
+                    item[0],
+                    item[1],
+                ),
+            ):
+                nivel_id, grado_id, nivel_nombre, grado_nombre = group_key
+                rows_group = grouped_rows[group_key]
                 titulo_nivel = nivel_nombre or f"Nivel {nivel_id}"
                 titulo_grado = grado_nombre or f"Grado {grado_id}"
                 st.caption(
                     f"{titulo_nivel} | {titulo_grado} | Clases: {len(rows_group)}"
                 )
-                for row in rows_group:
-                    clase_id = int(row["clase_id"])
-                    options = row.get("options") or []
-                    if not options:
-                        continue
-                    option_ids = [int(opt["grupo_id"]) for opt in options]
-                    labels: Dict[int, str] = {}
-                    for opt in options:
-                        alumnos_contratados = opt.get("alumnos_contratados")
-                        count_txt = (
-                            f" ({int(alumnos_contratados)})"
-                            if alumnos_contratados is not None
-                            else ""
-                        )
-                        clave = str(opt.get("grupo_clave") or "").strip()
-                        nombre = str(opt.get("grupo_nombre") or "").strip()
-                        grupo_txt = clave or nombre or str(opt.get("grupo_id"))
-                        labels[int(opt["grupo_id"])] = f"{grupo_txt}{count_txt}"
+                cols_grid = st.columns(4, gap="small")
+                for idx_row, row in enumerate(rows_group):
+                    with cols_grid[idx_row % 4]:
+                        with st.container(border=True):
+                            clase_id = int(row["clase_id"])
+                            options = row.get("options") or []
+                            if not options:
+                                st.caption(f"`{clase_id}` sin grupos")
+                                continue
+                            option_ids = [int(opt["grupo_id"]) for opt in options]
+                            labels: Dict[int, str] = {}
+                            for opt in options:
+                                alumnos_contratados = opt.get("alumnos_contratados")
+                                count_txt = (
+                                    f" ({int(alumnos_contratados)})"
+                                    if alumnos_contratados is not None
+                                    else ""
+                                )
+                                clave = str(opt.get("grupo_clave") or "").strip()
+                                nombre = str(opt.get("grupo_nombre") or "").strip()
+                                grupo_txt = clave or nombre or str(opt.get("grupo_id"))
+                                labels[int(opt["grupo_id"])] = f"{grupo_txt}{count_txt}"
 
-                    selected_default = int(row.get("selected_group_id") or option_ids[0])
-                    if selected_default not in option_ids:
-                        selected_default = option_ids[0]
+                            selected_default = int(
+                                row.get("selected_group_id") or option_ids[0]
+                            )
+                            if selected_default not in option_ids:
+                                selected_default = option_ids[0]
 
-                    col_row_left, col_row_right = st.columns([4.7, 1.5])
-                    actual_txt = str(
-                        row.get("grupo_clave_actual")
-                        or row.get("grupo_id_actual")
-                        or "-"
-                    )
-                    col_row_left.markdown(
-                        f"`{clase_id}` {row.get('clase_nombre', '')}  \n"
-                        f"<small>Actual: {actual_txt}</small>",
-                        unsafe_allow_html=True,
-                    )
-                    key_select = f"clases_auto_group_select_{clase_id}"
-                    selected_val = col_row_right.selectbox(
-                        "Grupo",
-                        options=option_ids,
-                        index=option_ids.index(selected_default),
-                        format_func=lambda gid, lbl=labels: lbl.get(int(gid), str(gid)),
-                        key=key_select,
-                        label_visibility="collapsed",
-                    )
-                    row["selected_group_id"] = int(selected_val)
-        st.session_state["clases_auto_group_rows"] = auto_rows
+                            actual_txt = str(
+                                row.get("grupo_clave_actual")
+                                or row.get("grupo_id_actual")
+                                or "-"
+                            )
+                            st.markdown(f"`{clase_id}` {row.get('clase_nombre', '')}")
+                            st.caption(f"Actual: {actual_txt}")
+                            key_select = f"clases_auto_group_select_{clase_id}"
+                            selected_val = st.selectbox(
+                                "Grupo",
+                                options=option_ids,
+                                index=option_ids.index(selected_default),
+                                format_func=lambda gid, lbl=labels: lbl.get(
+                                    int(gid), str(gid)
+                                ),
+                                key=key_select,
+                                label_visibility="collapsed",
+                            )
+                            row["selected_group_id"] = int(selected_val)
+            st.session_state["clases_auto_group_rows"] = auto_rows
 
-    if auto_warnings:
-        st.warning("Hay clases omitidas o sin opciones de grupo.")
-        st.write("\n".join(f"- {item}" for item in auto_warnings[:20]))
-        restantes = len(auto_warnings) - 20
-        if restantes > 0:
-            st.caption(f"... y {restantes} advertencias mas.")
+        if auto_warnings:
+            st.warning("Hay clases omitidas o sin opciones de grupo.")
+            st.write("\n".join(f"- {item}" for item in auto_warnings[:20]))
+            restantes = len(auto_warnings) - 20
+            if restantes > 0:
+                st.caption(f"... y {restantes} advertencias mas.")
 
     if run_guardar_asignacion:
         if not token:
@@ -1700,9 +1770,6 @@ with tab_crud_clases:
             st.stop()
         if not confirm_guardar_asignacion:
             st.error("Debes confirmar antes de guardar cambios de grupos.")
-            st.stop()
-        if str(admin_password_auto_group or "") != "admin":
-            st.error("Clave admin incorrecta.")
             st.stop()
 
         rows_auto = st.session_state.get("clases_auto_group_rows") or []

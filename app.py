@@ -1025,6 +1025,240 @@ with tab_crud_clases:
             )
             run_eliminar_clases = st.button("Eliminar clases", key="clases_eliminar_btn")
 
+    with st.container(border=True):
+        st.markdown("**Vaciar alumnos de todas las clases del colegio**")
+        st.caption("Primero previsualiza. Luego confirma y ejecuta.")
+        col_vaciar_prev, col_vaciar_run = st.columns(2)
+        run_preview_vaciar_all = col_vaciar_prev.button(
+            "Previsualizar vaciado total",
+            key="clases_vaciar_all_preview",
+        )
+        confirm_vaciar_all = col_vaciar_run.checkbox(
+            "Confirmo vaciar alumnos de todas las clases del colegio.",
+            key="clases_vaciar_all_confirm",
+        )
+        run_vaciar_all = col_vaciar_run.button(
+            "Vaciar todas las clases",
+            key="clases_vaciar_all_btn",
+        )
+
+    if run_preview_vaciar_all:
+        if not token:
+            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+            st.stop()
+        try:
+            colegio_id_int = _parse_colegio_id(colegio_id_raw)
+        except ValueError as exc:
+            st.error(f"Error: {exc}")
+            st.stop()
+        try:
+            clases = _fetch_clases_gestion_escolar(
+                token=token,
+                colegio_id=colegio_id_int,
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                timeout=int(timeout),
+            )
+        except Exception as exc:  # pragma: no cover - UI
+            st.error(f"Error: {exc}")
+            st.stop()
+
+        if not clases:
+            st.info("No se encontraron clases para ese colegio/ciclo.")
+            st.session_state["clases_vaciar_all_targets"] = []
+            st.session_state["clases_vaciar_all_resumen"] = []
+            st.session_state["clases_vaciar_all_errores"] = []
+        else:
+            targets: List[Dict[str, object]] = []
+            resumen_rows: List[Dict[str, object]] = []
+            errores_preview: List[str] = []
+            seen_pairs = set()
+            total_clases = len(clases)
+            progress = st.progress(0)
+            status = st.empty()
+
+            for idx, item in enumerate(clases, start=1):
+                progress.progress(int((idx / total_clases) * 100))
+                if not isinstance(item, dict):
+                    errores_preview.append("Clase con formato invalido.")
+                    continue
+                clase_id_raw_item = item.get("geClaseId")
+                if clase_id_raw_item is None:
+                    errores_preview.append("Clase sin geClaseId.")
+                    continue
+                try:
+                    clase_id_item = int(clase_id_raw_item)
+                except (TypeError, ValueError):
+                    errores_preview.append(f"Clase con geClaseId invalido: {clase_id_raw_item}")
+                    continue
+                clase_nombre_item = str(item.get("geClase") or item.get("geClaseClave") or "")
+                status.write(f"Previsualizando {idx}/{total_clases}: {clase_id_item}")
+
+                try:
+                    clase_data = _fetch_alumnos_clase_gestion_escolar(
+                        token=token,
+                        clase_id=clase_id_item,
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                    )
+                except Exception as exc:  # pragma: no cover - UI
+                    errores_preview.append(f"{clase_id_item}: {exc}")
+                    continue
+
+                alumnos_data = clase_data.get("claseAlumnos") or []
+                if not isinstance(alumnos_data, list):
+                    errores_preview.append(f"{clase_id_item}: campo claseAlumnos no es lista")
+                    continue
+
+                alumnos_count = 0
+                for entry in alumnos_data:
+                    if not isinstance(entry, dict):
+                        continue
+                    alumno = entry.get("alumno")
+                    if not isinstance(alumno, dict):
+                        continue
+                    alumno_id_raw = alumno.get("alumnoId")
+                    if alumno_id_raw is None:
+                        continue
+                    try:
+                        alumno_id = int(alumno_id_raw)
+                    except (TypeError, ValueError):
+                        continue
+                    pair = (clase_id_item, alumno_id)
+                    if pair in seen_pairs:
+                        continue
+                    seen_pairs.add(pair)
+                    alumnos_count += 1
+                    persona = (
+                        alumno.get("persona")
+                        if isinstance(alumno.get("persona"), dict)
+                        else {}
+                    )
+                    targets.append(
+                        {
+                            "Clase ID": clase_id_item,
+                            "Clase": clase_nombre_item,
+                            "Alumno ID": alumno_id,
+                            "Nombre Completo": str(persona.get("nombreCompleto") or ""),
+                        }
+                    )
+
+                resumen_rows.append(
+                    {
+                        "Clase ID": clase_id_item,
+                        "Clase": clase_nombre_item,
+                        "Alumnos a eliminar": alumnos_count,
+                    }
+                )
+
+            status.empty()
+            st.session_state["clases_vaciar_all_targets"] = targets
+            st.session_state["clases_vaciar_all_resumen"] = resumen_rows
+            st.session_state["clases_vaciar_all_errores"] = errores_preview
+            st.session_state["clases_vaciar_all_context"] = {
+                "colegio_id": int(colegio_id_int),
+                "ciclo_id": int(ciclo_id),
+                "empresa_id": int(empresa_id),
+            }
+
+            st.success(
+                "Previsualizacion lista. Clases: {clases}, Alumnos a eliminar: {alumnos}, "
+                "Errores: {errores}.".format(
+                    clases=len(resumen_rows),
+                    alumnos=len(targets),
+                    errores=len(errores_preview),
+                )
+            )
+
+    preview_resumen = st.session_state.get("clases_vaciar_all_resumen") or []
+    preview_targets = st.session_state.get("clases_vaciar_all_targets") or []
+    preview_errores = st.session_state.get("clases_vaciar_all_errores") or []
+    if preview_resumen or preview_targets:
+        st.markdown("**Previsualizacion actual del vaciado total**")
+        if preview_resumen:
+            _show_dataframe(preview_resumen, use_container_width=True)
+        if preview_targets:
+            with st.expander("Detalle de alumnos a eliminar", expanded=False):
+                _show_dataframe(preview_targets, use_container_width=True)
+    if preview_errores:
+        st.warning("La previsualizacion tuvo errores en algunas clases.")
+        st.write("\n".join(f"- {item}" for item in preview_errores[:20]))
+        restantes = len(preview_errores) - 20
+        if restantes > 0:
+            st.caption(f"... y {restantes} errores mas.")
+
+    if run_vaciar_all:
+        if not token:
+            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+            st.stop()
+        if not confirm_vaciar_all:
+            st.error("Debes confirmar antes de vaciar todas las clases.")
+            st.stop()
+
+        targets = st.session_state.get("clases_vaciar_all_targets") or []
+        context = st.session_state.get("clases_vaciar_all_context") or {}
+        if not targets:
+            st.error("Primero ejecuta 'Previsualizar vaciado total'.")
+            st.stop()
+
+        try:
+            colegio_id_int = _parse_colegio_id(colegio_id_raw)
+        except ValueError as exc:
+            st.error(f"Error: {exc}")
+            st.stop()
+        if int(context.get("colegio_id", -1)) != int(colegio_id_int):
+            st.error("El colegio global cambio. Vuelve a previsualizar antes de ejecutar.")
+            st.stop()
+        if int(context.get("ciclo_id", -1)) != int(ciclo) or int(
+            context.get("empresa_id", -1)
+        ) != int(empresa_id):
+            st.error("El contexto cambio. Vuelve a previsualizar antes de ejecutar.")
+            st.stop()
+
+        errores: List[str] = []
+        eliminados: List[Dict[str, object]] = []
+        total = len(targets)
+        progress = st.progress(0)
+        status = st.empty()
+        for idx, target in enumerate(targets, start=1):
+            clase_id_item = int(target.get("Clase ID", 0))
+            alumno_id_item = int(target.get("Alumno ID", 0))
+            status.write(
+                f"Eliminando {idx}/{total}: clase {clase_id_item}, alumno {alumno_id_item}"
+            )
+            try:
+                _delete_alumno_clase_gestion_escolar(
+                    token=token,
+                    clase_id=clase_id_item,
+                    alumno_id=alumno_id_item,
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                )
+                eliminados.append(target)
+            except Exception as exc:  # pragma: no cover - UI
+                errores.append(f"clase {clase_id_item}, alumno {alumno_id_item}: {exc}")
+            progress.progress(int((idx / total) * 100))
+        status.empty()
+
+        st.success(
+            f"Vaciado total ejecutado. Eliminados: {len(eliminados)} de {total}"
+        )
+        if eliminados:
+            _show_dataframe(eliminados, use_container_width=True)
+        if errores:
+            st.error("Errores al eliminar alumnos:")
+            st.write("\n".join(f"- {item}" for item in errores[:30]))
+            restantes = len(errores) - 30
+            if restantes > 0:
+                st.caption(f"... y {restantes} errores mas.")
+
+        st.session_state["clases_vaciar_all_targets"] = []
+        st.session_state["clases_vaciar_all_resumen"] = []
+        st.session_state["clases_vaciar_all_errores"] = []
+        st.session_state["clases_vaciar_all_context"] = {}
+
     if run_listar_clases:
         if not token:
             st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")

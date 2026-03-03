@@ -1505,7 +1505,6 @@ with tab_crud_clases:
             if col_ok.button("Desbloquear", key="clases_auto_group_unlock_ok"):
                 if str(pwd_unlock or "") == "admin":
                     st.session_state["clases_auto_group_unlocked"] = True
-                    st.session_state["clases_auto_group_unlock_input"] = ""
                     st.rerun()
                 else:
                     st.error("Clave admin incorrecta.")

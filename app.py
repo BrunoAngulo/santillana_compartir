@@ -1668,7 +1668,7 @@ with tab_crud_clases:
     auto_warnings = st.session_state.get("clases_auto_group_warnings") or []
     if st.session_state.get("clases_auto_group_unlocked", False):
         if auto_rows:
-            st.markdown("**Asignacion por grado (grilla 4 columnas)**")
+            st.markdown("**Asignacion por grado (grilla compacta 7 columnas)**")
             auto_rows = sorted(
                 auto_rows,
                 key=lambda row: (
@@ -1676,6 +1676,10 @@ with tab_crud_clases:
                     str(row.get("grado_nombre") or "").upper(),
                     int(row.get("nivel_id") or 0),
                     int(row.get("grado_id") or 0),
+                    (
+                        _extract_group_hint_from_class_name(row.get("clase_nombre"))
+                        or "ZZ"
+                    ),
                     str(row.get("clase_nombre") or "").upper(),
                     int(row.get("clase_id") or 0),
                 ),
@@ -1706,9 +1710,22 @@ with tab_crud_clases:
                 st.caption(
                     f"{titulo_nivel} | {titulo_grado} | Clases: {len(rows_group)}"
                 )
-                cols_grid = st.columns(4, gap="small")
+                rows_group = sorted(
+                    rows_group,
+                    key=lambda row: (
+                        (
+                            _extract_group_hint_from_class_name(
+                                row.get("clase_nombre")
+                            )
+                            or "ZZ"
+                        ),
+                        str(row.get("clase_nombre") or "").upper(),
+                        int(row.get("clase_id") or 0),
+                    ),
+                )
+                cols_grid = st.columns(7, gap="small")
                 for idx_row, row in enumerate(rows_group):
-                    with cols_grid[idx_row % 4]:
+                    with cols_grid[idx_row % 7]:
                         with st.container(border=True):
                             clase_id = int(row["clase_id"])
                             options = row.get("options") or []
@@ -1735,13 +1752,11 @@ with tab_crud_clases:
                             if selected_default not in option_ids:
                                 selected_default = option_ids[0]
 
-                            actual_txt = str(
-                                row.get("grupo_clave_actual")
-                                or row.get("grupo_id_actual")
-                                or "-"
-                            )
-                            st.markdown(f"`{clase_id}` {row.get('clase_nombre', '')}")
-                            st.caption(f"Actual: {actual_txt}")
+                            clase_nombre = str(row.get("clase_nombre") or "").strip()
+                            label_txt = f"`{clase_id}` {clase_nombre}"
+                            if len(label_txt) > 38:
+                                label_txt = f"{label_txt[:35].rstrip()}..."
+                            st.caption(label_txt)
                             key_select = f"clases_auto_group_select_{clase_id}"
                             selected_val = st.selectbox(
                                 "Grupo",

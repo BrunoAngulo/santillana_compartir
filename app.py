@@ -1210,7 +1210,7 @@ with tab_crud_clases:
         if int(context.get("colegio_id", -1)) != int(colegio_id_int):
             st.error("El colegio global cambio. Vuelve a previsualizar antes de ejecutar.")
             st.stop()
-        if int(context.get("ciclo_id", -1)) != int(ciclo) or int(
+        if int(context.get("ciclo_id", -1)) != int(ciclo_id) or int(
             context.get("empresa_id", -1)
         ) != int(empresa_id):
             st.error("El contexto cambio. Vuelve a previsualizar antes de ejecutar.")

@@ -701,9 +701,26 @@ def _pick_default_group_id(
     hint = _extract_group_hint_from_class_name(clase_nombre)
     if hint:
         for option in options:
-            clave = str(option.get("grupo_clave") or "").strip().upper()
-            if clave and clave == hint:
+            clave = _normalize_plain_text(option.get("grupo_clave"))
+            nombre = _normalize_plain_text(option.get("grupo_nombre"))
+            if clave == hint:
                 return int(option["grupo_id"])
+            match_nombre = re.search(r"GRUPO\s+([A-Z])\b", nombre)
+            if match_nombre and match_nombre.group(1) == hint:
+                return int(option["grupo_id"])
+        # Fallback consecutivo: A->1er grupo, B->2do, ... Z->26vo.
+        # Se usa solo si no hubo match directo por clave/nombre.
+        if len(hint) == 1 and "A" <= hint <= "Z":
+            sorted_options = sorted(
+                options,
+                key=lambda row: _grupo_sort_key(
+                    str(row.get("grupo_clave") or ""),
+                    str(row.get("grupo_nombre") or ""),
+                ),
+            )
+            idx = ord(hint) - ord("A")
+            if 0 <= idx < len(sorted_options):
+                return int(sorted_options[idx]["grupo_id"])
     if grupo_id_actual is not None:
         for option in options:
             if int(option["grupo_id"]) == int(grupo_id_actual):
@@ -1586,12 +1603,22 @@ with tab_crud_clases:
             clase_nombre = str(row.get("clase_nombre") or "").strip()
             nivel_id = int(row["nivel_id"])
             grado_id = int(row["grado_id"])
+            options = row.get("options") or []
             key_select = f"clases_auto_group_select_{clase_id}"
-            selected_group_id = st.session_state.get(
-                key_select,
-                row.get("selected_group_id"),
+            # Priorizar asignacion automatica por sufijo de clase (A/B/C/...).
+            auto_group_id = _pick_default_group_id(
+                row.get("clase_nombre"),
+                options if isinstance(options, list) else [],
+                row.get("grupo_id_actual"),
             )
-            selected_group_id = _safe_int(selected_group_id)
+            selected_group_id = _safe_int(auto_group_id)
+            if selected_group_id is None:
+                selected_group_id = _safe_int(
+                    st.session_state.get(
+                        key_select,
+                        row.get("selected_group_id"),
+                    )
+                )
             status.write(f"Guardando {idx}/{total}: clase {clase_id} | {clase_nombre}")
 
             if selected_group_id is None:
@@ -1607,6 +1634,8 @@ with tab_crud_clases:
                 progress.progress(int((idx / total) * 100))
                 continue
 
+            alumnos_count: Optional[int] = None
+            censo_validacion_txt = ""
             try:
                 status.write(
                     f"Guardando {idx}/{total}: clase {clase_id} | validando alumnos contratados"
@@ -1623,30 +1652,12 @@ with tab_crud_clases:
                     cache=alumnos_cache,
                 )
             except Exception as exc:  # pragma: no cover - UI
-                err_count += 1
-                resultados.append(
-                    {
-                        "Clase ID": clase_id,
-                        "Clase": row.get("clase_nombre", ""),
-                        "Resultado": "Error",
-                        "Detalle": f"No se pudo validar alumnos contratados: {exc}",
-                    }
+                censo_validacion_txt = (
+                    f" No se pudo validar alumnos contratados en censo: {exc}."
                 )
-                progress.progress(int((idx / total) * 100))
-                continue
 
-            if int(alumnos_count) <= 0:
-                skip_count += 1
-                resultados.append(
-                    {
-                        "Clase ID": clase_id,
-                        "Clase": row.get("clase_nombre", ""),
-                        "Resultado": "Omitido",
-                        "Detalle": "Grupo sin alumnos contratados.",
-                    }
-                )
-                progress.progress(int((idx / total) * 100))
-                continue
+            if alumnos_count is not None and int(alumnos_count) <= 0:
+                censo_validacion_txt += " Censo reporta 0 alumnos contratados para el grupo."
 
             # Formatear clase: eliminar alumnos actuales antes de reasignar.
             try:
@@ -1762,15 +1773,18 @@ with tab_crud_clases:
                     timeout=int(timeout),
                 )
                 ok_count += 1
+                detalle_ok = (
+                    f"Formateada ({deleted_count} eliminados) y "
+                    f"grupo {selected_group_id} asignado."
+                )
+                if censo_validacion_txt:
+                    detalle_ok = f"{detalle_ok}{censo_validacion_txt}"
                 resultados.append(
                     {
                         "Clase ID": clase_id,
                         "Clase": row.get("clase_nombre", ""),
                         "Resultado": "OK",
-                        "Detalle": (
-                            f"Formateada ({deleted_count} eliminados) y "
-                            f"grupo {selected_group_id} asignado."
-                        ),
+                        "Detalle": detalle_ok,
                     }
                 )
                 row["grupo_id_actual"] = int(selected_group_id)

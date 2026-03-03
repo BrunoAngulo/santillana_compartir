@@ -1583,6 +1583,7 @@ with tab_crud_clases:
 
         for idx, row in enumerate(rows_auto, start=1):
             clase_id = int(row["clase_id"])
+            clase_nombre = str(row.get("clase_nombre") or "").strip()
             nivel_id = int(row["nivel_id"])
             grado_id = int(row["grado_id"])
             key_select = f"clases_auto_group_select_{clase_id}"
@@ -1591,7 +1592,7 @@ with tab_crud_clases:
                 row.get("selected_group_id"),
             )
             selected_group_id = _safe_int(selected_group_id)
-            status.write(f"Guardando {idx}/{total}: clase {clase_id}")
+            status.write(f"Guardando {idx}/{total}: clase {clase_id} | {clase_nombre}")
 
             if selected_group_id is None:
                 err_count += 1
@@ -1607,6 +1608,9 @@ with tab_crud_clases:
                 continue
 
             try:
+                status.write(
+                    f"Guardando {idx}/{total}: clase {clase_id} | validando alumnos contratados"
+                )
                 alumnos_count = _fetch_grupo_alumnos_count(
                     token=token,
                     colegio_id=int(colegio_id_int),
@@ -1646,6 +1650,9 @@ with tab_crud_clases:
 
             # Formatear clase: eliminar alumnos actuales antes de reasignar.
             try:
+                status.write(
+                    f"Guardando {idx}/{total}: clase {clase_id} | listando alumnos actuales"
+                )
                 clase_data_actual = _fetch_alumnos_clase_gestion_escolar(
                     token=token,
                     clase_id=int(clase_id),
@@ -1698,7 +1705,19 @@ with tab_crud_clases:
 
             delete_errors: List[str] = []
             deleted_count = 0
-            for alumno_id_actual in alumnos_ids_actuales:
+            total_alumnos_actuales = len(alumnos_ids_actuales)
+            for del_idx, alumno_id_actual in enumerate(alumnos_ids_actuales, start=1):
+                status.write(
+                    "Guardando {idx}/{total}: clase {clase} | eliminando {del_idx}/{tot} "
+                    "alumno {alumno}".format(
+                        idx=idx,
+                        total=total,
+                        clase=clase_id,
+                        del_idx=del_idx,
+                        tot=total_alumnos_actuales,
+                        alumno=alumno_id_actual,
+                    )
+                )
                 try:
                     _delete_alumno_clase_gestion_escolar(
                         token=token,
@@ -1729,6 +1748,9 @@ with tab_crud_clases:
                 continue
 
             try:
+                status.write(
+                    f"Guardando {idx}/{total}: clase {clase_id} | asignando grupo {selected_group_id}"
+                )
                 _post_clase_participantes_gestion_escolar(
                     token=token,
                     clase_id=int(clase_id),

@@ -1234,6 +1234,12 @@ with tab_crud_clases:
     token = _get_shared_token()
     empresa_id = DEFAULT_EMPRESA_ID
     timeout = 30
+    run_cargar_clases_delete = False
+    run_cargar_clases_alumnos = False
+    run_eliminar_clases_selected = False
+    run_eliminar_clases_masivo = False
+    confirm_delete_selected = False
+    confirm_delete_masivo = False
 
     col_list, col_alumnos, col_delete = st.columns(3, gap="large")
     with col_list:
@@ -1242,12 +1248,48 @@ with tab_crud_clases:
             run_listar_clases = st.button("Listar clases", key="clases_listar_btn")
     with col_alumnos:
         with st.container(border=True):
-            st.markdown("**Ver alumnos por clase**")
-            clase_id_raw = st.text_input(
-                "Clase ID (geClaseId)",
+            st.markdown("**Desasignacion de alumnos por clase**")
+            run_cargar_clases_alumnos = st.button(
+                "Cargar clases para desasignar",
+                key="clases_alumnos_load_options",
+            )
+            alumnos_options = st.session_state.get("clases_alumnos_options") or []
+            alumnos_option_ids: List[int] = []
+            alumnos_labels: Dict[int, str] = {}
+            for item in alumnos_options:
+                if not isinstance(item, dict):
+                    continue
+                clase_id_tmp = _safe_int(item.get("id"))
+                if clase_id_tmp is None:
+                    continue
+                alumnos_option_ids.append(int(clase_id_tmp))
+                alumnos_labels[int(clase_id_tmp)] = str(
+                    item.get("nombre") or f"Clase {clase_id_tmp}"
+                )
+
+            selected_clase_id: Optional[int] = None
+            if alumnos_option_ids:
+                selected_clase_id = int(
+                    st.selectbox(
+                        "Clase seleccionada",
+                        options=alumnos_option_ids,
+                        format_func=lambda cid, lbl=alumnos_labels: (
+                            f"{cid} | {lbl.get(int(cid), '')}"
+                        ),
+                        key="clases_alumnos_selected_id",
+                    )
+                )
+            else:
+                st.caption("Sin clases cargadas para seleccionar.")
+
+            clase_id_manual = st.text_input(
+                "Clase ID manual (opcional)",
                 key="clases_alumnos_clase_id",
                 placeholder="20143933",
             )
+            clase_id_raw = str(
+                clase_id_manual or (selected_clase_id if selected_clase_id is not None else "")
+            ).strip()
             run_ver_alumnos_clase = st.button(
                 "Ver alumnos",
                 key="clases_ver_alumnos_btn",
@@ -1264,11 +1306,53 @@ with tab_crud_clases:
         with st.container(border=True):
             st.markdown("**Eliminar clases**")
             st.caption("Accion irreversible.")
-            confirm_delete = st.checkbox(
-                "Confirmo eliminar todas las clases listadas.",
-                key="clases_confirm_delete",
+            run_cargar_clases_delete = st.button(
+                "Cargar clases para seleccionar",
+                key="clases_delete_load_options",
             )
-            run_eliminar_clases = st.button("Eliminar clases", key="clases_eliminar_btn")
+            delete_options = st.session_state.get("clases_delete_options") or []
+            option_ids: List[int] = []
+            labels_delete: Dict[int, str] = {}
+            for item in delete_options:
+                if not isinstance(item, dict):
+                    continue
+                clase_id_tmp = _safe_int(item.get("id"))
+                if clase_id_tmp is None:
+                    continue
+                option_ids.append(int(clase_id_tmp))
+                labels_delete[int(clase_id_tmp)] = str(
+                    item.get("nombre") or f"Clase {clase_id_tmp}"
+                )
+
+            if option_ids:
+                st.multiselect(
+                    "Clases seleccionadas",
+                    options=option_ids,
+                    format_func=lambda cid, lbl=labels_delete: (
+                        f"{cid} | {lbl.get(int(cid), '')}"
+                    ),
+                    key="clases_delete_selected_ids",
+                )
+            else:
+                st.caption("Sin clases cargadas para seleccion.")
+
+            confirm_delete_selected = st.checkbox(
+                "Confirmo eliminar solo las clases seleccionadas.",
+                key="clases_confirm_delete_selected",
+            )
+            run_eliminar_clases_selected = st.button(
+                "Eliminar seleccionadas",
+                key="clases_eliminar_selected_btn",
+            )
+
+            confirm_delete_masivo = st.checkbox(
+                "Confirmo eliminar todas las clases del colegio.",
+                key="clases_confirm_delete_masivo",
+            )
+            run_eliminar_clases_masivo = st.button(
+                "Eliminar masivo",
+                key="clases_eliminar_masivo_btn",
+            )
 
     if "clases_auto_group_unlocked" not in st.session_state:
         st.session_state["clases_auto_group_unlocked"] = False
@@ -1907,6 +1991,207 @@ with tab_crud_clases:
                     st.write(f"Clases encontradas: {len(tabla)}")
                     _show_dataframe(tabla, use_container_width=True)
 
+    if run_cargar_clases_alumnos:
+        if not token:
+            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+            st.stop()
+        try:
+            colegio_id_int = _parse_colegio_id(colegio_id_raw)
+        except ValueError as exc:
+            st.error(f"Error: {exc}")
+            st.stop()
+        try:
+            clases = _fetch_clases_gestion_escolar(
+                token=token,
+                colegio_id=colegio_id_int,
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                timeout=int(timeout),
+            )
+        except Exception as exc:  # pragma: no cover - UI
+            st.error(f"Error: {exc}")
+            st.stop()
+
+        options_alumnos: List[Dict[str, object]] = []
+        for item in clases:
+            if not isinstance(item, dict):
+                continue
+            clase_id_tmp = _safe_int(item.get("geClaseId"))
+            if clase_id_tmp is None:
+                continue
+            options_alumnos.append(
+                {
+                    "id": int(clase_id_tmp),
+                    "nombre": str(item.get("geClase") or item.get("geClaseClave") or ""),
+                }
+            )
+        options_alumnos = sorted(
+            options_alumnos,
+            key=lambda row: (
+                str(row.get("nombre") or "").upper(),
+                int(row.get("id") or 0),
+            ),
+        )
+        st.session_state["clases_alumnos_options"] = options_alumnos
+        st.session_state["clases_alumnos_context"] = {
+            "colegio_id": int(colegio_id_int),
+            "ciclo_id": int(ciclo_id),
+            "empresa_id": int(empresa_id),
+        }
+        st.success(f"Clases cargadas para desasignacion: {len(options_alumnos)}")
+
+    if run_cargar_clases_delete:
+        if not token:
+            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+            st.stop()
+        try:
+            colegio_id_int = _parse_colegio_id(colegio_id_raw)
+        except ValueError as exc:
+            st.error(f"Error: {exc}")
+            st.stop()
+        try:
+            clases = _fetch_clases_gestion_escolar(
+                token=token,
+                colegio_id=colegio_id_int,
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                timeout=int(timeout),
+            )
+        except Exception as exc:  # pragma: no cover - UI
+            st.error(f"Error: {exc}")
+            st.stop()
+
+        options_delete: List[Dict[str, object]] = []
+        for item in clases:
+            if not isinstance(item, dict):
+                continue
+            clase_id_tmp = _safe_int(item.get("geClaseId"))
+            if clase_id_tmp is None:
+                continue
+            options_delete.append(
+                {
+                    "id": int(clase_id_tmp),
+                    "nombre": str(item.get("geClase") or item.get("geClaseClave") or ""),
+                }
+            )
+        st.session_state["clases_delete_options"] = options_delete
+        st.session_state["clases_delete_context"] = {
+            "colegio_id": int(colegio_id_int),
+            "ciclo_id": int(ciclo_id),
+            "empresa_id": int(empresa_id),
+        }
+        st.session_state["clases_delete_selected_ids"] = []
+        st.success(f"Clases cargadas para seleccion: {len(options_delete)}")
+
+    if run_eliminar_clases_selected:
+        if not token:
+            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+            st.stop()
+        if not confirm_delete_selected:
+            st.error("Debes confirmar antes de eliminar seleccionadas.")
+            st.stop()
+
+        selected_raw = st.session_state.get("clases_delete_selected_ids") or []
+        selected_ids: List[int] = []
+        seen_ids = set()
+        for value in selected_raw:
+            class_id_tmp = _safe_int(value)
+            if class_id_tmp is None:
+                continue
+            if int(class_id_tmp) in seen_ids:
+                continue
+            seen_ids.add(int(class_id_tmp))
+            selected_ids.append(int(class_id_tmp))
+        if not selected_ids:
+            st.error("Selecciona al menos una clase para eliminar.")
+            st.stop()
+
+        try:
+            colegio_id_int = _parse_colegio_id(colegio_id_raw)
+        except ValueError as exc:
+            st.error(f"Error: {exc}")
+            st.stop()
+        delete_context = st.session_state.get("clases_delete_context") or {}
+        if int(delete_context.get("colegio_id", -1)) != int(colegio_id_int):
+            st.error("El colegio global cambio. Vuelve a cargar clases para seleccionar.")
+            st.stop()
+        if int(delete_context.get("ciclo_id", -1)) != int(ciclo_id) or int(
+            delete_context.get("empresa_id", -1)
+        ) != int(empresa_id):
+            st.error("El contexto cambio. Vuelve a cargar clases para seleccionar.")
+            st.stop()
+
+        delete_options = st.session_state.get("clases_delete_options") or []
+        labels_delete: Dict[int, str] = {}
+        for item in delete_options:
+            if not isinstance(item, dict):
+                continue
+            clase_id_tmp = _safe_int(item.get("id"))
+            if clase_id_tmp is None:
+                continue
+            labels_delete[int(clase_id_tmp)] = str(item.get("nombre") or "")
+
+        total = len(selected_ids)
+        progress = st.progress(0)
+        status = st.empty()
+        resultados_delete: List[Dict[str, object]] = []
+        ok_count = 0
+        err_count = 0
+        ok_ids = set()
+
+        for idx, clase_id in enumerate(selected_ids, start=1):
+            status.write(f"Eliminando {idx}/{total}: clase {clase_id}")
+            try:
+                _delete_clase_gestion_escolar(
+                    token=token,
+                    clase_id=int(clase_id),
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                )
+                ok_count += 1
+                ok_ids.add(int(clase_id))
+                resultados_delete.append(
+                    {
+                        "Clase ID": int(clase_id),
+                        "Clase": labels_delete.get(int(clase_id), ""),
+                        "Resultado": "OK",
+                        "Detalle": "Clase eliminada.",
+                    }
+                )
+            except Exception as exc:  # pragma: no cover - UI
+                err_count += 1
+                resultados_delete.append(
+                    {
+                        "Clase ID": int(clase_id),
+                        "Clase": labels_delete.get(int(clase_id), ""),
+                        "Resultado": "Error",
+                        "Detalle": str(exc),
+                    }
+                )
+            progress.progress(int((idx / total) * 100))
+        status.empty()
+
+        if ok_ids:
+            filtered_options = []
+            for item in delete_options:
+                if not isinstance(item, dict):
+                    continue
+                clase_id_tmp = _safe_int(item.get("id"))
+                if clase_id_tmp is None or int(clase_id_tmp) in ok_ids:
+                    continue
+                filtered_options.append(item)
+            st.session_state["clases_delete_options"] = filtered_options
+            st.session_state["clases_delete_selected_ids"] = [
+                cid for cid in selected_ids if int(cid) not in ok_ids
+            ]
+
+        st.success(
+            f"Eliminacion seleccionada completada. OK: {ok_count} | Errores: {err_count}"
+        )
+        if resultados_delete:
+            _show_dataframe(resultados_delete, use_container_width=True)
+
     if run_ver_alumnos_clase:
         if not token:
             st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
@@ -2079,12 +2364,12 @@ with tab_crud_clases:
             if restantes > 0:
                 st.caption(f"... y {restantes} errores mas.")
 
-    if run_eliminar_clases:
+    if run_eliminar_clases_masivo:
         if not token:
             st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
             st.stop()
-        if not confirm_delete:
-            st.error("Debes confirmar antes de eliminar.")
+        if not confirm_delete_masivo:
+            st.error("Debes confirmar antes de eliminar masivo.")
             st.stop()
         try:
             colegio_id_int = _parse_colegio_id(colegio_id_raw)

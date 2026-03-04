@@ -58,7 +58,7 @@ CENSO_PLANTILLA_EDICION_URL = (
     "/ciclos/{ciclo_id}/colegios/{colegio_id}/descargarPlantillaEdicionMasiva"
 )
 GESTION_ESCOLAR_CICLO_ID_DEFAULT = 207
-RESTRICTED_SECTIONS_PASSWORD = "Angul@2002"
+RESTRICTED_SECTIONS_PASSWORD = "Palabr@leatoria123!"
 
 
 def _restricted_sections_unlocked() -> bool:

@@ -72,7 +72,7 @@ def _show_restricted_unlock_dialog() -> None:
         "Contrasena",
         type="password",
         key="restricted_sections_unlock_input",
-        placeholder="Angul@2002",
+        placeholder="password",
     )
     col_ok, col_cancel = st.columns(2)
     if col_ok.button("Desbloquear", key="restricted_sections_unlock_ok"):
@@ -1440,7 +1440,7 @@ with tab_crud_clases:
                     "Clave admin",
                     type="password",
                     key="clases_auto_group_unlock_input",
-                    placeholder="admin",
+                    placeholder="password",
                 )
                 col_ok, col_cancel = st.columns(2)
                 if col_ok.button("Desbloquear", key="clases_auto_group_unlock_ok"):

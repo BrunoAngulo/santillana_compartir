@@ -5,6 +5,7 @@ import unicodedata
 from io import BytesIO
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from urllib.parse import urljoin
 
 import pandas as pd
 import requests
@@ -58,6 +59,7 @@ CENSO_PLANTILLA_EDICION_URL = (
     "/ciclos/{ciclo_id}/colegios/{colegio_id}/descargarPlantillaEdicionMasiva"
 )
 GESTION_ESCOLAR_CICLO_ID_DEFAULT = 207
+RICHMONDSTUDIO_USERS_URL = "https://richmondstudio.global/api/users"
 RESTRICTED_SECTIONS_PASSWORD = "Palabr@leatoria123!"
 
 
@@ -176,6 +178,81 @@ def _get_shared_token() -> str:
     if token:
         return token
     return _clean_token(os.environ.get("PEGASUS_TOKEN", ""))
+
+
+def _fetch_richmondstudio_users(token: str, timeout: int = 30) -> List[Dict[str, object]]:
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    next_url = RICHMONDSTUDIO_USERS_URL
+    next_params: Optional[Dict[str, object]] = {"include": "groups", "sort": "firstName"}
+    visited_urls = set()
+    users: List[Dict[str, object]] = []
+
+    while next_url:
+        if next_url in visited_urls:
+            break
+        visited_urls.add(next_url)
+        try:
+            response = requests.get(
+                next_url,
+                headers=headers,
+                params=next_params,
+                timeout=timeout,
+            )
+        except requests.RequestException as exc:
+            raise RuntimeError(f"Error de red: {exc}") from exc
+        next_params = None
+
+        status_code = response.status_code
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise RuntimeError(f"Respuesta no JSON (status {status_code})") from exc
+
+        if not response.ok:
+            detail = ""
+            if isinstance(payload, dict):
+                errors = payload.get("errors")
+                if isinstance(errors, list) and errors:
+                    first_error = errors[0]
+                    if isinstance(first_error, dict):
+                        detail = str(
+                            first_error.get("detail")
+                            or first_error.get("title")
+                            or ""
+                        ).strip()
+                if not detail:
+                    detail = str(payload.get("message") or "").strip()
+            raise RuntimeError(detail or f"HTTP {status_code}")
+
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, list):
+            raise RuntimeError("Respuesta invalida: campo data no es lista.")
+        for item in data:
+            if isinstance(item, dict):
+                users.append(item)
+
+        next_candidate = None
+        if isinstance(payload, dict):
+            links = payload.get("links")
+            if isinstance(links, dict):
+                next_candidate = links.get("next")
+                if isinstance(next_candidate, dict):
+                    next_candidate = next_candidate.get("href")
+
+        if isinstance(next_candidate, str) and next_candidate.strip():
+            next_url = urljoin(RICHMONDSTUDIO_USERS_URL, next_candidate.strip())
+        else:
+            next_url = ""
+
+    return users
+
+
+def _export_simple_excel(rows: List[Dict[str, object]], sheet_name: str = "data") -> bytes:
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        pd.DataFrame(rows).to_excel(writer, index=False, sheet_name=sheet_name)
+    output.seek(0)
+    return output.getvalue()
 
 
 def _show_dataframe(data: object, use_container_width: bool = True) -> None:
@@ -1295,6 +1372,69 @@ with tab_crud_alumnos:
                     file_name=download_name,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
+
+    with st.container(border=True):
+        st.markdown("**3) EXCEL RS**")
+        st.caption("Richmond Studio: firstName, lastName, identifier.")
+        rs_token_raw = st.text_input(
+            "Bearer token RS",
+            type="password",
+            key="rs_bearer_token",
+            placeholder="password",
+        )
+        run_rs_excel = st.button("EXCEL RS", type="primary", key="rs_excel_generate")
+
+        if run_rs_excel:
+            rs_token = _clean_token(str(rs_token_raw or ""))
+            if not rs_token:
+                st.error("Ingresa el bearer token de Richmond Studio.")
+                st.stop()
+            try:
+                with st.spinner("Consultando Richmond Studio..."):
+                    rs_users = _fetch_richmondstudio_users(rs_token, timeout=30)
+            except Exception as exc:  # pragma: no cover - UI
+                st.error(f"Error: {exc}")
+                st.stop()
+
+            rows_rs: List[Dict[str, str]] = []
+            for item in rs_users:
+                attrs = item.get("attributes") if isinstance(item.get("attributes"), dict) else {}
+                rows_rs.append(
+                    {
+                        "firstName": str(attrs.get("firstName") or "").strip(),
+                        "lastName": str(attrs.get("lastName") or "").strip(),
+                        "identifier": str(attrs.get("identifier") or "").strip(),
+                    }
+                )
+            rows_rs = [
+                row
+                for row in rows_rs
+                if row.get("firstName") or row.get("lastName") or row.get("identifier")
+            ]
+            rows_rs = sorted(
+                rows_rs,
+                key=lambda row: (
+                    str(row.get("firstName") or "").lower(),
+                    str(row.get("lastName") or "").lower(),
+                    str(row.get("identifier") or "").lower(),
+                ),
+            )
+
+            rs_excel_bytes = _export_simple_excel(rows_rs, sheet_name="users")
+            st.session_state["rs_excel_bytes"] = rs_excel_bytes
+            st.session_state["rs_excel_count"] = int(len(rows_rs))
+            st.success(f"EXCEL RS listo. Usuarios: {len(rows_rs)}")
+            if rows_rs:
+                _show_dataframe(rows_rs[:200], use_container_width=True)
+
+        if st.session_state.get("rs_excel_bytes"):
+            st.download_button(
+                label="Descargar EXCEL RS",
+                data=st.session_state["rs_excel_bytes"],
+                file_name="excel_rs.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="rs_excel_download",
+            )
     
 with tab_crud_clases:
     if not _restricted_sections_unlocked():

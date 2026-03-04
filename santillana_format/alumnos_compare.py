@@ -595,6 +595,12 @@ def _resolve_apellidos_match(
     if len(candidates) == 1:
         return candidates[0]
 
+    # Si hay apellidos repetidos (ej. hermanos), priorizar desempate
+    # por identidad de persona (nombre/fecha/sexo) antes de NUIP.
+    best_by_identity = _pick_best_match(act_row, df_bd, candidates)
+    if best_by_identity is not None:
+        return best_by_identity
+
     nuip_norm = _normalize_nuip(act_row.get("nuip"))
     if nuip_norm:
         for idx in candidates:
@@ -602,7 +608,7 @@ def _resolve_apellidos_match(
             if bd_nuip and bd_nuip == nuip_norm:
                 return idx
 
-    return _pick_best_match(act_row, df_bd, candidates)
+    return None
 
 
 def _build_nuip_summary(df_bd: pd.DataFrame, df_act: pd.DataFrame) -> Dict[str, int]:
@@ -699,7 +705,18 @@ def _build_comparacion_bd(
         nuip_norm = ""
         if not df_bd.empty:
             nuip_norm = _normalize_nuip(act_row.get("nuip"))
-            if nuip_norm:
+            # Prioridad solicitada:
+            # 1) Apellido paterno + materno
+            # 2) NUIP
+            # 3) Nombre + apellido paterno
+            if bd_idx is None:
+                bd_idx = _resolve_apellidos_match(
+                    act_row,
+                    df_bd,
+                    apellidos_cache,
+                    used_indices=bd_matched_indices,
+                )
+            if bd_idx is None and nuip_norm:
                 nuip_candidates = _filter_unused_indices(
                     nuip_index.get(nuip_norm) or [],
                     bd_matched_indices,
@@ -711,14 +728,6 @@ def _build_comparacion_bd(
                     act_row,
                     df_bd,
                     nombre_ap_pat_index,
-                    used_indices=bd_matched_indices,
-                )
-
-            if bd_idx is None:
-                bd_idx = _resolve_apellidos_match(
-                    act_row,
-                    df_bd,
-                    apellidos_cache,
                     used_indices=bd_matched_indices,
                 )
         if bd_idx is None:

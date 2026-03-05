@@ -60,6 +60,7 @@ CENSO_PLANTILLA_EDICION_URL = (
 )
 GESTION_ESCOLAR_CICLO_ID_DEFAULT = 207
 RICHMONDSTUDIO_USERS_URL = "https://richmondstudio.global/api/users"
+RICHMONDSTUDIO_GROUPS_URL = "https://richmondstudio.global/api/groups"
 RESTRICTED_SECTIONS_PASSWORD = "Palabr@leatoria123!"
 
 
@@ -245,6 +246,73 @@ def _fetch_richmondstudio_users(token: str, timeout: int = 30) -> List[Dict[str,
             next_url = ""
 
     return users
+
+
+def _fetch_richmondstudio_groups(token: str, timeout: int = 30) -> List[Dict[str, object]]:
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    next_url = RICHMONDSTUDIO_GROUPS_URL
+    next_params: Optional[Dict[str, object]] = None
+    visited_urls = set()
+    groups: List[Dict[str, object]] = []
+
+    while next_url:
+        if next_url in visited_urls:
+            break
+        visited_urls.add(next_url)
+        try:
+            response = requests.get(
+                next_url,
+                headers=headers,
+                params=next_params,
+                timeout=timeout,
+            )
+        except requests.RequestException as exc:
+            raise RuntimeError(f"Error de red: {exc}") from exc
+        next_params = None
+
+        status_code = response.status_code
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise RuntimeError(f"Respuesta no JSON (status {status_code})") from exc
+
+        if not response.ok:
+            detail = ""
+            if isinstance(payload, dict):
+                errors = payload.get("errors")
+                if isinstance(errors, list) and errors:
+                    first_error = errors[0]
+                    if isinstance(first_error, dict):
+                        detail = str(
+                            first_error.get("detail")
+                            or first_error.get("title")
+                            or ""
+                        ).strip()
+                if not detail:
+                    detail = str(payload.get("message") or "").strip()
+            raise RuntimeError(detail or f"HTTP {status_code}")
+
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, list):
+            raise RuntimeError("Respuesta invalida: campo data no es lista.")
+        for item in data:
+            if isinstance(item, dict):
+                groups.append(item)
+
+        next_candidate = None
+        if isinstance(payload, dict):
+            links = payload.get("links")
+            if isinstance(links, dict):
+                next_candidate = links.get("next")
+                if isinstance(next_candidate, dict):
+                    next_candidate = next_candidate.get("href")
+
+        if isinstance(next_candidate, str) and next_candidate.strip():
+            next_url = urljoin(RICHMONDSTUDIO_GROUPS_URL, next_candidate.strip())
+        else:
+            next_url = ""
+
+    return groups
 
 
 def _export_simple_excel(rows: List[Dict[str, object]], sheet_name: str = "data") -> bytes:
@@ -1408,7 +1476,7 @@ with tab_crud_alumnos:
 
     with st.container(border=True):
         st.markdown("**3) EXCEL RS**")
-        st.caption("Richmond Studio: firstName, lastName, identifier.")
+        st.caption("Richmond Studio: CLASS NAME, CLASS CODE, STUDENT NAME, IDENTIFIER.")
         rs_token_raw = st.text_input(
             "Bearer token RS",
             type="password",
@@ -1425,38 +1493,101 @@ with tab_crud_alumnos:
             try:
                 with st.spinner("Consultando Richmond Studio..."):
                     rs_users = _fetch_richmondstudio_users(rs_token, timeout=30)
+                    rs_groups = _fetch_richmondstudio_groups(rs_token, timeout=30)
             except Exception as exc:  # pragma: no cover - UI
                 st.error(f"Error: {exc}")
                 st.stop()
 
+            group_lookup: Dict[str, Dict[str, str]] = {}
+            for group_item in rs_groups:
+                group_id = str(group_item.get("id") or "").strip()
+                if not group_id:
+                    continue
+                attrs = (
+                    group_item.get("attributes")
+                    if isinstance(group_item.get("attributes"), dict)
+                    else {}
+                )
+                group_lookup[group_id] = {
+                    "class_name": str(
+                        attrs.get("name") or attrs.get("description") or ""
+                    ).strip(),
+                    "class_code": str(attrs.get("code") or "").strip(),
+                }
+
             rows_rs: List[Dict[str, str]] = []
             for item in rs_users:
                 attrs = item.get("attributes") if isinstance(item.get("attributes"), dict) else {}
-                rows_rs.append(
-                    {
-                        "firstName": str(attrs.get("firstName") or "").strip(),
-                        "lastName": str(attrs.get("lastName") or "").strip(),
-                        "identifier": str(attrs.get("identifier") or "").strip(),
-                    }
+                relationships = (
+                    item.get("relationships")
+                    if isinstance(item.get("relationships"), dict)
+                    else {}
                 )
+                groups_rel = (
+                    relationships.get("groups")
+                    if isinstance(relationships.get("groups"), dict)
+                    else {}
+                )
+                groups_data = groups_rel.get("data") if isinstance(groups_rel.get("data"), list) else []
+
+                first_name = str(attrs.get("firstName") or "").strip()
+                last_name = str(attrs.get("lastName") or "").strip()
+                student_name = " ".join(part for part in [first_name, last_name] if part).strip()
+                identifier = str(attrs.get("identifier") or "").strip()
+
+                group_ids: List[str] = []
+                seen_group_ids = set()
+                for rel in groups_data:
+                    if not isinstance(rel, dict):
+                        continue
+                    group_id = str(rel.get("id") or "").strip()
+                    if not group_id or group_id in seen_group_ids:
+                        continue
+                    seen_group_ids.add(group_id)
+                    group_ids.append(group_id)
+
+                if group_ids:
+                    for group_id in group_ids:
+                        group_meta = group_lookup.get(group_id) or {}
+                        rows_rs.append(
+                            {
+                                "CLASS NAME": str(group_meta.get("class_name") or "").strip(),
+                                "CLASS CODE": str(group_meta.get("class_code") or "").strip(),
+                                "STUDENT NAME": student_name,
+                                "IDENTIFIER": identifier,
+                            }
+                        )
+                else:
+                    rows_rs.append(
+                        {
+                            "CLASS NAME": "",
+                            "CLASS CODE": "",
+                            "STUDENT NAME": student_name,
+                            "IDENTIFIER": identifier,
+                        }
+                    )
             rows_rs = [
                 row
                 for row in rows_rs
-                if row.get("firstName") or row.get("lastName") or row.get("identifier")
+                if row.get("CLASS NAME")
+                or row.get("CLASS CODE")
+                or row.get("STUDENT NAME")
+                or row.get("IDENTIFIER")
             ]
             rows_rs = sorted(
                 rows_rs,
                 key=lambda row: (
-                    str(row.get("firstName") or "").lower(),
-                    str(row.get("lastName") or "").lower(),
-                    str(row.get("identifier") or "").lower(),
+                    str(row.get("CLASS NAME") or "").lower(),
+                    str(row.get("CLASS CODE") or "").lower(),
+                    str(row.get("STUDENT NAME") or "").lower(),
+                    str(row.get("IDENTIFIER") or "").lower(),
                 ),
             )
 
             rs_excel_bytes = _export_simple_excel(rows_rs, sheet_name="users")
             st.session_state["rs_excel_bytes"] = rs_excel_bytes
             st.session_state["rs_excel_count"] = int(len(rows_rs))
-            st.success(f"EXCEL RS listo. Usuarios: {len(rows_rs)}")
+            st.success(f"EXCEL RS listo. Filas: {len(rows_rs)}")
             if rows_rs:
                 _show_dataframe(rows_rs[:200], use_container_width=True)
 
@@ -1473,8 +1604,8 @@ with tab_crud_clases:
     if not _restricted_sections_unlocked():
         _render_restricted_blur("CRUD Clases", "clases_2")
     else:
-        st.markdown("**2) Listar y eliminar clases**")
-        st.caption("Usa token global y colegio global.")
+        st.markdown("**2) Gestion de clases**")
+        st.caption("Listado, desasignacion de alumnos y eliminacion de clases.")
         colegio_id_raw = str(st.session_state.get("shared_colegio_id", "")).strip()
         ciclo_id = GESTION_ESCOLAR_CICLO_ID_DEFAULT
     
@@ -1488,17 +1619,24 @@ with tab_crud_clases:
         confirm_delete_selected = False
         confirm_delete_masivo = False
     
-        col_list, col_alumnos, col_delete = st.columns(3, gap="large")
+        col_list, col_alumnos, col_delete = st.columns(3, gap="small")
         with col_list:
             with st.container(border=True):
                 st.markdown("**Listar clases**")
-                run_listar_clases = st.button("Listar clases", key="clases_listar_btn")
+                st.caption("Consulta rapida por colegio.")
+                run_listar_clases = st.button(
+                    "Listar clases",
+                    key="clases_listar_btn",
+                    use_container_width=True,
+                )
         with col_alumnos:
             with st.container(border=True):
                 st.markdown("**Desasignacion de alumnos por clase**")
+                st.caption("Selecciona una clase y vacia sus alumnos.")
                 run_cargar_clases_alumnos = st.button(
                     "Cargar clases para desasignar",
                     key="clases_alumnos_load_options",
+                    use_container_width=True,
                 )
                 alumnos_options = st.session_state.get("clases_alumnos_options") or []
                 alumnos_option_ids: List[int] = []
@@ -1528,7 +1666,7 @@ with tab_crud_clases:
                     )
                 else:
                     st.caption("Sin clases cargadas para seleccionar.")
-    
+
                 clase_id_manual = st.text_input(
                     "Clase ID manual (opcional)",
                     key="clases_alumnos_clase_id",
@@ -1537,17 +1675,20 @@ with tab_crud_clases:
                 clase_id_raw = str(
                     clase_id_manual or (selected_clase_id if selected_clase_id is not None else "")
                 ).strip()
-                run_ver_alumnos_clase = st.button(
+                col_ver, col_vaciar = st.columns(2)
+                run_ver_alumnos_clase = col_ver.button(
                     "Ver alumnos",
                     key="clases_ver_alumnos_btn",
+                    use_container_width=True,
                 )
                 confirm_vaciar_clase = st.checkbox(
                     "Confirmo vaciar la clase (eliminar todos los alumnos).",
                     key="clases_vaciar_confirm",
                 )
-                run_vaciar_clase = st.button(
+                run_vaciar_clase = col_vaciar.button(
                     "Vaciar clase",
                     key="clases_vaciar_btn",
+                    use_container_width=True,
                 )
         with col_delete:
             with st.container(border=True):
@@ -1556,6 +1697,7 @@ with tab_crud_clases:
                 run_cargar_clases_delete = st.button(
                     "Cargar clases para seleccionar",
                     key="clases_delete_load_options",
+                    use_container_width=True,
                 )
                 delete_options = st.session_state.get("clases_delete_options") or []
                 option_ids: List[int] = []
@@ -1582,24 +1724,28 @@ with tab_crud_clases:
                     )
                 else:
                     st.caption("Sin clases cargadas para seleccion.")
-    
-                confirm_delete_selected = st.checkbox(
-                    "Confirmo eliminar solo las clases seleccionadas.",
-                    key="clases_confirm_delete_selected",
-                )
-                run_eliminar_clases_selected = st.button(
-                    "Eliminar seleccionadas",
-                    key="clases_eliminar_selected_btn",
-                )
-    
-                confirm_delete_masivo = st.checkbox(
-                    "Confirmo eliminar todas las clases del colegio.",
-                    key="clases_confirm_delete_masivo",
-                )
-                run_eliminar_clases_masivo = st.button(
-                    "Eliminar masivo",
-                    key="clases_eliminar_masivo_btn",
-                )
+
+                col_delete_selected, col_delete_all = st.columns(2)
+                with col_delete_selected:
+                    confirm_delete_selected = st.checkbox(
+                        "Confirmo seleccionadas.",
+                        key="clases_confirm_delete_selected",
+                    )
+                    run_eliminar_clases_selected = st.button(
+                        "Eliminar seleccionadas",
+                        key="clases_eliminar_selected_btn",
+                        use_container_width=True,
+                    )
+                with col_delete_all:
+                    confirm_delete_masivo = st.checkbox(
+                        "Confirmo eliminacion masiva.",
+                        key="clases_confirm_delete_masivo",
+                    )
+                    run_eliminar_clases_masivo = st.button(
+                        "Eliminar masivo",
+                        key="clases_eliminar_masivo_btn",
+                        use_container_width=True,
+                    )
     
         if "clases_auto_group_unlocked" not in st.session_state:
             st.session_state["clases_auto_group_unlocked"] = False
@@ -1630,6 +1776,7 @@ with tab_crud_clases:
         run_asignar_participantes = False
         confirm_eliminar_participantes = False
         confirm_asignar_participantes = False
+        st.divider()
         with st.container(border=True):
             st.markdown("**Asignación de Participantes**")
             st.caption(
@@ -1794,7 +1941,12 @@ with tab_crud_clases:
         auto_rows = st.session_state.get("clases_auto_group_rows") or []
         auto_warnings = st.session_state.get("clases_auto_group_warnings") or []
         if st.session_state.get("clases_auto_group_unlocked", False):
-            if auto_rows:
+            show_auto_group_grid = st.toggle(
+                "Mostrar grilla por grado",
+                value=False,
+                key="clases_auto_group_show_grid",
+            )
+            if show_auto_group_grid and auto_rows:
                 st.markdown("**Asignacion por grado (grilla compacta 7 columnas)**")
                 auto_rows = sorted(
                     auto_rows,
@@ -1897,7 +2049,9 @@ with tab_crud_clases:
                                 )
                                 row["selected_group_id"] = int(selected_val)
                 st.session_state["clases_auto_group_rows"] = auto_rows
-    
+            elif auto_rows:
+                st.caption(f"Grilla oculta. Clases cargadas: {len(auto_rows)}")
+
             if auto_warnings:
                 st.warning("Hay clases omitidas o sin opciones de grupo.")
                 st.write("\n".join(f"- {item}" for item in auto_warnings[:20]))

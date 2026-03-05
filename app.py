@@ -899,6 +899,39 @@ def _fetch_grupo_alumnos_count(
     return int(count)
 
 
+def _build_alumno_export_key(
+    item: Dict[str, object],
+    source: Dict[str, object],
+    persona: Dict[str, object],
+) -> str:
+    for raw in (
+        source.get("alumnoId"),
+        item.get("alumnoId"),
+        persona.get("personaId"),
+        persona.get("idOficial"),
+        source.get("uuid"),
+        item.get("uuid"),
+    ):
+        text = str(raw or "").strip()
+        if text:
+            return f"id:{text}"
+
+    persona_login = (
+        persona.get("personaLogin") if isinstance(persona.get("personaLogin"), dict) else {}
+    )
+    login_txt = _normalize_plain_text(
+        source.get("login")
+        or persona_login.get("login")
+        or item.get("login")
+    )
+    nombre_txt = _normalize_plain_text(persona.get("nombre"))
+    ap_pat_txt = _normalize_plain_text(persona.get("apellidoPaterno"))
+    ap_mat_txt = _normalize_plain_text(persona.get("apellidoMaterno"))
+    if nombre_txt or ap_pat_txt or ap_mat_txt or login_txt:
+        return f"sig:{nombre_txt}|{ap_pat_txt}|{ap_mat_txt}|{login_txt}"
+    return ""
+
+
 def _collect_colegios(clases: List[Dict[str, object]]) -> List[Dict[str, object]]:
     colegios: Dict[int, str] = {}
     for item in clases:
@@ -2653,7 +2686,7 @@ with tab_crud_alumnos:
                 value=False,
                 key="clases_alumnos_excel_solo_activos",
             )
-            excluir_5to_sec_z = True
+            excluir_5to_sec_z = False
             if st.button(
                 "Generar Excel alumnos (Censo)",
                 type="primary",
@@ -2809,6 +2842,7 @@ with tab_crud_alumnos:
                     )
     
                 rows_excel: List[Dict[str, object]] = []
+                seen_excel_keys = set()
                 errores_excel: List[str] = []
                 total = len(contexts)
                 progress = st.progress(0)
@@ -2854,8 +2888,13 @@ with tab_crud_alumnos:
                         activo_value = source.get("activo", item.get("activo"))
                         if solo_activos_censo and not _to_bool(activo_value):
                             continue
-    
+
                         persona = source.get("persona") if isinstance(source.get("persona"), dict) else {}
+                        dedupe_key = _build_alumno_export_key(item, source, persona)
+                        if dedupe_key and dedupe_key in seen_excel_keys:
+                            continue
+                        if dedupe_key:
+                            seen_excel_keys.add(dedupe_key)
                         login, password = _resolve_alumno_login_password(
                             item=item,
                             by_alumno_id=by_alumno_id,
@@ -2877,12 +2916,13 @@ with tab_crud_alumnos:
                                 "Apellido Materno": str(persona.get("apellidoMaterno") or ""),
                                 "Login": login,
                                 "Password": password,
+                                "_dedupe_key": dedupe_key,
                             }
                         )
-    
-                if not rows_excel and contexts:
+
+                if contexts:
                     status.write(
-                        "Sin filas en consulta por grupo. Reintentando por nivel/grado..."
+                        "Consolidando por nivel/grado para asegurar cobertura..."
                     )
                     fallback_pairs = sorted(
                         {
@@ -2934,7 +2974,7 @@ with tab_crud_alumnos:
                             activo_value = source.get("activo", item.get("activo"))
                             if solo_activos_censo and not _to_bool(activo_value):
                                 continue
-    
+
                             persona = (
                                 source.get("persona")
                                 if isinstance(source.get("persona"), dict)
@@ -2958,6 +2998,11 @@ with tab_crud_alumnos:
                                 grupo_clave or grupo_nombre,
                             ):
                                 continue
+                            dedupe_key = _build_alumno_export_key(item, source, persona)
+                            if dedupe_key and dedupe_key in seen_excel_keys:
+                                continue
+                            if dedupe_key:
+                                seen_excel_keys.add(dedupe_key)
                             login, password = _resolve_alumno_login_password(
                                 item=item,
                                 by_alumno_id=by_alumno_id,
@@ -2976,6 +3021,7 @@ with tab_crud_alumnos:
                                     "Apellido Materno": str(persona.get("apellidoMaterno") or ""),
                                     "Login": login,
                                     "Password": password,
+                                    "_dedupe_key": dedupe_key,
                                 }
                             )
     
@@ -3011,7 +3057,13 @@ with tab_crud_alumnos:
                     df_excel = pd.DataFrame(columns=excel_columns)
                 else:
                     df_excel = df_excel.drop(
-                        columns=["_nivel_order", "_grado_order", "_grupo_sort"], errors="ignore"
+                        columns=[
+                            "_nivel_order",
+                            "_grado_order",
+                            "_grupo_sort",
+                            "_dedupe_key",
+                        ],
+                        errors="ignore",
                     )
                     df_excel = df_excel.reindex(columns=excel_columns)
     

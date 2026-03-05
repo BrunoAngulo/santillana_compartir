@@ -763,7 +763,12 @@ def _build_comparacion_bd(
             row_out[target] = _clean_cell_value(bd_row.get(source, ""))
 
         for source, target in ACTUALIZADA_BASE_FIELDS.items():
-            row_out[target] = _clean_cell_value(act_row.get(source, ""))
+            value_actualizada = _clean_cell_value(act_row.get(source, ""))
+            # En actualizacion: si Login viene vacio en Plantilla_Actualizada,
+            # conservar el Login de Plantilla_BD.
+            if source == "login" and not value_actualizada:
+                continue
+            row_out[target] = value_actualizada
 
         row_out["Activo"] = "Si"
 

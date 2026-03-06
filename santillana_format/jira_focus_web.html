@@ -254,6 +254,65 @@
       background: var(--bg-soft);
     }
 
+    .issue-phase-panel {
+      width: 100%;
+      border: 1px dashed var(--line);
+      border-radius: var(--radius-md);
+      background: var(--bg-soft);
+      padding: var(--spacing-xs) var(--spacing-sm);
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--spacing-xs);
+    }
+
+    .issue-phase-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      margin-right: 4px;
+    }
+
+    .issue-phase-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex: 1 1 220px;
+      min-width: 190px;
+    }
+
+    .issue-phase-item label {
+      margin: 0;
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .issue-phase-item .sel {
+      padding: 6px 8px;
+      font-size: 13px;
+      min-width: 128px;
+    }
+
+    .issue-phase-actions {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: auto;
+      flex-wrap: wrap;
+    }
+
+    .issue-phase-actions .btn {
+      padding: 6px 10px;
+      font-size: 12px;
+    }
+
+    .issue-phase-hint {
+      width: 100%;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
     .dashboard-grid {
       display: grid;
       grid-template-columns: minmax(0, 1.35fr) minmax(320px, 1fr);
@@ -2070,6 +2129,16 @@
         white-space: normal;
       }
 
+      .issue-phase-item {
+        flex: 1 1 100%;
+        min-width: 0;
+      }
+
+      .issue-phase-actions {
+        width: 100%;
+        margin-left: 0;
+      }
+
       .float {
         left: 10px;
         right: 10px;
@@ -2106,6 +2175,11 @@
 
       .row>.btn {
         flex: 1 1 100%;
+      }
+
+      .issue-phase-actions .btn {
+        width: auto;
+        flex: 1 1 calc(50% - 6px);
       }
     }
   </style>
@@ -2429,6 +2503,11 @@
         'Configuración de estudiantes',
         'Integración Studio'
       ];
+      const PHASE_SUBTASK_DEFS = [
+        { id: 'fase1', label: 'TEP-Seguimiento Fase 1', shortLabel: 'Fase 1' },
+        { id: 'fase2', label: 'TEP-Seguimiento Fase 2', shortLabel: 'Fase 2' },
+        { id: 'fase3', label: 'TEP-Seguimiento Fase 3', shortLabel: 'Fase 3' }
+      ];
       const ACTIVITY_PALETTE = [
         '#1b78c4', '#1f8f71', '#e07a2f', '#7a57c2', '#c63f69', '#3e8f5b', '#2e7fba',
         '#aa5d13', '#5f7bca', '#0f8fa8', '#b0453e', '#1d9164', '#8568c8', '#ad4c88'
@@ -2485,7 +2564,12 @@
         popupWatchTimer: 0,
         popupProcessing: false,
         oauthCallbackInProgress: false,
-        netPendingCount: 0
+        netPendingCount: 0,
+        subtaskTransitionsByKey: {},
+        subtaskPhaseSelection: {},
+        subtaskPhaseLoadedStampByIssue: {},
+        subtaskPhaseLoading: false,
+        subtaskPhaseApplying: false
       };
 
       const el = {};
@@ -3191,6 +3275,14 @@
           const jql = 'assignee = currentUser() AND statusCategory != Done AND issuetype not in subTaskIssueTypes() ORDER BY updated DESC';
           return this.req('GET', '/rest/api/3/search/jql', { params: { jql, maxResults: 80, fields: 'summary,status,issuetype,attachment,subtasks' } });
         },
+        issueTransitions(key) {
+          return this.req('GET', `/rest/api/3/issue/${encodeURIComponent(key)}/transitions`);
+        },
+        transitionIssue(key, transitionId) {
+          return this.req('POST', `/rest/api/3/issue/${encodeURIComponent(key)}/transitions`, {
+            body: { transition: { id: String(transitionId || '').trim() } }
+          });
+        },
         comments(key) { return this.req('GET', `/rest/api/3/issue/${encodeURIComponent(key)}/comment`, { params: { orderBy: '-created', maxResults: 100 } }); },
         worklogs(key) { return this.req('GET', `/rest/api/3/issue/${encodeURIComponent(key)}/worklog`); },
         addWorklog(key, body) { return this.req('POST', `/rest/api/3/issue/${encodeURIComponent(key)}/worklog`, { body }); },
@@ -3776,6 +3868,7 @@
         const subtasksLabel = subtaskNames.length ? subtaskNames.join(' | ') : 'Sin subtareas';
         const lastPlantillaEstudiantes = lastWorklogLabelByOfficialType(key, ESTUDIANTES_TEMPLATE_ACTIVITY);
         const lastPlantillaDocentes = lastWorklogLabelByOfficialType(key, DOCENTES_TEMPLATE_ACTIVITY);
+        const phaseControlsHtml = renderPhaseStatusControls(issue);
         el.issueInsight.className = 'issue-insight';
         el.issueInsight.innerHTML = `
           <span class="issue-chip metric"><b>Comentarios:</b><span class="value">${escapeHtml(String(commentsCount))}</span></span>
@@ -3785,6 +3878,7 @@
           <span class="issue-chip extra"><b>Subtareas:</b><span class="value">${escapeHtml(subtasksLabel)}</span></span>
           <span class="issue-chip extra"><b>Ult. registro plantilla estudiantes:</b><span class="value">${escapeHtml(lastPlantillaEstudiantes)}</span></span>
           <span class="issue-chip extra"><b>Ult. registro plantilla docentes:</b><span class="value">${escapeHtml(lastPlantillaDocentes)}</span></span>
+          ${phaseControlsHtml}
         `;
       }
 
@@ -4028,6 +4122,130 @@
         return noPrefix || noCollege || raw;
       }
 
+      function detectPhaseSubtaskId(text) {
+        const normalized = normalizePlain(text).replace(/[^a-z0-9]+/g, ' ').trim();
+        if (!normalized) return '';
+        if (normalized.includes('tep seguimiento fase 1') || normalized.includes('seguimiento fase 1')) return 'fase1';
+        if (normalized.includes('tep seguimiento fase 2') || normalized.includes('seguimiento fase 2')) return 'fase2';
+        if (normalized.includes('tep seguimiento fase 3') || normalized.includes('seguimiento fase 3')) return 'fase3';
+        if (/\bfase\s*1\b/.test(normalized)) return 'fase1';
+        if (/\bfase\s*2\b/.test(normalized)) return 'fase2';
+        if (/\bfase\s*3\b/.test(normalized)) return 'fase3';
+        return '';
+      }
+
+      function phaseSubtasksForIssue(issue) {
+        const detail = issue && Array.isArray(issue.subtasksDetail) ? issue.subtasksDetail : [];
+        const found = {};
+        PHASE_SUBTASK_DEFS.forEach((def) => { found[def.id] = null; });
+        detail.forEach((subtask) => {
+          if (!subtask || typeof subtask !== 'object') return;
+          const phaseId = detectPhaseSubtaskId(subtask.summary || subtask.compactSummary || '');
+          if (!phaseId) return;
+          if (!found[phaseId]) {
+            found[phaseId] = subtask;
+          }
+        });
+        return PHASE_SUBTASK_DEFS.map((def) => ({
+          id: def.id,
+          label: def.label,
+          shortLabel: def.shortLabel,
+          subtask: found[def.id] || null
+        }));
+      }
+
+      function transitionOptionsFromPayload(payload) {
+        const rows = payload && Array.isArray(payload.transitions) ? payload.transitions : [];
+        const seen = new Set();
+        const options = [];
+        rows.forEach((row) => {
+          const id = String(row && row.id ? row.id : '').trim();
+          if (!id || seen.has(id)) return;
+          seen.add(id);
+          const transitionName = String(row && row.name ? row.name : '').trim();
+          const toObj = row && row.to && typeof row.to === 'object' ? row.to : {};
+          const toName = String(toObj.name || '').trim();
+          let label = toName || transitionName || `Transicion ${id}`;
+          if (toName && transitionName && normalizePlain(toName) !== normalizePlain(transitionName)) {
+            label = `${toName} (${transitionName})`;
+          }
+          options.push({
+            id,
+            label,
+            toName,
+            transitionName
+          });
+        });
+        return options;
+      }
+
+      function renderPhaseStatusControls(issue) {
+        const rows = phaseSubtasksForIssue(issue);
+        const hasAny = rows.some((row) => !!row.subtask);
+        if (!hasAny) return '';
+
+        const itemsHtml = rows.map((row) => {
+          const subtask = row.subtask;
+          if (!subtask) {
+            return `
+              <div class="issue-phase-item">
+                <label>${escapeHtml(row.shortLabel)}</label>
+                <select class="sel issue-phase-select" disabled>
+                  <option>No encontrada</option>
+                </select>
+              </div>
+            `;
+          }
+
+          const subtaskKey = String(subtask.key || '').trim();
+          const currentStatus = String(subtask.statusName || 'Sin estado').trim() || 'Sin estado';
+          const options = Array.isArray(state.subtaskTransitionsByKey[subtaskKey]) ? state.subtaskTransitionsByKey[subtaskKey] : [];
+          const currentSelected = String(state.subtaskPhaseSelection[subtaskKey] || '').trim();
+          const baseOptionText = state.subtaskPhaseLoading
+            ? 'Cargando opciones...'
+            : `Sin cambio (actual: ${currentStatus})`;
+
+          let optionsHtml = `<option value="">${escapeHtml(baseOptionText)}</option>`;
+          options.forEach((opt) => {
+            const transitionId = String(opt && opt.id ? opt.id : '').trim();
+            if (!transitionId) return;
+            const selectedAttr = transitionId === currentSelected ? ' selected' : '';
+            optionsHtml += `<option value="${escapeHtml(transitionId)}"${selectedAttr}>${escapeHtml(String(opt.label || transitionId))}</option>`;
+          });
+
+          const disableSelect = (state.subtaskPhaseLoading || state.subtaskPhaseApplying || !options.length) ? ' disabled' : '';
+          return `
+            <div class="issue-phase-item">
+              <label title="${escapeHtml(subtask.key || row.label)}">${escapeHtml(row.shortLabel)}</label>
+              <select class="sel issue-phase-select" data-phase-subtask-key="${escapeHtml(subtaskKey)}"${disableSelect}>
+                ${optionsHtml}
+              </select>
+            </div>
+          `;
+        }).join('');
+
+        const missing = rows.filter((row) => !row.subtask).map((row) => row.shortLabel);
+        const hint = state.subtaskPhaseLoading
+          ? 'Cargando estados disponibles para Fase 1, 2 y 3...'
+          : (missing.length
+            ? `No encontradas: ${missing.join(', ')}.`
+            : 'Selecciona una opcion por fase y pulsa Actualizar fases.');
+        const disableReload = (state.subtaskPhaseLoading || state.subtaskPhaseApplying) ? ' disabled' : '';
+        const disableApply = (state.subtaskPhaseLoading || state.subtaskPhaseApplying) ? ' disabled' : '';
+
+        return `
+          <div class="issue-phase-panel">
+            <div class="issue-phase-title">Actualizar TEP-Seguimiento</div>
+            ${itemsHtml}
+            <div class="issue-phase-actions">
+              <button class="btn" type="button" data-act="phase-reload-options"${disableReload}>Recargar opciones</button>
+              <button class="btn primary" type="button" data-act="phase-apply-statuses"${disableApply}>Actualizar fases</button>
+            </div>
+            <div class="issue-phase-hint">${escapeHtml(hint)}</div>
+          </div>
+        `;
+      }
+
       function parseIssues(payload) {
         const list = Array.isArray(payload.issues)
           ? payload.issues
@@ -4036,16 +4254,30 @@
           .filter((it) => it && it.key && it.fields && !(it.fields.issuetype && it.fields.issuetype.subtask))
           .map((it) => {
             const subtasksRaw = Array.isArray(it.fields.subtasks) ? it.fields.subtasks : [];
+            const subtasksDetail = subtasksRaw
+              .map((sub) => {
+                const fields = sub && sub.fields && typeof sub.fields === 'object' ? sub.fields : {};
+                const statusObj = fields.status && typeof fields.status === 'object' ? fields.status : {};
+                const summary = String(fields.summary || '').trim();
+                return {
+                  key: String(sub && sub.key ? sub.key : '').trim(),
+                  summary,
+                  compactSummary: compactSubtaskSummary(summary),
+                  statusName: String(statusObj.name || '').trim()
+                };
+              })
+              .filter((sub) => sub.key || sub.summary);
             const subtasks = uniqueStrings(
-              subtasksRaw
-                .map((sub) => compactSubtaskSummary(sub && sub.fields ? sub.fields.summary : ''))
+              subtasksDetail
+                .map((sub) => sub.compactSummary || sub.summary)
                 .filter((name) => !!name)
             );
             return {
               key: it.key,
               summary: String(it.fields.summary || ''),
               attachments: Array.isArray(it.fields.attachment) ? it.fields.attachment : [],
-              subtasks
+              subtasks,
+              subtasksDetail
             };
           });
       }
@@ -5300,6 +5532,133 @@
         XLSX.writeFile(wb, `jira_reporte_plantillas_${stamp}.xlsx`);
       }
 
+      async function preloadPhaseTransitionsForIssue(issueKey, force = false) {
+        const key = String(issueKey || '').trim();
+        if (!key) return 0;
+        const issue = issueByKey(key);
+        if (!issue) return 0;
+
+        const phaseRows = phaseSubtasksForIssue(issue).filter((row) => !!(row.subtask && row.subtask.key));
+        if (!phaseRows.length) {
+          state.subtaskPhaseLoadedStampByIssue[key] = '';
+          return 0;
+        }
+
+        const stamp = phaseRows
+          .map((row) => String(row.subtask && row.subtask.key ? row.subtask.key : '').trim())
+          .filter((subtaskKey) => !!subtaskKey)
+          .sort()
+          .join('|');
+        const alreadyLoaded = String(state.subtaskPhaseLoadedStampByIssue[key] || '') === stamp;
+        const allCached = phaseRows.every((row) => {
+          const subtaskKey = String(row.subtask && row.subtask.key ? row.subtask.key : '').trim();
+          return !!subtaskKey && Array.isArray(state.subtaskTransitionsByKey[subtaskKey]);
+        });
+        if (!force && alreadyLoaded && allCached) return 0;
+
+        state.subtaskPhaseLoading = true;
+        renderIssueInsight();
+
+        let failCount = 0;
+        await mapLimit(phaseRows, 3, async (row) => {
+          const subtaskKey = String(row.subtask && row.subtask.key ? row.subtask.key : '').trim();
+          if (!subtaskKey) return;
+          try {
+            const payload = await JiraService.issueTransitions(subtaskKey);
+            const options = transitionOptionsFromPayload(payload);
+            state.subtaskTransitionsByKey[subtaskKey] = options;
+            const selected = String(state.subtaskPhaseSelection[subtaskKey] || '').trim();
+            if (selected && !options.some((opt) => String(opt.id || '').trim() === selected)) {
+              state.subtaskPhaseSelection[subtaskKey] = '';
+            }
+          } catch (error) {
+            failCount += 1;
+            state.subtaskTransitionsByKey[subtaskKey] = [];
+            dbg('phase_transitions_error', {
+              subtask_key: subtaskKey,
+              message: error && error.message ? error.message : String(error || '')
+            });
+          }
+        });
+
+        state.subtaskPhaseLoadedStampByIssue[key] = stamp;
+        state.subtaskPhaseLoading = false;
+        renderIssueInsight();
+        return failCount;
+      }
+
+      async function applyPhaseStatusesForIssue(issueKey) {
+        const key = String(issueKey || '').trim();
+        if (!key) {
+          showMsg('error', 'Selecciona un ticket.');
+          return;
+        }
+        const issue = issueByKey(key);
+        if (!issue) {
+          showMsg('error', 'No se encontro el ticket seleccionado.');
+          return;
+        }
+        const phaseRows = phaseSubtasksForIssue(issue).filter((row) => !!(row.subtask && row.subtask.key));
+        if (!phaseRows.length) {
+          showMsg('info', 'Este ticket no tiene subtareas TEP-Seguimiento Fase 1/2/3.');
+          return;
+        }
+
+        const targets = [];
+        phaseRows.forEach((row) => {
+          const subtaskKey = String(row.subtask && row.subtask.key ? row.subtask.key : '').trim();
+          if (!subtaskKey) return;
+          const transitionId = String(state.subtaskPhaseSelection[subtaskKey] || '').trim();
+          if (!transitionId) return;
+          targets.push({
+            subtaskKey,
+            transitionId,
+            phaseLabel: row.shortLabel || row.label || subtaskKey
+          });
+        });
+        if (!targets.length) {
+          showMsg('info', 'Selecciona al menos un estado en Fase 1, 2 o 3.');
+          return;
+        }
+
+        state.subtaskPhaseApplying = true;
+        renderIssueInsight();
+
+        let okCount = 0;
+        let failCount = 0;
+        let firstError = null;
+        await mapLimit(targets, 1, async (target) => {
+          try {
+            await JiraService.transitionIssue(target.subtaskKey, target.transitionId);
+            state.subtaskPhaseSelection[target.subtaskKey] = '';
+            okCount += 1;
+          } catch (error) {
+            failCount += 1;
+            if (!firstError) firstError = error;
+            dbg('phase_update_error', {
+              subtask_key: target.subtaskKey,
+              phase: target.phaseLabel,
+              transition_id: target.transitionId,
+              message: error && error.message ? error.message : String(error || '')
+            });
+          }
+        });
+
+        state.subtaskPhaseApplying = false;
+        renderIssueInsight();
+
+        await loadIssues();
+        if (failCount === 0) {
+          showMsg('ok', `Fases actualizadas correctamente (${okCount}).`);
+          return;
+        }
+        if (okCount > 0) {
+          showMsg('info', `Actualizacion parcial: ${okCount} OK, ${failCount} con error.`);
+          return;
+        }
+        applyError(firstError || new Error('No se pudo actualizar fases.'), 'No se pudieron actualizar las fases seleccionadas.');
+      }
+
       async function loadIssueData(issueKey) {
         if (!issueKey) return;
         const [c, w] = await Promise.all([JiraService.comments(issueKey), JiraService.worklogs(issueKey)]);
@@ -5323,6 +5682,7 @@
           cleaned[worklogId] = commentId;
         });
         state.manualWorklogToCommentByIssue[issueKey] = cleaned;
+        await preloadPhaseTransitionsForIssue(issueKey);
         renderIssueData();
       }
 
@@ -5478,6 +5838,11 @@
         state.report = { detail: [], grouped: [] };
         state.dash = { logs: [], today: 0, week: 0, issueCount: 0, refreshedAt: null };
         state.netPendingCount = 0;
+        state.subtaskTransitionsByKey = {};
+        state.subtaskPhaseSelection = {};
+        state.subtaskPhaseLoadedStampByIssue = {};
+        state.subtaskPhaseLoading = false;
+        state.subtaskPhaseApplying = false;
         JiraService.setCloudId('');
       }
 
@@ -5727,6 +6092,50 @@
           try { await loadIssueData(state.selectedIssueKey); }
           catch (e) { applyError(e, `No se pudo cargar detalle de ${state.selectedIssueKey}.`); }
           renderCompact();
+        });
+
+        el.issueInsight.addEventListener('change', (ev) => {
+          const select = ev.target && ev.target.closest
+            ? ev.target.closest('select[data-phase-subtask-key]')
+            : null;
+          if (!select) return;
+          const subtaskKey = String(select.getAttribute('data-phase-subtask-key') || '').trim();
+          if (!subtaskKey) return;
+          state.subtaskPhaseSelection[subtaskKey] = String(select.value || '').trim();
+        });
+
+        el.issueInsight.addEventListener('click', async (ev) => {
+          const btn = ev.target && ev.target.closest
+            ? ev.target.closest('button[data-act]')
+            : null;
+          if (!btn) return;
+          const act = String(btn.getAttribute('data-act') || '').trim();
+          if (!act) return;
+          const issueKey = String(state.selectedIssueKey || '').trim();
+          if (!issueKey) {
+            showMsg('error', 'Selecciona un ticket.');
+            return;
+          }
+          if (act === 'phase-reload-options') {
+            try {
+              const failCount = await preloadPhaseTransitionsForIssue(issueKey, true);
+              if (failCount > 0) {
+                showMsg('info', `Opciones recargadas con ${failCount} subtarea(s) sin opciones disponibles.`);
+              } else {
+                showMsg('ok', 'Opciones de estado recargadas.');
+              }
+            } catch (error) {
+              applyError(error, 'No se pudieron recargar opciones de fase.');
+            }
+            return;
+          }
+          if (act === 'phase-apply-statuses') {
+            try {
+              await applyPhaseStatusesForIssue(issueKey);
+            } catch (error) {
+              applyError(error, 'No se pudieron actualizar las fases.');
+            }
+          }
         });
 
         el.activityTypeSel.addEventListener('change', () => {

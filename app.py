@@ -129,208 +129,284 @@ def _inject_professional_theme() -> None:
     st.markdown(
         """
         <style>
-        @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap');
 
         :root{
-            --app-bg-a: #f7f8fa;
-            --app-bg-b: #f7f8fa;
+            --app-bg: #fafbfc;
             --surface: #ffffff;
-            --surface-strong: #ffffff;
-            --text-strong: #0a0d12;
-            --text-muted: #223142;
-            --border-soft: #cfd7e2;
-            --accent: #1155cc;
-            --accent-strong: #0c43a1;
-            --shadow-soft: 0 2px 9px rgba(10, 13, 18, 0.08);
-            --radius-md: 9px;
-            --radius-lg: 12px;
+            --surface-elevated: #ffffff;
+            --text-primary: #1a1d21;
+            --text-secondary: #5c6670;
+            --text-muted: #8b939e;
+            --border: #e5e8eb;
+            --border-hover: #d1d5db;
+            --accent: #2563eb;
+            --accent-hover: #1d4ed8;
+            --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+            --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.06);
+            --radius-sm: 6px;
+            --radius-md: 10px;
+            --radius-lg: 14px;
+            --spacing-xs: 0.5rem;
+            --spacing-sm: 0.75rem;
+            --spacing-md: 1rem;
+            --spacing-lg: 1.5rem;
+            --spacing-xl: 2rem;
         }
 
         html, body, [class*="css"]{
-            font-family: "Manrope", "Segoe UI", sans-serif;
-            color: var(--text-strong);
+            font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            color: var(--text-primary);
+            -webkit-font-smoothing: antialiased;
         }
         code, pre, .stCode, .stJson{
-            font-family: "IBM Plex Mono", Consolas, monospace !important;
+            font-family: "JetBrains Mono", "SF Mono", Consolas, monospace !important;
         }
 
         [data-testid="stAppViewContainer"]{
-            background: linear-gradient(180deg, var(--app-bg-a) 0%, var(--app-bg-b) 100%);
+            background: var(--app-bg);
         }
         [data-testid="stHeader"]{
             background: transparent;
         }
         .main .block-container{
-            max-width: 1500px;
-            padding-top: 0.45rem;
-            padding-bottom: 0.8rem;
-            padding-left: 0.65rem;
-            padding-right: 0.65rem;
+            max-width: 1400px;
+            padding-top: var(--spacing-lg);
+            padding-bottom: var(--spacing-xl);
+            padding-left: var(--spacing-lg);
+            padding-right: var(--spacing-lg);
         }
         div[data-testid="stVerticalBlock"]{
-            gap: 0.24rem;
+            gap: var(--spacing-sm);
         }
 
         h1, h2, h3, h4{
-            color: var(--text-strong);
-            letter-spacing: -0.01em;
+            color: var(--text-primary);
+            letter-spacing: -0.02em;
+            font-weight: 600;
         }
         h1{
-            font-size: 1.55rem;
-            font-weight: 800;
-            margin-bottom: 0.02rem;
+            font-size: 1.75rem;
+            font-weight: 700;
+            margin-bottom: var(--spacing-xs);
+        }
+        h2{
+            font-size: 1.25rem;
+            margin-bottom: var(--spacing-xs);
+        }
+        h3{
+            font-size: 1.1rem;
+            margin-bottom: var(--spacing-xs);
         }
         [data-testid="stMarkdownContainer"] p,
         [data-testid="stCaptionContainer"]{
-            color: var(--text-muted);
-            margin-top: 0.08rem;
-            margin-bottom: 0.22rem;
-            line-height: 1.2;
-            font-size: 0.86rem;
+            color: var(--text-secondary);
+            margin-top: var(--spacing-xs);
+            margin-bottom: var(--spacing-sm);
+            line-height: 1.5;
+            font-size: 0.9rem;
         }
 
         .app-hero{
-            border: 1px solid var(--border-soft);
+            border: 1px solid var(--border);
             border-radius: var(--radius-lg);
-            padding: 0.56rem 0.72rem 0.52rem 0.72rem;
-            margin: 0.08rem 0 0.35rem 0;
-            background: #ffffff;
-            box-shadow: var(--shadow-soft);
+            padding: var(--spacing-lg) var(--spacing-xl);
+            margin: var(--spacing-sm) 0 var(--spacing-lg) 0;
+            background: var(--surface);
+            box-shadow: var(--shadow-sm);
         }
         .app-hero-eyebrow{
-            font-size: 0.72rem;
-            font-weight: 800;
+            font-size: 0.7rem;
+            font-weight: 600;
             text-transform: uppercase;
-            letter-spacing: 0.08em;
-            color: #1d4d8f;
-            margin-bottom: 0.24rem;
+            letter-spacing: 0.1em;
+            color: var(--accent);
+            margin-bottom: var(--spacing-xs);
         }
         .app-hero-title{
-            font-size: 1.38rem;
-            line-height: 1.15;
-            font-weight: 800;
-            color: var(--text-strong);
+            font-size: 1.5rem;
+            line-height: 1.2;
+            font-weight: 700;
+            color: var(--text-primary);
             margin: 0;
         }
         .app-hero-subtitle{
-            margin: 0.16rem 0 0 0;
-            color: var(--text-muted);
-            font-size: 0.83rem;
+            margin: var(--spacing-xs) 0 0 0;
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+            line-height: 1.5;
         }
 
         div[data-testid="stVerticalBlockBorderWrapper"]{
-            border: 1px solid var(--border-soft);
+            border: 1px solid var(--border);
             border-radius: var(--radius-lg);
             background: var(--surface);
-            box-shadow: var(--shadow-soft);
+            box-shadow: var(--shadow-sm);
         }
         div[data-testid="stVerticalBlockBorderWrapper"] > div{
-            padding: 0.09rem 0.12rem 0.06rem 0.12rem;
+            padding: var(--spacing-md);
         }
 
         .stTabs [data-baseweb="tab-list"]{
-            gap: 0.14rem;
-            background: #ffffff;
-            border: 1px solid var(--border-soft);
+            gap: 4px;
+            background: var(--app-bg);
+            border: 1px solid var(--border);
             border-radius: var(--radius-md);
-            padding: 0.11rem;
+            padding: 4px;
         }
         .stTabs [data-baseweb="tab"]{
-            height: 30px;
-            border-radius: 7px;
-            padding: 0 0.62rem;
-            font-weight: 700;
-            color: #1b2633;
-            font-size: 0.83rem;
+            height: 36px;
+            border-radius: var(--radius-sm);
+            padding: 0 var(--spacing-md);
+            font-weight: 500;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            transition: all 0.15s ease;
+        }
+        .stTabs [data-baseweb="tab"]:hover{
+            color: var(--text-primary);
+            background: rgba(0, 0, 0, 0.03);
         }
         .stTabs [aria-selected="true"]{
-            background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
+            background: var(--accent);
             color: #ffffff !important;
-            box-shadow: 0 1px 6px rgba(17, 85, 204, 0.24);
+            box-shadow: var(--shadow-sm);
         }
 
         div[data-testid="stRadio"] > div{
-            gap: 0.2rem;
+            gap: 4px;
             width: fit-content;
-            background: #ffffff;
-            border: 1px solid var(--border-soft);
-            border-radius: 8px;
-            padding: 0.12rem;
+            background: var(--app-bg);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: 4px;
         }
         div[data-testid="stRadio"] label{
             border: 1px solid transparent;
-            border-radius: 6px;
-            padding: 0.08rem 0.5rem;
+            border-radius: var(--radius-sm);
+            padding: 6px 14px;
             background: transparent;
-            font-weight: 700;
-            color: #10151e;
-            font-size: 0.8rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            transition: all 0.15s ease;
+        }
+        div[data-testid="stRadio"] label:hover{
+            color: var(--text-primary);
+            background: rgba(0, 0, 0, 0.03);
         }
         div[data-testid="stRadio"] label:has(input:checked){
             color: #ffffff;
-            background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
-            box-shadow: 0 1px 6px rgba(17, 85, 204, 0.24);
+            background: var(--accent);
+            box-shadow: var(--shadow-sm);
         }
 
         .stButton > button,
         .stDownloadButton > button{
-            border-radius: 7px;
-            border: 1px solid #b4c0cf;
-            background: #ffffff;
-            color: #10151e;
-            font-weight: 700;
-            min-height: 1.9rem;
-            padding-top: 0.14rem;
-            padding-bottom: 0.14rem;
-            font-size: 0.82rem;
-            transition: all 120ms ease;
+            border-radius: var(--radius-sm);
+            border: 1px solid var(--border);
+            background: var(--surface);
+            color: var(--text-primary);
+            font-weight: 500;
+            min-height: 2.25rem;
+            padding: 8px 16px;
+            font-size: 0.875rem;
+            transition: all 0.15s ease;
         }
         .stButton > button:hover,
         .stDownloadButton > button:hover{
-            border-color: #8fa4bb;
-            transform: translateY(-1px);
-            box-shadow: 0 2px 8px rgba(16, 21, 30, 0.12);
+            border-color: var(--border-hover);
+            background: var(--app-bg);
+            box-shadow: var(--shadow-sm);
         }
         .stButton > button[kind="primary"],
         .stDownloadButton > button[kind="primary"]{
-            border: 1px solid var(--accent-strong);
-            background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
+            border: 1px solid var(--accent);
+            background: var(--accent);
             color: #ffffff;
+        }
+        .stButton > button[kind="primary"]:hover,
+        .stDownloadButton > button[kind="primary"]:hover{
+            background: var(--accent-hover);
+            border-color: var(--accent-hover);
         }
 
         .stTextInput input,
         .stTextArea textarea,
         .stNumberInput input{
-            border-radius: 7px !important;
-            border: 1px solid #b8c4d2 !important;
-            background: rgba(255,255,255,0.98) !important;
-            font-size: 0.84rem !important;
+            border-radius: var(--radius-sm) !important;
+            border: 1px solid var(--border) !important;
+            background: var(--surface) !important;
+            font-size: 0.9rem !important;
+            padding: 10px 12px !important;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+        }
+        .stTextInput input:focus,
+        .stTextArea textarea:focus,
+        .stNumberInput input:focus{
+            border-color: var(--accent) !important;
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1) !important;
         }
         .stTextArea textarea{
-            min-height: 72px;
+            min-height: 100px;
         }
         div[data-baseweb="select"] > div{
-            border-radius: 7px !important;
-            border: 1px solid #b8c4d2 !important;
-            background: rgba(255,255,255,0.98) !important;
-            min-height: 1.95rem !important;
+            border-radius: var(--radius-sm) !important;
+            border: 1px solid var(--border) !important;
+            background: var(--surface) !important;
+            min-height: 2.25rem !important;
+        }
+        div[data-baseweb="select"] > div:hover{
+            border-color: var(--border-hover) !important;
         }
 
         div[data-testid="stDataFrame"]{
-            border: 1px solid var(--border-soft);
-            border-radius: 9px;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
             overflow: hidden;
-            background: #ffffff;
+            background: var(--surface);
         }
 
         .stAlert{
-            border-radius: 9px;
-            border: 1px solid var(--border-soft);
+            border-radius: var(--radius-md);
+            border: 1px solid var(--border);
+            padding: var(--spacing-md);
         }
         div[data-testid="stExpander"]{
-            border: 1px solid var(--border-soft);
-            border-radius: 9px;
-            background: rgba(255,255,255,0.90);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            background: var(--surface);
+            margin-bottom: var(--spacing-sm);
+        }
+        div[data-testid="stExpander"]:hover{
+            border-color: var(--border-hover);
+        }
+
+        /* Spacing improvements */
+        .stMarkdown{
+            margin-bottom: var(--spacing-xs);
+        }
+        [data-testid="column"]{
+            padding: 0 var(--spacing-xs);
+        }
+        .stSelectbox, .stMultiSelect, .stTextInput, .stNumberInput{
+            margin-bottom: var(--spacing-sm);
+        }
+
+        /* Section dividers */
+        hr{
+            border: none;
+            border-top: 1px solid var(--border);
+            margin: var(--spacing-lg) 0;
+        }
+
+        /* Card-like sections */
+        .section-card{
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: var(--spacing-lg);
+            margin-bottom: var(--spacing-md);
         }
         </style>
         """,

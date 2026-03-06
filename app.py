@@ -1476,7 +1476,10 @@ with tab_crud_alumnos:
 
     with st.container(border=True):
         st.markdown("**3) EXCEL RS**")
-        st.caption("Richmond Studio: CLASS NAME, CLASS CODE, STUDENT NAME, IDENTIFIER.")
+        st.caption(
+            "Richmond Studio: CLASS NAME, CLASS CODE, STUDENT NAME, IDENTIFIER. "
+            "Solo roles student/teacher."
+        )
         rs_token_raw = st.text_input(
             "Bearer token RS",
             type="password",
@@ -1498,6 +1501,22 @@ with tab_crud_alumnos:
                 st.error(f"Error: {exc}")
                 st.stop()
 
+            allowed_roles = {"student", "teacher"}
+            excluded_roles: Dict[str, int] = {}
+            filtered_users: List[Dict[str, object]] = []
+            for item in rs_users:
+                attrs = (
+                    item.get("attributes")
+                    if isinstance(item.get("attributes"), dict)
+                    else {}
+                )
+                role = str(attrs.get("role") or "").strip().lower()
+                if role not in allowed_roles:
+                    role_key = role or "sin_rol"
+                    excluded_roles[role_key] = int(excluded_roles.get(role_key, 0)) + 1
+                    continue
+                filtered_users.append(item)
+
             group_lookup: Dict[str, Dict[str, str]] = {}
             for group_item in rs_groups:
                 group_id = str(group_item.get("id") or "").strip()
@@ -1516,7 +1535,7 @@ with tab_crud_alumnos:
                 }
 
             rows_rs: List[Dict[str, str]] = []
-            for item in rs_users:
+            for item in filtered_users:
                 attrs = item.get("attributes") if isinstance(item.get("attributes"), dict) else {}
                 relationships = (
                     item.get("relationships")
@@ -1587,7 +1606,19 @@ with tab_crud_alumnos:
             rs_excel_bytes = _export_simple_excel(rows_rs, sheet_name="users")
             st.session_state["rs_excel_bytes"] = rs_excel_bytes
             st.session_state["rs_excel_count"] = int(len(rows_rs))
-            st.success(f"EXCEL RS listo. Filas: {len(rows_rs)}")
+            st.success(
+                "EXCEL RS listo. Filas: {filas} | Usuarios validos: {validos}/{total}.".format(
+                    filas=len(rows_rs),
+                    validos=len(filtered_users),
+                    total=len(rs_users),
+                )
+            )
+            if excluded_roles:
+                excluded_txt = ", ".join(
+                    f"{role}: {count}"
+                    for role, count in sorted(excluded_roles.items(), key=lambda item: item[0])
+                )
+                st.caption(f"Roles excluidos: {excluded_txt}")
             if rows_rs:
                 _show_dataframe(rows_rs[:200], use_container_width=True)
 

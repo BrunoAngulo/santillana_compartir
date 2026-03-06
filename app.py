@@ -125,7 +125,211 @@ def _render_restricted_blur(section_name: str, key_suffix: str) -> None:
             _show_restricted_unlock_dialog()
 
 
+def _inject_professional_theme() -> None:
+    st.markdown(
+        """
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500&display=swap');
+
+        :root{
+            --app-bg-a: #f8fbff;
+            --app-bg-b: #f2f6fb;
+            --surface: rgba(255,255,255,0.92);
+            --surface-strong: #ffffff;
+            --text-strong: #0b2239;
+            --text-muted: #405368;
+            --border-soft: #d9e3ee;
+            --accent: #0b6b85;
+            --accent-strong: #0c4f74;
+            --shadow-soft: 0 10px 26px rgba(12, 34, 57, 0.10);
+            --radius-md: 12px;
+            --radius-lg: 16px;
+        }
+
+        html, body, [class*="css"]{
+            font-family: "Manrope", "Segoe UI", sans-serif;
+            color: var(--text-strong);
+        }
+        code, pre, .stCode, .stJson{
+            font-family: "IBM Plex Mono", Consolas, monospace !important;
+        }
+
+        [data-testid="stAppViewContainer"]{
+            background:
+                radial-gradient(1000px 380px at 6% -8%, rgba(11,107,133,0.12), transparent 46%),
+                radial-gradient(900px 360px at 96% -12%, rgba(12,79,116,0.10), transparent 44%),
+                linear-gradient(180deg, var(--app-bg-a) 0%, var(--app-bg-b) 100%);
+        }
+        [data-testid="stHeader"]{
+            background: transparent;
+        }
+        .main .block-container{
+            max-width: 1460px;
+            padding-top: 1.1rem;
+            padding-bottom: 2.4rem;
+            padding-left: 1.1rem;
+            padding-right: 1.1rem;
+        }
+
+        h1, h2, h3, h4{
+            color: var(--text-strong);
+            letter-spacing: -0.01em;
+        }
+        h1{
+            font-size: 2.0rem;
+            font-weight: 800;
+            margin-bottom: 0.1rem;
+        }
+        [data-testid="stMarkdownContainer"] p,
+        [data-testid="stCaptionContainer"]{
+            color: var(--text-muted);
+        }
+
+        .app-hero{
+            border: 1px solid var(--border-soft);
+            border-radius: var(--radius-lg);
+            padding: 1rem 1rem 0.95rem 1rem;
+            margin: 0.2rem 0 0.8rem 0;
+            background:
+                linear-gradient(120deg, rgba(255,255,255,0.94) 0%, rgba(243,249,255,0.94) 100%);
+            box-shadow: var(--shadow-soft);
+        }
+        .app-hero-eyebrow{
+            font-size: 0.76rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #34627d;
+            margin-bottom: 0.35rem;
+        }
+        .app-hero-title{
+            font-size: 1.85rem;
+            line-height: 1.15;
+            font-weight: 800;
+            color: var(--text-strong);
+            margin: 0;
+        }
+        .app-hero-subtitle{
+            margin: 0.32rem 0 0 0;
+            color: var(--text-muted);
+            font-size: 0.98rem;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"]{
+            border: 1px solid var(--border-soft);
+            border-radius: var(--radius-lg);
+            background: var(--surface);
+            box-shadow: var(--shadow-soft);
+            backdrop-filter: blur(2px);
+        }
+        div[data-testid="stVerticalBlockBorderWrapper"] > div{
+            padding: 0.35rem 0.3rem 0.15rem 0.3rem;
+        }
+
+        .stTabs [data-baseweb="tab-list"]{
+            gap: 0.35rem;
+            background: rgba(255,255,255,0.70);
+            border: 1px solid var(--border-soft);
+            border-radius: var(--radius-md);
+            padding: 0.22rem;
+        }
+        .stTabs [data-baseweb="tab"]{
+            height: 38px;
+            border-radius: 10px;
+            padding: 0 0.95rem;
+            font-weight: 700;
+            color: #31475d;
+        }
+        .stTabs [aria-selected="true"]{
+            background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
+            color: #ffffff !important;
+            box-shadow: 0 8px 20px rgba(11, 107, 133, 0.28);
+        }
+
+        div[data-testid="stRadio"] > div{
+            gap: 0.32rem;
+            width: fit-content;
+            background: rgba(255,255,255,0.74);
+            border: 1px solid var(--border-soft);
+            border-radius: 12px;
+            padding: 0.2rem;
+        }
+        div[data-testid="stRadio"] label{
+            border: 1px solid transparent;
+            border-radius: 9px;
+            padding: 0.2rem 0.7rem;
+            background: transparent;
+            font-weight: 700;
+            color: #2c4358;
+        }
+        div[data-testid="stRadio"] label:has(input:checked){
+            color: #ffffff;
+            background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
+            box-shadow: 0 7px 16px rgba(11, 107, 133, 0.25);
+        }
+
+        .stButton > button,
+        .stDownloadButton > button{
+            border-radius: 10px;
+            border: 1px solid #9db6c9;
+            background: linear-gradient(180deg, #ffffff 0%, #f1f7fc 100%);
+            color: #17324d;
+            font-weight: 700;
+            transition: all 120ms ease;
+        }
+        .stButton > button:hover,
+        .stDownloadButton > button:hover{
+            border-color: #7a9ab3;
+            transform: translateY(-1px);
+            box-shadow: 0 8px 18px rgba(23, 50, 77, 0.12);
+        }
+        .stButton > button[kind="primary"],
+        .stDownloadButton > button[kind="primary"]{
+            border: 1px solid var(--accent-strong);
+            background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
+            color: #ffffff;
+        }
+
+        .stTextInput input,
+        .stTextArea textarea,
+        .stNumberInput input{
+            border-radius: 10px !important;
+            border: 1px solid #c7d5e3 !important;
+            background: rgba(255,255,255,0.98) !important;
+        }
+        .stTextArea textarea{
+            min-height: 96px;
+        }
+        div[data-baseweb="select"] > div{
+            border-radius: 10px !important;
+            border: 1px solid #c7d5e3 !important;
+            background: rgba(255,255,255,0.98) !important;
+        }
+
+        div[data-testid="stDataFrame"]{
+            border: 1px solid var(--border-soft);
+            border-radius: 12px;
+            overflow: hidden;
+            background: #ffffff;
+        }
+
+        .stAlert{
+            border-radius: 12px;
+            border: 1px solid var(--border-soft);
+        }
+        div[data-testid="stExpander"]{
+            border: 1px solid var(--border-soft);
+            border-radius: 12px;
+            background: rgba(255,255,255,0.90);
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 st.set_page_config(page_title="Generador de Plantilla", layout="wide")
+_inject_professional_theme()
 st.markdown("**Menu principal**")
 menu_option = st.radio(
     "Menu",
@@ -140,8 +344,18 @@ if menu_option == "Jira Focus Web":
         st.stop()
     render_jira_focus_web(height=1400)
     st.stop()
-st.title("Procesos Pegasus")
-st.caption("Gestion rapida de clases, profesores y alumnos.")
+st.markdown(
+    """
+    <section class="app-hero">
+      <div class="app-hero-eyebrow">Panel Operativo</div>
+      <h1 class="app-hero-title">Procesos Pegasus</h1>
+      <p class="app-hero-subtitle">
+        Gestion integrada de clases, profesores y alumnos con ejecucion directa desde web.
+      </p>
+    </section>
+    """,
+    unsafe_allow_html=True,
+)
 st.markdown("**Configuracion global**")
 global_col_token, global_col_colegio = st.columns([2.3, 1.1])
 with global_col_token:

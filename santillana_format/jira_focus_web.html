@@ -2483,6 +2483,7 @@
       };
       const INACTIVITY_MS = 2 * 60 * 60 * 1000;
       const SUGGESTION_MS = 3 * 24 * 60 * 60 * 1000;
+      const COMMENT_LINK_FORWARD_WINDOW_MS = 12 * 60 * 60 * 1000;
       const ONBOARDING_START = { year: 2025, month: 12, day: 15, hour: 8, minute: 30 };
       const DOCENTES_TEMPLATE_ACTIVITY = 'Entrega de plantillas DOCENTES Coach/Farmer/Hunter';
       const ESTUDIANTES_TEMPLATE_ACTIVITY = 'Entrega de plantillas ESTUDIANTES Coach/Farmer/Hunter';
@@ -2746,14 +2747,23 @@
         normalizeBusinessCheckpoint(dateIn) {
           const d = new Date(dateIn);
           if (Number.isNaN(d.getTime())) return this.nextBusinessStart(new Date());
-          const w = this.dayWindow(d);
-          if (w && d >= w.start && d <= w.end) {
-            return d;
+          const blocks = this.dayWorkBlocks(d);
+          if (blocks.length) {
+            for (let i = 0; i < blocks.length; i += 1) {
+              const block = blocks[i];
+              if (d < block.start) {
+                return new Date(block.start);
+              }
+              if (d >= block.start && d <= block.end) {
+                return d;
+              }
+            }
+            const nextDay = new Date(d);
+            nextDay.setDate(nextDay.getDate() + 1);
+            nextDay.setHours(0, 0, 0, 0);
+            return this.nextBusinessStart(nextDay);
           }
-          const nextDay = new Date(d);
-          nextDay.setDate(nextDay.getDate() + 1);
-          nextDay.setHours(0, 0, 0, 0);
-          return this.nextBusinessStart(nextDay);
+          return this.nextBusinessStart(d);
         },
         subtractBusinessMinutes(endIn, minsIn) {
           let remain = Math.max(0, Math.floor(Number(minsIn || 0)));
@@ -4428,6 +4438,19 @@
         const ts = tsOf(value);
         return Number.isFinite(ts) ? Math.floor(ts / 60000) : NaN;
       }
+      function commentLinkAnchor(comment) {
+        const sourceTs = tsOf(comment && comment.created ? comment.created : comment);
+        if (!Number.isFinite(sourceTs)) {
+          return { anchorTs: NaN, outsideBusiness: false };
+        }
+        const sourceDate = new Date(sourceTs);
+        const anchorDate = TimeService.normalizeBusinessCheckpoint(sourceDate);
+        const anchorTs = tsOf(anchorDate);
+        return {
+          anchorTs: Number.isFinite(anchorTs) ? anchorTs : sourceTs,
+          outsideBusiness: !TimeService.isBusinessNow(sourceDate)
+        };
+      }
       function linkedWorklogIdsForComment(issueKey, commentId) {
         const links = state.timelineLinksByIssue[issueKey] || { commentToWorklogIds: {}, worklogToCommentId: {} };
         const commentKey = String(commentId || '').trim();
@@ -4476,21 +4499,35 @@
           if (hasResolvedLinks) return null;
         }
 
-        const commentMinute = minuteBucket(comment.created);
-        const commentTs = tsOf(comment.created);
+        const linkRef = commentLinkAnchor(comment);
+        const commentTs = Number.isFinite(linkRef.anchorTs)
+          ? linkRef.anchorTs
+          : tsOf(comment.created);
+        const commentMinute = Number.isFinite(commentTs)
+          ? Math.floor(commentTs / 60000)
+          : NaN;
         if (!Number.isFinite(commentMinute)) return null;
+        const nextWindowLimitTs = linkRef.outsideBusiness && Number.isFinite(commentTs)
+          ? (commentTs + COMMENT_LINK_FORWARD_WINDOW_MS)
+          : NaN;
         const candidates = rows
           .map((w) => ({ row: w, win: windowOf(w) }))
           .filter((it) => Number.isFinite(it.win.startTs) && Number.isFinite(it.win.endTs))
           .map((it) => {
             const endMinute = minuteBucket(it.win.endTs);
+            const startsAfterCheckpoint = linkRef.outsideBusiness
+              && Number.isFinite(nextWindowLimitTs)
+              && it.win.startTs >= commentTs
+              && it.win.startTs <= nextWindowLimitTs;
             const endsAtCommentMinute = endMinute === commentMinute;
-            if (!endsAtCommentMinute) {
+            if (!endsAtCommentMinute && !startsAfterCheckpoint) {
               return null;
             }
+            const matchTs = endsAtCommentMinute ? it.win.endTs : it.win.startTs;
             return {
               row: it.row,
-              distEnd: Number.isFinite(commentTs) ? Math.abs(it.win.endTs - commentTs) : 0
+              matchRank: endsAtCommentMinute ? 0 : 1,
+              distEnd: Number.isFinite(commentTs) ? Math.abs(matchTs - commentTs) : 0
             };
           })
           .filter((it) => !!it);
@@ -4499,6 +4536,7 @@
           const mineA = mine(a.row.author) ? 0 : 1;
           const mineB = mine(b.row.author) ? 0 : 1;
           if (mineA !== mineB) return mineA - mineB;
+          if (a.matchRank !== b.matchRank) return a.matchRank - b.matchRank;
           if (a.distEnd !== b.distEnd) return a.distEnd - b.distEnd;
           return 0;
         });
@@ -4790,36 +4828,27 @@
 
       function suggestionFor(issueKey) {
         const comments = state.commentsByIssue[issueKey] || [];
-        const worklogs = state.worklogsByIssue[issueKey] || [];
         if (!comments.length || !state.me) return null;
         const commentsAsc = comments
           .slice()
           .filter((c) => c && c.created)
           .sort((a, b) => new Date(a.created).getTime() - new Date(b.created).getTime());
-        const myLogs = worklogs
-          .slice()
-          .filter((w) => mine(w.author))
-          .sort((a, b) => new Date(a.started || a.created || 0).getTime() - new Date(b.started || b.created || 0).getTime());
         const pending = [];
-        for (let i = 0; i < commentsAsc.length; i += 1) {
-          const c = commentsAsc[i];
-          const cTs = new Date(c.created).getTime();
-          const nextTs = i < commentsAsc.length - 1
-            ? new Date(commentsAsc[i + 1].created).getTime()
-            : Number.POSITIVE_INFINITY;
-          if (!Number.isFinite(cTs)) continue;
-          const registered = myLogs.some((w) => {
-            const wTs = new Date(w.started || w.created || 0).getTime();
-            return Number.isFinite(wTs) && wTs >= cTs && wTs < nextTs;
-          });
-          if (!registered) {
+        commentsAsc.forEach((c) => {
+          const linked = findExistingWorklogForComment(issueKey, c);
+          const registeredByMe = !!(linked && mine(linked.author));
+          if (!registeredByMe) {
             pending.push(c);
           }
-        }
+        });
         if (pending.length) {
           const c = pending[pending.length - 1];
           const suggestedType = inferOfficialActivityType(commentText(c));
-          const mins = Math.max(5, Math.min(480, TimeService.businessMinutesBetween(new Date(c.created), new Date())));
+          const anchor = commentLinkAnchor(c);
+          const baseDate = Number.isFinite(anchor.anchorTs)
+            ? new Date(anchor.anchorTs)
+            : new Date(c.created);
+          const mins = Math.max(5, Math.min(480, TimeService.businessMinutesBetween(baseDate, new Date())));
           return {
             commentId: c.id,
             created: c.created,
@@ -4865,8 +4894,13 @@
         for (let i = 0; i < commentsAsc.length; i += 1) {
           const c = commentsAsc[i];
           const cId = String(c.id || '');
-          const cTs = new Date(c.created || 0).getTime();
+          const linkRef = commentLinkAnchor(c);
+          const cTsRaw = new Date(c.created || 0).getTime();
+          const cTs = Number.isFinite(linkRef.anchorTs) ? linkRef.anchorTs : cTsRaw;
           const cMinute = Number.isFinite(cTs) ? Math.floor(cTs / 60000) : NaN;
+          const nextWindowLimitTs = linkRef.outsideBusiness && Number.isFinite(cTs)
+            ? (cTs + COMMENT_LINK_FORWARD_WINDOW_MS)
+            : NaN;
           if (!cId || !Number.isFinite(cMinute)) continue;
           const candidates = [];
           logsAsc.forEach((r) => {
@@ -4876,22 +4910,39 @@
             const endTs = Number(r.endTs || (startTs + Math.max(1, Number(r.mins || 1)) * 60000));
             if (!Number.isFinite(startTs) || !Number.isFinite(endTs)) return;
             const endMinute = Number.isFinite(endTs) ? Math.floor(endTs / 60000) : NaN;
-            if (endMinute !== cMinute) return;
+            const endsAtCommentMinute = endMinute === cMinute;
+            const startsAfterCheckpoint = linkRef.outsideBusiness
+              && Number.isFinite(nextWindowLimitTs)
+              && startTs >= cTs
+              && startTs <= nextWindowLimitTs;
+            if (!endsAtCommentMinute && !startsAfterCheckpoint) return;
             const authorObj = r && r.worklog && r.worklog.author ? r.worklog.author : null;
             const mineRank = mine(authorObj) ? 0 : 1;
-            const dist = Number.isFinite(cTs) ? Math.abs(endTs - cTs) : 0;
+            const matchTs = endsAtCommentMinute ? endTs : startTs;
+            const dist = Number.isFinite(cTs) ? Math.abs(matchTs - cTs) : 0;
             candidates.push({
               id,
               dist,
-              mineRank
+              mineRank,
+              matchRank: endsAtCommentMinute ? 0 : 1
             });
           });
-          candidates.sort((a, b) => (a.mineRank - b.mineRank) || (a.dist - b.dist));
+          candidates.sort((a, b) => (a.mineRank - b.mineRank) || (a.matchRank - b.matchRank) || (a.dist - b.dist));
           const best = candidates.length ? candidates[0] : null;
           if (best && best.id) {
             const prev = worklogToBest[best.id];
-            if (!prev || best.mineRank < prev.mineRank || (best.mineRank === prev.mineRank && best.dist < prev.dist)) {
-              worklogToBest[best.id] = { commentId: cId, dist: best.dist, mineRank: best.mineRank };
+            if (
+              !prev
+              || best.mineRank < prev.mineRank
+              || (best.mineRank === prev.mineRank && best.matchRank < prev.matchRank)
+              || (best.mineRank === prev.mineRank && best.matchRank === prev.matchRank && best.dist < prev.dist)
+            ) {
+              worklogToBest[best.id] = {
+                commentId: cId,
+                dist: best.dist,
+                mineRank: best.mineRank,
+                matchRank: best.matchRank
+              };
             }
           }
         }

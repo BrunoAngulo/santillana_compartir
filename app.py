@@ -132,18 +132,18 @@ def _inject_professional_theme() -> None:
         @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500&display=swap');
 
         :root{
-            --app-bg-a: #f8fbff;
-            --app-bg-b: #f2f6fb;
-            --surface: rgba(255,255,255,0.92);
+            --app-bg-a: #f4f6f9;
+            --app-bg-b: #edf1f6;
+            --surface: #ffffff;
             --surface-strong: #ffffff;
-            --text-strong: #0b2239;
-            --text-muted: #405368;
-            --border-soft: #d9e3ee;
-            --accent: #0b6b85;
-            --accent-strong: #0c4f74;
-            --shadow-soft: 0 10px 26px rgba(12, 34, 57, 0.10);
-            --radius-md: 12px;
-            --radius-lg: 16px;
+            --text-strong: #0f1722;
+            --text-muted: #1f3042;
+            --border-soft: #ccd7e4;
+            --accent: #0f4f7a;
+            --accent-strong: #0b3f62;
+            --shadow-soft: 0 4px 14px rgba(15, 23, 34, 0.08);
+            --radius-md: 10px;
+            --radius-lg: 12px;
         }
 
         html, body, [class*="css"]{
@@ -155,20 +155,20 @@ def _inject_professional_theme() -> None:
         }
 
         [data-testid="stAppViewContainer"]{
-            background:
-                radial-gradient(1000px 380px at 6% -8%, rgba(11,107,133,0.12), transparent 46%),
-                radial-gradient(900px 360px at 96% -12%, rgba(12,79,116,0.10), transparent 44%),
-                linear-gradient(180deg, var(--app-bg-a) 0%, var(--app-bg-b) 100%);
+            background: linear-gradient(180deg, var(--app-bg-a) 0%, var(--app-bg-b) 100%);
         }
         [data-testid="stHeader"]{
             background: transparent;
         }
         .main .block-container{
-            max-width: 1460px;
-            padding-top: 1.1rem;
-            padding-bottom: 2.4rem;
-            padding-left: 1.1rem;
-            padding-right: 1.1rem;
+            max-width: 1500px;
+            padding-top: 0.6rem;
+            padding-bottom: 1.1rem;
+            padding-left: 0.75rem;
+            padding-right: 0.75rem;
+        }
+        div[data-testid="stVerticalBlock"]{
+            gap: 0.35rem;
         }
 
         h1, h2, h3, h4{
@@ -176,22 +176,25 @@ def _inject_professional_theme() -> None:
             letter-spacing: -0.01em;
         }
         h1{
-            font-size: 2.0rem;
+            font-size: 1.72rem;
             font-weight: 800;
-            margin-bottom: 0.1rem;
+            margin-bottom: 0.02rem;
         }
         [data-testid="stMarkdownContainer"] p,
         [data-testid="stCaptionContainer"]{
             color: var(--text-muted);
+            margin-top: 0.08rem;
+            margin-bottom: 0.32rem;
+            line-height: 1.25;
+            font-size: 0.92rem;
         }
 
         .app-hero{
             border: 1px solid var(--border-soft);
             border-radius: var(--radius-lg);
-            padding: 1rem 1rem 0.95rem 1rem;
-            margin: 0.2rem 0 0.8rem 0;
-            background:
-                linear-gradient(120deg, rgba(255,255,255,0.94) 0%, rgba(243,249,255,0.94) 100%);
+            padding: 0.68rem 0.82rem 0.64rem 0.82rem;
+            margin: 0.1rem 0 0.5rem 0;
+            background: #ffffff;
             box-shadow: var(--shadow-soft);
         }
         .app-hero-eyebrow{
@@ -203,16 +206,16 @@ def _inject_professional_theme() -> None:
             margin-bottom: 0.35rem;
         }
         .app-hero-title{
-            font-size: 1.85rem;
+            font-size: 1.56rem;
             line-height: 1.15;
             font-weight: 800;
             color: var(--text-strong);
             margin: 0;
         }
         .app-hero-subtitle{
-            margin: 0.32rem 0 0 0;
+            margin: 0.22rem 0 0 0;
             color: var(--text-muted);
-            font-size: 0.98rem;
+            font-size: 0.9rem;
         }
 
         div[data-testid="stVerticalBlockBorderWrapper"]{
@@ -220,30 +223,30 @@ def _inject_professional_theme() -> None:
             border-radius: var(--radius-lg);
             background: var(--surface);
             box-shadow: var(--shadow-soft);
-            backdrop-filter: blur(2px);
         }
         div[data-testid="stVerticalBlockBorderWrapper"] > div{
-            padding: 0.35rem 0.3rem 0.15rem 0.3rem;
+            padding: 0.14rem 0.16rem 0.08rem 0.16rem;
         }
 
         .stTabs [data-baseweb="tab-list"]{
-            gap: 0.35rem;
-            background: rgba(255,255,255,0.70);
+            gap: 0.2rem;
+            background: #ffffff;
             border: 1px solid var(--border-soft);
             border-radius: var(--radius-md);
-            padding: 0.22rem;
+            padding: 0.16rem;
         }
         .stTabs [data-baseweb="tab"]{
-            height: 38px;
-            border-radius: 10px;
-            padding: 0 0.95rem;
+            height: 33px;
+            border-radius: 8px;
+            padding: 0 0.72rem;
             font-weight: 700;
-            color: #31475d;
+            color: #1d3348;
+            font-size: 0.88rem;
         }
         .stTabs [aria-selected="true"]{
             background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
             color: #ffffff !important;
-            box-shadow: 0 8px 20px rgba(11, 107, 133, 0.28);
+            box-shadow: 0 2px 8px rgba(15, 79, 122, 0.24);
         }
 
         div[data-testid="stRadio"] > div{
@@ -251,37 +254,41 @@ def _inject_professional_theme() -> None:
             width: fit-content;
             background: rgba(255,255,255,0.74);
             border: 1px solid var(--border-soft);
-            border-radius: 12px;
+            border-radius: 9px;
             padding: 0.2rem;
         }
         div[data-testid="stRadio"] label{
             border: 1px solid transparent;
-            border-radius: 9px;
-            padding: 0.2rem 0.7rem;
+            border-radius: 7px;
+            padding: 0.12rem 0.6rem;
             background: transparent;
             font-weight: 700;
-            color: #2c4358;
+            color: #1e3348;
+            font-size: 0.86rem;
         }
         div[data-testid="stRadio"] label:has(input:checked){
             color: #ffffff;
             background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
-            box-shadow: 0 7px 16px rgba(11, 107, 133, 0.25);
+            box-shadow: 0 2px 8px rgba(15, 79, 122, 0.24);
         }
 
         .stButton > button,
         .stDownloadButton > button{
-            border-radius: 10px;
-            border: 1px solid #9db6c9;
-            background: linear-gradient(180deg, #ffffff 0%, #f1f7fc 100%);
-            color: #17324d;
+            border-radius: 8px;
+            border: 1px solid #9eb0c2;
+            background: linear-gradient(180deg, #ffffff 0%, #f5f8fb 100%);
+            color: #15283d;
             font-weight: 700;
+            min-height: 2.12rem;
+            padding-top: 0.24rem;
+            padding-bottom: 0.24rem;
             transition: all 120ms ease;
         }
         .stButton > button:hover,
         .stDownloadButton > button:hover{
             border-color: #7a9ab3;
             transform: translateY(-1px);
-            box-shadow: 0 8px 18px rgba(23, 50, 77, 0.12);
+            box-shadow: 0 4px 12px rgba(23, 50, 77, 0.11);
         }
         .stButton > button[kind="primary"],
         .stDownloadButton > button[kind="primary"]{
@@ -293,16 +300,16 @@ def _inject_professional_theme() -> None:
         .stTextInput input,
         .stTextArea textarea,
         .stNumberInput input{
-            border-radius: 10px !important;
-            border: 1px solid #c7d5e3 !important;
+            border-radius: 8px !important;
+            border: 1px solid #b7c8d9 !important;
             background: rgba(255,255,255,0.98) !important;
         }
         .stTextArea textarea{
-            min-height: 96px;
+            min-height: 82px;
         }
         div[data-baseweb="select"] > div{
-            border-radius: 10px !important;
-            border: 1px solid #c7d5e3 !important;
+            border-radius: 8px !important;
+            border: 1px solid #b7c8d9 !important;
             background: rgba(255,255,255,0.98) !important;
         }
 
@@ -943,8 +950,8 @@ def _delete_alumno_clase_gestion_escolar(
         raise RuntimeError(message or f"HTTP {status_code}")
 
     if not isinstance(payload, dict) or payload.get("success") is False:
-        message = payload.get("message") if isinstance(payload, dict) else "Respuesta invÃ¡lida"
-        raise RuntimeError(message or "Respuesta invÃ¡lida")
+        message = payload.get("message") if isinstance(payload, dict) else "Respuesta inv�f¡lida"
+        raise RuntimeError(message or "Respuesta inv�f¡lida")
 
 
 def _post_clase_participantes_gestion_escolar(
@@ -1991,31 +1998,6 @@ with tab_crud_clases:
                         key="clases_eliminar_masivo_btn",
                         use_container_width=True,
                     )
-    
-        if "clases_auto_group_unlocked" not in st.session_state:
-            st.session_state["clases_auto_group_unlocked"] = False
-    
-        @st.dialog("Acceso Admin - Asignación de Participantes", width="small")
-        def _show_auto_group_unlock_dialog() -> None:
-            col_l, col_c, col_r = st.columns([1, 3, 1])
-            with col_c:
-                st.markdown("### Ingresar clave")
-                pwd_unlock = st.text_input(
-                    "Clave admin",
-                    type="password",
-                    key="clases_auto_group_unlock_input",
-                    placeholder="password",
-                )
-                col_ok, col_cancel = st.columns(2)
-                if col_ok.button("Desbloquear", key="clases_auto_group_unlock_ok"):
-                    if str(pwd_unlock or "") == "admin":
-                        st.session_state["clases_auto_group_unlocked"] = True
-                        st.rerun()
-                    else:
-                        st.error("Clave admin incorrecta.")
-                if col_cancel.button("Cancelar", key="clases_auto_group_unlock_cancel"):
-                    st.rerun()
-    
         run_cargar_asignacion = False
         run_eliminar_participantes = False
         run_asignar_participantes = False
@@ -2023,80 +2005,39 @@ with tab_crud_clases:
         confirm_asignar_participantes = False
         st.divider()
         with st.container(border=True):
-            st.markdown("**Asignación de Participantes**")
+            st.markdown("**Asignacion de Participantes**")
             st.caption(
                 "Ejecuta por separado: primero elimina alumnos, luego asigna grupo."
             )
-    
-            if not st.session_state.get("clases_auto_group_unlocked", False):
-                st.markdown(
-                    """
-                    <style>
-                    .auto-group-blur-box{
-                        filter: blur(3px);
-                        opacity: 0.45;
-                        border: 1px dashed #9aa0a6;
-                        border-radius: 12px;
-                        padding: 16px;
-                        margin: 6px 0 14px 0;
-                        background: linear-gradient(135deg,#f8f9fa,#eef2f6);
-                        text-align:center;
-                    }
-                    .auto-group-blur-box small{
-                        display:block;
-                        margin-top:4px;
-                    }
-                    </style>
-                    <div class="auto-group-blur-box">
-                        <strong>Funcion protegida</strong>
-                        <small>Se requiere clave admin para ver y ejecutar.</small>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-                col_a, col_b, col_c = st.columns([1, 2, 1])
-                with col_b:
-                    if st.button(
-                        "Desbloquear funcion",
-                        key="clases_auto_group_unlock_open",
-                        use_container_width=True,
-                    ):
-                        _show_auto_group_unlock_dialog()
-            else:
-                col_auto_load, col_auto_del, col_auto_asig, col_auto_lock = st.columns(
-                    [1.1, 1.5, 1.5, 0.8]
-                )
-                run_cargar_asignacion = col_auto_load.button(
-                    "Cargar clases",
-                    key="clases_auto_group_load",
-                    use_container_width=True,
-                )
-                confirm_eliminar_participantes = col_auto_del.checkbox(
-                    "Confirmo eliminar alumnos de las clases.",
-                    key="clases_auto_group_confirm_delete_participants",
-                )
-                run_eliminar_participantes = col_auto_del.button(
-                    "Eliminar participantes",
-                    key="clases_auto_group_delete_participants",
-                    use_container_width=True,
-                )
-                confirm_asignar_participantes = col_auto_asig.checkbox(
-                    "Confirmo asignar grupos a las clases.",
-                    key="clases_auto_group_confirm_assign_participants",
-                )
-                run_asignar_participantes = col_auto_asig.button(
-                    "Asignar participantes",
-                    key="clases_auto_group_assign_participants",
-                    use_container_width=True,
-                )
-                if col_auto_lock.button(
-                    "Bloquear",
-                    key="clases_auto_group_lock_btn",
-                    use_container_width=True,
-                ):
-                    st.session_state["clases_auto_group_unlocked"] = False
-                    st.rerun()
-    
+
+            col_auto_load, col_auto_del, col_auto_asig = st.columns(
+                [1.1, 1.5, 1.5],
+                gap="small",
+            )
+            run_cargar_asignacion = col_auto_load.button(
+                "Cargar clases",
+                key="clases_auto_group_load",
+                use_container_width=True,
+            )
+            confirm_eliminar_participantes = col_auto_del.checkbox(
+                "Confirmo eliminar alumnos de las clases.",
+                key="clases_auto_group_confirm_delete_participants",
+            )
+            run_eliminar_participantes = col_auto_del.button(
+                "Eliminar participantes",
+                key="clases_auto_group_delete_participants",
+                use_container_width=True,
+            )
+            confirm_asignar_participantes = col_auto_asig.checkbox(
+                "Confirmo asignar grupos a las clases.",
+                key="clases_auto_group_confirm_assign_participants",
+            )
+            run_asignar_participantes = col_auto_asig.button(
+                "Asignar participantes",
+                key="clases_auto_group_assign_participants",
+                use_container_width=True,
+            )
+
         if run_cargar_asignacion:
             if not token:
                 st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
@@ -2182,128 +2123,126 @@ with tab_crud_clases:
                     omitidas=max(len(clases) - len(rows_auto), 0),
                 )
             )
-    
         auto_rows = st.session_state.get("clases_auto_group_rows") or []
         auto_warnings = st.session_state.get("clases_auto_group_warnings") or []
-        if st.session_state.get("clases_auto_group_unlocked", False):
-            show_auto_group_grid = st.toggle(
-                "Mostrar grilla por grado",
-                value=False,
-                key="clases_auto_group_show_grid",
+        show_auto_group_grid = st.toggle(
+            "Mostrar grilla por grado",
+            value=False,
+            key="clases_auto_group_show_grid",
+        )
+        if show_auto_group_grid and auto_rows:
+            st.markdown("**Asignacion por grado (grilla compacta 7 columnas)**")
+            auto_rows = sorted(
+                auto_rows,
+                key=lambda row: (
+                    str(row.get("nivel_nombre") or "").upper(),
+                    str(row.get("grado_nombre") or "").upper(),
+                    int(row.get("nivel_id") or 0),
+                    int(row.get("grado_id") or 0),
+                    (
+                        _extract_group_hint_from_class_name(row.get("clase_nombre"))
+                        or "ZZ"
+                    ),
+                    str(row.get("clase_nombre") or "").upper(),
+                    int(row.get("clase_id") or 0),
+                ),
             )
-            if show_auto_group_grid and auto_rows:
-                st.markdown("**Asignacion por grado (grilla compacta 7 columnas)**")
-                auto_rows = sorted(
-                    auto_rows,
+            grouped_rows: Dict[Tuple[int, int, str, str], List[Dict[str, object]]] = {}
+            for row in auto_rows:
+                key = (
+                    int(row.get("nivel_id") or 0),
+                    int(row.get("grado_id") or 0),
+                    str(row.get("nivel_nombre") or ""),
+                    str(row.get("grado_nombre") or ""),
+                )
+                grouped_rows.setdefault(key, []).append(row)
+
+            for group_key in sorted(
+                grouped_rows.keys(),
+                key=lambda item: (
+                    item[2].upper(),
+                    item[3].upper(),
+                    item[0],
+                    item[1],
+                ),
+            ):
+                nivel_id, grado_id, nivel_nombre, grado_nombre = group_key
+                rows_group = grouped_rows[group_key]
+                titulo_nivel = nivel_nombre or f"Nivel {nivel_id}"
+                titulo_grado = grado_nombre or f"Grado {grado_id}"
+                st.caption(
+                    f"{titulo_nivel} | {titulo_grado} | Clases: {len(rows_group)}"
+                )
+                rows_group = sorted(
+                    rows_group,
                     key=lambda row: (
-                        str(row.get("nivel_nombre") or "").upper(),
-                        str(row.get("grado_nombre") or "").upper(),
-                        int(row.get("nivel_id") or 0),
-                        int(row.get("grado_id") or 0),
                         (
-                            _extract_group_hint_from_class_name(row.get("clase_nombre"))
+                            _extract_group_hint_from_class_name(
+                                row.get("clase_nombre")
+                            )
                             or "ZZ"
                         ),
                         str(row.get("clase_nombre") or "").upper(),
                         int(row.get("clase_id") or 0),
                     ),
                 )
-                grouped_rows: Dict[Tuple[int, int, str, str], List[Dict[str, object]]] = {}
-                for row in auto_rows:
-                    key = (
-                        int(row.get("nivel_id") or 0),
-                        int(row.get("grado_id") or 0),
-                        str(row.get("nivel_nombre") or ""),
-                        str(row.get("grado_nombre") or ""),
-                    )
-                    grouped_rows.setdefault(key, []).append(row)
-    
-                for group_key in sorted(
-                    grouped_rows.keys(),
-                    key=lambda item: (
-                        item[2].upper(),
-                        item[3].upper(),
-                        item[0],
-                        item[1],
-                    ),
-                ):
-                    nivel_id, grado_id, nivel_nombre, grado_nombre = group_key
-                    rows_group = grouped_rows[group_key]
-                    titulo_nivel = nivel_nombre or f"Nivel {nivel_id}"
-                    titulo_grado = grado_nombre or f"Grado {grado_id}"
-                    st.caption(
-                        f"{titulo_nivel} | {titulo_grado} | Clases: {len(rows_group)}"
-                    )
-                    rows_group = sorted(
-                        rows_group,
-                        key=lambda row: (
-                            (
-                                _extract_group_hint_from_class_name(
-                                    row.get("clase_nombre")
+                cols_grid = st.columns(7, gap="small")
+                for idx_row, row in enumerate(rows_group):
+                    with cols_grid[idx_row % 7]:
+                        with st.container(border=True):
+                            clase_id = int(row["clase_id"])
+                            options = row.get("options") or []
+                            if not options:
+                                st.caption(f"`{clase_id}` sin grupos")
+                                continue
+                            option_ids = [int(opt["grupo_id"]) for opt in options]
+                            labels: Dict[int, str] = {}
+                            for opt in options:
+                                alumnos_contratados = opt.get("alumnos_contratados")
+                                count_txt = (
+                                    f" ({int(alumnos_contratados)})"
+                                    if alumnos_contratados is not None
+                                    else ""
                                 )
-                                or "ZZ"
-                            ),
-                            str(row.get("clase_nombre") or "").upper(),
-                            int(row.get("clase_id") or 0),
-                        ),
-                    )
-                    cols_grid = st.columns(7, gap="small")
-                    for idx_row, row in enumerate(rows_group):
-                        with cols_grid[idx_row % 7]:
-                            with st.container(border=True):
-                                clase_id = int(row["clase_id"])
-                                options = row.get("options") or []
-                                if not options:
-                                    st.caption(f"`{clase_id}` sin grupos")
-                                    continue
-                                option_ids = [int(opt["grupo_id"]) for opt in options]
-                                labels: Dict[int, str] = {}
-                                for opt in options:
-                                    alumnos_contratados = opt.get("alumnos_contratados")
-                                    count_txt = (
-                                        f" ({int(alumnos_contratados)})"
-                                        if alumnos_contratados is not None
-                                        else ""
-                                    )
-                                    clave = str(opt.get("grupo_clave") or "").strip()
-                                    nombre = str(opt.get("grupo_nombre") or "").strip()
-                                    grupo_txt = clave or nombre or str(opt.get("grupo_id"))
-                                    labels[int(opt["grupo_id"])] = f"{grupo_txt}{count_txt}"
-    
-                                selected_default = int(
-                                    row.get("selected_group_id") or option_ids[0]
-                                )
-                                if selected_default not in option_ids:
-                                    selected_default = option_ids[0]
-    
-                                clase_nombre = str(row.get("clase_nombre") or "").strip()
-                                label_txt = f"`{clase_id}` {clase_nombre}"
-                                if len(label_txt) > 38:
-                                    label_txt = f"{label_txt[:35].rstrip()}..."
-                                st.caption(label_txt)
-                                key_select = f"clases_auto_group_select_{clase_id}"
-                                selected_val = st.selectbox(
-                                    "Grupo",
-                                    options=option_ids,
-                                    index=option_ids.index(selected_default),
-                                    format_func=lambda gid, lbl=labels: lbl.get(
-                                        int(gid), str(gid)
-                                    ),
-                                    key=key_select,
-                                    label_visibility="collapsed",
-                                )
-                                row["selected_group_id"] = int(selected_val)
-                st.session_state["clases_auto_group_rows"] = auto_rows
-            elif auto_rows:
-                st.caption(f"Grilla oculta. Clases cargadas: {len(auto_rows)}")
+                                clave = str(opt.get("grupo_clave") or "").strip()
+                                nombre = str(opt.get("grupo_nombre") or "").strip()
+                                grupo_txt = clave or nombre or str(opt.get("grupo_id"))
+                                labels[int(opt["grupo_id"])] = f"{grupo_txt}{count_txt}"
 
-            if auto_warnings:
-                st.warning("Hay clases omitidas o sin opciones de grupo.")
-                st.write("\n".join(f"- {item}" for item in auto_warnings[:20]))
-                restantes = len(auto_warnings) - 20
-                if restantes > 0:
-                    st.caption(f"... y {restantes} advertencias mas.")
-    
+                            selected_default = int(
+                                row.get("selected_group_id") or option_ids[0]
+                            )
+                            if selected_default not in option_ids:
+                                selected_default = option_ids[0]
+
+                            clase_nombre = str(row.get("clase_nombre") or "").strip()
+                            label_txt = f"`{clase_id}` {clase_nombre}"
+                            if len(label_txt) > 38:
+                                label_txt = f"{label_txt[:35].rstrip()}..."
+                            st.caption(label_txt)
+                            key_select = f"clases_auto_group_select_{clase_id}"
+                            selected_val = st.selectbox(
+                                "Grupo",
+                                options=option_ids,
+                                index=option_ids.index(selected_default),
+                                format_func=lambda gid, lbl=labels: lbl.get(
+                                    int(gid), str(gid)
+                                ),
+                                key=key_select,
+                                label_visibility="collapsed",
+                            )
+                            row["selected_group_id"] = int(selected_val)
+            st.session_state["clases_auto_group_rows"] = auto_rows
+        elif auto_rows:
+            st.caption(f"Grilla oculta. Clases cargadas: {len(auto_rows)}")
+
+        if auto_warnings:
+            st.warning("Hay clases omitidas o sin opciones de grupo.")
+            st.write("\n".join(f"- {item}" for item in auto_warnings[:20]))
+            restantes = len(auto_warnings) - 20
+            if restantes > 0:
+                st.caption(f"... y {restantes} advertencias mas.")
+
         if run_eliminar_participantes or run_asignar_participantes:
             if not token:
                 st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
@@ -3498,3 +3437,5 @@ with tab_crud_alumnos:
                     restantes = len(errores_excel) - 20
                     if restantes > 0:
                         st.caption(f"... y {restantes} errores más.")
+
+

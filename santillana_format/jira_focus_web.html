@@ -2483,7 +2483,6 @@
       };
       const INACTIVITY_MS = 2 * 60 * 60 * 1000;
       const SUGGESTION_MS = 3 * 24 * 60 * 60 * 1000;
-      const COMMENT_LINK_NEAR_MINUTES = 120;
       const ONBOARDING_START = { year: 2025, month: 12, day: 15, hour: 8, minute: 30 };
       const DOCENTES_TEMPLATE_ACTIVITY = 'Entrega de plantillas DOCENTES Coach/Farmer/Hunter';
       const ESTUDIANTES_TEMPLATE_ACTIVITY = 'Entrega de plantillas ESTUDIANTES Coach/Farmer/Hunter';
@@ -4128,6 +4127,12 @@
         if (normalized.includes('tep seguimiento fase 1') || normalized.includes('seguimiento fase 1')) return 'fase1';
         if (normalized.includes('tep seguimiento fase 2') || normalized.includes('seguimiento fase 2')) return 'fase2';
         if (normalized.includes('tep seguimiento fase 3') || normalized.includes('seguimiento fase 3')) return 'fase3';
+        if (normalized.includes('tep seguimiento fase i') || normalized.includes('seguimiento fase i')) return 'fase1';
+        if (normalized.includes('tep seguimiento fase ii') || normalized.includes('seguimiento fase ii')) return 'fase2';
+        if (normalized.includes('tep seguimiento fase iii') || normalized.includes('seguimiento fase iii')) return 'fase3';
+        if (normalized.includes('fase1')) return 'fase1';
+        if (normalized.includes('fase2')) return 'fase2';
+        if (normalized.includes('fase3')) return 'fase3';
         if (/\bfase\s*1\b/.test(normalized)) return 'fase1';
         if (/\bfase\s*2\b/.test(normalized)) return 'fase2';
         if (/\bfase\s*3\b/.test(normalized)) return 'fase3';
@@ -4182,7 +4187,6 @@
       function renderPhaseStatusControls(issue) {
         const rows = phaseSubtasksForIssue(issue);
         const hasAny = rows.some((row) => !!row.subtask);
-        if (!hasAny) return '';
 
         const itemsHtml = rows.map((row) => {
           const subtask = row.subtask;
@@ -4227,11 +4231,13 @@
         const missing = rows.filter((row) => !row.subtask).map((row) => row.shortLabel);
         const hint = state.subtaskPhaseLoading
           ? 'Cargando estados disponibles para Fase 1, 2 y 3...'
-          : (missing.length
-            ? `No encontradas: ${missing.join(', ')}.`
-            : 'Selecciona una opcion por fase y pulsa Actualizar fases.');
-        const disableReload = (state.subtaskPhaseLoading || state.subtaskPhaseApplying) ? ' disabled' : '';
-        const disableApply = (state.subtaskPhaseLoading || state.subtaskPhaseApplying) ? ' disabled' : '';
+          : (!hasAny
+            ? 'No se encontraron subtareas TEP-Seguimiento Fase 1/2/3 en este ticket.'
+            : (missing.length
+              ? `No encontradas: ${missing.join(', ')}.`
+              : 'Selecciona una opcion por fase y pulsa Actualizar fases.'));
+        const disableReload = (state.subtaskPhaseLoading || state.subtaskPhaseApplying || !hasAny) ? ' disabled' : '';
+        const disableApply = (state.subtaskPhaseLoading || state.subtaskPhaseApplying || !hasAny) ? ' disabled' : '';
 
         return `
           <div class="issue-phase-panel">
@@ -4473,28 +4479,18 @@
         const commentMinute = minuteBucket(comment.created);
         const commentTs = tsOf(comment.created);
         if (!Number.isFinite(commentMinute)) return null;
-        const nearMs = COMMENT_LINK_NEAR_MINUTES * 60000;
         const candidates = rows
           .map((w) => ({ row: w, win: windowOf(w) }))
           .filter((it) => Number.isFinite(it.win.startTs) && Number.isFinite(it.win.endTs))
           .map((it) => {
             const endMinute = minuteBucket(it.win.endTs);
-            const startMinute = minuteBucket(it.win.startTs);
             const endsAtCommentMinute = endMinute === commentMinute;
-            const startsAtCommentMinute = startMinute === commentMinute;
-            const insideRange = Number.isFinite(commentTs) && commentTs >= it.win.startTs && commentTs <= it.win.endTs;
-            const nearComment = Number.isFinite(commentTs) && Math.abs(it.win.endTs - commentTs) <= nearMs;
-            if (!endsAtCommentMinute && !startsAtCommentMinute && !insideRange && !nearComment) {
+            if (!endsAtCommentMinute) {
               return null;
             }
-            const modeRank = endsAtCommentMinute
-              ? 0
-              : (startsAtCommentMinute ? 1 : (insideRange ? 2 : 3));
             return {
               row: it.row,
-              modeRank,
-              distEnd: Number.isFinite(commentTs) ? Math.abs(it.win.endTs - commentTs) : Number.POSITIVE_INFINITY,
-              distStart: Number.isFinite(commentTs) ? Math.abs(it.win.startTs - commentTs) : Number.POSITIVE_INFINITY
+              distEnd: Number.isFinite(commentTs) ? Math.abs(it.win.endTs - commentTs) : 0
             };
           })
           .filter((it) => !!it);
@@ -4503,9 +4499,8 @@
           const mineA = mine(a.row.author) ? 0 : 1;
           const mineB = mine(b.row.author) ? 0 : 1;
           if (mineA !== mineB) return mineA - mineB;
-          if (a.modeRank !== b.modeRank) return a.modeRank - b.modeRank;
           if (a.distEnd !== b.distEnd) return a.distEnd - b.distEnd;
-          return a.distStart - b.distStart;
+          return 0;
         });
         return candidates[0].row;
       }
@@ -4571,7 +4566,7 @@
         const end = anchorEnd instanceof Date ? anchorEnd : new Date(anchorEnd || 0);
         if (!key || !isTemplateOfficialType(type)) return false;
         if (Number.isNaN(end.getTime()) || !isAfterOnboardingStart(end)) return false;
-        return countTemplateWorklogs(key) === 0;
+        return countWorklogsByOfficialType(key, type) === 0;
       }
 
       function activityFromText(text) {
@@ -4867,60 +4862,38 @@
         const key = String(issueKey || '').trim();
         const worklogToCommentId = {};
         const worklogToBest = {};
-        const nearMs = COMMENT_LINK_NEAR_MINUTES * 60000;
-        const distanceToRange = (ts, startTs, endTs) => {
-          if (!Number.isFinite(ts) || !Number.isFinite(startTs) || !Number.isFinite(endTs)) return Number.POSITIVE_INFINITY;
-          if (ts < startTs) return startTs - ts;
-          if (ts > endTs) return ts - endTs;
-          return 0;
-        };
         for (let i = 0; i < commentsAsc.length; i += 1) {
           const c = commentsAsc[i];
           const cId = String(c.id || '');
           const cTs = new Date(c.created || 0).getTime();
           const cMinute = Number.isFinite(cTs) ? Math.floor(cTs / 60000) : NaN;
-          const nextTs = i < commentsAsc.length - 1
-            ? new Date(commentsAsc[i + 1].created || 0).getTime()
-            : Number.POSITIVE_INFINITY;
+          if (!cId || !Number.isFinite(cMinute)) continue;
           const candidates = [];
-          if (Number.isFinite(cTs)) {
-            logsAsc.forEach((r) => {
-              const startTs = Number(r.startTs || 0);
-              const endTs = Number(r.endTs || (startTs + Math.max(1, Number(r.mins || 1)) * 60000));
-              if (!Number.isFinite(startTs) || !Number.isFinite(endTs)) return;
-              const startMinute = Number.isFinite(startTs) ? Math.floor(startTs / 60000) : NaN;
-              const endMinute = Number.isFinite(endTs) ? Math.floor(endTs / 60000) : NaN;
-              const endsAtCommentMinute = Number.isFinite(cMinute) && endMinute === cMinute;
-              const startsAtCommentMinute = Number.isFinite(cMinute) && startMinute === cMinute;
-              const insideRange = cTs >= startTs && cTs <= endTs;
-              const startsAfterComment = startTs >= cTs && startTs < nextTs;
-              const dist = distanceToRange(cTs, startTs, endTs);
-              const nearComment = dist <= nearMs;
-              if (!endsAtCommentMinute && !startsAtCommentMinute && !insideRange && !startsAfterComment && !nearComment) return;
-              const score = endsAtCommentMinute
-                ? 0
-                : (startsAtCommentMinute
-                  ? 1
-                  : (insideRange ? 2 : (startsAfterComment ? 3 : 4)));
-              candidates.push({
-                id: String(r.id || ''),
-                dist,
-                score,
-                startTs
-              });
+          logsAsc.forEach((r) => {
+            const id = String(r.id || '').trim();
+            if (!id) return;
+            const startTs = Number(r.startTs || 0);
+            const endTs = Number(r.endTs || (startTs + Math.max(1, Number(r.mins || 1)) * 60000));
+            if (!Number.isFinite(startTs) || !Number.isFinite(endTs)) return;
+            const endMinute = Number.isFinite(endTs) ? Math.floor(endTs / 60000) : NaN;
+            if (endMinute !== cMinute) return;
+            const authorObj = r && r.worklog && r.worklog.author ? r.worklog.author : null;
+            const mineRank = mine(authorObj) ? 0 : 1;
+            const dist = Number.isFinite(cTs) ? Math.abs(endTs - cTs) : 0;
+            candidates.push({
+              id,
+              dist,
+              mineRank
             });
-          }
-          candidates.sort((a, b) => (a.score - b.score) || (a.dist - b.dist) || (a.startTs - b.startTs));
-          const matched = [];
-          candidates.forEach((item) => {
-            if (!item.id || matched.includes(item.id)) return;
-            if (item.score >= 2 && matched.length) return;
-            matched.push(item.id);
-            const prev = worklogToBest[item.id];
-            if (!prev || item.dist < prev.dist || (item.dist === prev.dist && item.score < prev.score)) {
-              worklogToBest[item.id] = { commentId: cId, dist: item.dist, score: item.score };
-            }
           });
+          candidates.sort((a, b) => (a.mineRank - b.mineRank) || (a.dist - b.dist));
+          const best = candidates.length ? candidates[0] : null;
+          if (best && best.id) {
+            const prev = worklogToBest[best.id];
+            if (!prev || best.mineRank < prev.mineRank || (best.mineRank === prev.mineRank && best.dist < prev.dist)) {
+              worklogToBest[best.id] = { commentId: cId, dist: best.dist, mineRank: best.mineRank };
+            }
+          }
         }
         Object.entries(worklogToBest).forEach(([worklogId, best]) => {
           worklogToCommentId[worklogId] = String(best.commentId || '');

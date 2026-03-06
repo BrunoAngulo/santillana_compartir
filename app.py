@@ -132,17 +132,17 @@ def _inject_professional_theme() -> None:
         @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500&display=swap');
 
         :root{
-            --app-bg-a: #f4f6f9;
-            --app-bg-b: #edf1f6;
+            --app-bg-a: #f7f8fa;
+            --app-bg-b: #f7f8fa;
             --surface: #ffffff;
             --surface-strong: #ffffff;
-            --text-strong: #0f1722;
-            --text-muted: #1f3042;
-            --border-soft: #ccd7e4;
-            --accent: #0f4f7a;
-            --accent-strong: #0b3f62;
-            --shadow-soft: 0 4px 14px rgba(15, 23, 34, 0.08);
-            --radius-md: 10px;
+            --text-strong: #0a0d12;
+            --text-muted: #223142;
+            --border-soft: #cfd7e2;
+            --accent: #1155cc;
+            --accent-strong: #0c43a1;
+            --shadow-soft: 0 2px 9px rgba(10, 13, 18, 0.08);
+            --radius-md: 9px;
             --radius-lg: 12px;
         }
 
@@ -162,13 +162,13 @@ def _inject_professional_theme() -> None:
         }
         .main .block-container{
             max-width: 1500px;
-            padding-top: 0.6rem;
-            padding-bottom: 1.1rem;
-            padding-left: 0.75rem;
-            padding-right: 0.75rem;
+            padding-top: 0.45rem;
+            padding-bottom: 0.8rem;
+            padding-left: 0.65rem;
+            padding-right: 0.65rem;
         }
         div[data-testid="stVerticalBlock"]{
-            gap: 0.35rem;
+            gap: 0.24rem;
         }
 
         h1, h2, h3, h4{
@@ -176,7 +176,7 @@ def _inject_professional_theme() -> None:
             letter-spacing: -0.01em;
         }
         h1{
-            font-size: 1.72rem;
+            font-size: 1.55rem;
             font-weight: 800;
             margin-bottom: 0.02rem;
         }
@@ -184,38 +184,38 @@ def _inject_professional_theme() -> None:
         [data-testid="stCaptionContainer"]{
             color: var(--text-muted);
             margin-top: 0.08rem;
-            margin-bottom: 0.32rem;
-            line-height: 1.25;
-            font-size: 0.92rem;
+            margin-bottom: 0.22rem;
+            line-height: 1.2;
+            font-size: 0.86rem;
         }
 
         .app-hero{
             border: 1px solid var(--border-soft);
             border-radius: var(--radius-lg);
-            padding: 0.68rem 0.82rem 0.64rem 0.82rem;
-            margin: 0.1rem 0 0.5rem 0;
+            padding: 0.56rem 0.72rem 0.52rem 0.72rem;
+            margin: 0.08rem 0 0.35rem 0;
             background: #ffffff;
             box-shadow: var(--shadow-soft);
         }
         .app-hero-eyebrow{
-            font-size: 0.76rem;
+            font-size: 0.72rem;
             font-weight: 800;
             text-transform: uppercase;
             letter-spacing: 0.08em;
-            color: #34627d;
-            margin-bottom: 0.35rem;
+            color: #1d4d8f;
+            margin-bottom: 0.24rem;
         }
         .app-hero-title{
-            font-size: 1.56rem;
+            font-size: 1.38rem;
             line-height: 1.15;
             font-weight: 800;
             color: var(--text-strong);
             margin: 0;
         }
         .app-hero-subtitle{
-            margin: 0.22rem 0 0 0;
+            margin: 0.16rem 0 0 0;
             color: var(--text-muted);
-            font-size: 0.9rem;
+            font-size: 0.83rem;
         }
 
         div[data-testid="stVerticalBlockBorderWrapper"]{
@@ -225,70 +225,71 @@ def _inject_professional_theme() -> None:
             box-shadow: var(--shadow-soft);
         }
         div[data-testid="stVerticalBlockBorderWrapper"] > div{
-            padding: 0.14rem 0.16rem 0.08rem 0.16rem;
+            padding: 0.09rem 0.12rem 0.06rem 0.12rem;
         }
 
         .stTabs [data-baseweb="tab-list"]{
-            gap: 0.2rem;
+            gap: 0.14rem;
             background: #ffffff;
             border: 1px solid var(--border-soft);
             border-radius: var(--radius-md);
-            padding: 0.16rem;
+            padding: 0.11rem;
         }
         .stTabs [data-baseweb="tab"]{
-            height: 33px;
-            border-radius: 8px;
-            padding: 0 0.72rem;
+            height: 30px;
+            border-radius: 7px;
+            padding: 0 0.62rem;
             font-weight: 700;
-            color: #1d3348;
-            font-size: 0.88rem;
+            color: #1b2633;
+            font-size: 0.83rem;
         }
         .stTabs [aria-selected="true"]{
             background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
             color: #ffffff !important;
-            box-shadow: 0 2px 8px rgba(15, 79, 122, 0.24);
+            box-shadow: 0 1px 6px rgba(17, 85, 204, 0.24);
         }
 
         div[data-testid="stRadio"] > div{
-            gap: 0.32rem;
+            gap: 0.2rem;
             width: fit-content;
-            background: rgba(255,255,255,0.74);
+            background: #ffffff;
             border: 1px solid var(--border-soft);
-            border-radius: 9px;
-            padding: 0.2rem;
+            border-radius: 8px;
+            padding: 0.12rem;
         }
         div[data-testid="stRadio"] label{
             border: 1px solid transparent;
-            border-radius: 7px;
-            padding: 0.12rem 0.6rem;
+            border-radius: 6px;
+            padding: 0.08rem 0.5rem;
             background: transparent;
             font-weight: 700;
-            color: #1e3348;
-            font-size: 0.86rem;
+            color: #10151e;
+            font-size: 0.8rem;
         }
         div[data-testid="stRadio"] label:has(input:checked){
             color: #ffffff;
             background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
-            box-shadow: 0 2px 8px rgba(15, 79, 122, 0.24);
+            box-shadow: 0 1px 6px rgba(17, 85, 204, 0.24);
         }
 
         .stButton > button,
         .stDownloadButton > button{
-            border-radius: 8px;
-            border: 1px solid #9eb0c2;
-            background: linear-gradient(180deg, #ffffff 0%, #f5f8fb 100%);
-            color: #15283d;
+            border-radius: 7px;
+            border: 1px solid #b4c0cf;
+            background: #ffffff;
+            color: #10151e;
             font-weight: 700;
-            min-height: 2.12rem;
-            padding-top: 0.24rem;
-            padding-bottom: 0.24rem;
+            min-height: 1.9rem;
+            padding-top: 0.14rem;
+            padding-bottom: 0.14rem;
+            font-size: 0.82rem;
             transition: all 120ms ease;
         }
         .stButton > button:hover,
         .stDownloadButton > button:hover{
-            border-color: #7a9ab3;
+            border-color: #8fa4bb;
             transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(23, 50, 77, 0.11);
+            box-shadow: 0 2px 8px rgba(16, 21, 30, 0.12);
         }
         .stButton > button[kind="primary"],
         .stDownloadButton > button[kind="primary"]{
@@ -300,39 +301,54 @@ def _inject_professional_theme() -> None:
         .stTextInput input,
         .stTextArea textarea,
         .stNumberInput input{
-            border-radius: 8px !important;
-            border: 1px solid #b7c8d9 !important;
+            border-radius: 7px !important;
+            border: 1px solid #b8c4d2 !important;
             background: rgba(255,255,255,0.98) !important;
+            font-size: 0.84rem !important;
         }
         .stTextArea textarea{
-            min-height: 82px;
+            min-height: 72px;
         }
         div[data-baseweb="select"] > div{
-            border-radius: 8px !important;
-            border: 1px solid #b7c8d9 !important;
+            border-radius: 7px !important;
+            border: 1px solid #b8c4d2 !important;
             background: rgba(255,255,255,0.98) !important;
+            min-height: 1.95rem !important;
         }
 
         div[data-testid="stDataFrame"]{
             border: 1px solid var(--border-soft);
-            border-radius: 12px;
+            border-radius: 9px;
             overflow: hidden;
             background: #ffffff;
         }
 
         .stAlert{
-            border-radius: 12px;
+            border-radius: 9px;
             border: 1px solid var(--border-soft);
         }
         div[data-testid="stExpander"]{
             border: 1px solid var(--border-soft);
-            border-radius: 12px;
+            border-radius: 9px;
             background: rgba(255,255,255,0.90);
         }
         </style>
         """,
         unsafe_allow_html=True,
     )
+
+
+def _clean_token_value(token: object) -> str:
+    text = str(token or "").strip()
+    if text.lower().startswith("bearer "):
+        text = text[7:].strip()
+    return text
+
+
+def _sync_shared_token_from_input() -> None:
+    token_input = _clean_token_value(st.session_state.get("shared_pegasus_token_input", ""))
+    if token_input:
+        st.session_state["shared_pegasus_token"] = token_input
 
 
 st.set_page_config(page_title="Generador de Plantilla", layout="wide")
@@ -363,15 +379,37 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-st.markdown("**Configuracion global**")
-global_col_token, global_col_colegio = st.columns([2.3, 1.1])
-with global_col_token:
-    st.text_input(
-        "Token (sin Bearer)",
-        type="password",
-        key="shared_pegasus_token",
-        help="Se usa en todas las funciones. Si queda vacio, toma PEGASUS_TOKEN.",
+if "shared_pegasus_token" not in st.session_state:
+    st.session_state["shared_pegasus_token"] = _clean_token_value(
+        os.environ.get("PEGASUS_TOKEN", "")
     )
+if "shared_pegasus_token_input" not in st.session_state:
+    st.session_state["shared_pegasus_token_input"] = str(
+        st.session_state.get("shared_pegasus_token", "")
+    )
+
+st.markdown("**Configuracion global**")
+global_col_token, global_col_colegio = st.columns([2.7, 1.1])
+with global_col_token:
+    token_col_input, token_col_save, token_col_clear = st.columns([4.1, 1, 1], gap="small")
+    with token_col_input:
+        st.text_input(
+            "Token (sin Bearer)",
+            type="password",
+            key="shared_pegasus_token_input",
+            on_change=_sync_shared_token_from_input,
+            help="Se usa en todas las funciones y queda guardado en la sesion actual.",
+        )
+    with token_col_save:
+        if st.button("Guardar", key="shared_token_save_btn", use_container_width=True):
+            _sync_shared_token_from_input()
+    with token_col_clear:
+        if st.button("Limpiar", key="shared_token_clear_btn", use_container_width=True):
+            st.session_state["shared_pegasus_token"] = ""
+            st.session_state["shared_pegasus_token_input"] = ""
+            st.rerun()
+    if st.session_state.get("shared_pegasus_token"):
+        st.caption("Token guardado en sesion.")
 with global_col_colegio:
     st.text_input(
         "Colegio Clave (global)",
@@ -389,16 +427,17 @@ tab_crud_clases, tab_crud_profesores, tab_crud_alumnos = st.tabs(
 
 
 def _clean_token(token: str) -> str:
-    token = token.strip()
-    if token.lower().startswith("bearer "):
-        token = token[7:].strip()
-    return token
+    return _clean_token_value(token)
 
 
 def _get_shared_token() -> str:
-    token = _clean_token(str(st.session_state.get("shared_pegasus_token", "")))
-    if token:
-        return token
+    token_saved = _clean_token(str(st.session_state.get("shared_pegasus_token", "")))
+    if token_saved:
+        return token_saved
+    token_input = _clean_token(str(st.session_state.get("shared_pegasus_token_input", "")))
+    if token_input:
+        st.session_state["shared_pegasus_token"] = token_input
+        return token_input
     return _clean_token(os.environ.get("PEGASUS_TOKEN", ""))
 
 

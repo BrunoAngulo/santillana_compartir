@@ -4694,7 +4694,7 @@
               ? 'Se encontraron subtareas. Las etiquetas se guardan al momento aunque no exista TEP-Seguimiento en todas.'
               : (missingFieldSummary.length
                 ? `Campos no disponibles en: ${missingFieldSummary.join(' | ')}.`
-                : 'Las etiquetas se guardan al momento. Para cambios de seguimiento, pulsa Guardar subtareas.')));
+                : '')));
         const disableReload = (state.subtaskPhaseLoading || state.subtaskPhaseApplying || !hasAnyPhaseField) ? ' disabled' : '';
         const disableApply = (state.subtaskPhaseLoading || state.subtaskPhaseApplying || !hasSubtasks) ? ' disabled' : '';
 

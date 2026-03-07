@@ -381,7 +381,7 @@
       right: 0;
       display: none;
       gap: 6px;
-      max-height: 220px;
+      max-height: min(420px, 60vh);
       overflow: auto;
       padding: 6px;
       border: 1px solid var(--line);
@@ -4439,8 +4439,7 @@
             return { code, description, rank };
           })
           .filter((row) => !!row)
-          .sort((a, b) => a.rank - b.rank || a.code.localeCompare(b.code))
-          .slice(0, 8);
+          .sort((a, b) => a.rank - b.rank || a.code.localeCompare(b.code));
       }
 
       function hideLabelSuggestions(inputEl) {

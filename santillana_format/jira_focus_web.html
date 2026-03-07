@@ -2647,6 +2647,8 @@
         netPendingCount: 0,
         subtaskPhaseOptionsByKey: {},
         subtaskLabelsDraftByKey: {},
+        subtaskLabelSaveInFlightByKey: {},
+        subtaskLabelSaveQueuedByKey: {},
         subtaskPhaseSelection: {},
         subtaskPhaseLoadedStampByIssue: {},
         subtaskPhaseLoading: false,
@@ -4297,6 +4299,12 @@
         return key || label || 'Subtarea';
       }
 
+      function issueSubtaskByKey(issue, subtaskKey) {
+        const key = String(subtaskKey || '').trim();
+        if (!key || !issue || !Array.isArray(issue.subtasksDetail)) return null;
+        return issue.subtasksDetail.find((subtask) => String(subtask && subtask.key ? subtask.key : '').trim() === key) || null;
+      }
+
       function labelsListFromFields(raw) {
         if (!Array.isArray(raw)) return [];
         return uniqueStrings(
@@ -4336,6 +4344,32 @@
             .map((item) => canonicalizeLabelToken(item))
             .filter((item) => !!item)
         );
+      }
+
+      function parseLabelsDraftForSubtask(subtask, value) {
+        const currentLabels = labelsListFromFields(subtask && Array.isArray(subtask.labels) ? subtask.labels : []);
+        const currentMap = new Map(currentLabels.map((item) => [String(item || '').trim().toLowerCase(), item]));
+        let complete = true;
+        const labels = uniqueStrings(
+          String(value || '')
+            .split(',')
+            .map((item) => String(item || '').trim())
+            .filter((item) => !!item)
+            .map((item) => {
+              const fromCurrent = currentMap.get(item.toLowerCase());
+              if (fromCurrent) return fromCurrent;
+              const canonical = canonicalizeLabelToken(item);
+              const option = subtaskLabelOptionByCode(canonical);
+              if (option) return option.code;
+              complete = false;
+              return '';
+            })
+            .filter((item) => !!item)
+        );
+        return {
+          labels,
+          complete
+        };
       }
 
       function labelsListsEqual(left, right) {
@@ -4383,7 +4417,9 @@
         const cursor = Number.isFinite(inputEl.selectionStart) ? inputEl.selectionStart : value.length;
         const range = labelTokenRange(value, cursor);
         const token = String(value.slice(range.start, cursor) || '').trim();
-        if (!token) return [];
+        const leftSegment = value.slice(0, cursor);
+        const showAll = !token && (/\s*,\s*$/.test(leftSegment) || !leftSegment.trim());
+        if (!token && !showAll) return [];
         const otherText = `${value.slice(0, range.start)}${value.slice(range.end)}`;
         const selected = new Set(parseLabelsDraft(otherText).map((item) => item.toLowerCase()));
         const query = normalizePlain(token);
@@ -4395,7 +4431,8 @@
             const descNorm = normalizePlain(description);
             if (!code || selected.has(code.toLowerCase())) return null;
             let rank = 99;
-            if (codeNorm.startsWith(query)) rank = 0;
+            if (!query) rank = 0;
+            else if (codeNorm.startsWith(query)) rank = 0;
             else if (codeNorm.includes(query)) rank = 1;
             else if (descNorm.includes(query)) rank = 2;
             if (rank > 2) return null;
@@ -4411,6 +4448,15 @@
         if (!box) return;
         box.classList.remove('show');
         box.innerHTML = '';
+      }
+
+      function shouldAutoSaveLabelsInput(inputEl) {
+        if (!inputEl) return false;
+        const value = String(inputEl.value || '');
+        const cursor = Number.isFinite(inputEl.selectionStart) ? inputEl.selectionStart : value.length;
+        const leftSegment = value.slice(0, cursor);
+        if (!value.trim()) return true;
+        return /\s*,\s*$/.test(leftSegment);
       }
 
       function renderLabelSuggestionsForInput(inputEl, forcedIndex = null) {
@@ -4471,6 +4517,48 @@
         inputEl.focus();
         if (typeof inputEl.setSelectionRange === 'function') {
           inputEl.setSelectionRange(nextCursor, nextCursor);
+        }
+      }
+
+      async function autoSaveSubtaskLabels(issueKey, subtaskKey) {
+        const issueKeySafe = String(issueKey || '').trim();
+        const subtaskKeySafe = String(subtaskKey || '').trim();
+        if (!issueKeySafe || !subtaskKeySafe) return false;
+        const issue = issueByKey(issueKeySafe);
+        const subtask = issueSubtaskByKey(issue, subtaskKeySafe);
+        if (!subtask) return false;
+
+        const draftValue = subtaskLabelsDraftValue(subtask);
+        const parsed = parseLabelsDraftForSubtask(subtask, draftValue);
+        if (!parsed.complete || labelsListsEqual(subtask.labels, parsed.labels)) {
+          return false;
+        }
+
+        if (state.subtaskLabelSaveInFlightByKey[subtaskKeySafe]) {
+          state.subtaskLabelSaveQueuedByKey[subtaskKeySafe] = true;
+          return false;
+        }
+
+        state.subtaskLabelSaveInFlightByKey[subtaskKeySafe] = true;
+        try {
+          await JiraService.updateIssue(subtaskKeySafe, { labels: parsed.labels });
+          const latestIssue = issueByKey(issueKeySafe);
+          const latestSubtask = issueSubtaskByKey(latestIssue, subtaskKeySafe);
+          if (latestSubtask) {
+            latestSubtask.labels = parsed.labels.slice();
+          }
+          return true;
+        } catch (error) {
+          applyError(error, `No se pudo actualizar etiquetas de la subtarea ${subtaskKeySafe}.`);
+          return false;
+        } finally {
+          state.subtaskLabelSaveInFlightByKey[subtaskKeySafe] = false;
+          if (state.subtaskLabelSaveQueuedByKey[subtaskKeySafe]) {
+            state.subtaskLabelSaveQueuedByKey[subtaskKeySafe] = false;
+            window.setTimeout(() => {
+              autoSaveSubtaskLabels(issueKeySafe, subtaskKeySafe);
+            }, 0);
+          }
         }
       }
 
@@ -4583,7 +4671,6 @@
                   <input class="inp" type="text" data-subtask-labels-key="${escapeHtml(subtaskKey)}" value="${escapeHtml(labelsValue)}" placeholder="Escribe etiquetas separadas por coma"${labelsDisabled}>
                   <div class="issue-phase-label-suggest" data-subtask-label-suggest="${escapeHtml(subtaskKey)}"></div>
                 </div>
-                <div class="issue-phase-labels-help">Separa varias etiquetas con coma. Usa Tab para autocompletar la sugerencia activa.</div>
               </div>
             </div>
           `;
@@ -4605,10 +4692,10 @@
           : (!hasSubtasks
             ? 'Este ticket no tiene subtareas.'
             : (!hasAnyPhaseField
-              ? 'Se encontraron subtareas. Puedes editar etiquetas aunque no exista TEP-Seguimiento en todas.'
+              ? 'Se encontraron subtareas. Las etiquetas se guardan al momento aunque no exista TEP-Seguimiento en todas.'
               : (missingFieldSummary.length
                 ? `Campos no disponibles en: ${missingFieldSummary.join(' | ')}.`
-                : 'Edita seguimiento o etiquetas por subtarea y pulsa Guardar subtareas.')));
+                : 'Las etiquetas se guardan al momento. Para cambios de seguimiento, pulsa Guardar subtareas.')));
         const disableReload = (state.subtaskPhaseLoading || state.subtaskPhaseApplying || !hasAnyPhaseField) ? ' disabled' : '';
         const disableApply = (state.subtaskPhaseLoading || state.subtaskPhaseApplying || !hasSubtasks) ? ' disabled' : '';
 
@@ -6353,6 +6440,8 @@
         state.netPendingCount = 0;
         state.subtaskPhaseOptionsByKey = {};
         state.subtaskLabelsDraftByKey = {};
+        state.subtaskLabelSaveInFlightByKey = {};
+        state.subtaskLabelSaveQueuedByKey = {};
         state.subtaskPhaseSelection = {};
         state.subtaskPhaseLoadedStampByIssue = {};
         state.subtaskPhaseLoading = false;
@@ -6615,6 +6704,9 @@
           state.subtaskLabelsDraftByKey[subtaskKey] = String(inp.value || '');
           inp.dataset.suggestIndex = '0';
           renderLabelSuggestionsForInput(inp, 0);
+          if (shouldAutoSaveLabelsInput(inp)) {
+            autoSaveSubtaskLabels(state.selectedIssueKey, subtaskKey);
+          }
         });
 
         el.issueInsight.addEventListener('focusin', (ev) => {
@@ -6631,9 +6723,13 @@
             ? ev.target.closest('input[data-subtask-labels-key]')
             : null;
           if (!inp) return;
+          const subtaskKey = String(inp.getAttribute('data-subtask-labels-key') || '').trim();
           window.setTimeout(() => {
             hideLabelSuggestions(inp);
           }, 100);
+          if (subtaskKey) {
+            autoSaveSubtaskLabels(state.selectedIssueKey, subtaskKey);
+          }
         });
 
         el.issueInsight.addEventListener('keydown', (ev) => {
@@ -6669,6 +6765,10 @@
             const picked = suggestions[index] || suggestions[0];
             if (picked && picked.code) {
               applyLabelSuggestion(inp, picked.code);
+              const subtaskKey = String(inp.getAttribute('data-subtask-labels-key') || '').trim();
+              if (subtaskKey) {
+                autoSaveSubtaskLabels(state.selectedIssueKey, subtaskKey);
+              }
             }
           }
         });
@@ -6686,6 +6786,10 @@
           const code = String(pickBtn.getAttribute('data-label-suggest-code') || '').trim();
           if (!code) return;
           applyLabelSuggestion(input, code);
+          const subtaskKey = String(input.getAttribute('data-subtask-labels-key') || '').trim();
+          if (subtaskKey) {
+            autoSaveSubtaskLabels(state.selectedIssueKey, subtaskKey);
+          }
         });
 
         el.issueInsight.addEventListener('click', async (ev) => {

@@ -46,21 +46,16 @@
 
     body {
       margin: 0;
-      padding: 0;
+      padding: var(--spacing-md);
+      display: grid;
+      gap: var(--spacing-md);
+      width: 100%;
+      max-width: 100%;
       font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       color: var(--text);
       line-height: 1.5;
       background: transparent;
       -webkit-font-smoothing: antialiased;
-    }
-
-    .app {
-      display: grid;
-      gap: var(--spacing-md);
-      width: 100%;
-      max-width: 100%;
-      margin: 0;
-      padding: var(--spacing-md);
     }
 
     .card {
@@ -2256,29 +2251,28 @@
 </head>
 
 <body>
-  <div class="app" id="app">
-    <div class="card row topbar">
-      <div>
-        <h2>Jira Focus Web</h2>
-      </div>
-      <div class="row" style="margin-left:auto;">
-        <span class="pill" id="connPill">Sin conexion</span>
-        <span class="pill" id="syncPill">Listo</span>
-        <span class="pill" id="userPill">Usuario: -</span>
-        <button class="btn" id="refreshIssuesBtn" type="button" disabled>Recargar tickets</button>
-        <button class="btn danger" id="disconnectBtn" type="button" disabled>Desconectar</button>
-      </div>
+  <div class="card row topbar">
+    <div>
+      <h2>Jira Focus Web</h2>
     </div>
+    <div class="row" style="margin-left:auto;">
+      <span class="pill" id="connPill">Sin conexion</span>
+      <span class="pill" id="syncPill">Listo</span>
+      <span class="pill" id="userPill">Usuario: -</span>
+      <button class="btn" id="refreshIssuesBtn" type="button" disabled>Recargar tickets</button>
+      <button class="btn danger" id="disconnectBtn" type="button" disabled>Desconectar</button>
+    </div>
+  </div>
 
-    <div class="msg" id="msg"></div>
+  <div class="msg" id="msg"></div>
 
-    <section class="card" id="loginView">
-      <div class="row">
-        <button class="btn primary" id="connectBtn" type="button">Acceder a cuenta Jira</button>
-      </div>
-    </section>
+  <section class="card" id="loginView">
+    <div class="row">
+      <button class="btn primary" id="connectBtn" type="button">Acceder a cuenta Jira</button>
+    </div>
+  </section>
 
-    <section id="mainView" class="hide">
+  <section id="mainView" class="hide">
       <div class="card board-head">
         <div class="board-ticket-picker">
           <label for="issueSel">Ticket actual</label>
@@ -2476,7 +2470,6 @@
         </div>
       </div>
     </section>
-  </div>
 
   <div class="float" id="floatBox">
     <div class="muted" id="floatIssue">-</div>

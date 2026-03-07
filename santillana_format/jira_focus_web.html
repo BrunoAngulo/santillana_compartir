@@ -365,6 +365,61 @@
       color: var(--muted);
     }
 
+    .issue-phase-labels-control {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .issue-phase-labels-control .sel {
+      min-width: 0;
+    }
+
+    .issue-phase-info {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      height: 18px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--bg-soft);
+      color: var(--primary);
+      font-size: 11px;
+      font-weight: 700;
+      cursor: help;
+      flex: 0 0 auto;
+    }
+
+    .issue-phase-info-popup {
+      position: absolute;
+      left: 50%;
+      bottom: calc(100% + 8px);
+      transform: translateX(-50%);
+      min-width: 240px;
+      max-width: 320px;
+      padding: 8px 10px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--line);
+      background: var(--card);
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.45;
+      box-shadow: var(--shadow-sm);
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      z-index: 6;
+      white-space: normal;
+    }
+
+    .issue-phase-info:hover .issue-phase-info-popup {
+      opacity: 1;
+      visibility: visible;
+    }
+
     .dashboard-grid {
       display: grid;
       grid-template-columns: minmax(0, 1.35fr) minmax(320px, 1fr);
@@ -2567,6 +2622,33 @@
         { id: 'fase1', label: 'TEP-Seguimiento Fase 1', shortLabel: 'Fase 1' },
         { id: 'fase2', label: 'TEP-Seguimiento Fase 2', shortLabel: 'Fase 2' },
         { id: 'fase3', label: 'TEP-Seguimiento Fase 3', shortLabel: 'Fase 3' }
+      ];
+      const SUBTASK_LABEL_OPTIONS = [
+        { code: 'ONBOARDING_OK', description: 'El onboarding se realizó de manera correcta y en los tiempos pactados. 3 días para casos sin integración y máximo 07 días con integración.' },
+        { code: 'ONBOARDING_DEMORA_INFO', description: 'Demora en la entrega de información.' },
+        { code: 'ONBOARDING_CAMBIO_COTI', description: 'Cambios en el Cotizador. No se visualizan los contenidos completos porque cambiaron de productos y se activó otra producto o han pedido añadir productos adicionales, como los promocionales.' },
+        { code: 'ONBOARDING_CAMBIO_ADICIONAL', description: 'Se solicitaron cambios en la config de la instancia (grupos, clases, secciones o contenidos) luego de la configuración inicial/base según adopción.' },
+        { code: 'ONBOARDING_PLANTILLA_NO_ESTANDARIZADA', description: 'Plantillas no estandarizadas o en formato no adecuado.' },
+        { code: 'ONBOARDING_CONFIG_TED', description: 'Demora en la Configuración de la plataforma por parte de TED.' },
+        { code: 'ONBOARDING_INFO_INCORRECTA', description: 'Demoras por información incorrecta por parte del colegio o del coach o del asesor. No envían la información adecuada o está incompleta.' },
+        { code: 'ONBOARDING_NO_INFO', description: 'No se entregó ninguna información para configurar el colegio.' },
+        { code: 'ONBOARDING_CAIDA_ADOPCIÓN', description: 'Se cayó la adopción y por tanto no se configura el colegio.' },
+        { code: 'ONBOARDING_CONFIG_COACH', description: 'Demora en la Configuración de usuarios y Clases por parte del Coach. Para colegios mantenimientos.' },
+        { code: 'ONBOARDING_CONFIG_GLOBAL', description: 'Demora en la Configuración por parte de Global.' },
+        { code: 'ONBOARDING_VALID_PAYMENT', description: 'Demora en la validación colegio Payment.' },
+        { code: 'ONBOARDING_OBS_CONTENIDO_INCOMPLETO', description: 'No se visualizan los contenidos porque faltan componentes o están incompletos. Depende del área de Producto al no tener finalizada las publicaciones o del área Contenidos Globales.' },
+        { code: 'ONBOARDING_OBS_CONTENIDO_DUPLICACION_MATERIA', description: 'No se visualizan los contenidos porque existe duplicidad de la materia de Compartir con una materia propia del colegio o creada por el coach. Implica un cambio manual por clase de la materia propia o de la materia Compartir.' },
+        { code: 'ONBOARDING_OBS_CONTENIDO_ERROR_ACTIVACION', description: 'No se visualizan los contenidos en Compartir por error en la asociación o en Richmond por un error en la activación de los contenidos.' },
+        { code: 'ONBOARDING_OBS_CLASES_INCORRECTAS', description: 'No figuran las clases o no están configuradas de acuerdo a lo solicitado.' },
+        { code: 'ONBOARDING_OBS_USUARIOS_INCORRECTOS', description: 'Faltan usuarios o sus datos no son correctos.' },
+        { code: 'ONBOARDING_OBS_ASIGNACIÓN_CLASES', description: 'Los usuarios están en clases o grupos que no le corresponden para colegios Mantenimiento.' },
+        { code: 'ONBOARDING_OBS_NO_BANNER', description: 'No figuran los banner en e-stela o aplicaciones en EDI.' },
+        { code: 'ONBOARDING_OBS_NO_INTEGRACIÓN', description: 'No se puede acceder a la plataforma destino, figura error de integración o solicita pines/códigos para el docente.' },
+        { code: 'IPA_OBS_CONFIG_GLOBAL', description: 'Configuración incorrecta global.' },
+        { code: 'IPA_OBS_INFO_INCORRECTA', description: 'Errores de información.' },
+        { code: 'IPA_SOLICITUD_PINES', description: 'Solucitud de activación de pines.' },
+        { code: 'IPA_OBS_VALID_INCORRECTA', description: 'Pre-validación incorrecta.' },
+        { code: 'IPA_REAPERTURA_EVALUACION', description: 'Solicitan reaperturar una evaluación o reprogramarla.' }
       ];
       const ACTIVITY_PALETTE = [
         '#1b78c4', '#1f8f71', '#e07a2f', '#7a57c2', '#c63f69', '#3e8f5b', '#2e7fba',

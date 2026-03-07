@@ -2643,6 +2643,65 @@
 
       const el = {};
       let msgTimer = 0;
+      let frameHeightRaf = 0;
+      let lastFrameHeight = 0;
+      let autoFrameHeightStarted = false;
+
+      function postFrameHeight() {
+        if (window.parent === window) return;
+        const root = document.documentElement;
+        const body = document.body;
+        const height = Math.max(
+          root ? root.scrollHeight : 0,
+          root ? root.offsetHeight : 0,
+          body ? body.scrollHeight : 0,
+          body ? body.offsetHeight : 0
+        );
+        if (!height || height === lastFrameHeight) return;
+        lastFrameHeight = height;
+        try {
+          window.parent.postMessage({ type: 'streamlit:setFrameHeight', height }, '*');
+        } catch (_e) {
+          // No-op when running outside Streamlit.
+        }
+      }
+
+      function scheduleFrameHeight() {
+        if (frameHeightRaf) return;
+        frameHeightRaf = window.requestAnimationFrame(() => {
+          frameHeightRaf = 0;
+          postFrameHeight();
+        });
+      }
+
+      function initAutoFrameHeight() {
+        if (autoFrameHeightStarted) {
+          scheduleFrameHeight();
+          return;
+        }
+        autoFrameHeightStarted = true;
+        window.addEventListener('load', scheduleFrameHeight);
+        window.addEventListener('resize', scheduleFrameHeight);
+        if (document.body && typeof ResizeObserver === 'function') {
+          const resizeObserver = new ResizeObserver(() => {
+            scheduleFrameHeight();
+          });
+          resizeObserver.observe(document.body);
+        }
+        if (document.body && typeof MutationObserver === 'function') {
+          const mutationObserver = new MutationObserver(() => {
+            scheduleFrameHeight();
+          });
+          mutationObserver.observe(document.body, {
+            childList: true,
+            subtree: true,
+            attributes: true,
+            characterData: true
+          });
+        }
+        scheduleFrameHeight();
+      }
+
       const StorageService = {
         parse(raw, fb) { try { return raw ? JSON.parse(raw) : fb; } catch (_e) { return fb; } },
         get(key) { try { return localStorage.getItem(key); } catch (_e) { return null; } },
@@ -4433,6 +4492,7 @@
         if (!box) return;
         box.classList.remove('show');
         box.innerHTML = '';
+        scheduleFrameHeight();
       }
 
       function shouldAutoSaveLabelsInput(inputEl) {
@@ -4470,6 +4530,7 @@
           `;
         }).join('');
         box.classList.add('show');
+        scheduleFrameHeight();
         return suggestions;
       }
 
@@ -7280,6 +7341,7 @@
       }
 
       function bootstrap() {
+        initAutoFrameHeight();
         dbg('bootstrap_start', {
           in_iframe: window.self !== window.top,
           top_href_available: !!getTopLocationHref()
@@ -7304,6 +7366,7 @@
         renderTimer();
         renderCompact();
         renderIdle();
+        scheduleFrameHeight();
 
         window.setInterval(() => { renderTimer(); renderCompact(); renderIdle(); }, 1000);
         window.setInterval(renderIdle, 60000);

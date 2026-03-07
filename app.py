@@ -137,7 +137,7 @@ menu_option = st.radio(
     key="main_top_menu",
 )
 if menu_option == "Jira Focus Web":
-    render_jira_focus_web(height=1400)
+    render_jira_focus_web()
     st.stop()
 st.markdown(
     """

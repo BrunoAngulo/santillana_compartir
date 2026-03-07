@@ -4,12 +4,12 @@ import json
 import os
 from pathlib import Path
 
-import streamlit.components.v1 as components
 import streamlit as st
+import streamlit.components.v1 as components
 
 
-def render_jira_focus_web(height: int = 1400) -> None:
-    components.html(_load_html(), height=height, scrolling=True)
+def render_jira_focus_web(height: int = 240) -> None:
+    components.html(_load_html(), height=height, scrolling=False)
 
 
 def _load_html() -> str:

@@ -38,13 +38,12 @@
       min-width: 0;
     }
 
-    html,
-    body {
+    .jira-focus-web-root {
       max-width: 100%;
       overflow-x: hidden;
     }
 
-    body {
+    .jira-focus-web-root {
       margin: 0;
       padding: var(--spacing-md);
       display: grid;
@@ -890,15 +889,15 @@
     }
 
     h2,
-    h3,
-    h4 {
+    .jira-focus-web-root h3,
+    .jira-focus-web-root h4 {
       margin: 0 0 var(--spacing-sm) 0;
       font-family: "Inter", "Segoe UI", sans-serif;
       font-weight: 600;
       letter-spacing: -0.02em;
     }
 
-    h3 {
+    .jira-focus-web-root h3 {
       font-size: 16px;
     }
 
@@ -1017,7 +1016,7 @@
       resize: vertical;
     }
 
-    label {
+    .jira-focus-web-root label {
       display: block;
       font-size: 13px;
       color: var(--muted);
@@ -1096,7 +1095,7 @@
       background: var(--card);
     }
 
-    table {
+    .jira-focus-web-root table {
       width: 100%;
       border-collapse: separate;
       border-spacing: 0;
@@ -1105,8 +1104,8 @@
       font-size: 13px;
     }
 
-    th,
-    td {
+    .jira-focus-web-root th,
+    .jira-focus-web-root td {
       border-bottom: 1px solid var(--line);
       padding: var(--spacing-sm);
       text-align: left;
@@ -1115,7 +1114,7 @@
       word-break: break-word;
     }
 
-    th {
+    .jira-focus-web-root th {
       background: var(--bg-soft);
       font-weight: 600;
       color: var(--text);
@@ -2066,7 +2065,7 @@
     }
 
     @media (max-width: 1180px) {
-      body {
+      .jira-focus-web-root {
         padding: 12px;
       }
     }
@@ -2213,7 +2212,7 @@
     }
 
     @media (max-width: 640px) {
-      body {
+      .jira-focus-web-root {
         padding: 8px;
       }
 
@@ -2244,9 +2243,10 @@
 </head>
 
 <body>
+  <div class="jira-focus-web-root" id="jiraFocusWebRoot">
   <div class="card row topbar">
     <div>
-      <h2>Jira Focus Web</h2>
+      <div class="muted" style="font-weight:600;">Sesion Jira</div>
     </div>
     <div class="row" style="margin-left:auto;">
       <span class="pill" id="connPill">Sin conexion</span>
@@ -2476,6 +2476,7 @@
   </div>
 
   <div class="hide" aria-hidden="true"></div>
+  </div>
 
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script>
@@ -2647,11 +2648,18 @@
       let lastFrameHeight = 0;
       let autoFrameHeightStarted = false;
 
+      function frameRootElement() {
+        return document.getElementById('jiraFocusWebRoot') || document.body || document.documentElement;
+      }
+
       function postFrameHeight() {
         if (window.parent === window) return;
+        const rootEl = frameRootElement();
         const root = document.documentElement;
         const body = document.body;
         const height = Math.max(
+          rootEl ? rootEl.scrollHeight : 0,
+          rootEl ? rootEl.offsetHeight : 0,
           root ? root.scrollHeight : 0,
           root ? root.offsetHeight : 0,
           body ? body.scrollHeight : 0,
@@ -2682,17 +2690,18 @@
         autoFrameHeightStarted = true;
         window.addEventListener('load', scheduleFrameHeight);
         window.addEventListener('resize', scheduleFrameHeight);
-        if (document.body && typeof ResizeObserver === 'function') {
+        const rootEl = frameRootElement();
+        if (rootEl && typeof ResizeObserver === 'function') {
           const resizeObserver = new ResizeObserver(() => {
             scheduleFrameHeight();
           });
-          resizeObserver.observe(document.body);
+          resizeObserver.observe(rootEl);
         }
-        if (document.body && typeof MutationObserver === 'function') {
+        if (rootEl && typeof MutationObserver === 'function') {
           const mutationObserver = new MutationObserver(() => {
             scheduleFrameHeight();
           });
-          mutationObserver.observe(document.body, {
+          mutationObserver.observe(rootEl, {
             childList: true,
             subtree: true,
             attributes: true,

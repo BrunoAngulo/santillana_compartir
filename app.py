@@ -137,6 +137,18 @@ menu_option = st.radio(
     key="main_top_menu",
 )
 if menu_option == "Jira Focus Web":
+    st.markdown(
+        """
+        <section class="bg-white border border-gray-200 rounded-lg px-4 py-3 mb-3 shadow-sm">
+          <div class="text-xs font-semibold uppercase tracking-wider text-blue-700 mb-1">Panel Operativo</div>
+          <h1 class="text-2xl font-bold text-gray-900 m-0">Jira Focus Web</h1>
+          <p class="text-sm text-gray-600 mt-1 mb-0">
+            Seguimiento operativo de tickets, subtareas, etiquetas y worklogs desde una sola vista.
+          </p>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
     render_jira_focus_web()
     st.stop()
 st.markdown(

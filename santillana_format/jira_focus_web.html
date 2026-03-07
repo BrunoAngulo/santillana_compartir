@@ -313,6 +313,37 @@
       color: var(--muted);
     }
 
+    .issue-phase-subtask-block {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--bg);
+      padding: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .issue-phase-subtask-head {
+      width: 100%;
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .issue-phase-subtask-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .issue-phase-subtask-meta {
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
     .dashboard-grid {
       display: grid;
       grid-template-columns: minmax(0, 1.35fr) minmax(320px, 1fr);
@@ -2565,7 +2596,7 @@
         popupProcessing: false,
         oauthCallbackInProgress: false,
         netPendingCount: 0,
-        subtaskTransitionsByKey: {},
+        subtaskPhaseOptionsByKey: {},
         subtaskPhaseSelection: {},
         subtaskPhaseLoadedStampByIssue: {},
         subtaskPhaseLoading: false,
@@ -3284,12 +3315,23 @@
           const jql = 'assignee = currentUser() AND statusCategory != Done AND issuetype not in subTaskIssueTypes() ORDER BY updated DESC';
           return this.req('GET', '/rest/api/3/search/jql', { params: { jql, maxResults: 80, fields: 'summary,status,issuetype,attachment,subtasks' } });
         },
+        issue(key, params = {}) {
+          return this.req('GET', `/rest/api/3/issue/${encodeURIComponent(key)}`, { params });
+        },
+        issueEditMeta(key) {
+          return this.req('GET', `/rest/api/3/issue/${encodeURIComponent(key)}/editmeta`);
+        },
         issueTransitions(key) {
           return this.req('GET', `/rest/api/3/issue/${encodeURIComponent(key)}/transitions`);
         },
         transitionIssue(key, transitionId) {
           return this.req('POST', `/rest/api/3/issue/${encodeURIComponent(key)}/transitions`, {
             body: { transition: { id: String(transitionId || '').trim() } }
+          });
+        },
+        updateIssue(key, fields) {
+          return this.req('PUT', `/rest/api/3/issue/${encodeURIComponent(key)}`, {
+            body: { fields: fields && typeof fields === 'object' ? fields : {} }
           });
         },
         comments(key) { return this.req('GET', `/rest/api/3/issue/${encodeURIComponent(key)}/comment`, { params: { orderBy: '-created', maxResults: 100 } }); },
@@ -4131,131 +4173,271 @@
         return noPrefix || noCollege || raw;
       }
 
-      function detectPhaseSubtaskId(text) {
-        const normalized = normalizePlain(text).replace(/[^a-z0-9]+/g, ' ').trim();
-        if (!normalized) return '';
-        if (normalized.includes('tep seguimiento fase 1') || normalized.includes('seguimiento fase 1')) return 'fase1';
-        if (normalized.includes('tep seguimiento fase 2') || normalized.includes('seguimiento fase 2')) return 'fase2';
-        if (normalized.includes('tep seguimiento fase 3') || normalized.includes('seguimiento fase 3')) return 'fase3';
-        if (normalized.includes('tep seguimiento fase i') || normalized.includes('seguimiento fase i')) return 'fase1';
-        if (normalized.includes('tep seguimiento fase ii') || normalized.includes('seguimiento fase ii')) return 'fase2';
-        if (normalized.includes('tep seguimiento fase iii') || normalized.includes('seguimiento fase iii')) return 'fase3';
-        if (normalized.includes('fase1')) return 'fase1';
-        if (normalized.includes('fase2')) return 'fase2';
-        if (normalized.includes('fase3')) return 'fase3';
-        if (/\bfase\s*1\b/.test(normalized)) return 'fase1';
-        if (/\bfase\s*2\b/.test(normalized)) return 'fase2';
-        if (/\bfase\s*3\b/.test(normalized)) return 'fase3';
+      function emptyPhaseFieldState() {
+        return {
+          fieldId: '',
+          valueLabel: '',
+          raw: null
+        };
+      }
+
+      function emptyPhaseFieldMap() {
+        const out = {};
+        PHASE_SUBTASK_DEFS.forEach((def) => {
+          out[def.id] = emptyPhaseFieldState();
+        });
+        return out;
+      }
+
+      function findFieldIdByLabel(names, label) {
+        const target = normalizePlain(label).replace(/\s+/g, ' ').trim();
+        if (!target || !names || typeof names !== 'object') return '';
+        for (const [fieldId, fieldLabel] of Object.entries(names)) {
+          const candidate = normalizePlain(fieldLabel).replace(/\s+/g, ' ').trim();
+          if (candidate === target) return String(fieldId || '').trim();
+        }
+        for (const [fieldId, fieldLabel] of Object.entries(names)) {
+          const candidate = normalizePlain(fieldLabel).replace(/\s+/g, ' ').trim();
+          if (candidate && (candidate.startsWith(target) || target.startsWith(candidate))) {
+            return String(fieldId || '').trim();
+          }
+        }
         return '';
       }
 
-      function phaseSubtasksForIssue(issue) {
-        const detail = issue && Array.isArray(issue.subtasksDetail) ? issue.subtasksDetail : [];
-        const found = {};
-        PHASE_SUBTASK_DEFS.forEach((def) => { found[def.id] = null; });
-        detail.forEach((subtask) => {
-          if (!subtask || typeof subtask !== 'object') return;
-          const phaseId = detectPhaseSubtaskId(subtask.summary || subtask.compactSummary || '');
-          if (!phaseId) return;
-          if (!found[phaseId]) {
-            found[phaseId] = subtask;
+      function phaseFieldValueLabel(raw) {
+        if (raw === undefined || raw === null) return '';
+        if (Array.isArray(raw)) {
+          return uniqueStrings(raw.map((item) => phaseFieldValueLabel(item)).filter((item) => !!item)).join(', ');
+        }
+        if (typeof raw === 'string' || typeof raw === 'number' || typeof raw === 'boolean') {
+          return String(raw).trim();
+        }
+        if (typeof raw === 'object') {
+          const direct = [
+            raw.value,
+            raw.name,
+            raw.displayName,
+            raw.label,
+            raw.title
+          ]
+            .map((item) => String(item || '').trim())
+            .filter((item) => !!item);
+          if (direct.length) return direct[0];
+          if (raw.child) {
+            const childLabel = phaseFieldValueLabel(raw.child);
+            if (childLabel) return childLabel;
           }
-        });
-        return PHASE_SUBTASK_DEFS.map((def) => ({
-          id: def.id,
-          label: def.label,
-          shortLabel: def.shortLabel,
-          subtask: found[def.id] || null
-        }));
+          if (raw.id !== undefined && raw.id !== null) {
+            return String(raw.id).trim();
+          }
+        }
+        return '';
       }
 
-      function transitionOptionsFromPayload(payload) {
-        const rows = payload && Array.isArray(payload.transitions) ? payload.transitions : [];
+      function phaseFieldOptionKey(raw) {
+        if (raw === undefined || raw === null) return '';
+        if (typeof raw === 'object' && !Array.isArray(raw)) {
+          const id = String(raw.id || '').trim();
+          if (id) return `id:${id}`;
+          const value = String(raw.value || '').trim();
+          if (value) return `value:${value}`;
+          const name = String(raw.name || '').trim();
+          if (name) return `name:${name}`;
+        }
+        const label = phaseFieldValueLabel(raw);
+        return label ? `label:${label}` : '';
+      }
+
+      function phaseFieldUpdateValue(raw) {
+        if (raw === undefined || raw === null) return null;
+        if (Array.isArray(raw)) {
+          const values = raw
+            .map((item) => phaseFieldUpdateValue(item))
+            .filter((item) => item !== null && item !== undefined);
+          return values.length ? values : null;
+        }
+        if (typeof raw === 'object') {
+          const id = String(raw.id || '').trim();
+          if (id) return { id };
+          const value = String(raw.value || '').trim();
+          if (value) return { value };
+          const name = String(raw.name || '').trim();
+          if (name) return { value: name };
+        }
+        const label = phaseFieldValueLabel(raw);
+        return label ? { value: label } : null;
+      }
+
+      function phaseFieldOptionsFromMeta(meta) {
+        const allowed = meta && Array.isArray(meta.allowedValues) ? meta.allowedValues : [];
         const seen = new Set();
         const options = [];
-        rows.forEach((row) => {
-          const id = String(row && row.id ? row.id : '').trim();
-          if (!id || seen.has(id)) return;
-          seen.add(id);
-          const transitionName = String(row && row.name ? row.name : '').trim();
-          const toObj = row && row.to && typeof row.to === 'object' ? row.to : {};
-          const toName = String(toObj.name || '').trim();
-          let label = toName || transitionName || `Transicion ${id}`;
-          if (toName && transitionName && normalizePlain(toName) !== normalizePlain(transitionName)) {
-            label = `${toName} (${transitionName})`;
-          }
+        allowed.forEach((item) => {
+          const key = phaseFieldOptionKey(item);
+          const label = phaseFieldValueLabel(item);
+          const updateValue = phaseFieldUpdateValue(item);
+          if (!key || !label || !updateValue || seen.has(key)) return;
+          seen.add(key);
           options.push({
-            id,
+            key,
             label,
-            toName,
-            transitionName
+            raw: item,
+            updateValue
           });
         });
         return options;
       }
 
-      function renderPhaseStatusControls(issue) {
-        const rows = phaseSubtasksForIssue(issue);
-        const hasAny = rows.some((row) => !!row.subtask);
+      function phaseFieldSelectionKey(subtaskKey, phaseId) {
+        return `${String(subtaskKey || '').trim()}::${String(phaseId || '').trim()}`;
+      }
 
-        const itemsHtml = rows.map((row) => {
-          const subtask = row.subtask;
-          if (!subtask) {
+      function phaseFieldState(subtask, phaseId) {
+        if (!subtask || typeof subtask !== 'object') return emptyPhaseFieldState();
+        const map = subtask.phaseFields && typeof subtask.phaseFields === 'object' ? subtask.phaseFields : null;
+        if (!map || !map[phaseId]) return emptyPhaseFieldState();
+        const row = map[phaseId];
+        return {
+          fieldId: String(row.fieldId || '').trim(),
+          valueLabel: String(row.valueLabel || '').trim(),
+          raw: row.raw === undefined ? null : row.raw
+        };
+      }
+
+      function subtaskDisplayLabel(subtask) {
+        if (!subtask || typeof subtask !== 'object') return 'Subtarea';
+        const key = String(subtask.key || '').trim();
+        const compact = String(subtask.compactSummary || '').trim();
+        const summary = String(subtask.summary || '').trim();
+        const label = compact || summary;
+        if (key && label) return `${key} - ${label}`;
+        return key || label || 'Subtarea';
+      }
+
+      function extractPhaseFieldsFromIssuePayload(payload) {
+        const fields = payload && payload.fields && typeof payload.fields === 'object' ? payload.fields : {};
+        const names = payload && payload.names && typeof payload.names === 'object' ? payload.names : {};
+        const out = emptyPhaseFieldMap();
+        PHASE_SUBTASK_DEFS.forEach((def) => {
+          const fieldId = findFieldIdByLabel(names, def.label);
+          const raw = fieldId ? fields[fieldId] : null;
+          out[def.id] = {
+            fieldId,
+            valueLabel: phaseFieldValueLabel(raw),
+            raw
+          };
+        });
+        return out;
+      }
+
+      function buildSubtaskRecord(payload) {
+        const fields = payload && payload.fields && typeof payload.fields === 'object' ? payload.fields : {};
+        const statusObj = fields.status && typeof fields.status === 'object' ? fields.status : {};
+        const summary = String(fields.summary || '').trim();
+        const record = {
+          key: String(payload && payload.key ? payload.key : '').trim(),
+          summary,
+          compactSummary: compactSubtaskSummary(summary),
+          statusName: String(statusObj.name || '').trim(),
+          phaseFields: extractPhaseFieldsFromIssuePayload(payload)
+        };
+        record.displayLabel = subtaskDisplayLabel(record);
+        return record;
+      }
+
+      function renderPhaseStatusControls(issue) {
+        const subtasks = issue && Array.isArray(issue.subtasksDetail) ? issue.subtasksDetail : [];
+        const hasSubtasks = subtasks.length > 0;
+        const hasAnyPhaseField = subtasks.some((subtask) => PHASE_SUBTASK_DEFS.some((def) => !!phaseFieldState(subtask, def.id).fieldId));
+
+        const itemsHtml = subtasks.map((subtask) => {
+          const subtaskKey = String(subtask && subtask.key ? subtask.key : '').trim();
+          const subtaskLabel = subtaskDisplayLabel(subtask);
+          const statusLabel = String(subtask && subtask.statusName ? subtask.statusName : 'Sin estado').trim() || 'Sin estado';
+          const phaseItemsHtml = PHASE_SUBTASK_DEFS.map((def) => {
+            const info = phaseFieldState(subtask, def.id);
+            if (!info.fieldId) {
+              return `
+                <div class="issue-phase-item">
+                  <label title="${escapeHtml(def.label)}">${escapeHtml(def.shortLabel)}</label>
+                  <select class="sel issue-phase-select" disabled>
+                    <option>Campo no disponible</option>
+                  </select>
+                </div>
+              `;
+            }
+            const bySubtask = state.subtaskPhaseOptionsByKey[subtaskKey] && typeof state.subtaskPhaseOptionsByKey[subtaskKey] === 'object'
+              ? state.subtaskPhaseOptionsByKey[subtaskKey]
+              : {};
+            const options = Array.isArray(bySubtask[def.id]) ? bySubtask[def.id] : [];
+            const selectionKey = phaseFieldSelectionKey(subtaskKey, def.id);
+            const currentSelected = String(state.subtaskPhaseSelection[selectionKey] || '').trim();
+            const currentValueLabel = info.valueLabel || 'Sin valor';
+            const baseOptionText = state.subtaskPhaseLoading
+              ? 'Cargando opciones...'
+              : `Sin cambio (actual: ${currentValueLabel})`;
+
+            let optionsHtml = `<option value="">${escapeHtml(baseOptionText)}</option>`;
+            options.forEach((opt) => {
+              const optionKey = String(opt && opt.key ? opt.key : '').trim();
+              if (!optionKey) return;
+              const selectedAttr = optionKey === currentSelected ? ' selected' : '';
+              optionsHtml += `<option value="${escapeHtml(optionKey)}"${selectedAttr}>${escapeHtml(String(opt.label || optionKey))}</option>`;
+            });
+
+            const disableSelect = (state.subtaskPhaseLoading || state.subtaskPhaseApplying || !options.length) ? ' disabled' : '';
             return `
               <div class="issue-phase-item">
-                <label>${escapeHtml(row.shortLabel)}</label>
-                <select class="sel issue-phase-select" disabled>
-                  <option>No encontrada</option>
+                <label title="${escapeHtml(def.label)}">${escapeHtml(def.shortLabel)}</label>
+                <select class="sel issue-phase-select" data-phase-subtask-key="${escapeHtml(subtaskKey)}" data-phase-id="${escapeHtml(def.id)}"${disableSelect}>
+                  ${optionsHtml}
                 </select>
               </div>
             `;
-          }
+          }).join('');
 
-          const subtaskKey = String(subtask.key || '').trim();
-          const currentStatus = String(subtask.statusName || 'Sin estado').trim() || 'Sin estado';
-          const options = Array.isArray(state.subtaskTransitionsByKey[subtaskKey]) ? state.subtaskTransitionsByKey[subtaskKey] : [];
-          const currentSelected = String(state.subtaskPhaseSelection[subtaskKey] || '').trim();
-          const baseOptionText = state.subtaskPhaseLoading
-            ? 'Cargando opciones...'
-            : `Sin cambio (actual: ${currentStatus})`;
-
-          let optionsHtml = `<option value="">${escapeHtml(baseOptionText)}</option>`;
-          options.forEach((opt) => {
-            const transitionId = String(opt && opt.id ? opt.id : '').trim();
-            if (!transitionId) return;
-            const selectedAttr = transitionId === currentSelected ? ' selected' : '';
-            optionsHtml += `<option value="${escapeHtml(transitionId)}"${selectedAttr}>${escapeHtml(String(opt.label || transitionId))}</option>`;
-          });
-
-          const disableSelect = (state.subtaskPhaseLoading || state.subtaskPhaseApplying || !options.length) ? ' disabled' : '';
           return `
-            <div class="issue-phase-item">
-              <label title="${escapeHtml(subtask.key || row.label)}">${escapeHtml(row.shortLabel)}</label>
-              <select class="sel issue-phase-select" data-phase-subtask-key="${escapeHtml(subtaskKey)}"${disableSelect}>
-                ${optionsHtml}
-              </select>
+            <div class="issue-phase-subtask-block">
+              <div class="issue-phase-subtask-head">
+                <span class="issue-phase-subtask-title">${escapeHtml(subtaskLabel)}</span>
+                <span class="issue-phase-subtask-meta">Estado: ${escapeHtml(statusLabel)}</span>
+              </div>
+              ${phaseItemsHtml}
             </div>
           `;
         }).join('');
 
-        const missing = rows.filter((row) => !row.subtask).map((row) => row.shortLabel);
+        const missingFieldSummary = subtasks
+          .map((subtask) => {
+            const missing = PHASE_SUBTASK_DEFS
+              .filter((def) => !phaseFieldState(subtask, def.id).fieldId)
+              .map((def) => def.shortLabel);
+            if (!missing.length) return '';
+            const key = String(subtask && subtask.key ? subtask.key : '').trim();
+            return `${key || 'Subtarea'}: ${missing.join(', ')}`;
+          })
+          .filter((item) => !!item);
+
         const hint = state.subtaskPhaseLoading
-          ? 'Cargando estados disponibles para Fase 1, 2 y 3...'
-          : (!hasAny
-            ? 'No se encontraron subtareas TEP-Seguimiento Fase 1/2/3 en este ticket.'
-            : (missing.length
-              ? `No encontradas: ${missing.join(', ')}.`
-              : 'Selecciona una opcion por fase y pulsa Actualizar fases.'));
-        const disableReload = (state.subtaskPhaseLoading || state.subtaskPhaseApplying || !hasAny) ? ' disabled' : '';
-        const disableApply = (state.subtaskPhaseLoading || state.subtaskPhaseApplying || !hasAny) ? ' disabled' : '';
+          ? 'Cargando combos de TEP-Seguimiento desde las subtareas...'
+          : (!hasSubtasks
+            ? 'Este ticket no tiene subtareas.'
+            : (!hasAnyPhaseField
+              ? 'Se encontraron subtareas, pero no se detectaron los campos TEP-Seguimiento Fase 1/2/3.'
+              : (missingFieldSummary.length
+                ? `Campos no disponibles en: ${missingFieldSummary.join(' | ')}.`
+                : 'Selecciona el valor deseado por subtarea y pulsa Actualizar seguimiento.')));
+        const disableReload = (state.subtaskPhaseLoading || state.subtaskPhaseApplying || !hasAnyPhaseField) ? ' disabled' : '';
+        const disableApply = (state.subtaskPhaseLoading || state.subtaskPhaseApplying || !hasAnyPhaseField) ? ' disabled' : '';
 
         return `
           <div class="issue-phase-panel">
-            <div class="issue-phase-title">Actualizar TEP-Seguimiento</div>
-            ${itemsHtml}
+            <div class="issue-phase-title">Subtareas / TEP-Seguimiento</div>
+            ${itemsHtml || '<div class="issue-phase-hint">Sin subtareas para este ticket.</div>'}
             <div class="issue-phase-actions">
-              <button class="btn" type="button" data-act="phase-reload-options"${disableReload}>Recargar opciones</button>
-              <button class="btn primary" type="button" data-act="phase-apply-statuses"${disableApply}>Actualizar fases</button>
+              <button class="btn" type="button" data-act="phase-reload-options"${disableReload}>Recargar combos</button>
+              <button class="btn primary" type="button" data-act="phase-apply-statuses"${disableApply}>Actualizar seguimiento</button>
             </div>
             <div class="issue-phase-hint">${escapeHtml(hint)}</div>
           </div>
@@ -4271,22 +4453,12 @@
           .map((it) => {
             const subtasksRaw = Array.isArray(it.fields.subtasks) ? it.fields.subtasks : [];
             const subtasksDetail = subtasksRaw
-              .map((sub) => {
-                const fields = sub && sub.fields && typeof sub.fields === 'object' ? sub.fields : {};
-                const statusObj = fields.status && typeof fields.status === 'object' ? fields.status : {};
-                const summary = String(fields.summary || '').trim();
-                return {
-                  key: String(sub && sub.key ? sub.key : '').trim(),
-                  summary,
-                  compactSummary: compactSubtaskSummary(summary),
-                  statusName: String(statusObj.name || '').trim()
-                };
-              })
+              .map((sub) => buildSubtaskRecord(sub))
               .filter((sub) => sub.key || sub.summary);
             const subtasks = uniqueStrings(
               subtasksDetail
-                .map((sub) => sub.compactSummary || sub.summary)
-                .filter((name) => !!name)
+                .map((sub) => sub.displayLabel || subtaskDisplayLabel(sub))
+                .filter((label) => !!label)
             );
             return {
               key: it.key,
@@ -5556,27 +5728,93 @@
         XLSX.writeFile(wb, `jira_reporte_plantillas_${stamp}.xlsx`);
       }
 
+      async function refreshIssueSubtasks(issueKey) {
+        const key = String(issueKey || '').trim();
+        if (!key) return null;
+        const issue = issueByKey(key);
+        if (!issue) return null;
+
+        let payload = null;
+        try {
+          payload = await JiraService.issue(key, { fields: 'summary,status,issuetype,attachment,subtasks' });
+        } catch (error) {
+          dbg('parent_issue_detail_error', {
+            issue_key: key,
+            message: error && error.message ? error.message : String(error || '')
+          });
+          return issue;
+        }
+
+        const fields = payload && payload.fields && typeof payload.fields === 'object' ? payload.fields : {};
+        issue.summary = String(fields.summary || issue.summary || '');
+        issue.attachments = Array.isArray(fields.attachment) ? fields.attachment : [];
+
+        const subtasksRaw = Array.isArray(fields.subtasks) ? fields.subtasks : [];
+        if (!subtasksRaw.length) {
+          issue.subtasks = [];
+          issue.subtasksDetail = [];
+          return issue;
+        }
+
+        const detailRows = Array.from({ length: subtasksRaw.length }, () => null);
+        await mapLimit(subtasksRaw, 3, async (subtaskRef, index) => {
+          const subtaskKey = String(subtaskRef && subtaskRef.key ? subtaskRef.key : '').trim();
+          if (!subtaskKey) return;
+          try {
+            const subtaskPayload = await JiraService.issue(subtaskKey, { expand: 'names' });
+            detailRows[index] = buildSubtaskRecord(subtaskPayload);
+          } catch (error) {
+            detailRows[index] = buildSubtaskRecord(subtaskRef);
+            dbg('subtask_issue_detail_error', {
+              issue_key: key,
+              subtask_key: subtaskKey,
+              message: error && error.message ? error.message : String(error || '')
+            });
+          }
+        });
+
+        issue.subtasksDetail = detailRows.filter((row) => row && (row.key || row.summary));
+        issue.subtasks = uniqueStrings(
+          issue.subtasksDetail
+            .map((subtask) => subtask.displayLabel || subtaskDisplayLabel(subtask))
+            .filter((label) => !!label)
+        );
+        return issue;
+      }
+
       async function preloadPhaseTransitionsForIssue(issueKey, force = false) {
         const key = String(issueKey || '').trim();
         if (!key) return 0;
         const issue = issueByKey(key);
         if (!issue) return 0;
 
-        const phaseRows = phaseSubtasksForIssue(issue).filter((row) => !!(row.subtask && row.subtask.key));
-        if (!phaseRows.length) {
+        const subtasks = issue && Array.isArray(issue.subtasksDetail) ? issue.subtasksDetail : [];
+        const trackedSubtasks = subtasks.filter((subtask) => PHASE_SUBTASK_DEFS.some((def) => !!phaseFieldState(subtask, def.id).fieldId));
+        if (!trackedSubtasks.length) {
           state.subtaskPhaseLoadedStampByIssue[key] = '';
           return 0;
         }
 
-        const stamp = phaseRows
-          .map((row) => String(row.subtask && row.subtask.key ? row.subtask.key : '').trim())
-          .filter((subtaskKey) => !!subtaskKey)
+        const stamp = trackedSubtasks
+          .map((subtask) => {
+            const subtaskKey = String(subtask && subtask.key ? subtask.key : '').trim();
+            const fieldStamp = PHASE_SUBTASK_DEFS
+              .map((def) => String(phaseFieldState(subtask, def.id).fieldId || '').trim())
+              .join(',');
+            return `${subtaskKey}:${fieldStamp}`;
+          })
+          .filter((row) => !!row)
           .sort()
           .join('|');
         const alreadyLoaded = String(state.subtaskPhaseLoadedStampByIssue[key] || '') === stamp;
-        const allCached = phaseRows.every((row) => {
-          const subtaskKey = String(row.subtask && row.subtask.key ? row.subtask.key : '').trim();
-          return !!subtaskKey && Array.isArray(state.subtaskTransitionsByKey[subtaskKey]);
+        const allCached = trackedSubtasks.every((subtask) => {
+          const subtaskKey = String(subtask && subtask.key ? subtask.key : '').trim();
+          const bySubtask = state.subtaskPhaseOptionsByKey[subtaskKey] && typeof state.subtaskPhaseOptionsByKey[subtaskKey] === 'object'
+            ? state.subtaskPhaseOptionsByKey[subtaskKey]
+            : {};
+          return PHASE_SUBTASK_DEFS
+            .filter((def) => !!phaseFieldState(subtask, def.id).fieldId)
+            .every((def) => Array.isArray(bySubtask[def.id]));
         });
         if (!force && alreadyLoaded && allCached) return 0;
 
@@ -5584,21 +5822,34 @@
         renderIssueInsight();
 
         let failCount = 0;
-        await mapLimit(phaseRows, 3, async (row) => {
-          const subtaskKey = String(row.subtask && row.subtask.key ? row.subtask.key : '').trim();
+        await mapLimit(trackedSubtasks, 3, async (subtask) => {
+          const subtaskKey = String(subtask && subtask.key ? subtask.key : '').trim();
           if (!subtaskKey) return;
           try {
-            const payload = await JiraService.issueTransitions(subtaskKey);
-            const options = transitionOptionsFromPayload(payload);
-            state.subtaskTransitionsByKey[subtaskKey] = options;
-            const selected = String(state.subtaskPhaseSelection[subtaskKey] || '').trim();
-            if (selected && !options.some((opt) => String(opt.id || '').trim() === selected)) {
-              state.subtaskPhaseSelection[subtaskKey] = '';
+            const payload = await JiraService.issueEditMeta(subtaskKey);
+            const metaFields = payload && payload.fields && typeof payload.fields === 'object' ? payload.fields : {};
+            if (!state.subtaskPhaseOptionsByKey[subtaskKey] || typeof state.subtaskPhaseOptionsByKey[subtaskKey] !== 'object') {
+              state.subtaskPhaseOptionsByKey[subtaskKey] = {};
             }
+            PHASE_SUBTASK_DEFS.forEach((def) => {
+              const info = phaseFieldState(subtask, def.id);
+              const options = info.fieldId ? phaseFieldOptionsFromMeta(metaFields[info.fieldId]) : [];
+              state.subtaskPhaseOptionsByKey[subtaskKey][def.id] = options;
+              const selectionKey = phaseFieldSelectionKey(subtaskKey, def.id);
+              const selected = String(state.subtaskPhaseSelection[selectionKey] || '').trim();
+              if (selected && !options.some((opt) => String(opt.key || '').trim() === selected)) {
+                state.subtaskPhaseSelection[selectionKey] = '';
+              }
+            });
           } catch (error) {
             failCount += 1;
-            state.subtaskTransitionsByKey[subtaskKey] = [];
-            dbg('phase_transitions_error', {
+            if (!state.subtaskPhaseOptionsByKey[subtaskKey] || typeof state.subtaskPhaseOptionsByKey[subtaskKey] !== 'object') {
+              state.subtaskPhaseOptionsByKey[subtaskKey] = {};
+            }
+            PHASE_SUBTASK_DEFS.forEach((def) => {
+              state.subtaskPhaseOptionsByKey[subtaskKey][def.id] = [];
+            });
+            dbg('phase_editmeta_error', {
               subtask_key: subtaskKey,
               message: error && error.message ? error.message : String(error || '')
             });
@@ -5622,26 +5873,45 @@
           showMsg('error', 'No se encontro el ticket seleccionado.');
           return;
         }
-        const phaseRows = phaseSubtasksForIssue(issue).filter((row) => !!(row.subtask && row.subtask.key));
-        if (!phaseRows.length) {
-          showMsg('info', 'Este ticket no tiene subtareas TEP-Seguimiento Fase 1/2/3.');
+        const subtasks = issue && Array.isArray(issue.subtasksDetail) ? issue.subtasksDetail : [];
+        const trackedSubtasks = subtasks.filter((subtask) => PHASE_SUBTASK_DEFS.some((def) => !!phaseFieldState(subtask, def.id).fieldId));
+        if (!trackedSubtasks.length) {
+          showMsg('info', 'Este ticket no tiene subtareas con campos TEP-Seguimiento Fase 1/2/3.');
           return;
         }
 
-        const targets = [];
-        phaseRows.forEach((row) => {
-          const subtaskKey = String(row.subtask && row.subtask.key ? row.subtask.key : '').trim();
+        const updatesBySubtask = {};
+        trackedSubtasks.forEach((subtask) => {
+          const subtaskKey = String(subtask && subtask.key ? subtask.key : '').trim();
           if (!subtaskKey) return;
-          const transitionId = String(state.subtaskPhaseSelection[subtaskKey] || '').trim();
-          if (!transitionId) return;
-          targets.push({
-            subtaskKey,
-            transitionId,
-            phaseLabel: row.shortLabel || row.label || subtaskKey
+          PHASE_SUBTASK_DEFS.forEach((def) => {
+            const info = phaseFieldState(subtask, def.id);
+            if (!info.fieldId) return;
+            const selectionKey = phaseFieldSelectionKey(subtaskKey, def.id);
+            const selectedOptionKey = String(state.subtaskPhaseSelection[selectionKey] || '').trim();
+            if (!selectedOptionKey) return;
+            const bySubtask = state.subtaskPhaseOptionsByKey[subtaskKey] && typeof state.subtaskPhaseOptionsByKey[subtaskKey] === 'object'
+              ? state.subtaskPhaseOptionsByKey[subtaskKey]
+              : {};
+            const options = Array.isArray(bySubtask[def.id]) ? bySubtask[def.id] : [];
+            const selectedOption = options.find((opt) => String(opt && opt.key ? opt.key : '').trim() === selectedOptionKey);
+            if (!selectedOption || selectedOption.updateValue === null || selectedOption.updateValue === undefined) return;
+            if (!updatesBySubtask[subtaskKey]) {
+              updatesBySubtask[subtaskKey] = { fields: {}, count: 0 };
+            }
+            updatesBySubtask[subtaskKey].fields[info.fieldId] = selectedOption.updateValue;
+            updatesBySubtask[subtaskKey].count += 1;
           });
         });
+        const targets = Object.entries(updatesBySubtask)
+          .filter((entry) => entry && entry[0] && entry[1] && Object.keys(entry[1].fields || {}).length)
+          .map(([subtaskKey, data]) => ({
+            subtaskKey,
+            fields: data.fields,
+            count: Math.max(0, Math.floor(Number(data.count || 0)))
+          }));
         if (!targets.length) {
-          showMsg('info', 'Selecciona al menos un estado en Fase 1, 2 o 3.');
+          showMsg('info', 'Selecciona al menos un valor en TEP-Seguimiento para alguna subtarea.');
           return;
         }
 
@@ -5653,16 +5923,20 @@
         let firstError = null;
         await mapLimit(targets, 1, async (target) => {
           try {
-            await JiraService.transitionIssue(target.subtaskKey, target.transitionId);
-            state.subtaskPhaseSelection[target.subtaskKey] = '';
-            okCount += 1;
+            await JiraService.updateIssue(target.subtaskKey, target.fields);
+            PHASE_SUBTASK_DEFS.forEach((def) => {
+              const selectionKey = phaseFieldSelectionKey(target.subtaskKey, def.id);
+              if (state.subtaskPhaseSelection[selectionKey]) {
+                state.subtaskPhaseSelection[selectionKey] = '';
+              }
+            });
+            okCount += Math.max(1, Math.floor(Number(target.count || 0)));
           } catch (error) {
             failCount += 1;
             if (!firstError) firstError = error;
-            dbg('phase_update_error', {
+            dbg('phase_field_update_error', {
               subtask_key: target.subtaskKey,
-              phase: target.phaseLabel,
-              transition_id: target.transitionId,
+              field_count: Object.keys(target.fields || {}).length,
               message: error && error.message ? error.message : String(error || '')
             });
           }
@@ -5673,19 +5947,23 @@
 
         await loadIssues();
         if (failCount === 0) {
-          showMsg('ok', `Fases actualizadas correctamente (${okCount}).`);
+          showMsg('ok', `Seguimiento actualizado correctamente (${okCount} campo(s)).`);
           return;
         }
         if (okCount > 0) {
-          showMsg('info', `Actualizacion parcial: ${okCount} OK, ${failCount} con error.`);
+          showMsg('info', `Actualizacion parcial: ${okCount} campo(s) OK, ${failCount} subtarea(s) con error.`);
           return;
         }
-        applyError(firstError || new Error('No se pudo actualizar fases.'), 'No se pudieron actualizar las fases seleccionadas.');
+        applyError(firstError || new Error('No se pudo actualizar el seguimiento.'), 'No se pudo actualizar el seguimiento seleccionado.');
       }
 
       async function loadIssueData(issueKey) {
         if (!issueKey) return;
-        const [c, w] = await Promise.all([JiraService.comments(issueKey), JiraService.worklogs(issueKey)]);
+        const [_, c, w] = await Promise.all([
+          refreshIssueSubtasks(issueKey),
+          JiraService.comments(issueKey),
+          JiraService.worklogs(issueKey)
+        ]);
         const comments = (Array.isArray(c.comments) ? c.comments : [])
           .slice()
           .sort((a, b) => new Date(a.created || 0).getTime() - new Date(b.created || 0).getTime());
@@ -5862,7 +6140,7 @@
         state.report = { detail: [], grouped: [] };
         state.dash = { logs: [], today: 0, week: 0, issueCount: 0, refreshedAt: null };
         state.netPendingCount = 0;
-        state.subtaskTransitionsByKey = {};
+        state.subtaskPhaseOptionsByKey = {};
         state.subtaskPhaseSelection = {};
         state.subtaskPhaseLoadedStampByIssue = {};
         state.subtaskPhaseLoading = false;
@@ -6124,8 +6402,9 @@
             : null;
           if (!select) return;
           const subtaskKey = String(select.getAttribute('data-phase-subtask-key') || '').trim();
-          if (!subtaskKey) return;
-          state.subtaskPhaseSelection[subtaskKey] = String(select.value || '').trim();
+          const phaseId = String(select.getAttribute('data-phase-id') || '').trim();
+          if (!subtaskKey || !phaseId) return;
+          state.subtaskPhaseSelection[phaseFieldSelectionKey(subtaskKey, phaseId)] = String(select.value || '').trim();
         });
 
         el.issueInsight.addEventListener('click', async (ev) => {
@@ -6144,12 +6423,12 @@
             try {
               const failCount = await preloadPhaseTransitionsForIssue(issueKey, true);
               if (failCount > 0) {
-                showMsg('info', `Opciones recargadas con ${failCount} subtarea(s) sin opciones disponibles.`);
+                showMsg('info', `Combos recargados con ${failCount} subtarea(s) sin opciones disponibles.`);
               } else {
-                showMsg('ok', 'Opciones de estado recargadas.');
+                showMsg('ok', 'Combos de seguimiento recargados.');
               }
             } catch (error) {
-              applyError(error, 'No se pudieron recargar opciones de fase.');
+              applyError(error, 'No se pudieron recargar los combos de seguimiento.');
             }
             return;
           }
@@ -6157,7 +6436,7 @@
             try {
               await applyPhaseStatusesForIssue(issueKey);
             } catch (error) {
-              applyError(error, 'No se pudieron actualizar las fases.');
+              applyError(error, 'No se pudo actualizar el seguimiento.');
             }
           }
         });

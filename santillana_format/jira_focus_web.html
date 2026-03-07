@@ -366,58 +366,69 @@
     }
 
     .issue-phase-labels-control {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      min-width: 0;
-    }
-
-    .issue-phase-labels-control .sel {
-      min-width: 0;
-    }
-
-    .issue-phase-info {
       position: relative;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      width: 18px;
-      height: 18px;
-      border-radius: 999px;
-      border: 1px solid var(--line);
-      background: var(--bg-soft);
-      color: var(--primary);
-      font-size: 11px;
-      font-weight: 700;
-      cursor: help;
-      flex: 0 0 auto;
+      min-width: 0;
     }
 
-    .issue-phase-info-popup {
+    .issue-phase-labels-control .inp {
+      min-width: 0;
+    }
+
+    .issue-phase-label-suggest {
       position: absolute;
-      left: 50%;
-      bottom: calc(100% + 8px);
-      transform: translateX(-50%);
-      min-width: 240px;
-      max-width: 320px;
-      padding: 8px 10px;
-      border-radius: var(--radius-sm);
+      top: calc(100% + 4px);
+      left: 0;
+      right: 0;
+      display: none;
+      gap: 6px;
+      max-height: 220px;
+      overflow: auto;
+      padding: 6px;
       border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
       background: var(--card);
-      color: var(--text);
-      font-size: 12px;
-      line-height: 1.45;
       box-shadow: var(--shadow-sm);
-      opacity: 0;
-      visibility: hidden;
-      pointer-events: none;
       z-index: 6;
-      white-space: normal;
     }
 
-    .issue-phase-info:hover .issue-phase-info-popup {
-      opacity: 1;
-      visibility: visible;
+    .issue-phase-label-suggest.show {
+      display: grid;
+    }
+
+    .issue-phase-label-option {
+      width: 100%;
+      text-align: left;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--card);
+      padding: 10px 12px;
+      cursor: pointer;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+    }
+
+    .issue-phase-label-option:hover {
+      border-color: var(--line-strong);
+      background: var(--bg-soft);
+    }
+
+    .issue-phase-label-option.selected {
+      border-color: var(--primary);
+      background: #eff6ff;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+
+    .issue-phase-label-option-code {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      overflow-wrap: anywhere;
+    }
+
+    .issue-phase-label-option-desc {
+      margin-top: 4px;
+      font-size: 12px;
+      color: var(--muted);
+      overflow-wrap: anywhere;
     }
 
     .dashboard-grid {
@@ -2013,21 +2024,6 @@
       max-width: 360px;
     }
 
-    #debugLogBox {
-      margin: 8px 0 0 0;
-      max-height: 180px;
-      overflow: auto;
-      background: #f6f9fd;
-      border: 1px solid #d6e3f0;
-      border-radius: 10px;
-      padding: 10px;
-      font-size: 11px;
-      line-height: 1.35;
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-      word-break: break-word;
-    }
-
     .float {
       position: fixed;
       right: 12px;
@@ -2079,51 +2075,6 @@
     #compactBtn,
     #floatBox {
       display: none !important;
-    }
-
-    details.debug-panel {
-      padding: 0;
-    }
-
-    details.debug-panel summary {
-      list-style: none;
-      cursor: pointer;
-      padding: 12px 14px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      font-size: 14px;
-      font-weight: 700;
-      color: var(--text);
-      user-select: none;
-    }
-
-    details.debug-panel summary::-webkit-details-marker {
-      display: none;
-    }
-
-    details.debug-panel summary::after {
-      content: 'Mostrar';
-      font-size: 11px;
-      font-weight: 600;
-      color: var(--muted);
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      padding: 3px 8px;
-      background: #fff;
-    }
-
-    details.debug-panel[open] summary {
-      border-bottom: 1px solid #e5eef8;
-    }
-
-    details.debug-panel[open] summary::after {
-      content: 'Ocultar';
-    }
-
-    .debug-body {
-      padding: 12px 14px 14px;
     }
 
     @media (max-width: 1180px) {
@@ -2320,20 +2271,6 @@
     </div>
 
     <div class="msg" id="msg"></div>
-    <div class="msg" id="idleMsg"></div>
-    <details class="card debug-panel">
-      <summary>Logs de depuracion (tecnico)</summary>
-      <div class="debug-body">
-        <div class="row" style="justify-content:space-between;">
-          <div class="muted">No se registran tokens, codes ni secrets. Solo eventos tecnicos.</div>
-          <div class="row">
-            <button class="btn" id="debugCopyBtn" type="button">Copiar logs</button>
-            <button class="btn" id="debugClearBtn" type="button">Limpiar logs</button>
-          </div>
-        </div>
-        <pre id="debugLogBox"></pre>
-      </div>
-    </details>
 
     <section class="card" id="loginView">
       <div class="row">
@@ -2587,7 +2524,6 @@
         client_secret: __BASE_OAUTH_CLIENT_SECRET__,
         redirect_uri: __BASE_OAUTH_REDIRECT_URI__
       };
-      const DEBUG_MAX = 140;
       const LABOR = {
         startHour: 8,
         startMinute: 30,
@@ -2600,7 +2536,6 @@
         dayMinutes: 510,
         weekMinutes: 2550
       };
-      const INACTIVITY_MS = 2 * 60 * 60 * 1000;
       const SUGGESTION_MS = 3 * 24 * 60 * 60 * 1000;
       const COMMENT_LINK_FORWARD_WINDOW_MS = 12 * 60 * 60 * 1000;
       const ONBOARDING_START = { year: 2025, month: 12, day: 15, hour: 8, minute: 30 };
@@ -2706,7 +2641,6 @@
         manualWorklogToCommentByIssue: {},
         chartDesign: DEFAULT_CHART_DESIGN,
         activities: [],
-        debugLogs: [],
         popupWatchTimer: 0,
         popupProcessing: false,
         oauthCallbackInProgress: false,
@@ -3507,81 +3441,7 @@
         }
       }
 
-      function sanitizeDebugMeta(input) {
-        const secretKeys = new Set([
-          'code',
-          'state',
-          'authorization',
-          'access_token',
-          'refresh_token',
-          'id_token',
-          'token',
-          'api_token',
-          'client_secret',
-          'code_verifier',
-          'password'
-        ]);
-        const walk = (value, keyName) => {
-          if (keyName) {
-            const key = String(keyName || '').toLowerCase();
-            if (secretKeys.has(key) || key.endsWith('_token') || key.endsWith('_secret')) {
-              return '[REDACTED]';
-            }
-          }
-          if (value === null || value === undefined) {
-            return value;
-          }
-          if (typeof value === 'string') {
-            if (value.length > 160) {
-              return `${value.slice(0, 160)}...`;
-            }
-            if (/^Bearer\s+/i.test(value)) {
-              return '[REDACTED]';
-            }
-            return value;
-          }
-          if (typeof value === 'number' || typeof value === 'boolean') {
-            return value;
-          }
-          if (Array.isArray(value)) {
-            return value.slice(0, 25).map((item) => walk(item, keyName));
-          }
-          if (typeof value === 'object') {
-            const out = {};
-            Object.keys(value).slice(0, 40).forEach((k) => {
-              out[k] = walk(value[k], k);
-            });
-            return out;
-          }
-          return String(value);
-        };
-        return walk(input, '');
-      }
-
-      function renderDebugLogs() {
-        if (!el.debugLogBox) {
-          return;
-        }
-        const lines = state.debugLogs.length ? state.debugLogs : ['(sin logs)'];
-        el.debugLogBox.textContent = lines.join('\n');
-      }
-
-      function dbg(eventName, meta) {
-        const stamp = new Date().toISOString();
-        let line = `[${stamp}] ${eventName}`;
-        if (meta !== undefined) {
-          try {
-            line += ` | ${JSON.stringify(sanitizeDebugMeta(meta))}`;
-          } catch (_e) {
-            line += ' | {"meta":"(error serializando)"}';
-          }
-        }
-        state.debugLogs.push(line);
-        if (state.debugLogs.length > DEBUG_MAX) {
-          state.debugLogs = state.debugLogs.slice(state.debugLogs.length - DEBUG_MAX);
-        }
-        renderDebugLogs();
-      }
+      function dbg() {}
 
       function openOAuthPopupWindow() {
         try {
@@ -3855,14 +3715,6 @@
           .replace(/'/g, '&#039;');
       }
 
-      function cssEscape(v) {
-        const raw = String(v || '');
-        if (window.CSS && typeof window.CSS.escape === 'function') {
-          return window.CSS.escape(raw);
-        }
-        return raw.replace(/["\\]/g, '\\$&');
-      }
-
       function httpMessage(payload, status) {
         if (payload && typeof payload.error_description === 'string' && payload.error_description) {
           const errCode = typeof payload.error === 'string' && payload.error ? payload.error : 'oauth_error';
@@ -3881,8 +3733,7 @@
       }
       function cacheElements() {
         [
-          'connPill', 'syncPill', 'userPill', 'refreshIssuesBtn', 'disconnectBtn', 'msg', 'idleMsg',
-          'debugLogBox', 'debugCopyBtn', 'debugClearBtn',
+          'connPill', 'syncPill', 'userPill', 'refreshIssuesBtn', 'disconnectBtn', 'msg',
           'loginView', 'connectBtn',
           'mainView', 'issueSel', 'issueInsight', 'activityTypeSel', 'activityDueInp', 'activityInp', 'minutesInp', 'registerBtn', 'jiraDurationPill', 'timerVal', 'timerState', 'startBtn', 'pauseBtn',
           'resetBtn', 'applyTimerBtn', 'suggestionBox', 'applySugActBtn', 'applySugTimeBtn', 'registerSugBtn', 'todayTotal', 'weekTotal', 'issueCount', 'dashMeta',
@@ -4013,14 +3864,7 @@
       }
 
       function renderIdle() {
-        const idle = !state.timer.running && (Date.now() - state.lastActivityTs >= INACTIVITY_MS);
-        if (idle) {
-          el.idleMsg.className = 'msg show info';
-          el.idleMsg.textContent = 'Aviso: pasaron mas de 2 horas sin actividad registrada y el timer esta detenido.';
-        } else {
-          el.idleMsg.className = 'msg';
-          el.idleMsg.textContent = '';
-        }
+        return;
       }
 
       function renderTop() {
@@ -4468,56 +4312,166 @@
         return SUBTASK_LABEL_OPTIONS.find((opt) => String(opt && opt.code ? opt.code : '').trim().toLowerCase() === normalized) || null;
       }
 
-      function catalogLabelCodeFromList(list) {
-        const labels = labelsListFromFields(list);
-        for (const label of labels) {
-          const option = subtaskLabelOptionByCode(label);
-          if (option) return option.code;
+      function labelsTextFromList(list) {
+        return labelsListFromFields(list).join(', ');
+      }
+
+      function canonicalizeLabelToken(token) {
+        const raw = String(token || '').trim();
+        if (!raw) return '';
+        const exact = subtaskLabelOptionByCode(raw);
+        if (exact) return exact.code;
+        const normalized = normalizePlain(raw);
+        const prefixMatches = SUBTASK_LABEL_OPTIONS.filter((opt) => normalizePlain(String(opt && opt.code ? opt.code : '')).startsWith(normalized));
+        if (prefixMatches.length === 1) {
+          return String(prefixMatches[0].code || '').trim();
         }
-        return labels.length ? labels[0] : '';
+        return raw;
       }
 
-      function subtaskLabelDescription(code) {
-        const option = subtaskLabelOptionByCode(code);
-        if (option) return String(option.description || '').trim();
-        const raw = String(code || '').trim();
-        return raw ? `Etiqueta actual en Jira: ${raw}` : 'Selecciona una etiqueta para ver su descripción.';
+      function parseLabelsDraft(value) {
+        return uniqueStrings(
+          String(value || '')
+            .split(',')
+            .map((item) => canonicalizeLabelToken(item))
+            .filter((item) => !!item)
+        );
       }
 
-      function buildLabelsForSave(subtask, selectedCode) {
-        const current = labelsListFromFields(subtask && Array.isArray(subtask.labels) ? subtask.labels : []);
-        const currentManagedLabel = catalogLabelCodeFromList(current);
-        const managedNormalized = String(currentManagedLabel || '').trim().toLowerCase();
-        const preserved = current.filter((label) => {
-          const normalized = String(label || '').trim().toLowerCase();
-          if (!normalized) return false;
-          if (subtaskLabelOptionByCode(label)) return false;
-          if (managedNormalized && normalized === managedNormalized) return false;
-          return true;
-        });
-        const option = subtaskLabelOptionByCode(selectedCode);
-        if (option) {
-          preserved.push(option.code);
-        } else {
-          const raw = String(selectedCode || '').trim();
-          if (raw) preserved.push(raw);
+      function labelsListsEqual(left, right) {
+        const normalizeList = (source) => {
+          const items = Array.isArray(source) ? labelsListFromFields(source) : parseLabelsDraft(source);
+          return uniqueStrings(items.map((item) => canonicalizeLabelToken(item)).filter((item) => !!item))
+            .map((item) => item.toLowerCase())
+            .sort();
+        };
+        const a = normalizeList(left);
+        const b = normalizeList(right);
+        if (a.length !== b.length) return false;
+        for (let i = 0; i < a.length; i += 1) {
+          if (a[i] !== b[i]) return false;
         }
-        return uniqueStrings(preserved);
-      }
-
-      function sameLabelValue(left, right) {
-        return String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
+        return true;
       }
 
       function subtaskLabelsDraftValue(subtask) {
         const key = String(subtask && subtask.key ? subtask.key : '').trim();
         if (!key) return '';
         if (Object.prototype.hasOwnProperty.call(state.subtaskLabelsDraftByKey, key)) {
-          const raw = String(state.subtaskLabelsDraftByKey[key] || '').trim();
-          const option = subtaskLabelOptionByCode(raw);
-          return option ? option.code : raw;
+          return String(state.subtaskLabelsDraftByKey[key] || '');
         }
-        return catalogLabelCodeFromList(subtask && Array.isArray(subtask.labels) ? subtask.labels : []);
+        return labelsTextFromList(subtask && Array.isArray(subtask.labels) ? subtask.labels : []);
+      }
+
+      function labelTokenRange(text, cursorPos) {
+        const value = String(text || '');
+        const cursor = Math.max(0, Math.min(Number.isFinite(cursorPos) ? cursorPos : value.length, value.length));
+        const start = value.lastIndexOf(',', Math.max(0, cursor - 1)) + 1;
+        let end = value.indexOf(',', cursor);
+        if (end < 0) end = value.length;
+        return { start, end };
+      }
+
+      function labelSuggestionBox(inputEl) {
+        if (!inputEl || !inputEl.parentElement) return null;
+        return inputEl.parentElement.querySelector('[data-subtask-label-suggest]') || null;
+      }
+
+      function labelSuggestionsForInput(inputEl) {
+        if (!inputEl) return [];
+        const value = String(inputEl.value || '');
+        const cursor = Number.isFinite(inputEl.selectionStart) ? inputEl.selectionStart : value.length;
+        const range = labelTokenRange(value, cursor);
+        const token = String(value.slice(range.start, cursor) || '').trim();
+        if (!token) return [];
+        const otherText = `${value.slice(0, range.start)}${value.slice(range.end)}`;
+        const selected = new Set(parseLabelsDraft(otherText).map((item) => item.toLowerCase()));
+        const query = normalizePlain(token);
+        return SUBTASK_LABEL_OPTIONS
+          .map((opt) => {
+            const code = String(opt && opt.code ? opt.code : '').trim();
+            const description = String(opt && opt.description ? opt.description : '').trim();
+            const codeNorm = normalizePlain(code);
+            const descNorm = normalizePlain(description);
+            if (!code || selected.has(code.toLowerCase())) return null;
+            let rank = 99;
+            if (codeNorm.startsWith(query)) rank = 0;
+            else if (codeNorm.includes(query)) rank = 1;
+            else if (descNorm.includes(query)) rank = 2;
+            if (rank > 2) return null;
+            return { code, description, rank };
+          })
+          .filter((row) => !!row)
+          .sort((a, b) => a.rank - b.rank || a.code.localeCompare(b.code))
+          .slice(0, 8);
+      }
+
+      function hideLabelSuggestions(inputEl) {
+        const box = labelSuggestionBox(inputEl);
+        if (!box) return;
+        box.classList.remove('show');
+        box.innerHTML = '';
+      }
+
+      function renderLabelSuggestionsForInput(inputEl, forcedIndex = null) {
+        const box = labelSuggestionBox(inputEl);
+        if (!box || !inputEl || inputEl.disabled) {
+          hideLabelSuggestions(inputEl);
+          return [];
+        }
+        const suggestions = labelSuggestionsForInput(inputEl);
+        if (!suggestions.length) {
+          inputEl.dataset.suggestIndex = '0';
+          hideLabelSuggestions(inputEl);
+          return [];
+        }
+        let index = forcedIndex === null ? Math.floor(Number(inputEl.dataset.suggestIndex || 0)) : Math.floor(Number(forcedIndex || 0));
+        if (!Number.isFinite(index) || index < 0) index = 0;
+        if (index >= suggestions.length) index = suggestions.length - 1;
+        inputEl.dataset.suggestIndex = String(index);
+        box.innerHTML = suggestions.map((row, rowIndex) => {
+          const selected = rowIndex === index;
+          return `
+            <button class="issue-phase-label-option${selected ? ' selected' : ''}" type="button" data-label-suggest-code="${escapeHtml(row.code)}">
+              <div class="issue-phase-label-option-code">${escapeHtml(row.code)}</div>
+              <div class="issue-phase-label-option-desc">${escapeHtml(row.description)}</div>
+            </button>
+          `;
+        }).join('');
+        box.classList.add('show');
+        return suggestions;
+      }
+
+      function applyLabelSuggestion(inputEl, code) {
+        if (!inputEl) return;
+        const subtaskKey = String(inputEl.getAttribute('data-subtask-labels-key') || '').trim();
+        const suggestion = String(code || '').trim();
+        if (!subtaskKey || !suggestion) return;
+        const value = String(inputEl.value || '');
+        const cursor = Number.isFinite(inputEl.selectionStart) ? inputEl.selectionStart : value.length;
+        const range = labelTokenRange(value, cursor);
+        const leftRaw = value.slice(0, range.start);
+        const rightRaw = value.slice(range.end);
+        const left = parseLabelsDraft(leftRaw).length
+          ? `${leftRaw.replace(/\s*$/, '')} `
+          : '';
+        const right = rightRaw.startsWith(',')
+          ? rightRaw.replace(/^,\s*/, ', ')
+          : rightRaw;
+        let nextValue = `${left}${suggestion}${right}`;
+        let nextCursor = left.length + suggestion.length;
+        if (range.end === value.length) {
+          nextValue = `${left}${suggestion}, `;
+          nextCursor = nextValue.length;
+        }
+        inputEl.value = nextValue;
+        state.subtaskLabelsDraftByKey[subtaskKey] = nextValue;
+        inputEl.dataset.suggestIndex = '0';
+        hideLabelSuggestions(inputEl);
+        inputEl.focus();
+        if (typeof inputEl.setSelectionRange === 'function') {
+          inputEl.setSelectionRange(nextCursor, nextCursor);
+        }
       }
 
       function extractPhaseFieldsFromIssuePayload(payload) {
@@ -4563,7 +4517,6 @@
           const subtaskLabel = subtaskDisplayLabel(subtask);
           const statusLabel = String(subtask && subtask.statusName ? subtask.statusName : 'Sin estado').trim() || 'Sin estado';
           const labelsValue = subtaskLabelsDraftValue(subtask);
-          const labelsDescription = subtaskLabelDescription(labelsValue);
           const labelsDisabled = state.subtaskPhaseApplying ? ' disabled' : '';
           const phaseItemsHtml = PHASE_SUBTASK_DEFS.map((def) => {
             const info = phaseFieldState(subtask, def.id);
@@ -4627,24 +4580,10 @@
               <div class="issue-phase-labels">
                 <label title="Etiquetas Jira">Etiquetas</label>
                 <div class="issue-phase-labels-control">
-                  <select class="sel" data-subtask-labels-key="${escapeHtml(subtaskKey)}"${labelsDisabled}>
-                    ${labelsValue && !subtaskLabelOptionByCode(labelsValue)
-                      ? `<option value="${escapeHtml(labelsValue)}" selected>${escapeHtml(labelsValue)}</option>`
-                      : ''}
-                    <option value=""${labelsValue ? '' : ' selected'}>Sin etiqueta</option>
-                    ${SUBTASK_LABEL_OPTIONS.map((opt) => {
-                      const optionCode = String(opt && opt.code ? opt.code : '').trim();
-                      if (!optionCode) return '';
-                      const selectedAttr = optionCode === labelsValue ? ' selected' : '';
-                      return `<option value="${escapeHtml(optionCode)}"${selectedAttr}>${escapeHtml(optionCode)}</option>`;
-                    }).join('')}
-                  </select>
-                  <span class="issue-phase-info" aria-label="Descripción de etiqueta" title="${escapeHtml(labelsDescription)}" data-subtask-labels-info="${escapeHtml(subtaskKey)}">
-                    i
-                    <span class="issue-phase-info-popup">${escapeHtml(labelsDescription)}</span>
-                  </span>
+                  <input class="inp" type="text" data-subtask-labels-key="${escapeHtml(subtaskKey)}" value="${escapeHtml(labelsValue)}" placeholder="Escribe etiquetas separadas por coma"${labelsDisabled}>
+                  <div class="issue-phase-label-suggest" data-subtask-label-suggest="${escapeHtml(subtaskKey)}"></div>
                 </div>
-                <div class="issue-phase-labels-help">Selecciona una etiqueta estándar para la subtarea.</div>
+                <div class="issue-phase-labels-help">Separa varias etiquetas con coma. Usa Tab para autocompletar la sugerencia activa.</div>
               </div>
             </div>
           `;
@@ -6039,7 +5978,7 @@
         issue.subtasksDetail.forEach((subtask) => {
           const subtaskKey = String(subtask && subtask.key ? subtask.key : '').trim();
           if (!subtaskKey) return;
-          state.subtaskLabelsDraftByKey[subtaskKey] = catalogLabelCodeFromList(subtask.labels);
+          state.subtaskLabelsDraftByKey[subtaskKey] = labelsTextFromList(subtask.labels);
         });
         return issue;
       }
@@ -6146,13 +6085,13 @@
         editableSubtasks.forEach((subtask) => {
           const subtaskKey = String(subtask && subtask.key ? subtask.key : '').trim();
           if (!subtaskKey) return;
-          const currentCatalogCode = catalogLabelCodeFromList(Array.isArray(subtask.labels) ? subtask.labels : []);
-          const draftCatalogCode = subtaskLabelsDraftValue(subtask);
-          if (!sameLabelValue(currentCatalogCode, draftCatalogCode)) {
+          const currentLabels = Array.isArray(subtask.labels) ? subtask.labels : [];
+          const draftLabels = subtaskLabelsDraftValue(subtask);
+          if (!labelsListsEqual(currentLabels, draftLabels)) {
             if (!updatesBySubtask[subtaskKey]) {
               updatesBySubtask[subtaskKey] = { fields: {}, count: 0 };
             }
-            updatesBySubtask[subtaskKey].fields.labels = buildLabelsForSave(subtask, draftCatalogCode);
+            updatesBySubtask[subtaskKey].fields.labels = parseLabelsDraft(draftLabels);
             updatesBySubtask[subtaskKey].count += 1;
           }
           PHASE_SUBTASK_DEFS.forEach((def) => {
@@ -6579,20 +6518,6 @@
           }
         });
 
-        el.debugClearBtn.addEventListener('click', () => {
-          state.debugLogs = [];
-          renderDebugLogs();
-        });
-        el.debugCopyBtn.addEventListener('click', async () => {
-          const payload = (state.debugLogs || []).join('\n');
-          try {
-            await navigator.clipboard.writeText(payload);
-            showMsg('info', 'Logs copiados al portapapeles.');
-          } catch (_e) {
-            showMsg('error', 'No se pudo copiar logs. Copia manual desde el panel.');
-          }
-        });
-
         el.connectBtn.addEventListener('click', async () => {
           clearMsg();
           const cfg = readConfigInputs();
@@ -6673,27 +6598,94 @@
           const select = ev.target && ev.target.closest
             ? ev.target.closest('select[data-phase-subtask-key]')
             : null;
-          if (select) {
-            const subtaskKey = String(select.getAttribute('data-phase-subtask-key') || '').trim();
-            const phaseId = String(select.getAttribute('data-phase-id') || '').trim();
-            if (!subtaskKey || !phaseId) return;
-            state.subtaskPhaseSelection[phaseFieldSelectionKey(subtaskKey, phaseId)] = String(select.value || '').trim();
+          if (!select) return;
+          const subtaskKey = String(select.getAttribute('data-phase-subtask-key') || '').trim();
+          const phaseId = String(select.getAttribute('data-phase-id') || '').trim();
+          if (!subtaskKey || !phaseId) return;
+          state.subtaskPhaseSelection[phaseFieldSelectionKey(subtaskKey, phaseId)] = String(select.value || '').trim();
+        });
+
+        el.issueInsight.addEventListener('input', (ev) => {
+          const inp = ev.target && ev.target.closest
+            ? ev.target.closest('input[data-subtask-labels-key]')
+            : null;
+          if (!inp) return;
+          const subtaskKey = String(inp.getAttribute('data-subtask-labels-key') || '').trim();
+          if (!subtaskKey) return;
+          state.subtaskLabelsDraftByKey[subtaskKey] = String(inp.value || '');
+          inp.dataset.suggestIndex = '0';
+          renderLabelSuggestionsForInput(inp, 0);
+        });
+
+        el.issueInsight.addEventListener('focusin', (ev) => {
+          const inp = ev.target && ev.target.closest
+            ? ev.target.closest('input[data-subtask-labels-key]')
+            : null;
+          if (!inp) return;
+          inp.dataset.suggestIndex = '0';
+          renderLabelSuggestionsForInput(inp, 0);
+        });
+
+        el.issueInsight.addEventListener('focusout', (ev) => {
+          const inp = ev.target && ev.target.closest
+            ? ev.target.closest('input[data-subtask-labels-key]')
+            : null;
+          if (!inp) return;
+          window.setTimeout(() => {
+            hideLabelSuggestions(inp);
+          }, 100);
+        });
+
+        el.issueInsight.addEventListener('keydown', (ev) => {
+          const inp = ev.target && ev.target.closest
+            ? ev.target.closest('input[data-subtask-labels-key]')
+            : null;
+          if (!inp) return;
+          if (ev.key === 'Escape') {
+            hideLabelSuggestions(inp);
             return;
           }
-          const labelSelect = ev.target && ev.target.closest
-            ? ev.target.closest('select[data-subtask-labels-key]')
+          if (ev.key !== 'Tab' && ev.key !== 'ArrowDown' && ev.key !== 'ArrowUp') {
+            return;
+          }
+          const suggestions = renderLabelSuggestionsForInput(inp);
+          if (!suggestions.length) return;
+          let index = Math.floor(Number(inp.dataset.suggestIndex || 0));
+          if (!Number.isFinite(index) || index < 0) index = 0;
+          if (ev.key === 'ArrowDown') {
+            ev.preventDefault();
+            index = (index + 1) % suggestions.length;
+            renderLabelSuggestionsForInput(inp, index);
+            return;
+          }
+          if (ev.key === 'ArrowUp') {
+            ev.preventDefault();
+            index = (index - 1 + suggestions.length) % suggestions.length;
+            renderLabelSuggestionsForInput(inp, index);
+            return;
+          }
+          if (ev.key === 'Tab') {
+            ev.preventDefault();
+            const picked = suggestions[index] || suggestions[0];
+            if (picked && picked.code) {
+              applyLabelSuggestion(inp, picked.code);
+            }
+          }
+        });
+
+        el.issueInsight.addEventListener('mousedown', (ev) => {
+          const pickBtn = ev.target && ev.target.closest
+            ? ev.target.closest('button[data-label-suggest-code]')
             : null;
-          if (!labelSelect) return;
-          const subtaskKey = String(labelSelect.getAttribute('data-subtask-labels-key') || '').trim();
-          if (!subtaskKey) return;
-          const selectedCode = String(labelSelect.value || '').trim();
-          state.subtaskLabelsDraftByKey[subtaskKey] = selectedCode;
-          const infoTip = el.issueInsight.querySelector(`[data-subtask-labels-info="${cssEscape(subtaskKey)}"]`);
-          if (!infoTip) return;
-          const description = subtaskLabelDescription(selectedCode);
-          infoTip.setAttribute('title', description);
-          const popup = infoTip.querySelector('.issue-phase-info-popup');
-          if (popup) popup.textContent = description;
+          if (!pickBtn) return;
+          ev.preventDefault();
+          const input = pickBtn.closest('.issue-phase-labels-control')
+            ? pickBtn.closest('.issue-phase-labels-control').querySelector('input[data-subtask-labels-key]')
+            : null;
+          if (!input) return;
+          const code = String(pickBtn.getAttribute('data-label-suggest-code') || '').trim();
+          if (!code) return;
+          applyLabelSuggestion(input, code);
         });
 
         el.issueInsight.addEventListener('click', async (ev) => {
@@ -7223,7 +7215,6 @@
         renderTimer();
         renderCompact();
         renderIdle();
-        renderDebugLogs();
 
         window.setInterval(() => { renderTimer(); renderCompact(); renderIdle(); }, 1000);
         window.setInterval(renderIdle, 60000);

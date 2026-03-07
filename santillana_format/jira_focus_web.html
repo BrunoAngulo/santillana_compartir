@@ -2653,7 +2653,6 @@
       }
 
       function postFrameHeight() {
-        if (window.parent === window) return;
         const rootEl = frameRootElement();
         const root = document.documentElement;
         const body = document.body;
@@ -2667,6 +2666,18 @@
         );
         if (!height || height === lastFrameHeight) return;
         lastFrameHeight = height;
+        try {
+          const frame = window.frameElement;
+          if (frame && frame.style) {
+            frame.style.height = `${height}px`;
+            frame.style.minHeight = `${height}px`;
+            frame.style.overflow = 'hidden';
+            frame.setAttribute('height', String(height));
+          }
+        } catch (_e) {
+          // No-op when the frame is not directly accessible.
+        }
+        if (window.parent === window) return;
         try {
           window.parent.postMessage({ type: 'streamlit:setFrameHeight', height }, '*');
         } catch (_e) {

@@ -3315,6 +3315,20 @@
           const jql = 'assignee = currentUser() AND statusCategory != Done AND issuetype not in subTaskIssueTypes() ORDER BY updated DESC';
           return this.req('GET', '/rest/api/3/search/jql', { params: { jql, maxResults: 80, fields: 'summary,status,issuetype,attachment,subtasks' } });
         },
+        searchSubtasks(parentKey) {
+          const key = String(parentKey || '').trim();
+          if (!key) {
+            return Promise.resolve({ issues: [] });
+          }
+          const jql = `parent = ${key} ORDER BY created ASC`;
+          return this.req('GET', '/rest/api/3/search/jql', {
+            params: {
+              jql,
+              maxResults: 200,
+              fields: 'summary,status,issuetype,parent'
+            }
+          });
+        },
         issue(key, params = {}) {
           return this.req('GET', `/rest/api/3/issue/${encodeURIComponent(key)}`, { params });
         },
@@ -4350,6 +4364,7 @@
         const subtasks = issue && Array.isArray(issue.subtasksDetail) ? issue.subtasksDetail : [];
         const hasSubtasks = subtasks.length > 0;
         const hasAnyPhaseField = subtasks.some((subtask) => PHASE_SUBTASK_DEFS.some((def) => !!phaseFieldState(subtask, def.id).fieldId));
+        const subtaskCountLabel = hasSubtasks ? ` (${subtasks.length})` : '';
 
         const itemsHtml = subtasks.map((subtask) => {
           const subtaskKey = String(subtask && subtask.key ? subtask.key : '').trim();
@@ -4433,7 +4448,7 @@
 
         return `
           <div class="issue-phase-panel">
-            <div class="issue-phase-title">Subtareas / TEP-Seguimiento</div>
+            <div class="issue-phase-title">Subtareas / TEP-Seguimiento${escapeHtml(subtaskCountLabel)}</div>
             ${itemsHtml || '<div class="issue-phase-hint">Sin subtareas para este ticket.</div>'}
             <div class="issue-phase-actions">
               <button class="btn" type="button" data-act="phase-reload-options"${disableReload}>Recargar combos</button>
@@ -5749,7 +5764,22 @@
         issue.summary = String(fields.summary || issue.summary || '');
         issue.attachments = Array.isArray(fields.attachment) ? fields.attachment : [];
 
-        const subtasksRaw = Array.isArray(fields.subtasks) ? fields.subtasks : [];
+        let subtasksRaw = [];
+        try {
+          const subtasksPayload = await JiraService.searchSubtasks(key);
+          const searchList = Array.isArray(subtasksPayload.issues)
+            ? subtasksPayload.issues
+            : (Array.isArray(subtasksPayload.values) ? subtasksPayload.values : []);
+          subtasksRaw = searchList.filter((row) => row && row.key);
+        } catch (error) {
+          dbg('subtasks_search_error', {
+            issue_key: key,
+            message: error && error.message ? error.message : String(error || '')
+          });
+        }
+        if (!subtasksRaw.length) {
+          subtasksRaw = Array.isArray(fields.subtasks) ? fields.subtasks : [];
+        }
         if (!subtasksRaw.length) {
           issue.subtasks = [];
           issue.subtasksDetail = [];

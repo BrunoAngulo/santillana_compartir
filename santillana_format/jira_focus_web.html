@@ -5025,14 +5025,20 @@
               && Number.isFinite(nextWindowLimitTs)
               && it.win.startTs >= commentTs
               && it.win.startTs <= nextWindowLimitTs;
+            const spansCheckpoint = linkRef.outsideBusiness
+              && Number.isFinite(commentTs)
+              && it.win.startTs <= commentTs
+              && it.win.endTs >= commentTs;
             const endsAtCommentMinute = endMinute === commentMinute;
-            if (!endsAtCommentMinute && !startsAfterCheckpoint) {
+            if (!endsAtCommentMinute && !startsAfterCheckpoint && !spansCheckpoint) {
               return null;
             }
-            const matchTs = endsAtCommentMinute ? it.win.endTs : it.win.startTs;
+            const matchTs = endsAtCommentMinute
+              ? it.win.endTs
+              : (spansCheckpoint ? commentTs : it.win.startTs);
             return {
               row: it.row,
-              matchRank: endsAtCommentMinute ? 0 : 1,
+              matchRank: endsAtCommentMinute ? 0 : (spansCheckpoint ? 1 : 2),
               distEnd: Number.isFinite(commentTs) ? Math.abs(matchTs - commentTs) : 0
             };
           })
@@ -5421,16 +5427,20 @@
               && Number.isFinite(nextWindowLimitTs)
               && startTs >= cTs
               && startTs <= nextWindowLimitTs;
-            if (!endsAtCommentMinute && !startsAfterCheckpoint) return;
+            const spansCheckpoint = linkRef.outsideBusiness
+              && Number.isFinite(cTs)
+              && startTs <= cTs
+              && endTs >= cTs;
+            if (!endsAtCommentMinute && !startsAfterCheckpoint && !spansCheckpoint) return;
             const authorObj = r && r.worklog && r.worklog.author ? r.worklog.author : null;
             const mineRank = mine(authorObj) ? 0 : 1;
-            const matchTs = endsAtCommentMinute ? endTs : startTs;
+            const matchTs = endsAtCommentMinute ? endTs : (spansCheckpoint ? cTs : startTs);
             const dist = Number.isFinite(cTs) ? Math.abs(matchTs - cTs) : 0;
             candidates.push({
               id,
               dist,
               mineRank,
-              matchRank: endsAtCommentMinute ? 0 : 1
+              matchRank: endsAtCommentMinute ? 0 : (spansCheckpoint ? 1 : 2)
             });
           });
           candidates.sort((a, b) => (a.mineRank - b.mineRank) || (a.matchRank - b.matchRank) || (a.dist - b.dist));
@@ -7203,9 +7213,17 @@
           }
           let explicitStarted = null;
           let anchorEndTs = Number(state.regCtx.anchorEndTs || 0);
+          let outsideBusiness = false;
+          const comments = state.commentsByIssue[issueKey] || [];
+          const sourceComment = comments.find((x) => String(x.id || '') === String(state.regCtx.commentId || ''));
+          if (sourceComment) {
+            const anchorRef = commentLinkAnchor(sourceComment);
+            outsideBusiness = !!anchorRef.outsideBusiness;
+            if (!Number.isFinite(anchorEndTs) || anchorEndTs <= 0) {
+              anchorEndTs = Number(anchorRef.anchorTs || 0);
+            }
+          }
           if (!Number.isFinite(anchorEndTs) || anchorEndTs <= 0) {
-            const comments = state.commentsByIssue[issueKey] || [];
-            const sourceComment = comments.find((x) => String(x.id || '') === String(state.regCtx.commentId || ''));
             const sourceTs = sourceComment && sourceComment.created ? new Date(sourceComment.created) : new Date();
             anchorEndTs = TimeService.normalizeBusinessCheckpoint(sourceTs).getTime();
           }
@@ -7223,7 +7241,9 @@
             }
             explicitStarted = applyTemplate
               ? TimeService.subtractBusinessMinutes(anchorEnd, mins)
-              : new Date(anchorEnd.getTime() - (mins * 60000));
+              : (outsideBusiness
+                ? new Date(anchorEnd)
+                : new Date(anchorEnd.getTime() - (mins * 60000)));
           }
           const sourceCommentId = state.regCtx && state.regCtx.commentId ? String(state.regCtx.commentId) : '';
           hideInlineRegistrar();

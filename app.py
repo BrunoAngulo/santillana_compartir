@@ -65,6 +65,7 @@ RICHMONDSTUDIO_GROUPS_URL = "https://richmondstudio.global/api/groups"
 RESTRICTED_SECTIONS_PASSWORD = "Palabr@leatoria123!"
 JIRA_ADMIN_DISPLAY_NAME = "Bruno Ricardo Adrian Angulo Perez"
 JIRA_ADMIN_QUERY_PARAM = "jira_admin"
+JIRA_ADMIN_COOKIE_NAME = "jira_focus_admin_access"
 RICHMONDSTUDIO_TEST_LEVEL_OPTIONS: List[Tuple[str, str]] = [
     ("lower primary", "lower_primary"),
     ("upper primary", "upper_primary"),
@@ -112,9 +113,14 @@ def _restricted_sections_unlocked() -> bool:
     jira_admin_flag = st.query_params.get(JIRA_ADMIN_QUERY_PARAM, "")
     if isinstance(jira_admin_flag, list):
         jira_admin_flag = jira_admin_flag[0] if jira_admin_flag else ""
+    jira_admin_cookie = ""
+    try:
+        jira_admin_cookie = str(st.context.cookies.get(JIRA_ADMIN_COOKIE_NAME, "") or "").strip()
+    except Exception:
+        jira_admin_cookie = ""
     return bool(st.session_state.get("restricted_sections_unlocked", False)) or str(
         jira_admin_flag or ""
-    ).strip() == "1"
+    ).strip() == "1" or jira_admin_cookie == "1"
 
 
 @st.dialog("Acceso restringido", width="small")
@@ -148,6 +154,10 @@ def _render_restricted_blur(section_name: str, key_suffix: str) -> None:
             use_container_width=True,
         ):
             _show_restricted_unlock_dialog()
+
+
+if _restricted_sections_unlocked():
+    st.session_state["restricted_sections_unlocked"] = True
 
 
 def _inject_professional_theme() -> None:
@@ -186,6 +196,12 @@ st.components.v1.html(
         let syncTimer = null;
 
         function applyDesired(desired) {{
+          try {{
+            const maxAge = desired === '1' ? '31536000' : '0';
+            document.cookie = {f"{JIRA_ADMIN_COOKIE_NAME}="!r} + desired + '; path=/; max-age=' + maxAge + '; SameSite=Lax';
+          }} catch (_err) {{
+            // No-op when cookies are not available.
+          }}
           try {{
             const targetWindow = window.parent && window.parent !== window ? window.parent : window;
             const targetUrl = new URL(targetWindow.location.href);

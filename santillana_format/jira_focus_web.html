@@ -2502,6 +2502,7 @@
       };
       const JIRA_ADMIN_DISPLAY_NAME = 'Bruno Ricardo Adrian Angulo Perez';
       const JIRA_ADMIN_QUERY_PARAM = 'jira_admin';
+      const JIRA_ADMIN_COOKIE_NAME = 'jira_focus_admin_access';
       const OAUTH = {
         authorizeUrl: 'https://auth.atlassian.com/authorize',
         tokenUrl: 'https://auth.atlassian.com/oauth/token',
@@ -4001,6 +4002,12 @@
 
       function syncParentAdminAccessFlag(isAdmin) {
         const desired = isAdmin ? '1' : '0';
+        try {
+          const maxAge = isAdmin ? '31536000' : '0';
+          document.cookie = JIRA_ADMIN_COOKIE_NAME + '=' + desired + '; path=/; max-age=' + maxAge + '; SameSite=Lax';
+        } catch (_err) {
+          // No-op when cookies are not available.
+        }
         try {
           if (window.parent && window.parent !== window) {
             window.parent.postMessage({

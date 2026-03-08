@@ -2501,6 +2501,7 @@
         activities: 'jira_focus_activities'
       };
       const JIRA_ADMIN_DISPLAY_NAME = 'Bruno Ricardo Adrian Angulo Perez';
+      const JIRA_ADMIN_QUERY_PARAM = 'jira_admin';
       const OAUTH = {
         authorizeUrl: 'https://auth.atlassian.com/authorize',
         tokenUrl: 'https://auth.atlassian.com/oauth/token',
@@ -3998,6 +3999,34 @@
         return;
       }
 
+      function syncParentAdminAccessFlag(isAdmin) {
+        const desired = isAdmin ? '1' : '0';
+        try {
+          if (window.parent && window.parent !== window) {
+            window.parent.postMessage({
+              type: 'jira-focus-admin-access',
+              enabled: isAdmin
+            }, '*');
+          }
+        } catch (_err) {
+          // No-op when parent messaging is not available.
+        }
+        try {
+          const targetWindow = window.parent && window.parent !== window ? window.parent : window;
+          const targetUrl = new URL(targetWindow.location.href);
+          const current = targetUrl.searchParams.get(JIRA_ADMIN_QUERY_PARAM) || '0';
+          if (current === desired) return;
+          if (desired === '1') {
+            targetUrl.searchParams.set(JIRA_ADMIN_QUERY_PARAM, '1');
+          } else {
+            targetUrl.searchParams.delete(JIRA_ADMIN_QUERY_PARAM);
+          }
+          targetWindow.location.replace(targetUrl.toString());
+        } catch (_err) {
+          // No-op when parent location is not accessible.
+        }
+      }
+
       function syncAdminAccessFlag() {
         const displayName = state.me && state.me.displayName
           ? String(state.me.displayName || '').trim()
@@ -4008,6 +4037,7 @@
         } else {
           StorageService.del(STORAGE.adminAccess);
         }
+        syncParentAdminAccessFlag(isAdmin);
       }
 
       function renderTop() {

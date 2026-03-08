@@ -177,6 +177,61 @@ def _sync_shared_token_from_input() -> None:
 
 st.set_page_config(page_title="Generador de Plantilla", layout="wide")
 _inject_professional_theme()
+st.components.v1.html(
+    f"""
+    <script>
+      (function () {{
+        const storageKey = 'jira_focus_admin_access';
+        const queryKey = {JIRA_ADMIN_QUERY_PARAM!r};
+        let syncTimer = null;
+
+        function applyDesired(desired) {{
+          try {{
+            const targetWindow = window.parent && window.parent !== window ? window.parent : window;
+            const targetUrl = new URL(targetWindow.location.href);
+            const current = targetUrl.searchParams.get(queryKey) || '0';
+            if (current === desired) return;
+            if (desired === '1') {{
+              targetUrl.searchParams.set(queryKey, '1');
+            }} else {{
+              targetUrl.searchParams.delete(queryKey);
+            }}
+            targetWindow.location.replace(targetUrl.toString());
+          }} catch (_err) {{
+            // No-op when parent location is not accessible.
+          }}
+        }}
+
+        function syncAdminFlag() {{
+          let desired = '0';
+          try {{
+            desired = (window.localStorage.getItem(storageKey) || '') === '1' ? '1' : '0';
+          }} catch (_err) {{
+            desired = '0';
+          }}
+          applyDesired(desired);
+        }}
+
+        try {{
+          const targetWindow = window.parent && window.parent !== window ? window.parent : window;
+          targetWindow.addEventListener('message', function (event) {{
+            const data = event && event.data ? event.data : null;
+            if (!data || data.type !== 'jira-focus-admin-access') return;
+            applyDesired(data.enabled ? '1' : '0');
+          }});
+        }} catch (_err) {{
+          // No-op when parent messaging is not accessible.
+        }}
+
+        syncAdminFlag();
+        if (!syncTimer) {{
+          syncTimer = window.setInterval(syncAdminFlag, 1000);
+        }}
+      }})();
+    </script>
+    """,
+    height=0,
+)
 st.markdown("**Menu principal**")
 menu_option = st.radio(
     "Menu",
@@ -200,37 +255,6 @@ if menu_option == "Jira Focus Web":
     )
     render_jira_focus_web()
     st.stop()
-
-st.components.v1.html(
-    f"""
-    <script>
-      (function () {{
-        const storageKey = 'jira_focus_admin_access';
-        const queryKey = {JIRA_ADMIN_QUERY_PARAM!r};
-        let desired = '0';
-        try {{
-          desired = (window.localStorage.getItem(storageKey) || '') === '1' ? '1' : '0';
-        }} catch (_err) {{
-          desired = '0';
-        }}
-        try {{
-          const targetUrl = new URL(window.parent.location.href);
-          const current = targetUrl.searchParams.get(queryKey) || '0';
-          if (current === desired) return;
-          if (desired === '1') {{
-            targetUrl.searchParams.set(queryKey, '1');
-          }} else {{
-            targetUrl.searchParams.delete(queryKey);
-          }}
-          window.parent.location.replace(targetUrl.toString());
-        }} catch (_err) {{
-          // No-op when parent location is not accessible.
-        }}
-      }})();
-    </script>
-    """,
-    height=0,
-)
 
 st.markdown(
     """

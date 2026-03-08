@@ -2494,11 +2494,13 @@
         oauthTokens: 'jira_oauth_tokens',
         oauthPending: 'jira_oauth_pending',
         oauthDone: 'jira_oauth_done',
+        adminAccess: 'jira_focus_admin_access',
         timer: 'jira_focus_timer_state',
         ui: 'jira_focus_ui_state',
         lastActivity: 'jira_focus_last_activity',
         activities: 'jira_focus_activities'
       };
+      const JIRA_ADMIN_DISPLAY_NAME = 'Bruno Ricardo Adrian Angulo Perez';
       const OAUTH = {
         authorizeUrl: 'https://auth.atlassian.com/authorize',
         tokenUrl: 'https://auth.atlassian.com/oauth/token',
@@ -3996,7 +3998,20 @@
         return;
       }
 
+      function syncAdminAccessFlag() {
+        const displayName = state.me && state.me.displayName
+          ? String(state.me.displayName || '').trim()
+          : '';
+        const isAdmin = state.connected && displayName.toLowerCase() === JIRA_ADMIN_DISPLAY_NAME.toLowerCase();
+        if (isAdmin) {
+          StorageService.set(STORAGE.adminAccess, '1');
+        } else {
+          StorageService.del(STORAGE.adminAccess);
+        }
+      }
+
       function renderTop() {
+        syncAdminAccessFlag();
         el.connPill.textContent = state.connected ? 'Conectado' : 'Sin conexion';
         el.connPill.className = `pill ${state.connected ? 'ok' : ''}`;
         const isBusy = Number(state.netPendingCount || 0) > 0;

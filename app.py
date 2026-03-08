@@ -63,6 +63,8 @@ GESTION_ESCOLAR_CICLO_ID_DEFAULT = 207
 RICHMONDSTUDIO_USERS_URL = "https://richmondstudio.global/api/users"
 RICHMONDSTUDIO_GROUPS_URL = "https://richmondstudio.global/api/groups"
 RESTRICTED_SECTIONS_PASSWORD = "Palabr@leatoria123!"
+JIRA_ADMIN_DISPLAY_NAME = "Bruno Ricardo Adrian Angulo Perez"
+JIRA_ADMIN_QUERY_PARAM = "jira_admin"
 RICHMONDSTUDIO_TEST_LEVEL_OPTIONS: List[Tuple[str, str]] = [
     ("lower primary", "lower_primary"),
     ("upper primary", "upper_primary"),
@@ -75,6 +77,12 @@ RICHMONDSTUDIO_TEST_LEVEL_BY_LABEL = {
 }
 RICHMONDSTUDIO_TEST_LEVEL_LABEL_BY_VALUE = {
     value: label for label, value in RICHMONDSTUDIO_TEST_LEVEL_OPTIONS
+}
+RICHMONDSTUDIO_LEVEL_SHORT_BY_VALUE = {
+    "preschool": "PRE",
+    "preprimary": "PRE",
+    "primary": "PRI",
+    "secondary": "SEC",
 }
 RICHMONDSTUDIO_GRADE_OPTIONS: List[Tuple[str, str]] = [
     ("2 años", "grade2"),
@@ -97,10 +105,16 @@ RICHMONDSTUDIO_GRADE_LABELS = [item[0] for item in RICHMONDSTUDIO_GRADE_OPTIONS]
 RICHMONDSTUDIO_GRADE_SUGGESTION_BY_LABEL = {
     label: value for label, value in RICHMONDSTUDIO_GRADE_OPTIONS
 }
+RICHMONDSTUDIO_GRADE_CODE_OPTIONS = [f"grade{idx}" for idx in range(1, 21)]
 
 
 def _restricted_sections_unlocked() -> bool:
-    return bool(st.session_state.get("restricted_sections_unlocked", False))
+    jira_admin_flag = st.query_params.get(JIRA_ADMIN_QUERY_PARAM, "")
+    if isinstance(jira_admin_flag, list):
+        jira_admin_flag = jira_admin_flag[0] if jira_admin_flag else ""
+    return bool(st.session_state.get("restricted_sections_unlocked", False)) or str(
+        jira_admin_flag or ""
+    ).strip() == "1"
 
 
 @st.dialog("Acceso restringido", width="small")
@@ -186,6 +200,38 @@ if menu_option == "Jira Focus Web":
     )
     render_jira_focus_web()
     st.stop()
+
+st.components.v1.html(
+    f"""
+    <script>
+      (function () {{
+        const storageKey = 'jira_focus_admin_access';
+        const queryKey = {JIRA_ADMIN_QUERY_PARAM!r};
+        let desired = '0';
+        try {{
+          desired = (window.localStorage.getItem(storageKey) || '') === '1' ? '1' : '0';
+        }} catch (_err) {{
+          desired = '0';
+        }}
+        try {{
+          const targetUrl = new URL(window.parent.location.href);
+          const current = targetUrl.searchParams.get(queryKey) || '0';
+          if (current === desired) return;
+          if (desired === '1') {{
+            targetUrl.searchParams.set(queryKey, '1');
+          }} else {{
+            targetUrl.searchParams.delete(queryKey);
+          }}
+          window.parent.location.replace(targetUrl.toString());
+        }} catch (_err) {{
+          // No-op when parent location is not accessible.
+        }}
+      }})();
+    </script>
+    """,
+    height=0,
+)
+
 st.markdown(
     """
     <section class="bg-white border border-gray-200 rounded-lg px-4 py-3 mb-3 shadow-sm">
@@ -448,6 +494,58 @@ def _create_richmondstudio_group(
     return body
 
 
+def _update_richmondstudio_group(
+    token: str, group_id: str, payload: Dict[str, object], timeout: int = 30
+) -> Dict[str, object]:
+    try:
+        response = requests.put(
+            f"{RICHMONDSTUDIO_GROUPS_URL}/{group_id}",
+            headers=_richmondstudio_headers(token),
+            json=payload,
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Error de red: {exc}") from exc
+
+    status_code = response.status_code
+    if not response.content:
+        if not response.ok:
+            raise RuntimeError(f"HTTP {status_code}")
+        return {}
+
+    try:
+        body = response.json()
+    except ValueError as exc:
+        raise RuntimeError(f"Respuesta no JSON (status {status_code})") from exc
+
+    if not response.ok:
+        raise RuntimeError(_richmondstudio_error_detail(body, status_code))
+    if not isinstance(body, dict):
+        return {}
+    return body
+
+
+def _delete_richmondstudio_group(token: str, group_id: str, timeout: int = 30) -> None:
+    try:
+        response = requests.delete(
+            f"{RICHMONDSTUDIO_GROUPS_URL}/{group_id}",
+            headers=_richmondstudio_headers(token),
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Error de red: {exc}") from exc
+
+    if response.ok:
+        return
+
+    status_code = response.status_code
+    try:
+        body = response.json()
+    except ValueError:
+        body = {"detail": response.text or f"HTTP {status_code}"}
+    raise RuntimeError(_richmondstudio_error_detail(body, status_code))
+
+
 def _richmondstudio_display_bool(value: object) -> str:
     return "Si" if bool(value) else "No"
 
@@ -465,6 +563,69 @@ def _richmondstudio_group_users_count(group_item: Dict[str, object]) -> int:
     return len(users_data)
 
 
+def _richmondstudio_grade_label(grade_code: object, level_value: object) -> str:
+    grade_text = str(grade_code or "").strip().lower()
+    level_text = str(level_value or "").strip().lower()
+    match = re.fullmatch(r"grade(\d+)", grade_text)
+    if not match:
+        return str(grade_code or "").strip()
+
+    grade_num = int(match.group(1))
+    if level_text == "secondary":
+        mapping = {
+            7: "Primer año de secundaria",
+            8: "Segundo año de secundaria",
+            9: "Tercer año de secundaria",
+            10: "Cuarto año de secundaria",
+            11: "Quinto año de secundaria",
+        }
+        return mapping.get(grade_num, f"Secundaria {grade_num}")
+    if level_text == "primary":
+        mapping = {
+            1: "Primer grado de primaria",
+            2: "Segundo grado de primaria",
+            3: "Tercer grado de primaria",
+            4: "Cuarto grado de primaria",
+            5: "Quinto grado de primaria",
+            6: "Sexto grado de primaria",
+        }
+        return mapping.get(grade_num, f"Primaria {grade_num}")
+    if level_text in {"preschool", "preprimary"}:
+        mapping = {
+            2: "2 años",
+            3: "3 años",
+            4: "4 años",
+            5: "5 años",
+        }
+        return mapping.get(grade_num, f"Inicial {grade_num}")
+    return str(grade_code or "").strip()
+
+
+def _richmondstudio_grade_display(attrs: Dict[str, object]) -> str:
+    level_value = str(attrs.get("level") or "").strip().lower()
+    level_short = str(RICHMONDSTUDIO_LEVEL_SHORT_BY_VALUE.get(level_value, "")).strip()
+    grade_label = _richmondstudio_grade_label(attrs.get("grade"), level_value)
+    if level_short and grade_label:
+        return f"{level_short} | {grade_label}"
+    return grade_label or level_short
+
+
+def _richmondstudio_date_display(date_text: object) -> str:
+    raw = str(date_text or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = date.fromisoformat(raw)
+        return parsed.strftime("%d/%m/%Y")
+    except ValueError:
+        return raw
+
+
+def _richmondstudio_default_dates() -> Tuple[date, date]:
+    today = date.today()
+    return today, date(today.year, 12, 31)
+
+
 def _normalize_richmondstudio_group_row(group_item: Dict[str, object]) -> Dict[str, object]:
     attrs = group_item.get("attributes") if isinstance(group_item.get("attributes"), dict) else {}
     start_date = str(attrs.get("startDate") or "").strip()
@@ -478,11 +639,19 @@ def _normalize_richmondstudio_group_row(group_item: Dict[str, object]) -> Dict[s
     return {
         "ID": str(group_item.get("id") or "").strip(),
         "Class name": str(attrs.get("name") or "").strip(),
-        "Grade": str(attrs.get("grade") or "").strip(),
-        "Dates": " / ".join(part for part in (start_date, end_date) if part),
+        "Grade": _richmondstudio_grade_display(attrs),
+        "Dates": " | ".join(
+            part
+            for part in (
+                f"Start: {_richmondstudio_date_display(start_date)}" if start_date else "",
+                f"End: {_richmondstudio_date_display(end_date)}" if end_date else "",
+            )
+            if part
+        ),
         "iRead": _richmondstudio_display_bool(attrs.get("iread")),
         "Code": str(attrs.get("code") or "").strip(),
         "Test level": grade_level_label,
+        "Students": int(attrs.get("numberOfStudents") or 0),
         "Users": _richmondstudio_group_users_count(group_item),
     }
 
@@ -504,7 +673,6 @@ def _coerce_iso_date(value: object, field_name: str) -> str:
 
 
 def _default_richmondstudio_group_row() -> Dict[str, object]:
-    today = date.today()
     return {
         "Crear": True,
         "Class name": "",
@@ -514,8 +682,6 @@ def _default_richmondstudio_group_row() -> Dict[str, object]:
             "Primer año de secundaria", "grade7"
         ),
         "Test level": "lower secondary",
-        "Start date": today,
-        "End date": date(today.year, 12, 31),
         "iRead": False,
     }
 
@@ -531,6 +697,12 @@ def _normalize_richmondstudio_create_rows(rows: List[Dict[str, object]]) -> List
             grade_code = str(
                 RICHMONDSTUDIO_GRADE_SUGGESTION_BY_LABEL.get(grade_label, "")
             ).strip()
+        if grade_code not in RICHMONDSTUDIO_GRADE_CODE_OPTIONS:
+            grade_code = str(
+                RICHMONDSTUDIO_GRADE_SUGGESTION_BY_LABEL.get(
+                    grade_label or "Primer aÃ±o de secundaria", "grade7"
+                )
+            ).strip()
         normalized.append(
             {
                 "Crear": bool(row.get("Crear", True)),
@@ -540,8 +712,6 @@ def _normalize_richmondstudio_create_rows(rows: List[Dict[str, object]]) -> List
                 "Grade code": grade_code,
                 "Test level": str(row.get("Test level") or "").strip()
                 or "lower secondary",
-                "Start date": row.get("Start date") or date.today(),
-                "End date": row.get("End date") or date(date.today().year, 12, 31),
                 "iRead": bool(row.get("iRead", False)),
             }
         )
@@ -569,10 +739,9 @@ def _build_richmondstudio_group_payload(row: Dict[str, object]) -> Dict[str, obj
     if not grade_level:
         raise ValueError(f"Test level invalido para {class_name}.")
 
-    start_date = _coerce_iso_date(row.get("Start date"), "Start date")
-    end_date = _coerce_iso_date(row.get("End date"), "End date")
-    if end_date < start_date:
-        raise ValueError(f"End date no puede ser menor que Start date en {class_name}.")
+    start_date_obj, end_date_obj = _richmondstudio_default_dates()
+    start_date = start_date_obj.isoformat()
+    end_date = end_date_obj.isoformat()
 
     return {
         "data": {
@@ -587,6 +756,301 @@ def _build_richmondstudio_group_payload(row: Dict[str, object]) -> Dict[str, obj
                 "iread": bool(row.get("iRead", False)),
             },
             "relationships": {"users": {"data": []}},
+        }
+    }
+
+
+def _default_richmondstudio_group_row() -> Dict[str, object]:
+    default_grade_label = (
+        RICHMONDSTUDIO_GRADE_LABELS[10]
+        if len(RICHMONDSTUDIO_GRADE_LABELS) > 10
+        else RICHMONDSTUDIO_GRADE_LABELS[0]
+    )
+    return {
+        "Crear": True,
+        "Class name": "",
+        "Description": "",
+        "Grade": default_grade_label,
+        "Grade code": RICHMONDSTUDIO_GRADE_SUGGESTION_BY_LABEL.get(
+            default_grade_label, "grade7"
+        ),
+        "Test level": "lower secondary",
+        "iRead": False,
+    }
+
+
+def _normalize_richmondstudio_create_rows(rows: List[Dict[str, object]]) -> List[Dict[str, object]]:
+    normalized: List[Dict[str, object]] = []
+    default_grade_label = (
+        RICHMONDSTUDIO_GRADE_LABELS[10]
+        if len(RICHMONDSTUDIO_GRADE_LABELS) > 10
+        else RICHMONDSTUDIO_GRADE_LABELS[0]
+    )
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        grade_label = str(row.get("Grade") or "").strip() or default_grade_label
+        grade_code = str(row.get("Grade code") or "").strip()
+        if not grade_code or grade_code not in RICHMONDSTUDIO_GRADE_CODE_OPTIONS:
+            grade_code = str(
+                RICHMONDSTUDIO_GRADE_SUGGESTION_BY_LABEL.get(grade_label, "grade7")
+            ).strip()
+        normalized.append(
+            {
+                "Crear": bool(row.get("Crear", True)),
+                "Class name": str(row.get("Class name") or "").strip(),
+                "Description": str(row.get("Description") or "").strip(),
+                "Grade": grade_label,
+                "Grade code": grade_code,
+                "Test level": str(
+                    row.get("Test level")
+                    if "Test level" in row and row.get("Test level") is not None
+                    else "lower secondary"
+                ).strip(),
+                "iRead": bool(row.get("iRead", False)),
+            }
+        )
+    return normalized
+
+
+def _richmondstudio_level_from_test_level(
+    test_level_value: object, fallback_level: object = ""
+) -> str:
+    raw = str(test_level_value or "").strip()
+    normalized = str(RICHMONDSTUDIO_TEST_LEVEL_BY_LABEL.get(raw, raw)).strip().lower()
+    mapping = {
+        "lower_primary": "primary",
+        "upper_primary": "primary",
+        "lower_secondary": "secondary",
+        "upper_secondary": "secondary",
+    }
+    if normalized in mapping:
+        return mapping[normalized]
+    return str(fallback_level or "").strip().lower()
+
+
+def _richmondstudio_group_users_data(group_item: Dict[str, object]) -> List[Dict[str, str]]:
+    relationships = group_item.get("relationships")
+    if not isinstance(relationships, dict):
+        return []
+    users_rel = relationships.get("users")
+    if not isinstance(users_rel, dict):
+        return []
+    users_data = users_rel.get("data")
+    if not isinstance(users_data, list):
+        return []
+
+    normalized_users: List[Dict[str, str]] = []
+    for item in users_data:
+        if not isinstance(item, dict):
+            continue
+        user_id = str(item.get("id") or "").strip()
+        if not user_id:
+            continue
+        normalized_users.append(
+            {
+                "id": user_id,
+                "type": str(item.get("type") or "users").strip() or "users",
+            }
+        )
+    return normalized_users
+
+
+def _richmondstudio_dates_summary(start_date: object, end_date: object) -> str:
+    return " | ".join(
+        part
+        for part in (
+            f"Start: {_richmondstudio_date_display(start_date)}"
+            if str(start_date or "").strip()
+            else "",
+            f"End: {_richmondstudio_date_display(end_date)}"
+            if str(end_date or "").strip()
+            else "",
+        )
+        if part
+    )
+
+
+def _richmondstudio_group_grade_display(
+    grade_code: object, test_level_label: object, fallback_level: object = ""
+) -> str:
+    level_value = _richmondstudio_level_from_test_level(test_level_label, fallback_level)
+    return _richmondstudio_grade_display(
+        {
+            "grade": str(grade_code or "").strip(),
+            "level": level_value,
+        }
+    )
+
+
+def _normalize_richmondstudio_group_row(group_item: Dict[str, object]) -> Dict[str, object]:
+    attrs = group_item.get("attributes") if isinstance(group_item.get("attributes"), dict) else {}
+    start_date = str(attrs.get("startDate") or "").strip()
+    end_date = str(attrs.get("endDate") or "").strip()
+    grade_code = str(attrs.get("grade") or "").strip()
+    grade_level_value = str(attrs.get("gradeLevel") or "").strip()
+    grade_level_label = (
+        RICHMONDSTUDIO_TEST_LEVEL_LABEL_BY_VALUE.get(grade_level_value, grade_level_value)
+        if grade_level_value
+        else ""
+    )
+    level_value = _richmondstudio_level_from_test_level(
+        grade_level_value,
+        attrs.get("level"),
+    )
+    class_name = str(attrs.get("name") or "").strip()
+    description = str(attrs.get("description") or "").strip() or class_name
+    return {
+        "Seleccionar": False,
+        "ID": str(group_item.get("id") or "").strip(),
+        "Class name": class_name,
+        "Description": description,
+        "Grade": _richmondstudio_group_grade_display(
+            grade_code,
+            grade_level_label,
+            level_value or attrs.get("level"),
+        ),
+        "Grade code": grade_code,
+        "Dates": _richmondstudio_dates_summary(start_date, end_date),
+        "Start date": start_date,
+        "End date": end_date,
+        "iRead": bool(attrs.get("iread")),
+        "Code": str(attrs.get("code") or "").strip(),
+        "Test level": grade_level_label,
+        "Students": int(attrs.get("numberOfStudents") or 0),
+        "Users": _richmondstudio_group_users_count(group_item),
+        "_level_value": level_value,
+        "_users_data": _richmondstudio_group_users_data(group_item),
+    }
+
+
+def _normalize_richmondstudio_loaded_rows(rows: List[Dict[str, object]]) -> List[Dict[str, object]]:
+    normalized: List[Dict[str, object]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        grade_code = str(row.get("Grade code") or "").strip()
+        test_level_label = str(row.get("Test level") or "").strip()
+        start_date_raw = row.get("Start date")
+        end_date_raw = row.get("End date")
+        if start_date_raw in ("", None):
+            start_date = ""
+        else:
+            try:
+                start_date = _coerce_iso_date(start_date_raw, "Start date")
+            except ValueError:
+                start_date = str(start_date_raw).strip()
+        if end_date_raw in ("", None):
+            end_date = ""
+        else:
+            try:
+                end_date = _coerce_iso_date(end_date_raw, "End date")
+            except ValueError:
+                end_date = str(end_date_raw).strip()
+        users_data = row.get("_users_data")
+        if not isinstance(users_data, list):
+            users_data = []
+        level_value = _richmondstudio_level_from_test_level(
+            test_level_label,
+            row.get("_level_value"),
+        )
+        normalized.append(
+            {
+                "Seleccionar": bool(row.get("Seleccionar", False)),
+                "ID": str(row.get("ID") or "").strip(),
+                "Class name": str(row.get("Class name") or "").strip(),
+                "Description": str(row.get("Description") or "").strip(),
+                "Grade": _richmondstudio_group_grade_display(
+                    grade_code,
+                    test_level_label,
+                    level_value,
+                ),
+                "Grade code": grade_code,
+                "Dates": _richmondstudio_dates_summary(start_date, end_date),
+                "Start date": start_date,
+                "End date": end_date,
+                "iRead": bool(row.get("iRead", False)),
+                "Code": str(row.get("Code") or "").strip(),
+                "Test level": test_level_label,
+                "Students": int(row.get("Students") or 0),
+                "Users": int(row.get("Users") or 0),
+                "_level_value": level_value,
+                "_users_data": users_data,
+            }
+        )
+    return normalized
+
+
+def _build_richmondstudio_group_payload(row: Dict[str, object]) -> Dict[str, object]:
+    class_name = str(row.get("Class name") or "").strip()
+    if not class_name:
+        raise ValueError("Falta Class name.")
+
+    description = str(row.get("Description") or "").strip() or class_name
+    grade_label = str(row.get("Grade") or "").strip()
+    grade_code = str(row.get("Grade code") or "").strip()
+    if not grade_code and grade_label:
+        grade_code = str(
+            RICHMONDSTUDIO_GRADE_SUGGESTION_BY_LABEL.get(grade_label, "")
+        ).strip()
+    if not grade_code:
+        raise ValueError(f"Falta Grade code para {class_name}.")
+
+    test_level_label = str(row.get("Test level") or "").strip()
+    grade_level = str(RICHMONDSTUDIO_TEST_LEVEL_BY_LABEL.get(test_level_label, "")).strip()
+    start_date_obj, end_date_obj = _richmondstudio_default_dates()
+
+    return {
+        "data": {
+            "type": "groups",
+            "attributes": {
+                "name": class_name,
+                "description": description,
+                "grade": grade_code,
+                "gradeLevel": grade_level or None,
+                "startDate": start_date_obj.isoformat(),
+                "endDate": end_date_obj.isoformat(),
+                "iread": bool(row.get("iRead", False)),
+            },
+            "relationships": {"users": {"data": []}},
+        }
+    }
+
+
+def _build_richmondstudio_group_update_payload(row: Dict[str, object]) -> Dict[str, object]:
+    group_id = str(row.get("ID") or "").strip()
+    if not group_id:
+        raise ValueError("Falta ID de la clase.")
+
+    class_name = str(row.get("Class name") or "").strip()
+    if not class_name:
+        raise ValueError(f"Falta Class name para {group_id}.")
+
+    description = str(row.get("Description") or "").strip() or class_name
+    grade_code = str(row.get("Grade code") or "").strip()
+    if not grade_code:
+        raise ValueError(f"Falta Grade code para {class_name}.")
+
+    test_level_label = str(row.get("Test level") or "").strip()
+    grade_level = str(RICHMONDSTUDIO_TEST_LEVEL_BY_LABEL.get(test_level_label, "")).strip()
+    users_data = row.get("_users_data")
+    if not isinstance(users_data, list):
+        users_data = []
+
+    return {
+        "data": {
+            "type": "groups",
+            "id": group_id,
+            "attributes": {
+                "name": class_name,
+                "description": description,
+                "grade": grade_code,
+                "gradeLevel": grade_level or None,
+                "startDate": _coerce_iso_date(row.get("Start date"), "Start date"),
+                "endDate": _coerce_iso_date(row.get("End date"), "End date"),
+                "iread": bool(row.get("iRead", False)),
+            },
+            "relationships": {"users": {"data": users_data}},
         }
     }
 
@@ -1911,9 +2375,13 @@ with tab_crud_clases:
                 "Bearer token RS",
                 type="password",
                 key="rs_groups_bearer_token",
-                help="Se usa para GET /api/groups?include=users y POST /api/groups.",
+                help="Se usa para GET, POST, PUT y DELETE sobre /api/groups.",
             )
-            col_rs_a, col_rs_b = st.columns([1, 1], gap="small")
+            if "rs_groups_create_rows" not in st.session_state:
+                st.session_state["rs_groups_create_rows"] = [
+                    _default_richmondstudio_group_row()
+                ]
+            col_rs_a, col_rs_b, col_rs_c = st.columns([1, 1, 1], gap="small")
             run_rs_groups_load = col_rs_a.button(
                 "Cargar clases RS",
                 key="rs_groups_load_btn",
@@ -1929,6 +2397,37 @@ with tab_crud_clases:
                 )
                 current_rs_rows.append(_default_richmondstudio_group_row())
                 st.session_state["rs_groups_create_rows"] = current_rs_rows
+            current_rs_rows = _normalize_richmondstudio_create_rows(
+                st.session_state.get("rs_groups_create_rows") or []
+            )
+            duplicate_options = list(range(len(current_rs_rows)))
+            duplicate_labels = {
+                idx: f"Fila {idx + 1}: {str(row.get('Class name') or '').strip() or 'Sin nombre'}"
+                for idx, row in enumerate(current_rs_rows)
+            }
+            duplicate_idx = 0
+            if duplicate_options:
+                duplicate_idx = int(
+                    col_rs_c.selectbox(
+                        "Duplicar fila",
+                        options=duplicate_options,
+                        format_func=lambda idx: duplicate_labels.get(int(idx), f"Fila {int(idx) + 1}"),
+                        key="rs_groups_duplicate_source",
+                    )
+                )
+            if col_rs_c.button(
+                "Duplicar fila",
+                key="rs_groups_duplicate_btn",
+                use_container_width=True,
+                disabled=not duplicate_options,
+            ):
+                current_rs_rows = _normalize_richmondstudio_create_rows(
+                    st.session_state.get("rs_groups_create_rows") or []
+                )
+                if current_rs_rows:
+                    base_row = dict(current_rs_rows[min(max(duplicate_idx, 0), len(current_rs_rows) - 1)])
+                    base_row["Crear"] = True
+                    st.session_state["rs_groups_create_rows"] = current_rs_rows + [base_row]
 
             if run_rs_groups_load:
                 if not _clean_token(rs_token):
@@ -1950,17 +2449,21 @@ with tab_crud_clases:
                     for item in rs_groups_loaded
                     if isinstance(item, dict)
                 ]
-                rs_group_rows = sorted(
-                    rs_group_rows,
-                    key=lambda row: (
-                        str(row.get("Class name") or "").upper(),
-                        str(row.get("Code") or "").upper(),
-                    ),
+                st.session_state["rs_groups_loaded_rows"] = _normalize_richmondstudio_loaded_rows(
+                    sorted(
+                        rs_group_rows,
+                        key=lambda row: (
+                            str(row.get("Class name") or "").upper(),
+                            str(row.get("Code") or "").upper(),
+                        ),
+                    )
                 )
-                st.session_state["rs_groups_loaded_rows"] = rs_group_rows
                 st.success(f"Clases RS cargadas: {len(rs_group_rows)}.")
 
-            rs_loaded_rows = st.session_state.get("rs_groups_loaded_rows") or []
+            rs_loaded_rows = _normalize_richmondstudio_loaded_rows(
+                st.session_state.get("rs_groups_loaded_rows") or []
+            )
+            st.session_state["rs_groups_loaded_rows"] = rs_loaded_rows
             if rs_loaded_rows:
                 st.markdown("**Listado RS**")
                 col_rs_filter_a, col_rs_filter_b, col_rs_filter_c = st.columns(
@@ -1985,11 +2488,12 @@ with tab_crud_clases:
 
                 rs_filter_text_norm = str(rs_filter_text or "").strip().lower()
                 rs_filtered_rows = []
+                rs_filtered_edit_rows = []
                 for row in rs_loaded_rows:
                     class_name_txt = str(row.get("Class name") or "")
                     code_txt = str(row.get("Code") or "")
                     level_txt = str(row.get("Test level") or "")
-                    iread_txt = str(row.get("iRead") or "")
+                    iread_txt = _richmondstudio_display_bool(row.get("iRead"))
                     hay_texto = not rs_filter_text_norm or (
                         rs_filter_text_norm in class_name_txt.lower()
                         or rs_filter_text_norm in code_txt.lower()
@@ -1997,6 +2501,7 @@ with tab_crud_clases:
                     hay_level = rs_filter_level == "Todos" or level_txt == rs_filter_level
                     hay_iread = rs_filter_iread == "Todos" or iread_txt == rs_filter_iread
                     if hay_texto and hay_level and hay_iread:
+                        rs_filtered_edit_rows.append(dict(row))
                         rs_filtered_rows.append(
                             {
                                 "Class name": class_name_txt,
@@ -2004,25 +2509,307 @@ with tab_crud_clases:
                                 "Dates": str(row.get("Dates") or ""),
                                 "iRead": iread_txt,
                                 "Code": code_txt,
+                                "Students": int(row.get("Students") or 0),
                             }
                         )
                 st.caption(
                     f"Mostrando {len(rs_filtered_rows)} de {len(rs_loaded_rows)} clases RS."
                 )
                 _show_dataframe(rs_filtered_rows, use_container_width=True)
+                st.markdown("**RS | Editar o eliminar clases cargadas**")
+                rs_edit_columns = [
+                    "Seleccionar",
+                    "ID",
+                    "Class name",
+                    "Description",
+                    "Grade code",
+                    "Test level",
+                    "Start date",
+                    "End date",
+                    "iRead",
+                    "Code",
+                    "Students",
+                ]
+                rs_edit_df = pd.DataFrame(
+                    [
+                        {column: row.get(column) for column in rs_edit_columns}
+                        for row in rs_filtered_edit_rows
+                    ]
+                )
+                edited_rs_loaded_df = st.data_editor(
+                    rs_edit_df,
+                    key="rs_groups_loaded_editor",
+                    hide_index=True,
+                    use_container_width=True,
+                    disabled=["ID", "Code", "Students"],
+                    column_config={
+                        "Seleccionar": st.column_config.CheckboxColumn("Seleccionar"),
+                        "ID": st.column_config.TextColumn("ID"),
+                        "Class name": st.column_config.TextColumn(
+                            "Class name",
+                            required=True,
+                            width="large",
+                        ),
+                        "Description": st.column_config.TextColumn(
+                            "Description",
+                            width="large",
+                        ),
+                        "Grade code": st.column_config.SelectboxColumn(
+                            "Grade code",
+                            options=RICHMONDSTUDIO_GRADE_CODE_OPTIONS,
+                            required=True,
+                        ),
+                        "Test level": st.column_config.SelectboxColumn(
+                            "Test level",
+                            options=[""] + RICHMONDSTUDIO_TEST_LEVEL_LABELS,
+                            required=False,
+                        ),
+                        "Start date": st.column_config.DateColumn(
+                            "Start date",
+                            format="YYYY-MM-DD",
+                            required=True,
+                        ),
+                        "End date": st.column_config.DateColumn(
+                            "End date",
+                            format="YYYY-MM-DD",
+                            required=True,
+                        ),
+                        "iRead": st.column_config.CheckboxColumn("iRead"),
+                        "Code": st.column_config.TextColumn("Code"),
+                        "Students": st.column_config.NumberColumn("Students", format="%d"),
+                    },
+                )
+                if isinstance(edited_rs_loaded_df, pd.DataFrame):
+                    edited_lookup = {
+                        str(item.get("ID") or "").strip(): item
+                        for item in edited_rs_loaded_df.to_dict("records")
+                        if str(item.get("ID") or "").strip()
+                    }
+                    merged_rows: List[Dict[str, object]] = []
+                    for row in rs_loaded_rows:
+                        row_id = str(row.get("ID") or "").strip()
+                        if row_id and row_id in edited_lookup:
+                            merged_row = dict(row)
+                            merged_row.update(edited_lookup[row_id])
+                            merged_rows.append(merged_row)
+                        else:
+                            merged_rows.append(dict(row))
+                    rs_loaded_rows = _normalize_richmondstudio_loaded_rows(merged_rows)
+                    st.session_state["rs_groups_loaded_rows"] = rs_loaded_rows
+
+                col_rs_update, col_rs_delete = st.columns([1, 1], gap="small")
+                run_rs_groups_update = col_rs_update.button(
+                    "Actualizar clases RS",
+                    key="rs_groups_update_btn",
+                    use_container_width=True,
+                )
+                run_rs_groups_delete = col_rs_delete.button(
+                    "Eliminar clases RS",
+                    key="rs_groups_delete_btn",
+                    use_container_width=True,
+                )
+                confirm_rs_delete = st.checkbox(
+                    "Confirmar eliminacion de clases RS seleccionadas",
+                    key="rs_groups_delete_confirm",
+                    value=False,
+                )
+
+                if run_rs_groups_update:
+                    rs_token_clean = _clean_token(rs_token)
+                    if not rs_token_clean:
+                        st.error("Ingresa el bearer token de Richmond Studio.")
+                        st.stop()
+
+                    rows_to_update = [
+                        row for row in rs_loaded_rows if bool(row.get("Seleccionar"))
+                    ]
+                    if not rows_to_update:
+                        st.error("Selecciona al menos una clase RS para actualizar.")
+                        st.stop()
+
+                    resultados_rs_update: List[Dict[str, str]] = []
+                    ok_rs_update = 0
+                    err_rs_update = 0
+                    progress_rs_update = st.progress(0)
+                    status_rs_update = st.empty()
+
+                    for idx_rs, row in enumerate(rows_to_update, start=1):
+                        class_name = str(row.get("Class name") or "").strip()
+                        group_id = str(row.get("ID") or "").strip()
+                        try:
+                            payload_rs = _build_richmondstudio_group_update_payload(row)
+                            status_rs_update.write(
+                                f"Actualizando {idx_rs}/{len(rows_to_update)}: {class_name}"
+                            )
+                            _update_richmondstudio_group(
+                                rs_token_clean,
+                                group_id,
+                                payload_rs,
+                                timeout=int(timeout),
+                            )
+                            resultados_rs_update.append(
+                                {
+                                    "Class name": class_name,
+                                    "Resultado": "OK",
+                                    "ID": group_id,
+                                    "Detalle": "Actualizada correctamente.",
+                                }
+                            )
+                            ok_rs_update += 1
+                        except Exception as exc:  # pragma: no cover - UI
+                            resultados_rs_update.append(
+                                {
+                                    "Class name": class_name,
+                                    "Resultado": "Error",
+                                    "ID": group_id,
+                                    "Detalle": str(exc),
+                                }
+                            )
+                            err_rs_update += 1
+                        progress_rs_update.progress(
+                            int((idx_rs / len(rows_to_update)) * 100)
+                        )
+
+                    status_rs_update.empty()
+                    progress_rs_update.empty()
+                    if ok_rs_update:
+                        try:
+                            rs_groups_loaded = _fetch_richmondstudio_groups(
+                                rs_token_clean,
+                                timeout=int(timeout),
+                                include_users=True,
+                            )
+                            rs_group_rows = [
+                                _normalize_richmondstudio_group_row(item)
+                                for item in rs_groups_loaded
+                                if isinstance(item, dict)
+                            ]
+                            st.session_state["rs_groups_loaded_rows"] = _normalize_richmondstudio_loaded_rows(
+                                sorted(
+                                    rs_group_rows,
+                                    key=lambda row: (
+                                        str(row.get("Class name") or "").upper(),
+                                        str(row.get("Code") or "").upper(),
+                                    ),
+                                )
+                            )
+                        except Exception:
+                            pass
+
+                    if ok_rs_update and not err_rs_update:
+                        st.success(f"Clases RS actualizadas correctamente: {ok_rs_update}.")
+                    elif ok_rs_update and err_rs_update:
+                        st.warning(
+                            f"Resultado parcial RS: OK {ok_rs_update} | Error {err_rs_update}."
+                        )
+                    else:
+                        st.error("No se pudo actualizar ninguna clase RS.")
+                    _show_dataframe(resultados_rs_update, use_container_width=True)
+
+                if run_rs_groups_delete:
+                    rs_token_clean = _clean_token(rs_token)
+                    if not rs_token_clean:
+                        st.error("Ingresa el bearer token de Richmond Studio.")
+                        st.stop()
+                    if not confirm_rs_delete:
+                        st.error("Marca la confirmacion para eliminar clases RS.")
+                        st.stop()
+
+                    rows_to_delete = [
+                        row for row in rs_loaded_rows if bool(row.get("Seleccionar"))
+                    ]
+                    if not rows_to_delete:
+                        st.error("Selecciona al menos una clase RS para eliminar.")
+                        st.stop()
+
+                    resultados_rs_delete: List[Dict[str, str]] = []
+                    ok_rs_delete = 0
+                    err_rs_delete = 0
+                    progress_rs_delete = st.progress(0)
+                    status_rs_delete = st.empty()
+
+                    for idx_rs, row in enumerate(rows_to_delete, start=1):
+                        class_name = str(row.get("Class name") or "").strip()
+                        group_id = str(row.get("ID") or "").strip()
+                        try:
+                            status_rs_delete.write(
+                                f"Eliminando {idx_rs}/{len(rows_to_delete)}: {class_name}"
+                            )
+                            _delete_richmondstudio_group(
+                                rs_token_clean,
+                                group_id,
+                                timeout=int(timeout),
+                            )
+                            resultados_rs_delete.append(
+                                {
+                                    "Class name": class_name,
+                                    "Resultado": "OK",
+                                    "ID": group_id,
+                                    "Detalle": "Eliminada correctamente.",
+                                }
+                            )
+                            ok_rs_delete += 1
+                        except Exception as exc:  # pragma: no cover - UI
+                            resultados_rs_delete.append(
+                                {
+                                    "Class name": class_name,
+                                    "Resultado": "Error",
+                                    "ID": group_id,
+                                    "Detalle": str(exc),
+                                }
+                            )
+                            err_rs_delete += 1
+                        progress_rs_delete.progress(
+                            int((idx_rs / len(rows_to_delete)) * 100)
+                        )
+
+                    status_rs_delete.empty()
+                    progress_rs_delete.empty()
+                    if ok_rs_delete:
+                        try:
+                            rs_groups_loaded = _fetch_richmondstudio_groups(
+                                rs_token_clean,
+                                timeout=int(timeout),
+                                include_users=True,
+                            )
+                            rs_group_rows = [
+                                _normalize_richmondstudio_group_row(item)
+                                for item in rs_groups_loaded
+                                if isinstance(item, dict)
+                            ]
+                            st.session_state["rs_groups_loaded_rows"] = _normalize_richmondstudio_loaded_rows(
+                                sorted(
+                                    rs_group_rows,
+                                    key=lambda row: (
+                                        str(row.get("Class name") or "").upper(),
+                                        str(row.get("Code") or "").upper(),
+                                    ),
+                                )
+                            )
+                        except Exception:
+                            st.session_state["rs_groups_loaded_rows"] = [
+                                row
+                                for row in rs_loaded_rows
+                                if not bool(row.get("Seleccionar"))
+                            ]
+
+                    if ok_rs_delete and not err_rs_delete:
+                        st.success(f"Clases RS eliminadas correctamente: {ok_rs_delete}.")
+                    elif ok_rs_delete and err_rs_delete:
+                        st.warning(
+                            f"Resultado parcial RS: OK {ok_rs_delete} | Error {err_rs_delete}."
+                        )
+                    else:
+                        st.error("No se pudo eliminar ninguna clase RS.")
+                    _show_dataframe(resultados_rs_delete, use_container_width=True)
             else:
                 st.caption("Aun no has cargado clases RS.")
 
         with st.container(border=True):
             st.markdown("**RS | Crear clases en bloque**")
             st.caption(
-                "Agrega filas como si fuera Excel. Description se completa con Class name si lo dejas vacio."
+                "Agrega filas como si fuera Excel. Description se completa con Class name si lo dejas vacio. Al crear: inicio = hoy, fin = 31/12 del ano actual y Test level vacio se manda como null."
             )
-            if "rs_groups_create_rows" not in st.session_state:
-                st.session_state["rs_groups_create_rows"] = [
-                    _default_richmondstudio_group_row()
-                ]
-
             rs_create_rows = _normalize_richmondstudio_create_rows(
                 st.session_state.get("rs_groups_create_rows") or []
             )
@@ -2053,24 +2840,15 @@ with tab_crud_clases:
                         options=RICHMONDSTUDIO_GRADE_LABELS,
                         required=True,
                     ),
-                    "Grade code": st.column_config.TextColumn(
+                    "Grade code": st.column_config.SelectboxColumn(
                         "Grade code",
-                        help="Valor real que se manda en attributes.grade.",
+                        options=RICHMONDSTUDIO_GRADE_CODE_OPTIONS,
+                        required=True,
                     ),
                     "Test level": st.column_config.SelectboxColumn(
                         "Test level",
-                        options=RICHMONDSTUDIO_TEST_LEVEL_LABELS,
-                        required=True,
-                    ),
-                    "Start date": st.column_config.DateColumn(
-                        "Start date",
-                        format="YYYY-MM-DD",
-                        required=True,
-                    ),
-                    "End date": st.column_config.DateColumn(
-                        "End date",
-                        format="YYYY-MM-DD",
-                        required=True,
+                        options=[""] + RICHMONDSTUDIO_TEST_LEVEL_LABELS,
+                        required=False,
                     ),
                     "iRead": st.column_config.CheckboxColumn("iRead"),
                 },
@@ -2169,12 +2947,14 @@ with tab_crud_clases:
                             for item in rs_groups_loaded
                             if isinstance(item, dict)
                         ]
-                        st.session_state["rs_groups_loaded_rows"] = sorted(
-                            rs_group_rows,
-                            key=lambda row: (
-                                str(row.get("Class name") or "").upper(),
-                                str(row.get("Code") or "").upper(),
-                            ),
+                        st.session_state["rs_groups_loaded_rows"] = _normalize_richmondstudio_loaded_rows(
+                            sorted(
+                                rs_group_rows,
+                                key=lambda row: (
+                                    str(row.get("Class name") or "").upper(),
+                                    str(row.get("Code") or "").upper(),
+                                ),
+                            )
                         )
                     except Exception:
                         pass

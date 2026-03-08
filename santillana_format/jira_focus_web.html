@@ -3998,12 +3998,21 @@
         state.activityDueDate = isValidInputDate(el.activityDueInp.value)
           ? String(el.activityDueInp.value)
           : TimeService.toInputDate(new Date());
+        const templatePlan = templateRegistrationPlan(state.selectedIssueKey, state.activityType, state.activityDueDate);
+        if (templatePlan) {
+          state.activityDueDate = templatePlan.dueInputDate;
+          state.durationMinutes = templatePlan.mins;
+          if (el.minutesInp) {
+            el.minutesInp.value = TimeService.jiraDuration(state.durationMinutes);
+          }
+        }
         el.activityDueInp.value = state.activityDueDate;
         state.activity = buildOfficialActivity(state.activityType, state.activityDueDate);
         el.activityInp.value = state.activity;
         if (el.activityQuickSel && el.activityQuickSel.options.length) {
           el.activityQuickSel.value = state.activityType;
         }
+        renderDurationPill();
         if (saveUi) {
           uiStateSave();
         }
@@ -4052,8 +4061,29 @@
         const dueDate = isValidInputDate(el.regDateInp.value)
           ? String(el.regDateInp.value)
           : TimeService.toInputDate(new Date());
+        const issueKey = state.regCtx && state.regCtx.issueKey
+          ? String(state.regCtx.issueKey || '').trim()
+          : String(state.selectedIssueKey || '').trim();
+        const templatePlan = templateRegistrationPlan(issueKey, selectedType, dueDate, state.regCtx);
         el.regTypeSel.value = selectedType;
+        if (templatePlan) {
+          el.regDateInp.value = templatePlan.dueInputDate;
+          if (el.regMinInp) {
+            el.regMinInp.value = TimeService.jiraDuration(templatePlan.mins);
+          }
+          if (el.regInlineMeta) {
+            el.regInlineMeta.textContent = templatePlan.metaText;
+          }
+          if (state.regCtx && typeof state.regCtx === 'object') {
+            state.regCtx.anchorEndTs = templatePlan.anchorEnd.getTime();
+            state.regCtx.templateType = templatePlan.templateType;
+          }
+          return;
+        }
         el.regDateInp.value = dueDate;
+        if (el.regInlineMeta && state.regCtx && state.regCtx.baseMetaText) {
+          el.regInlineMeta.textContent = state.regCtx.baseMetaText;
+        }
       }
 
       function hideInlineRegistrar() {
@@ -5116,7 +5146,91 @@
         const end = anchorEnd instanceof Date ? anchorEnd : new Date(anchorEnd || 0);
         if (!key || !isTemplateOfficialType(type)) return false;
         if (Number.isNaN(end.getTime()) || !isAfterOnboardingStart(end)) return false;
-        return countWorklogsByOfficialType(key, type) === 0;
+        const rows = (state.worklogsByIssue[key] || []).filter((w) => officialTypeOfWorklog(w) === type);
+        if (!rows.length) return true;
+        let earliestEndTs = Number.POSITIVE_INFINITY;
+        rows.forEach((row) => {
+          const span = windowOf(row);
+          if (Number.isFinite(span.endTs) && span.endTs < earliestEndTs) {
+            earliestEndTs = span.endTs;
+          }
+        });
+        if (!Number.isFinite(earliestEndTs)) return true;
+        return end.getTime() < earliestEndTs;
+      }
+
+      function templateAnchorFromDueDate(dueInputDate) {
+        const due = isValidInputDate(dueInputDate)
+          ? String(dueInputDate || '').trim()
+          : TimeService.toInputDate(new Date());
+        const base = new Date(`${due}T${String(LABOR.endHour).padStart(2, '0')}:${String(LABOR.endMinute).padStart(2, '0')}:00`);
+        if (Number.isNaN(base.getTime())) {
+          return TimeService.normalizeBusinessCheckpoint(new Date());
+        }
+        return TimeService.normalizeBusinessCheckpoint(base);
+      }
+
+      function registrationAnchorFromContext(issueKey, regCtx = null, dueInputDate = '') {
+        const key = String(issueKey || '').trim();
+        const ctx = regCtx && typeof regCtx === 'object' ? regCtx : null;
+        let sourceComment = null;
+        let outsideBusiness = false;
+        let anchorTs = Number(ctx && ctx.anchorEndTs ? ctx.anchorEndTs : 0);
+
+        if (key && ctx && ctx.commentId) {
+          const comments = state.commentsByIssue[key] || [];
+          sourceComment = comments.find((x) => String(x && x.id ? x.id : '') === String(ctx.commentId || '')) || null;
+          if (sourceComment) {
+            const anchorRef = commentLinkAnchor(sourceComment);
+            outsideBusiness = !!anchorRef.outsideBusiness;
+            const commentAnchorTs = Number(anchorRef.anchorTs || 0);
+            if (Number.isFinite(commentAnchorTs) && commentAnchorTs > 0) {
+              anchorTs = commentAnchorTs;
+            }
+          }
+        }
+
+        if ((!Number.isFinite(anchorTs) || anchorTs <= 0) && isValidInputDate(dueInputDate)) {
+          anchorTs = templateAnchorFromDueDate(dueInputDate).getTime();
+        }
+        if (!Number.isFinite(anchorTs) || anchorTs <= 0) {
+          anchorTs = TimeService.normalizeBusinessCheckpoint(new Date()).getTime();
+        }
+
+        return {
+          anchorEnd: new Date(anchorTs),
+          outsideBusiness,
+          sourceComment
+        };
+      }
+
+      function templateRegistrationPlan(issueKey, typeName, dueInputDate = '', regCtx = null) {
+        const key = String(issueKey || '').trim();
+        const templateType = String(typeName || '').trim();
+        if (!key || !isTemplateOfficialType(templateType)) return null;
+        if (!Array.isArray(state.worklogsByIssue[key])) return null;
+        const anchorRef = registrationAnchorFromContext(key, regCtx, dueInputDate);
+        const anchorEnd = anchorRef.anchorEnd instanceof Date ? anchorRef.anchorEnd : new Date(anchorRef.anchorEnd || 0);
+        if (Number.isNaN(anchorEnd.getTime())) return null;
+        const isFirstTemplate = isFirstTemplateFromStart(key, templateType, anchorEnd);
+        const mins = isFirstTemplate
+          ? Math.max(1, TimeService.businessMinutesBetween(onboardingStartDate(), anchorEnd))
+          : 1;
+        const dueInput = TimeService.toInputDate(anchorEnd);
+        const anchorLabel = TimeService.dtLabel(anchorEnd);
+        return {
+          templateType,
+          anchorEnd,
+          dueInputDate: dueInput,
+          mins,
+          isFirstTemplate,
+          explicitStarted: TimeService.subtractBusinessMinutes(anchorEnd, mins),
+          metaText: isFirstTemplate
+            ? `${key} | ${templateType} | primer registro | ${TimeService.jiraDuration(mins)} (auto desde 15/12/2025 08:30 hasta ${anchorLabel})`
+            : `${key} | ${templateType} | 1m (registro adicional de plantilla)`,
+          outsideBusiness: !!anchorRef.outsideBusiness,
+          sourceComment: anchorRef.sourceComment
+        };
       }
 
       function activityFromText(text) {
@@ -6978,10 +7092,22 @@
             return;
           }
           state.durationMinutes = Math.max(1, Math.floor(parsedMinutes));
+          let explicitStarted = null;
+          const templatePlan = templateRegistrationPlan(state.selectedIssueKey, state.activityType, state.activityDueDate);
+          if (templatePlan) {
+            state.activityType = templatePlan.templateType;
+            state.activityDueDate = templatePlan.dueInputDate;
+            state.durationMinutes = templatePlan.mins;
+            state.activity = buildOfficialActivity(templatePlan.templateType, templatePlan.dueInputDate);
+            explicitStarted = templatePlan.explicitStarted;
+            el.activityTypeSel.value = state.activityType;
+            el.activityDueInp.value = state.activityDueDate;
+            el.activityInp.value = state.activity;
+          }
           el.minutesInp.value = TimeService.jiraDuration(state.durationMinutes);
           uiStateSave();
           renderDurationPill();
-          try { await createWorklog(state.selectedIssueKey, state.activity, state.durationMinutes); }
+          try { await createWorklog(state.selectedIssueKey, state.activity, state.durationMinutes, explicitStarted); }
           catch (e) { applyError(e, 'No se pudo registrar worklog.'); }
         });
 
@@ -7035,11 +7161,22 @@
           state.durationMinutes = Math.max(1, Math.floor(Number(state.suggestion.minutes || 0)));
           el.activityTypeSel.value = state.activityType;
           el.activityDueInp.value = state.activityDueDate;
+          let explicitStarted = null;
+          const templatePlan = templateRegistrationPlan(state.selectedIssueKey, state.activityType, state.activityDueDate);
+          if (templatePlan) {
+            state.activityType = templatePlan.templateType;
+            state.activityDueDate = templatePlan.dueInputDate;
+            state.durationMinutes = templatePlan.mins;
+            state.activity = buildOfficialActivity(templatePlan.templateType, templatePlan.dueInputDate);
+            explicitStarted = templatePlan.explicitStarted;
+            el.activityTypeSel.value = state.activityType;
+            el.activityDueInp.value = state.activityDueDate;
+          }
           el.activityInp.value = state.activity;
           el.minutesInp.value = TimeService.jiraDuration(state.durationMinutes);
           renderDurationPill();
           uiStateSave();
-          try { await createWorklog(state.selectedIssueKey, state.activity, state.durationMinutes); }
+          try { await createWorklog(state.selectedIssueKey, state.activity, state.durationMinutes, explicitStarted); }
           catch (e) { applyError(e, 'No se pudo registrar la sugerencia.'); }
         });
 
@@ -7118,54 +7255,51 @@
           const anchorEnd = Number.isFinite(anchorEndTs) && anchorEndTs > 0
             ? new Date(anchorEndTs)
             : new Date();
-          const firstTemplateFromStart = !!(
-            plan.templateMode
-            && isFirstTemplateFromStart(issueKey, templateType, anchorEnd)
-          );
-          const resolvedMinutes = firstTemplateFromStart
-            ? Math.max(1, TimeService.businessMinutesBetween(onboardingStartDate(), anchorEnd))
+          const templatePlan = plan.templateMode
+            ? templateRegistrationPlan(issueKey, templateType, TimeService.toInputDate(anchorEnd), {
+              issueKey,
+              commentId: String(c.id || ''),
+              anchorEndTs
+            })
+            : null;
+          const resolvedMinutes = templatePlan
+            ? templatePlan.mins
             : Math.max(1, Math.floor(Number(plan.minutes || 0)));
+          const inferredDue = TimeService.toInputDate(c.created || new Date());
+          const anchorDue = Number.isFinite(anchorEndTs)
+            ? TimeService.toInputDate(anchorEndTs)
+            : TimeService.toInputDate(new Date());
+          const baseType = plan.templateMode
+            ? (templatePlan ? templatePlan.templateType : templateType)
+            : (OFFICIAL_ACTIVITY_TYPES.includes(inferredType) ? inferredType : OFFICIAL_ACTIVITY_TYPES[0]);
+          const baseDueDate = plan.templateMode
+            ? (templatePlan ? templatePlan.dueInputDate : anchorDue)
+            : (isValidInputDate(inferredDue) ? inferredDue : TimeService.toInputDate(new Date()));
+          const createdLabel = TimeService.dtLabel(c.created);
+          const anchorLabel = Number.isFinite(anchorEndTs)
+            ? TimeService.dtLabel(anchorEndTs)
+            : '';
+          const baseMetaText = templatePlan
+            ? templatePlan.metaText
+            : ((anchorLabel && anchorLabel !== createdLabel)
+              ? `${state.selectedIssueKey} | ${createdLabel} -> ${anchorLabel} (fuera de horario)`
+              : `${state.selectedIssueKey} | ${createdLabel}`);
           state.regCtx = {
             issueKey,
             commentId: String(c.id),
             templateMode: !!plan.templateMode,
             anchorEndTs,
-            templateType
+            templateType,
+            baseMetaText
           };
-          const inferredDue = TimeService.toInputDate(c.created || new Date());
-          const anchorDue = Number.isFinite(anchorEndTs)
-            ? TimeService.toInputDate(anchorEndTs)
-            : TimeService.toInputDate(new Date());
-          el.regTypeSel.value = plan.templateMode
-            ? templateType
-            : (OFFICIAL_ACTIVITY_TYPES.includes(inferredType) ? inferredType : OFFICIAL_ACTIVITY_TYPES[0]);
-          el.regDateInp.value = plan.templateMode
-            ? anchorDue
-            : (isValidInputDate(inferredDue) ? inferredDue : TimeService.toInputDate(new Date()));
+          el.regTypeSel.value = baseType;
+          el.regDateInp.value = baseDueDate;
           el.regMinInp.value = TimeService.jiraDuration(resolvedMinutes);
-          const createdLabel = TimeService.dtLabel(c.created);
-          const anchorLabel = Number.isFinite(anchorEndTs)
-            ? TimeService.dtLabel(anchorEndTs)
-            : '';
-          if (plan.templateMode) {
-            if (firstTemplateFromStart) {
-              el.regInlineMeta.textContent = `${issueKey} | ${templateType} | primer registro | ${TimeService.jiraDuration(resolvedMinutes)} (auto desde 15/12/2025 08:30 hasta ${anchorLabel || createdLabel})`;
-            } else {
-              el.regInlineMeta.textContent = `${issueKey} | ${templateType} | 1m (registro adicional de plantilla)`;
-            }
-            el.regTypeSel.disabled = false;
-            el.regDateInp.disabled = false;
-            el.regMinInp.readOnly = false;
-            el.regMinInp.disabled = false;
-          } else {
-            el.regInlineMeta.textContent = (anchorLabel && anchorLabel !== createdLabel)
-              ? `${state.selectedIssueKey} | ${createdLabel} -> ${anchorLabel} (fuera de horario)`
-              : `${state.selectedIssueKey} | ${createdLabel}`;
-            el.regTypeSel.disabled = false;
-            el.regDateInp.disabled = false;
-            el.regMinInp.disabled = false;
-            el.regMinInp.readOnly = false;
-          }
+          el.regInlineMeta.textContent = baseMetaText;
+          el.regTypeSel.disabled = false;
+          el.regDateInp.disabled = false;
+          el.regMinInp.disabled = false;
+          el.regMinInp.readOnly = false;
           syncInlineRegistrarInputs();
           showInlineRegistrar();
         });
@@ -7200,7 +7334,8 @@
           const issueKey = state.regCtx.issueKey;
           syncInlineRegistrarInputs();
           const selectedType = String(el.regTypeSel.value || '').trim();
-          let activity = buildOfficialActivity(selectedType, String(el.regDateInp.value || '').trim());
+          let dueInputDate = String(el.regDateInp.value || '').trim();
+          let activity = buildOfficialActivity(selectedType, dueInputDate);
           let mins = parseDurationInput(el.regMinInp.value);
           if (!Number.isFinite(mins) || mins <= 0) {
             showMsg('error', 'Duracion invalida. Usa formato Jira como 2w 4d 6h 45m o minutos.');
@@ -7228,22 +7363,18 @@
             anchorEndTs = TimeService.normalizeBusinessCheckpoint(sourceTs).getTime();
           }
           if (Number.isFinite(anchorEndTs) && anchorEndTs > 0) {
-            const anchorEnd = new Date(anchorEndTs);
-            const forceTemplate = isTemplateOfficialType(selectedType);
-            const applyTemplate = forceTemplate;
-            if (applyTemplate) {
-              const templateType = selectedType;
-              const isFirstTemplate = isFirstTemplateFromStart(issueKey, templateType, anchorEnd);
-              mins = isFirstTemplate
-                ? Math.max(1, TimeService.businessMinutesBetween(onboardingStartDate(), anchorEnd))
-                : 1;
-              activity = buildOfficialActivity(templateType, TimeService.toInputDate(anchorEnd));
-            }
-            explicitStarted = applyTemplate
-              ? TimeService.subtractBusinessMinutes(anchorEnd, mins)
-              : (outsideBusiness
+            const templatePlan = templateRegistrationPlan(issueKey, selectedType, dueInputDate, state.regCtx);
+            if (templatePlan) {
+              mins = templatePlan.mins;
+              dueInputDate = templatePlan.dueInputDate;
+              activity = buildOfficialActivity(templatePlan.templateType, dueInputDate);
+              explicitStarted = templatePlan.explicitStarted;
+            } else {
+              const anchorEnd = new Date(anchorEndTs);
+              explicitStarted = outsideBusiness
                 ? new Date(anchorEnd)
-                : new Date(anchorEnd.getTime() - (mins * 60000)));
+                : new Date(anchorEnd.getTime() - (mins * 60000));
+            }
           }
           const sourceCommentId = state.regCtx && state.regCtx.commentId ? String(state.regCtx.commentId) : '';
           hideInlineRegistrar();

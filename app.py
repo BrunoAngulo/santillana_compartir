@@ -2,6 +2,7 @@ import os
 import re
 import tempfile
 import unicodedata
+from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -62,6 +63,40 @@ GESTION_ESCOLAR_CICLO_ID_DEFAULT = 207
 RICHMONDSTUDIO_USERS_URL = "https://richmondstudio.global/api/users"
 RICHMONDSTUDIO_GROUPS_URL = "https://richmondstudio.global/api/groups"
 RESTRICTED_SECTIONS_PASSWORD = "Palabr@leatoria123!"
+RICHMONDSTUDIO_TEST_LEVEL_OPTIONS: List[Tuple[str, str]] = [
+    ("lower primary", "lower_primary"),
+    ("upper primary", "upper_primary"),
+    ("lower secondary", "lower_secondary"),
+    ("upper secondary", "upper_secondary"),
+]
+RICHMONDSTUDIO_TEST_LEVEL_LABELS = [item[0] for item in RICHMONDSTUDIO_TEST_LEVEL_OPTIONS]
+RICHMONDSTUDIO_TEST_LEVEL_BY_LABEL = {
+    label: value for label, value in RICHMONDSTUDIO_TEST_LEVEL_OPTIONS
+}
+RICHMONDSTUDIO_TEST_LEVEL_LABEL_BY_VALUE = {
+    value: label for label, value in RICHMONDSTUDIO_TEST_LEVEL_OPTIONS
+}
+RICHMONDSTUDIO_GRADE_OPTIONS: List[Tuple[str, str]] = [
+    ("2 años", "grade2"),
+    ("3 años", "grade3"),
+    ("4 años", "grade4"),
+    ("5 años", "grade5"),
+    ("Primer grado de primaria", "grade1"),
+    ("Segundo grado de primaria", "grade2"),
+    ("Tercer grado de primaria", "grade3"),
+    ("Cuarto grado de primaria", "grade4"),
+    ("Quinto grado de primaria", "grade5"),
+    ("Sexto grado de primaria", "grade6"),
+    ("Primer año de secundaria", "grade7"),
+    ("Segundo año de secundaria", "grade8"),
+    ("Tercer año de secundaria", "grade9"),
+    ("Cuarto año de secundaria", "grade10"),
+    ("Quinto año de secundaria", "grade11"),
+]
+RICHMONDSTUDIO_GRADE_LABELS = [item[0] for item in RICHMONDSTUDIO_GRADE_OPTIONS]
+RICHMONDSTUDIO_GRADE_SUGGESTION_BY_LABEL = {
+    label: value for label, value in RICHMONDSTUDIO_GRADE_OPTIONS
+}
 
 
 def _restricted_sections_unlocked() -> bool:
@@ -225,6 +260,45 @@ def _get_shared_token() -> str:
     return _clean_token(os.environ.get("PEGASUS_TOKEN", ""))
 
 
+def _get_richmondstudio_token() -> str:
+    for key in ("rs_groups_bearer_token", "rs_bearer_token"):
+        token_value = _clean_token(str(st.session_state.get(key, "")))
+        if token_value:
+            return token_value
+    return _clean_token(os.environ.get("RICHMONDSTUDIO_BEARER_TOKEN", ""))
+
+
+def _richmondstudio_headers(token: str) -> Dict[str, str]:
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+
+
+def _richmondstudio_error_detail(payload: object, status_code: int) -> str:
+    detail = ""
+    if isinstance(payload, dict):
+        errors = payload.get("errors")
+        if isinstance(errors, list) and errors:
+            first_error = errors[0]
+            if isinstance(first_error, dict):
+                detail = str(
+                    first_error.get("detail")
+                    or first_error.get("title")
+                    or first_error.get("message")
+                    or ""
+                ).strip()
+        if not detail:
+            detail = str(
+                payload.get("detail")
+                or payload.get("message")
+                or payload.get("error_description")
+                or ""
+            ).strip()
+    return detail or f"HTTP {status_code}"
+
+
 def _fetch_richmondstudio_users(token: str, timeout: int = 30) -> List[Dict[str, object]]:
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
     next_url = RICHMONDSTUDIO_USERS_URL
@@ -292,10 +366,12 @@ def _fetch_richmondstudio_users(token: str, timeout: int = 30) -> List[Dict[str,
     return users
 
 
-def _fetch_richmondstudio_groups(token: str, timeout: int = 30) -> List[Dict[str, object]]:
-    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+def _fetch_richmondstudio_groups(
+    token: str, timeout: int = 30, include_users: bool = False
+) -> List[Dict[str, object]]:
+    headers = _richmondstudio_headers(token)
     next_url = RICHMONDSTUDIO_GROUPS_URL
-    next_params: Optional[Dict[str, object]] = None
+    next_params: Optional[Dict[str, object]] = {"include": "users"} if include_users else None
     visited_urls = set()
     groups: List[Dict[str, object]] = []
 
@@ -321,20 +397,7 @@ def _fetch_richmondstudio_groups(token: str, timeout: int = 30) -> List[Dict[str
             raise RuntimeError(f"Respuesta no JSON (status {status_code})") from exc
 
         if not response.ok:
-            detail = ""
-            if isinstance(payload, dict):
-                errors = payload.get("errors")
-                if isinstance(errors, list) and errors:
-                    first_error = errors[0]
-                    if isinstance(first_error, dict):
-                        detail = str(
-                            first_error.get("detail")
-                            or first_error.get("title")
-                            or ""
-                        ).strip()
-                if not detail:
-                    detail = str(payload.get("message") or "").strip()
-            raise RuntimeError(detail or f"HTTP {status_code}")
+            raise RuntimeError(_richmondstudio_error_detail(payload, status_code))
 
         data = payload.get("data") if isinstance(payload, dict) else None
         if not isinstance(data, list):
@@ -357,6 +420,175 @@ def _fetch_richmondstudio_groups(token: str, timeout: int = 30) -> List[Dict[str
             next_url = ""
 
     return groups
+
+
+def _create_richmondstudio_group(
+    token: str, payload: Dict[str, object], timeout: int = 30
+) -> Dict[str, object]:
+    try:
+        response = requests.post(
+            RICHMONDSTUDIO_GROUPS_URL,
+            headers=_richmondstudio_headers(token),
+            json=payload,
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Error de red: {exc}") from exc
+
+    status_code = response.status_code
+    try:
+        body = response.json()
+    except ValueError as exc:
+        raise RuntimeError(f"Respuesta no JSON (status {status_code})") from exc
+
+    if not response.ok:
+        raise RuntimeError(_richmondstudio_error_detail(body, status_code))
+    if not isinstance(body, dict):
+        raise RuntimeError("Respuesta invalida al crear clase en RS.")
+    return body
+
+
+def _richmondstudio_display_bool(value: object) -> str:
+    return "Si" if bool(value) else "No"
+
+
+def _richmondstudio_group_users_count(group_item: Dict[str, object]) -> int:
+    relationships = group_item.get("relationships")
+    if not isinstance(relationships, dict):
+        return 0
+    users_rel = relationships.get("users")
+    if not isinstance(users_rel, dict):
+        return 0
+    users_data = users_rel.get("data")
+    if not isinstance(users_data, list):
+        return 0
+    return len(users_data)
+
+
+def _normalize_richmondstudio_group_row(group_item: Dict[str, object]) -> Dict[str, object]:
+    attrs = group_item.get("attributes") if isinstance(group_item.get("attributes"), dict) else {}
+    start_date = str(attrs.get("startDate") or "").strip()
+    end_date = str(attrs.get("endDate") or "").strip()
+    grade_level_value = str(attrs.get("gradeLevel") or "").strip()
+    grade_level_label = (
+        RICHMONDSTUDIO_TEST_LEVEL_LABEL_BY_VALUE.get(grade_level_value, grade_level_value)
+        if grade_level_value
+        else ""
+    )
+    return {
+        "ID": str(group_item.get("id") or "").strip(),
+        "Class name": str(attrs.get("name") or "").strip(),
+        "Grade": str(attrs.get("grade") or "").strip(),
+        "Dates": " / ".join(part for part in (start_date, end_date) if part),
+        "iRead": _richmondstudio_display_bool(attrs.get("iread")),
+        "Code": str(attrs.get("code") or "").strip(),
+        "Test level": grade_level_label,
+        "Users": _richmondstudio_group_users_count(group_item),
+    }
+
+
+def _coerce_iso_date(value: object, field_name: str) -> str:
+    if isinstance(value, pd.Timestamp):
+        return value.date().isoformat()
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError(f"Falta {field_name}.")
+    try:
+        return date.fromisoformat(text).isoformat()
+    except ValueError as exc:
+        raise ValueError(f"{field_name} invalida: {text}") from exc
+
+
+def _default_richmondstudio_group_row() -> Dict[str, object]:
+    today = date.today()
+    return {
+        "Crear": True,
+        "Class name": "",
+        "Description": "",
+        "Grade": "Primer año de secundaria",
+        "Grade code": RICHMONDSTUDIO_GRADE_SUGGESTION_BY_LABEL.get(
+            "Primer año de secundaria", "grade7"
+        ),
+        "Test level": "lower secondary",
+        "Start date": today,
+        "End date": date(today.year, 12, 31),
+        "iRead": False,
+    }
+
+
+def _normalize_richmondstudio_create_rows(rows: List[Dict[str, object]]) -> List[Dict[str, object]]:
+    normalized: List[Dict[str, object]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        grade_label = str(row.get("Grade") or "").strip()
+        grade_code = str(row.get("Grade code") or "").strip()
+        if not grade_code and grade_label:
+            grade_code = str(
+                RICHMONDSTUDIO_GRADE_SUGGESTION_BY_LABEL.get(grade_label, "")
+            ).strip()
+        normalized.append(
+            {
+                "Crear": bool(row.get("Crear", True)),
+                "Class name": str(row.get("Class name") or "").strip(),
+                "Description": str(row.get("Description") or "").strip(),
+                "Grade": grade_label or "Primer año de secundaria",
+                "Grade code": grade_code,
+                "Test level": str(row.get("Test level") or "").strip()
+                or "lower secondary",
+                "Start date": row.get("Start date") or date.today(),
+                "End date": row.get("End date") or date(date.today().year, 12, 31),
+                "iRead": bool(row.get("iRead", False)),
+            }
+        )
+    return normalized
+
+
+def _build_richmondstudio_group_payload(row: Dict[str, object]) -> Dict[str, object]:
+    class_name = str(row.get("Class name") or "").strip()
+    if not class_name:
+        raise ValueError("Falta Class name.")
+    description = str(row.get("Description") or "").strip() or class_name
+    grade_label = str(row.get("Grade") or "").strip()
+    grade_code = str(row.get("Grade code") or "").strip()
+    if not grade_code and grade_label:
+        grade_code = str(
+            RICHMONDSTUDIO_GRADE_SUGGESTION_BY_LABEL.get(grade_label, "")
+        ).strip()
+    if not grade_code:
+        raise ValueError(f"Falta Grade code para {class_name}.")
+
+    test_level_label = str(row.get("Test level") or "").strip()
+    grade_level = str(
+        RICHMONDSTUDIO_TEST_LEVEL_BY_LABEL.get(test_level_label, "")
+    ).strip()
+    if not grade_level:
+        raise ValueError(f"Test level invalido para {class_name}.")
+
+    start_date = _coerce_iso_date(row.get("Start date"), "Start date")
+    end_date = _coerce_iso_date(row.get("End date"), "End date")
+    if end_date < start_date:
+        raise ValueError(f"End date no puede ser menor que Start date en {class_name}.")
+
+    return {
+        "data": {
+            "type": "groups",
+            "attributes": {
+                "name": class_name,
+                "description": description,
+                "grade": grade_code,
+                "gradeLevel": grade_level,
+                "startDate": start_date,
+                "endDate": end_date,
+                "iread": bool(row.get("iRead", False)),
+            },
+            "relationships": {"users": {"data": []}},
+        }
+    }
 
 
 def _export_simple_excel(rows: List[Dict[str, object]], sheet_name: str = "data") -> bytes:
@@ -1661,12 +1893,302 @@ with tab_crud_clases:
         ciclo_id = GESTION_ESCOLAR_CICLO_ID_DEFAULT
     
         token = _get_shared_token()
+        rs_token_default = _get_richmondstudio_token()
         empresa_id = DEFAULT_EMPRESA_ID
         timeout = 30
         run_cargar_clases_delete = False
         run_eliminar_clases_selected = False
         confirm_delete_selected = False
-    
+
+        st.markdown("**RS | Listado y creacion masiva de clases**")
+        st.caption(
+            "Lista clases de Richmond Studio, filtralas y crea varias filas en una sola grilla."
+        )
+        if "rs_groups_bearer_token" not in st.session_state:
+            st.session_state["rs_groups_bearer_token"] = rs_token_default
+        with st.container(border=True):
+            rs_token = st.text_input(
+                "Bearer token RS",
+                type="password",
+                key="rs_groups_bearer_token",
+                help="Se usa para GET /api/groups?include=users y POST /api/groups.",
+            )
+            col_rs_a, col_rs_b = st.columns([1, 1], gap="small")
+            run_rs_groups_load = col_rs_a.button(
+                "Cargar clases RS",
+                key="rs_groups_load_btn",
+                use_container_width=True,
+            )
+            if col_rs_b.button(
+                "Nueva fila RS",
+                key="rs_groups_new_row_btn",
+                use_container_width=True,
+            ):
+                current_rs_rows = _normalize_richmondstudio_create_rows(
+                    st.session_state.get("rs_groups_create_rows") or []
+                )
+                current_rs_rows.append(_default_richmondstudio_group_row())
+                st.session_state["rs_groups_create_rows"] = current_rs_rows
+
+            if run_rs_groups_load:
+                if not _clean_token(rs_token):
+                    st.error("Ingresa el bearer token de Richmond Studio.")
+                    st.stop()
+                try:
+                    with st.spinner("Consultando clases RS..."):
+                        rs_groups_loaded = _fetch_richmondstudio_groups(
+                            _clean_token(rs_token),
+                            timeout=int(timeout),
+                            include_users=True,
+                        )
+                except Exception as exc:  # pragma: no cover - UI
+                    st.error(f"Error RS: {exc}")
+                    st.stop()
+
+                rs_group_rows = [
+                    _normalize_richmondstudio_group_row(item)
+                    for item in rs_groups_loaded
+                    if isinstance(item, dict)
+                ]
+                rs_group_rows = sorted(
+                    rs_group_rows,
+                    key=lambda row: (
+                        str(row.get("Class name") or "").upper(),
+                        str(row.get("Code") or "").upper(),
+                    ),
+                )
+                st.session_state["rs_groups_loaded_rows"] = rs_group_rows
+                st.success(f"Clases RS cargadas: {len(rs_group_rows)}.")
+
+            rs_loaded_rows = st.session_state.get("rs_groups_loaded_rows") or []
+            if rs_loaded_rows:
+                st.markdown("**Listado RS**")
+                col_rs_filter_a, col_rs_filter_b, col_rs_filter_c = st.columns(
+                    [2.4, 1.2, 1],
+                    gap="small",
+                )
+                rs_filter_text = col_rs_filter_a.text_input(
+                    "Filtrar por Class name o Code",
+                    key="rs_groups_filter_text",
+                    placeholder="Ej: 2026 Inglés 2SA",
+                )
+                rs_filter_level = col_rs_filter_b.selectbox(
+                    "Test level",
+                    options=["Todos"] + RICHMONDSTUDIO_TEST_LEVEL_LABELS,
+                    key="rs_groups_filter_level",
+                )
+                rs_filter_iread = col_rs_filter_c.selectbox(
+                    "iRead",
+                    options=["Todos", "Si", "No"],
+                    key="rs_groups_filter_iread",
+                )
+
+                rs_filter_text_norm = str(rs_filter_text or "").strip().lower()
+                rs_filtered_rows = []
+                for row in rs_loaded_rows:
+                    class_name_txt = str(row.get("Class name") or "")
+                    code_txt = str(row.get("Code") or "")
+                    level_txt = str(row.get("Test level") or "")
+                    iread_txt = str(row.get("iRead") or "")
+                    hay_texto = not rs_filter_text_norm or (
+                        rs_filter_text_norm in class_name_txt.lower()
+                        or rs_filter_text_norm in code_txt.lower()
+                    )
+                    hay_level = rs_filter_level == "Todos" or level_txt == rs_filter_level
+                    hay_iread = rs_filter_iread == "Todos" or iread_txt == rs_filter_iread
+                    if hay_texto and hay_level and hay_iread:
+                        rs_filtered_rows.append(
+                            {
+                                "Class name": class_name_txt,
+                                "Grade": str(row.get("Grade") or ""),
+                                "Dates": str(row.get("Dates") or ""),
+                                "iRead": iread_txt,
+                                "Code": code_txt,
+                            }
+                        )
+                st.caption(
+                    f"Mostrando {len(rs_filtered_rows)} de {len(rs_loaded_rows)} clases RS."
+                )
+                _show_dataframe(rs_filtered_rows, use_container_width=True)
+            else:
+                st.caption("Aun no has cargado clases RS.")
+
+        with st.container(border=True):
+            st.markdown("**RS | Crear clases en bloque**")
+            st.caption(
+                "Agrega filas como si fuera Excel. Description se completa con Class name si lo dejas vacio."
+            )
+            if "rs_groups_create_rows" not in st.session_state:
+                st.session_state["rs_groups_create_rows"] = [
+                    _default_richmondstudio_group_row()
+                ]
+
+            rs_create_rows = _normalize_richmondstudio_create_rows(
+                st.session_state.get("rs_groups_create_rows") or []
+            )
+            rs_create_df = pd.DataFrame(rs_create_rows)
+            edited_rs_create_df = st.data_editor(
+                rs_create_df,
+                key="rs_groups_create_editor",
+                hide_index=True,
+                use_container_width=True,
+                num_rows="dynamic",
+                column_config={
+                    "Crear": st.column_config.CheckboxColumn(
+                        "Crear",
+                        help="Marca las filas que quieres enviar a RS.",
+                        default=True,
+                    ),
+                    "Class name": st.column_config.TextColumn(
+                        "Class name",
+                        required=True,
+                        width="large",
+                    ),
+                    "Description": st.column_config.TextColumn(
+                        "Description",
+                        width="large",
+                    ),
+                    "Grade": st.column_config.SelectboxColumn(
+                        "Grade",
+                        options=RICHMONDSTUDIO_GRADE_LABELS,
+                        required=True,
+                    ),
+                    "Grade code": st.column_config.TextColumn(
+                        "Grade code",
+                        help="Valor real que se manda en attributes.grade.",
+                    ),
+                    "Test level": st.column_config.SelectboxColumn(
+                        "Test level",
+                        options=RICHMONDSTUDIO_TEST_LEVEL_LABELS,
+                        required=True,
+                    ),
+                    "Start date": st.column_config.DateColumn(
+                        "Start date",
+                        format="YYYY-MM-DD",
+                        required=True,
+                    ),
+                    "End date": st.column_config.DateColumn(
+                        "End date",
+                        format="YYYY-MM-DD",
+                        required=True,
+                    ),
+                    "iRead": st.column_config.CheckboxColumn("iRead"),
+                },
+            )
+            if isinstance(edited_rs_create_df, pd.DataFrame):
+                st.session_state["rs_groups_create_rows"] = _normalize_richmondstudio_create_rows(
+                    edited_rs_create_df.to_dict("records")
+                )
+
+            run_rs_groups_create = st.button(
+                "Crear clases RS",
+                type="primary",
+                key="rs_groups_create_btn",
+                use_container_width=True,
+            )
+            if run_rs_groups_create:
+                rs_token_clean = _clean_token(rs_token)
+                if not rs_token_clean:
+                    st.error("Ingresa el bearer token de Richmond Studio.")
+                    st.stop()
+
+                rows_to_create = _normalize_richmondstudio_create_rows(
+                    st.session_state.get("rs_groups_create_rows") or []
+                )
+                selected_rows = [
+                    row
+                    for row in rows_to_create
+                    if bool(row.get("Crear")) and str(row.get("Class name") or "").strip()
+                ]
+                if not selected_rows:
+                    st.error("No hay filas marcadas con Class name para crear.")
+                    st.stop()
+
+                resultados_rs: List[Dict[str, object]] = []
+                ok_rs = 0
+                err_rs = 0
+                progress_rs = st.progress(0)
+                status_rs = st.empty()
+
+                for idx_rs, row in enumerate(selected_rows, start=1):
+                    class_name = str(row.get("Class name") or "").strip()
+                    try:
+                        payload_rs = _build_richmondstudio_group_payload(row)
+                        status_rs.write(
+                            f"Creando {idx_rs}/{len(selected_rows)}: {class_name}"
+                        )
+                        created_rs = _create_richmondstudio_group(
+                            rs_token_clean,
+                            payload_rs,
+                            timeout=int(timeout),
+                        )
+                        created_data = (
+                            created_rs.get("data")
+                            if isinstance(created_rs.get("data"), dict)
+                            else {}
+                        )
+                        created_attrs = (
+                            created_data.get("attributes")
+                            if isinstance(created_data.get("attributes"), dict)
+                            else {}
+                        )
+                        resultados_rs.append(
+                            {
+                                "Class name": class_name,
+                                "Resultado": "OK",
+                                "ID": str(created_data.get("id") or "").strip(),
+                                "Code": str(created_attrs.get("code") or "").strip(),
+                                "Detalle": "Creada correctamente.",
+                            }
+                        )
+                        ok_rs += 1
+                    except Exception as exc:  # pragma: no cover - UI
+                        resultados_rs.append(
+                            {
+                                "Class name": class_name,
+                                "Resultado": "Error",
+                                "ID": "",
+                                "Code": "",
+                                "Detalle": str(exc),
+                            }
+                        )
+                        err_rs += 1
+                    progress_rs.progress(int((idx_rs / len(selected_rows)) * 100))
+
+                status_rs.empty()
+                progress_rs.empty()
+                if ok_rs:
+                    try:
+                        rs_groups_loaded = _fetch_richmondstudio_groups(
+                            rs_token_clean,
+                            timeout=int(timeout),
+                            include_users=True,
+                        )
+                        rs_group_rows = [
+                            _normalize_richmondstudio_group_row(item)
+                            for item in rs_groups_loaded
+                            if isinstance(item, dict)
+                        ]
+                        st.session_state["rs_groups_loaded_rows"] = sorted(
+                            rs_group_rows,
+                            key=lambda row: (
+                                str(row.get("Class name") or "").upper(),
+                                str(row.get("Code") or "").upper(),
+                            ),
+                        )
+                    except Exception:
+                        pass
+
+                if ok_rs and not err_rs:
+                    st.success(f"Clases RS creadas correctamente: {ok_rs}.")
+                elif ok_rs and err_rs:
+                    st.warning(f"Resultado parcial RS: OK {ok_rs} | Error {err_rs}.")
+                else:
+                    st.error("No se pudo crear ninguna clase RS.")
+                _show_dataframe(resultados_rs, use_container_width=True)
+
+        st.divider()
+
         with st.container(border=True):
             st.markdown("**Listar clases**")
             st.caption("Todas se marcan por defecto. Desmarca las que no quieras tocar.")

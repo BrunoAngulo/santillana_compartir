@@ -814,6 +814,8 @@
       display: flex;
       flex-direction: column;
       align-self: start;
+      min-height: 0;
+      overflow: hidden;
     }
 
     .panel-worklogs {
@@ -857,7 +859,8 @@
     }
 
     .panel-comments .comments {
-      max-height: none;
+      flex: 1 1 auto;
+      min-height: 0;
     }
 
     .panel-worklogs .tbl-wrap {
@@ -1124,7 +1127,10 @@
       display: grid;
       gap: var(--spacing-sm);
       max-height: none;
-      overflow: visible;
+      overflow-y: auto;
+      overflow-x: hidden;
+      scrollbar-gutter: stable;
+      padding-right: 4px;
     }
 
     .comment {
@@ -2337,14 +2343,23 @@
             </div>
           </div>
         </div>
-        <div class="card panel-comments">
+        <div class="card panel-comments" id="commentsPanel">
           <div class="panel-head">
             <div>
               <h3>Comentarios del ticket</h3>
             </div>
           </div>
           <div id="commentsBox" class="comments"></div>
-          <div id="regInlineBox" class="edit-inline hide" style="margin-top:10px;">
+        </div>
+        <div class="card panel-worklogs" id="worklogsPanel">
+          <div class="panel-head">
+            <div>
+              <h3 style="margin:0;">Historial editable por ticket</h3>
+              <div class="panel-meta" id="worklogsMeta">Sin worklogs.</div>
+            </div>
+            <button class="btn danger" id="deleteAllWorklogsBtn" type="button" disabled>Eliminar todo</button>
+          </div>
+          <div id="regInlineBox" class="edit-inline hide">
             <div class="edit-inline-title">Registrar actividad</div>
             <div class="muted" id="regInlineMeta"></div>
             <div class="grid3" style="margin-top:8px;">
@@ -2360,15 +2375,6 @@
               <button class="btn primary" id="regInlineOkBtn" type="button">Registrar</button>
               <button class="btn" id="regInlineCancelBtn" type="button">Cancelar</button>
             </div>
-          </div>
-        </div>
-        <div class="card panel-worklogs">
-          <div class="panel-head">
-            <div>
-              <h3 style="margin:0;">Historial editable por ticket</h3>
-              <div class="panel-meta" id="worklogsMeta">Sin worklogs.</div>
-            </div>
-            <button class="btn danger" id="deleteAllWorklogsBtn" type="button" disabled>Eliminar todo</button>
           </div>
           <div class="tbl-wrap">
             <table>
@@ -2647,6 +2653,7 @@
       let frameHeightRaf = 0;
       let lastFrameHeight = 0;
       let autoFrameHeightStarted = false;
+      let commentsLayoutRaf = 0;
 
       function frameRootElement() {
         return document.getElementById('jiraFocusWebRoot') || document.body || document.documentElement;
@@ -2693,14 +2700,68 @@
         });
       }
 
+      function syncCommentsPanelLayout() {
+        if (!el.commentsPanel || !el.commentsBox || !el.timelinePanel || !el.worklogsPanel) return;
+        if (window.matchMedia && window.matchMedia('(max-width: 700px)').matches) {
+          if (el.commentsPanel.style.height) el.commentsPanel.style.height = '';
+          if (el.commentsPanel.style.maxHeight) el.commentsPanel.style.maxHeight = '';
+          if (el.commentsBox.style.height) el.commentsBox.style.height = '';
+          if (el.commentsBox.style.maxHeight) el.commentsBox.style.maxHeight = '';
+          scheduleFrameHeight();
+          return;
+        }
+        const grid = el.commentsPanel.closest('.dashboard-grid');
+        if (!grid) return;
+        const gridStyle = window.getComputedStyle(grid);
+        const gap = parseFloat(gridStyle.rowGap || gridStyle.gap || '0') || 0;
+        const targetHeight = Math.max(
+          320,
+          Math.ceil(el.timelinePanel.offsetHeight + el.worklogsPanel.offsetHeight + gap)
+        );
+        const nextPanelHeight = `${targetHeight}px`;
+        if (el.commentsPanel.style.height !== nextPanelHeight) {
+          el.commentsPanel.style.height = nextPanelHeight;
+        }
+        if (el.commentsPanel.style.maxHeight !== nextPanelHeight) {
+          el.commentsPanel.style.maxHeight = nextPanelHeight;
+        }
+        const panelStyle = window.getComputedStyle(el.commentsPanel);
+        const paddingBottom = parseFloat(panelStyle.paddingBottom || '0') || 0;
+        const commentsTop = el.commentsBox.offsetTop - el.commentsPanel.offsetTop;
+        const commentsHeight = Math.max(180, Math.floor(targetHeight - commentsTop - paddingBottom));
+        const nextCommentsHeight = `${commentsHeight}px`;
+        if (el.commentsBox.style.height !== nextCommentsHeight) {
+          el.commentsBox.style.height = nextCommentsHeight;
+        }
+        if (el.commentsBox.style.maxHeight !== nextCommentsHeight) {
+          el.commentsBox.style.maxHeight = nextCommentsHeight;
+        }
+        scheduleFrameHeight();
+      }
+
+      function scheduleCommentsPanelLayout() {
+        if (commentsLayoutRaf) return;
+        commentsLayoutRaf = window.requestAnimationFrame(() => {
+          commentsLayoutRaf = 0;
+          syncCommentsPanelLayout();
+        });
+      }
+
       function initAutoFrameHeight() {
         if (autoFrameHeightStarted) {
+          scheduleCommentsPanelLayout();
           scheduleFrameHeight();
           return;
         }
         autoFrameHeightStarted = true;
-        window.addEventListener('load', scheduleFrameHeight);
-        window.addEventListener('resize', scheduleFrameHeight);
+        window.addEventListener('load', () => {
+          scheduleCommentsPanelLayout();
+          scheduleFrameHeight();
+        });
+        window.addEventListener('resize', () => {
+          scheduleCommentsPanelLayout();
+          scheduleFrameHeight();
+        });
         const rootEl = frameRootElement();
         if (rootEl && typeof ResizeObserver === 'function') {
           const resizeObserver = new ResizeObserver(() => {
@@ -2719,6 +2780,7 @@
             characterData: true
           });
         }
+        scheduleCommentsPanelLayout();
         scheduleFrameHeight();
       }
 
@@ -3804,7 +3866,7 @@
           'loginView', 'connectBtn',
           'mainView', 'issueSel', 'issueInsight', 'activityTypeSel', 'activityDueInp', 'activityInp', 'minutesInp', 'registerBtn', 'jiraDurationPill', 'timerVal', 'timerState', 'startBtn', 'pauseBtn',
           'resetBtn', 'applyTimerBtn', 'suggestionBox', 'applySugActBtn', 'applySugTimeBtn', 'registerSugBtn', 'todayTotal', 'weekTotal', 'issueCount', 'dashMeta',
-          'refreshDashBtn', 'recentBox', 'commentsBox', 'worklogBody', 'worklogsMeta', 'deleteAllWorklogsBtn', 'timelineBox', 'timelineMeta', 'ganttBox', 'genReportBtn', 'exportReportBtn', 'reportMeta',
+          'refreshDashBtn', 'recentBox', 'commentsPanel', 'commentsBox', 'worklogsPanel', 'worklogBody', 'worklogsMeta', 'deleteAllWorklogsBtn', 'timelineBox', 'timelineMeta', 'ganttBox', 'genReportBtn', 'exportReportBtn', 'reportMeta',
           'reportBody', 'timelinePanel', 'chartDesignSel', 'chartDesignHelp', 'activityFocusBox', 'activityQuickSel', 'activityQuickMeta', 'compactBtn', 'floatBox', 'floatIssue', 'floatTimer', 'floatState', 'floatStartBtn', 'floatPauseBtn', 'floatExpandBtn',
           'regInlineBox', 'regInlineMeta', 'regTypeSel', 'regDateInp', 'regMinInp', 'regInlineOkBtn', 'regInlineCancelBtn',
           'editInlineBox', 'editMeta', 'editTypeSel', 'editActInp', 'editDateInp', 'editTimeInp', 'editMinInp', 'editSaveBtn', 'editDeleteBtn', 'editCancelBtn', 'activityList'
@@ -4097,11 +4159,13 @@
         if (el.regInlineBox) {
           el.regInlineBox.classList.add('hide');
         }
+        scheduleCommentsPanelLayout();
       }
 
       function showInlineRegistrar() {
         if (el.regInlineBox) {
           el.regInlineBox.classList.remove('hide');
+          scheduleCommentsPanelLayout();
           if (typeof el.regInlineBox.scrollIntoView === 'function') {
             el.regInlineBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
           }
@@ -4126,11 +4190,13 @@
         if (el.editInlineBox) {
           el.editInlineBox.classList.add('hide');
         }
+        scheduleCommentsPanelLayout();
       }
 
       function showInlineEditor() {
         if (el.editInlineBox) {
           el.editInlineBox.classList.remove('hide');
+          scheduleCommentsPanelLayout();
           if (typeof el.editInlineBox.scrollIntoView === 'function') {
             el.editInlineBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
           }
@@ -5326,6 +5392,7 @@
           state.selectedCommentId = '';
           hideInlineRegistrar();
           el.commentsBox.innerHTML = '<div class="empty">Sin comentarios.</div>';
+          scheduleCommentsPanelLayout();
           return;
         }
         const prepared = comments.map((c) => {
@@ -5387,6 +5454,7 @@
             </div>
           `;
         }).join('');
+        scheduleCommentsPanelLayout();
       }
       function renderWorklogs(issueKey) {
         const rows = state.worklogsByIssue[issueKey] || [];
@@ -5399,6 +5467,7 @@
             el.worklogsMeta.textContent = 'Sin worklogs.';
           }
           el.worklogBody.innerHTML = '<tr><td colspan="4"><div class="empty">Sin worklogs.</div></td></tr>';
+          scheduleCommentsPanelLayout();
           return;
         }
         const prepared = rows.map((w) => {
@@ -5425,6 +5494,7 @@
         el.worklogBody.innerHTML = prepared.map((item) => (
           `<tr class="worklog-row${item.selectedClass}" data-worklog-id="${escapeHtml(item.id)}"><td>${escapeHtml(item.date)}</td><td>${escapeHtml(item.act)}</td><td>${escapeHtml(item.mins)}</td><td>${item.actions}</td></tr>`
         )).join('');
+        scheduleCommentsPanelLayout();
       }
 
       function focusWorklogInDashboard(issueKey, worklog) {
@@ -5717,6 +5787,7 @@
           el.ganttBox.className = 'hide';
           el.ganttBox.innerHTML = '';
           syncActivityFocusComponent();
+          scheduleCommentsPanelLayout();
           return;
         }
 
@@ -5733,6 +5804,7 @@
           el.ganttBox.className = 'hide';
           el.ganttBox.innerHTML = '';
           syncActivityFocusComponent();
+          scheduleCommentsPanelLayout();
           return;
         }
 
@@ -5839,6 +5911,7 @@
         el.ganttBox.className = 'hide';
         el.ganttBox.innerHTML = '';
         syncActivityFocusComponent();
+        scheduleCommentsPanelLayout();
         renderComments(key);
       }
 

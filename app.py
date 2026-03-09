@@ -461,8 +461,11 @@ def _get_richmondstudio_token() -> str:
 def _richmondstudio_headers(token: str) -> Dict[str, str]:
     return {
         "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
-        "Content-Type": "application/json",
+        "Accept": "application/vnd.api+json",
+        "Content-Type": "application/vnd.api+json",
+        "Origin": "https://richmondstudio.global",
+        "Referer": "https://richmondstudio.global/settings/classes",
+        "x-pwa-origin": "browser",
     }
 
 
@@ -487,6 +490,20 @@ def _richmondstudio_error_detail(payload: object, status_code: int) -> str:
                 or ""
             ).strip()
     return detail or f"HTTP {status_code}"
+
+
+def _richmondstudio_response_error(
+    response: requests.Response,
+    status_code: int,
+    body: object = None,
+) -> str:
+    detail = _richmondstudio_error_detail(body, status_code)
+    if detail and detail != f"HTTP {status_code}":
+        return detail
+    response_text = str(getattr(response, "text", "") or "").strip()
+    if response_text:
+        return f"HTTP {status_code}: {response_text[:300]}"
+    return f"HTTP {status_code}"
 
 
 def _fetch_richmondstudio_users(token: str, timeout: int = 30) -> List[Dict[str, object]]:
@@ -628,11 +645,13 @@ def _create_richmondstudio_group(
     status_code = response.status_code
     try:
         body = response.json()
-    except ValueError as exc:
-        raise RuntimeError(f"Respuesta no JSON (status {status_code})") from exc
+    except ValueError:
+        body = None
 
     if not response.ok:
-        raise RuntimeError(_richmondstudio_error_detail(body, status_code))
+        raise RuntimeError(_richmondstudio_response_error(response, status_code, body))
+    if body is None:
+        raise RuntimeError(f"Respuesta no JSON (status {status_code})")
     if not isinstance(body, dict):
         raise RuntimeError("Respuesta invalida al crear clase en RS.")
     return body
@@ -659,11 +678,13 @@ def _update_richmondstudio_group(
 
     try:
         body = response.json()
-    except ValueError as exc:
-        raise RuntimeError(f"Respuesta no JSON (status {status_code})") from exc
+    except ValueError:
+        body = None
 
     if not response.ok:
-        raise RuntimeError(_richmondstudio_error_detail(body, status_code))
+        raise RuntimeError(_richmondstudio_response_error(response, status_code, body))
+    if body is None:
+        raise RuntimeError(f"Respuesta no JSON (status {status_code})")
     if not isinstance(body, dict):
         return {}
     return body
@@ -686,8 +707,8 @@ def _delete_richmondstudio_group(token: str, group_id: str, timeout: int = 30) -
     try:
         body = response.json()
     except ValueError:
-        body = {"detail": response.text or f"HTTP {status_code}"}
-    raise RuntimeError(_richmondstudio_error_detail(body, status_code))
+        body = None
+    raise RuntimeError(_richmondstudio_response_error(response, status_code, body))
 
 
 def _richmondstudio_display_bool(value: object) -> str:
@@ -916,7 +937,7 @@ def _default_richmondstudio_group_row() -> Dict[str, object]:
         "Description": "",
         "Grade": _richmondstudio_grade_option_from_code(default_grade_code),
         "Grade code": default_grade_code,
-        "Test level": "lower secondary",
+        "Test level": "",
         "iRead": False,
     }
 
@@ -944,7 +965,7 @@ def _normalize_richmondstudio_create_rows(rows: List[Dict[str, object]]) -> List
                 "Test level": str(
                     row.get("Test level")
                     if "Test level" in row and row.get("Test level") is not None
-                    else "lower secondary"
+                    else ""
                 ).strip(),
                 "iRead": bool(row.get("iRead", False)),
             }
@@ -974,16 +995,15 @@ def _render_richmondstudio_create_rows_form(
         "Cada fila crea una clase. Puedes duplicar una fila para cambiar solo lo necesario."
     )
 
-    header_cols = st.columns([0.35, 0.55, 1.7, 1.7, 1.45, 1.25, 0.6, 0.8, 0.8], gap="small")
+    header_cols = st.columns([0.35, 0.55, 1.8, 1.8, 1.5, 1.35, 0.8, 0.8], gap="small")
     header_cols[0].caption("#")
     header_cols[1].caption("Crear")
     header_cols[2].caption("Class name")
     header_cols[3].caption("Description")
     header_cols[4].caption("Grado")
     header_cols[5].caption("Test level")
-    header_cols[6].caption("iRead")
+    header_cols[6].caption(" ")
     header_cols[7].caption(" ")
-    header_cols[8].caption(" ")
 
     updated_rows: List[Dict[str, object]] = []
     duplicate_after_row_id = ""
@@ -1004,7 +1024,7 @@ def _render_richmondstudio_create_rows_form(
             if current_test_level in test_level_options
             else 0
         )
-        row_cols = st.columns([0.35, 0.55, 1.7, 1.7, 1.45, 1.25, 0.6, 0.8, 0.8], gap="small")
+        row_cols = st.columns([0.35, 0.55, 1.8, 1.8, 1.5, 1.35, 0.8, 0.8], gap="small")
         row_cols[0].markdown(f"**{idx}**")
         create_flag = row_cols[1].checkbox(
             "Crear",
@@ -1040,19 +1060,13 @@ def _render_richmondstudio_create_rows_form(
             key=f"{widget_prefix}_test_level_{row_id}",
             label_visibility="collapsed",
         )
-        iread = row_cols[6].checkbox(
-            "iRead",
-            value=bool(row.get("iRead", False)),
-            key=f"{widget_prefix}_iread_{row_id}",
-            label_visibility="collapsed",
-        )
-        if row_cols[7].button(
+        if row_cols[6].button(
             "Duplicar",
             key=f"{widget_prefix}_duplicate_{row_id}",
             use_container_width=True,
         ):
             duplicate_after_row_id = row_id
-        if row_cols[8].button(
+        if row_cols[7].button(
             "Eliminar",
             key=f"{widget_prefix}_remove_{row_id}",
             use_container_width=True,
@@ -1069,7 +1083,7 @@ def _render_richmondstudio_create_rows_form(
                 "Grade": str(grade_label or "").strip(),
                 "Grade code": _richmondstudio_grade_code_from_value(grade_label),
                 "Test level": str(test_level or "").strip(),
-                "iRead": bool(iread),
+                "iRead": bool(row.get("iRead", False)),
             }
         )
         st.divider()
@@ -1319,7 +1333,6 @@ def _build_richmondstudio_group_payload(row: Dict[str, object]) -> Dict[str, obj
         "grade": grade_code,
         "startDate": start_date_obj.isoformat(),
         "endDate": end_date_obj.isoformat(),
-        "iread": bool(row.get("iRead", False)),
     }
     if grade_level:
         attributes["gradeLevel"] = grade_level
@@ -1358,7 +1371,6 @@ def _build_richmondstudio_group_update_payload(row: Dict[str, object]) -> Dict[s
         "grade": grade_code,
         "startDate": _coerce_iso_date(row.get("Start date"), "Start date"),
         "endDate": _coerce_iso_date(row.get("End date"), "End date"),
-        "iread": bool(row.get("iRead", False)),
     }
     if grade_level:
         attributes["gradeLevel"] = grade_level
@@ -2474,7 +2486,7 @@ def render_richmond_studio_view() -> None:
         with st.container(border=True):
             st.markdown("**RS | Crear clases en bloque**")
             st.caption(
-                "Llena una clase por bloque. Description se completa con Class name si lo dejas vacio. Al crear: inicio = hoy, fin = 31/12 del ano actual y Test level vacio se manda como null."
+                "Llena una clase por fila. Description se completa con Class name si lo dejas vacio. Al crear: inicio = hoy, fin = 31/12 del ano actual y Test level vacio no se manda."
             )
             rs_create_rows = _render_richmondstudio_create_rows_form(
                 state_key="rs_groups_create_rows",

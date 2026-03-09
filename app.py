@@ -88,27 +88,55 @@ RICHMONDSTUDIO_LEVEL_SHORT_BY_VALUE = {
     "secondary": "SEC",
 }
 RICHMONDSTUDIO_GRADE_OPTIONS: List[Tuple[str, str]] = [
-    ("2 años", "grade2"),
-    ("3 años", "grade3"),
-    ("4 años", "grade4"),
-    ("5 años", "grade5"),
-    ("Primer grado de primaria", "grade1"),
-    ("Segundo grado de primaria", "grade2"),
-    ("Tercer grado de primaria", "grade3"),
-    ("Cuarto grado de primaria", "grade4"),
-    ("Quinto grado de primaria", "grade5"),
-    ("Sexto grado de primaria", "grade6"),
-    ("Primer año de secundaria", "grade7"),
-    ("Segundo año de secundaria", "grade8"),
-    ("Tercer año de secundaria", "grade9"),
-    ("Cuarto año de secundaria", "grade10"),
-    ("Quinto año de secundaria", "grade11"),
+    ("grade12", "2 anos"),
+    ("grade13", "3 anos"),
+    ("grade14", "4 anos"),
+    ("grade15", "5 anos"),
+    ("grade1", "1 grado de primaria"),
+    ("grade2", "2 grado de primaria"),
+    ("grade3", "3 grado de primaria"),
+    ("grade4", "4 grado de primaria"),
+    ("grade5", "5 grado de primaria"),
+    ("grade6", "6 grado de primaria"),
+    ("grade7", "1 ano de secundaria"),
+    ("grade8", "2 ano de secundaria"),
+    ("grade9", "3 ano de secundaria"),
+    ("grade10", "4 ano de secundaria"),
+    ("grade11", "5 ano de secundaria"),
 ]
-RICHMONDSTUDIO_GRADE_LABELS = [item[0] for item in RICHMONDSTUDIO_GRADE_OPTIONS]
-RICHMONDSTUDIO_GRADE_SUGGESTION_BY_LABEL = {
-    label: value for label, value in RICHMONDSTUDIO_GRADE_OPTIONS
+RICHMONDSTUDIO_GRADE_CODE_OPTIONS = [code for code, _label in RICHMONDSTUDIO_GRADE_OPTIONS]
+RICHMONDSTUDIO_GRADE_TEXT_BY_CODE = {
+    code: label for code, label in RICHMONDSTUDIO_GRADE_OPTIONS
 }
-RICHMONDSTUDIO_GRADE_CODE_OPTIONS = [f"grade{idx}" for idx in range(1, 21)]
+RICHMONDSTUDIO_GRADE_OPTION_BY_CODE = {
+    code: f"{code} | {label}" for code, label in RICHMONDSTUDIO_GRADE_OPTIONS
+}
+RICHMONDSTUDIO_GRADE_LABELS = [
+    RICHMONDSTUDIO_GRADE_OPTION_BY_CODE[code] for code in RICHMONDSTUDIO_GRADE_CODE_OPTIONS
+]
+RICHMONDSTUDIO_GRADE_SUGGESTION_BY_LABEL = {
+    display: code for code, display in RICHMONDSTUDIO_GRADE_OPTION_BY_CODE.items()
+}
+
+
+def _richmondstudio_grade_option_from_code(grade_code: object) -> str:
+    code = str(grade_code or "").strip()
+    return str(RICHMONDSTUDIO_GRADE_OPTION_BY_CODE.get(code, code)).strip()
+
+
+def _richmondstudio_grade_code_from_value(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if text in RICHMONDSTUDIO_GRADE_CODE_OPTIONS:
+        return text
+    mapped = str(RICHMONDSTUDIO_GRADE_SUGGESTION_BY_LABEL.get(text, "")).strip()
+    if mapped:
+        return mapped
+    prefix = text.split("|", 1)[0].strip()
+    if prefix in RICHMONDSTUDIO_GRADE_CODE_OPTIONS:
+        return prefix
+    return ""
 
 
 def _normalize_display_name(value: object) -> str:
@@ -679,6 +707,9 @@ def _richmondstudio_group_users_count(group_item: Dict[str, object]) -> int:
 def _richmondstudio_grade_label(grade_code: object, level_value: object) -> str:
     grade_text = str(grade_code or "").strip().lower()
     level_text = str(level_value or "").strip().lower()
+    direct_label = str(RICHMONDSTUDIO_GRADE_TEXT_BY_CODE.get(grade_text, "")).strip()
+    if direct_label:
+        return direct_label
     match = re.fullmatch(r"grade(\d+)", grade_text)
     if not match:
         return str(grade_code or "").strip()
@@ -874,19 +905,13 @@ def _build_richmondstudio_group_payload(row: Dict[str, object]) -> Dict[str, obj
 
 
 def _default_richmondstudio_group_row() -> Dict[str, object]:
-    default_grade_label = (
-        RICHMONDSTUDIO_GRADE_LABELS[10]
-        if len(RICHMONDSTUDIO_GRADE_LABELS) > 10
-        else RICHMONDSTUDIO_GRADE_LABELS[0]
-    )
+    default_grade_code = "grade7"
     return {
         "Crear": True,
         "Class name": "",
         "Description": "",
-        "Grade": default_grade_label,
-        "Grade code": RICHMONDSTUDIO_GRADE_SUGGESTION_BY_LABEL.get(
-            default_grade_label, "grade7"
-        ),
+        "Grade": _richmondstudio_grade_option_from_code(default_grade_code),
+        "Grade code": default_grade_code,
         "Test level": "lower secondary",
         "iRead": False,
     }
@@ -894,26 +919,21 @@ def _default_richmondstudio_group_row() -> Dict[str, object]:
 
 def _normalize_richmondstudio_create_rows(rows: List[Dict[str, object]]) -> List[Dict[str, object]]:
     normalized: List[Dict[str, object]] = []
-    default_grade_label = (
-        RICHMONDSTUDIO_GRADE_LABELS[10]
-        if len(RICHMONDSTUDIO_GRADE_LABELS) > 10
-        else RICHMONDSTUDIO_GRADE_LABELS[0]
-    )
+    default_grade_code = "grade7"
+    default_grade_option = _richmondstudio_grade_option_from_code(default_grade_code)
     for row in rows:
         if not isinstance(row, dict):
             continue
-        grade_label = str(row.get("Grade") or "").strip() or default_grade_label
-        grade_code = str(row.get("Grade code") or "").strip()
+        grade_option = str(row.get("Grade") or "").strip() or default_grade_option
+        grade_code = _richmondstudio_grade_code_from_value(grade_option) or _richmondstudio_grade_code_from_value(row.get("Grade code"))
         if not grade_code or grade_code not in RICHMONDSTUDIO_GRADE_CODE_OPTIONS:
-            grade_code = str(
-                RICHMONDSTUDIO_GRADE_SUGGESTION_BY_LABEL.get(grade_label, "grade7")
-            ).strip()
+            grade_code = default_grade_code
         normalized.append(
             {
                 "Crear": bool(row.get("Crear", True)),
                 "Class name": str(row.get("Class name") or "").strip(),
                 "Description": str(row.get("Description") or "").strip(),
-                "Grade": grade_label,
+                "Grade": _richmondstudio_grade_option_from_code(grade_code),
                 "Grade code": grade_code,
                 "Test level": str(
                     row.get("Test level")
@@ -987,6 +1007,9 @@ def _richmondstudio_dates_summary(start_date: object, end_date: object) -> str:
 def _richmondstudio_group_grade_display(
     grade_code: object, test_level_label: object, fallback_level: object = ""
 ) -> str:
+    direct_option = _richmondstudio_grade_option_from_code(grade_code)
+    if direct_option and direct_option != str(grade_code or "").strip():
+        return direct_option
     level_value = _richmondstudio_level_from_test_level(test_level_label, fallback_level)
     return _richmondstudio_grade_display(
         {
@@ -1042,7 +1065,7 @@ def _normalize_richmondstudio_loaded_rows(rows: List[Dict[str, object]]) -> List
     for row in rows:
         if not isinstance(row, dict):
             continue
-        grade_code = str(row.get("Grade code") or "").strip()
+        grade_code = _richmondstudio_grade_code_from_value(row.get("Grade")) or _richmondstudio_grade_code_from_value(row.get("Grade code"))
         test_level_label = str(row.get("Test level") or "").strip()
         start_date_raw = row.get("Start date")
         end_date_raw = row.get("End date")
@@ -1073,7 +1096,8 @@ def _normalize_richmondstudio_loaded_rows(rows: List[Dict[str, object]]) -> List
                 "ID": str(row.get("ID") or "").strip(),
                 "Class name": str(row.get("Class name") or "").strip(),
                 "Description": str(row.get("Description") or "").strip(),
-                "Grade": _richmondstudio_group_grade_display(
+                "Grade": _richmondstudio_grade_option_from_code(grade_code)
+                or _richmondstudio_group_grade_display(
                     grade_code,
                     test_level_label,
                     level_value,
@@ -1129,14 +1153,9 @@ def _build_richmondstudio_group_payload(row: Dict[str, object]) -> Dict[str, obj
         raise ValueError("Falta Class name.")
 
     description = str(row.get("Description") or "").strip() or class_name
-    grade_label = str(row.get("Grade") or "").strip()
-    grade_code = str(row.get("Grade code") or "").strip()
-    if not grade_code and grade_label:
-        grade_code = str(
-            RICHMONDSTUDIO_GRADE_SUGGESTION_BY_LABEL.get(grade_label, "")
-        ).strip()
+    grade_code = _richmondstudio_grade_code_from_value(row.get("Grade")) or _richmondstudio_grade_code_from_value(row.get("Grade code"))
     if not grade_code:
-        raise ValueError(f"Falta Grade code para {class_name}.")
+        raise ValueError(f"Falta Grade para {class_name}.")
 
     test_level_label = str(row.get("Test level") or "").strip()
     grade_level = str(RICHMONDSTUDIO_TEST_LEVEL_BY_LABEL.get(test_level_label, "")).strip()
@@ -1169,9 +1188,9 @@ def _build_richmondstudio_group_update_payload(row: Dict[str, object]) -> Dict[s
         raise ValueError(f"Falta Class name para {group_id}.")
 
     description = str(row.get("Description") or "").strip() or class_name
-    grade_code = str(row.get("Grade code") or "").strip()
+    grade_code = _richmondstudio_grade_code_from_value(row.get("Grade")) or _richmondstudio_grade_code_from_value(row.get("Grade code"))
     if not grade_code:
-        raise ValueError(f"Falta Grade code para {class_name}.")
+        raise ValueError(f"Falta Grade para {class_name}.")
 
     test_level_label = str(row.get("Test level") or "").strip()
     grade_level = str(RICHMONDSTUDIO_TEST_LEVEL_BY_LABEL.get(test_level_label, "")).strip()
@@ -1932,7 +1951,7 @@ def render_richmond_studio_view() -> None:
                 use_container_width=True,
             )
             if col_rs_b.button(
-                "Nueva fila RS",
+                "Agregar fila abajo",
                 key="rs_rs_groups_new_row_btn",
                 use_container_width=True,
             ):
@@ -1953,7 +1972,7 @@ def render_richmond_studio_view() -> None:
             if duplicate_options:
                 duplicate_idx = int(
                     col_rs_c.selectbox(
-                        "Duplicar fila",
+                        "Fila base",
                         options=duplicate_options,
                         format_func=lambda idx: duplicate_labels.get(
                             int(idx), f"Fila {int(idx) + 1}"
@@ -1962,7 +1981,7 @@ def render_richmond_studio_view() -> None:
                     )
                 )
             if col_rs_c.button(
-                "Duplicar fila",
+                "Duplicar fila base",
                 key="rs_rs_groups_duplicate_btn",
                 use_container_width=True,
                 disabled=not duplicate_options,
@@ -2070,7 +2089,7 @@ def render_richmond_studio_view() -> None:
                     "ID",
                     "Class name",
                     "Description",
-                    "Grade code",
+                    "Grade",
                     "Test level",
                     "Start date",
                     "End date",
@@ -2100,9 +2119,9 @@ def render_richmond_studio_view() -> None:
                             "Description",
                             width="large",
                         ),
-                        "Grade code": st.column_config.SelectboxColumn(
-                            "Grade code",
-                            options=RICHMONDSTUDIO_GRADE_CODE_OPTIONS,
+                        "Grade": st.column_config.SelectboxColumn(
+                            "Grade",
+                            options=RICHMONDSTUDIO_GRADE_LABELS,
                             required=True,
                         ),
                         "Test level": st.column_config.SelectboxColumn(
@@ -2349,7 +2368,21 @@ def render_richmond_studio_view() -> None:
             rs_create_rows = _normalize_richmondstudio_create_rows(
                 st.session_state.get("rs_groups_create_rows") or []
             )
-            rs_create_df = pd.DataFrame(rs_create_rows)
+            rs_create_columns = [
+                "Crear",
+                "Class name",
+                "Description",
+                "Grade",
+                "Test level",
+                "iRead",
+            ]
+            rs_create_df = pd.DataFrame(
+                [
+                    {column: row.get(column) for column in rs_create_columns}
+                    for row in rs_create_rows
+                ],
+                columns=rs_create_columns,
+            )
             edited_rs_create_df = st.data_editor(
                 rs_create_df,
                 key="rs_rs_groups_create_editor",
@@ -2374,11 +2407,6 @@ def render_richmond_studio_view() -> None:
                     "Grade": st.column_config.SelectboxColumn(
                         "Grade",
                         options=RICHMONDSTUDIO_GRADE_LABELS,
-                        required=True,
-                    ),
-                    "Grade code": st.column_config.SelectboxColumn(
-                        "Grade code",
-                        options=RICHMONDSTUDIO_GRADE_CODE_OPTIONS,
                         required=True,
                     ),
                     "Test level": st.column_config.SelectboxColumn(
@@ -3305,7 +3333,7 @@ with tab_crud_clases:
                 use_container_width=True,
             )
             if col_rs_b.button(
-                "Nueva fila RS",
+                "Agregar fila abajo",
                 key="rs_groups_new_row_btn",
                 use_container_width=True,
             ):
@@ -3326,14 +3354,14 @@ with tab_crud_clases:
             if duplicate_options:
                 duplicate_idx = int(
                     col_rs_c.selectbox(
-                        "Duplicar fila",
+                        "Fila base",
                         options=duplicate_options,
                         format_func=lambda idx: duplicate_labels.get(int(idx), f"Fila {int(idx) + 1}"),
                         key="rs_groups_duplicate_source",
                     )
                 )
             if col_rs_c.button(
-                "Duplicar fila",
+                "Duplicar fila base",
                 key="rs_groups_duplicate_btn",
                 use_container_width=True,
                 disabled=not duplicate_options,
@@ -3439,7 +3467,7 @@ with tab_crud_clases:
                     "ID",
                     "Class name",
                     "Description",
-                    "Grade code",
+                    "Grade",
                     "Test level",
                     "Start date",
                     "End date",
@@ -3469,9 +3497,9 @@ with tab_crud_clases:
                             "Description",
                             width="large",
                         ),
-                        "Grade code": st.column_config.SelectboxColumn(
-                            "Grade code",
-                            options=RICHMONDSTUDIO_GRADE_CODE_OPTIONS,
+                        "Grade": st.column_config.SelectboxColumn(
+                            "Grade",
+                            options=RICHMONDSTUDIO_GRADE_LABELS,
                             required=True,
                         ),
                         "Test level": st.column_config.SelectboxColumn(
@@ -3728,7 +3756,21 @@ with tab_crud_clases:
             rs_create_rows = _normalize_richmondstudio_create_rows(
                 st.session_state.get("rs_groups_create_rows") or []
             )
-            rs_create_df = pd.DataFrame(rs_create_rows)
+            rs_create_columns = [
+                "Crear",
+                "Class name",
+                "Description",
+                "Grade",
+                "Test level",
+                "iRead",
+            ]
+            rs_create_df = pd.DataFrame(
+                [
+                    {column: row.get(column) for column in rs_create_columns}
+                    for row in rs_create_rows
+                ],
+                columns=rs_create_columns,
+            )
             edited_rs_create_df = st.data_editor(
                 rs_create_df,
                 key="rs_groups_create_editor",
@@ -3753,11 +3795,6 @@ with tab_crud_clases:
                     "Grade": st.column_config.SelectboxColumn(
                         "Grade",
                         options=RICHMONDSTUDIO_GRADE_LABELS,
-                        required=True,
-                    ),
-                    "Grade code": st.column_config.SelectboxColumn(
-                        "Grade code",
-                        options=RICHMONDSTUDIO_GRADE_CODE_OPTIONS,
                         required=True,
                     ),
                     "Test level": st.column_config.SelectboxColumn(

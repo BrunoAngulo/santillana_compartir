@@ -4243,19 +4243,35 @@
         try {
           await mapLimit(state.issues.slice(), 4, async (issue) => {
             try {
-              const comments = await fetchCommentsForIssue(issue.key, true);
+              const [comments] = await Promise.all([
+                fetchCommentsForIssue(issue.key, true),
+                fetchWorklogsForIssue(issue.key, true)
+              ]);
               const dayComments = comments.filter((comment) => {
                 if (!isCommentByCurrentUser(comment)) return;
                 if (!isCommentOnInputDate(comment, todayInput)) return;
                 return true;
               });
               if (!dayComments.length) return;
+              let minStartTs = Number.POSITIVE_INFINITY;
+              let maxEndTs = Number.NEGATIVE_INFINITY;
+              dayComments.forEach((comment) => {
+                const span = commentActivityWindow(issue.key, comment);
+                if (Number.isFinite(span.startTs) && span.startTs < minStartTs) {
+                  minStartTs = span.startTs;
+                }
+                if (Number.isFinite(span.endTs) && span.endTs > maxEndTs) {
+                  maxEndTs = span.endTs;
+                }
+              });
+              const firstCommentTs = tsOf(dayComments[0] && dayComments[0].created ? dayComments[0].created : 0);
+              const lastCommentTs = tsOf(dayComments[dayComments.length - 1] && dayComments[dayComments.length - 1].created ? dayComments[dayComments.length - 1].created : 0);
               rows.push({
                 issueKey: issue.key,
                 colegio: normalizeSchool(issue.summary || ''),
                 agent: agentName,
-                startCreated: dayComments[0] && dayComments[0].created ? dayComments[0].created : '',
-                endCreated: dayComments[dayComments.length - 1] && dayComments[dayComments.length - 1].created ? dayComments[dayComments.length - 1].created : ''
+                startCreated: Number.isFinite(minStartTs) ? new Date(minStartTs) : (Number.isFinite(firstCommentTs) ? new Date(firstCommentTs) : ''),
+                endCreated: Number.isFinite(maxEndTs) ? new Date(maxEndTs) : (Number.isFinite(lastCommentTs) ? new Date(lastCommentTs) : '')
               });
             } catch (_error) {
               failedIssues += 1;
@@ -5645,6 +5661,65 @@
         return { templateMode: false, minutes, anchorEndTs: anchorEnd.getTime() };
       }
 
+      function commentActivityWindow(issueKey, comment) {
+        const key = String(issueKey || '').trim();
+        if (!key || !comment) return { startTs: NaN, endTs: NaN, minutes: 0 };
+
+        const linkedWorklog = findExistingWorklogForComment(key, comment);
+        if (linkedWorklog && mine(linkedWorklog.author)) {
+          const linkedWindow = windowOf(linkedWorklog);
+          if (Number.isFinite(linkedWindow.startTs) && Number.isFinite(linkedWindow.endTs)) {
+            return {
+              startTs: linkedWindow.startTs,
+              endTs: linkedWindow.endTs,
+              minutes: minutesOf(linkedWorklog)
+            };
+          }
+        }
+
+        const createdTs = tsOf(comment && comment.created ? comment.created : 0);
+        const plan = registrationPlanFromComment(comment);
+        let minutes = Math.max(1, Math.floor(Number(plan && plan.minutes ? plan.minutes : 0)));
+        let endTs = Number.isFinite(createdTs)
+          ? createdTs
+          : Number(plan && plan.anchorEndTs ? plan.anchorEndTs : 0);
+
+        if (plan && plan.templateMode) {
+          const anchorEndTs = Number.isFinite(Number(plan.anchorEndTs || 0))
+            ? Number(plan.anchorEndTs || 0)
+            : endTs;
+          const inferredType = inferOfficialActivityType(commentText(comment));
+          const templateType = inferredType === ESTUDIANTES_TEMPLATE_ACTIVITY
+            ? ESTUDIANTES_TEMPLATE_ACTIVITY
+            : DOCENTES_TEMPLATE_ACTIVITY;
+          const templatePlan = templateRegistrationPlan(
+            key,
+            templateType,
+            TimeService.toInputDate(anchorEndTs || new Date()),
+            {
+              issueKey: key,
+              commentId: String(comment && comment.id ? comment.id : ''),
+              anchorEndTs
+            }
+          );
+          if (templatePlan) {
+            minutes = Math.max(1, Math.floor(Number(templatePlan.mins || 0)));
+          }
+        }
+
+        if (!Number.isFinite(endTs)) {
+          endTs = Number.isFinite(Number(plan && plan.anchorEndTs ? plan.anchorEndTs : 0))
+            ? Number(plan.anchorEndTs || 0)
+            : Date.now();
+        }
+        const started = TimeService.subtractBusinessMinutes(new Date(endTs), minutes);
+        return {
+          startTs: tsOf(started),
+          endTs,
+          minutes
+        };
+      }
+
       function sortDesc(items, dateFn) {
         return items.slice().sort((a, b) => new Date(dateFn(b)).getTime() - new Date(dateFn(a)).getTime());
       }
@@ -5665,6 +5740,18 @@
         const comments = normalizeCommentsPayload(payload);
         state.commentsByIssue[key] = comments;
         return comments;
+      }
+
+      async function fetchWorklogsForIssue(issueKey, force = false) {
+        const key = String(issueKey || '').trim();
+        if (!key) return [];
+        if (!force && Array.isArray(state.worklogsByIssue[key])) {
+          return state.worklogsByIssue[key];
+        }
+        const payload = await JiraService.worklogs(key);
+        const worklogs = sortDesc(Array.isArray(payload && payload.worklogs) ? payload.worklogs : [], (x) => x.started || x.created || '');
+        state.worklogsByIssue[key] = worklogs;
+        return worklogs;
       }
 
       function isCommentByCurrentUser(comment) {

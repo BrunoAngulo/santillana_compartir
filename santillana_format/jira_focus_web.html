@@ -2094,21 +2094,6 @@
       max-height: 58vh;
     }
 
-    .my-comments-ticket-link {
-      border: 0;
-      background: transparent;
-      color: var(--primary);
-      font-weight: 700;
-      padding: 0;
-      cursor: pointer;
-      text-align: left;
-      text-decoration: underline;
-    }
-
-    .my-comments-ticket-link:hover {
-      color: var(--primary-dark);
-    }
-
     .my-comments-modal-foot {
       display: flex;
       justify-content: flex-end;
@@ -2713,7 +2698,7 @@
         selectedTimelineActivity: '',
         selectedTimelineMinutes: 0,
         selectedWorklogId: '',
-        myCommentsToday: { loading: false, items: [], refreshedAt: null, failedIssues: 0, totalComments: 0 },
+        myCommentsToday: { loading: false, items: [], refreshedAt: null, failedIssues: 0 },
         timelineLinksByIssue: {},
         manualWorklogToCommentByIssue: {},
         chartDesign: DEFAULT_CHART_DESIGN,
@@ -4189,18 +4174,16 @@
       function renderMyCommentsTodayModal() {
         if (!el.myCommentsTodayMeta || !el.myCommentsTodayBody) return;
         const todayLabel = TimeService.ddmmyyyy(new Date());
-        const snapshot = state.myCommentsToday || { loading: false, items: [], refreshedAt: null, failedIssues: 0, totalComments: 0 };
+        const snapshot = state.myCommentsToday || { loading: false, items: [], refreshedAt: null, failedIssues: 0 };
         const items = Array.isArray(snapshot.items) ? snapshot.items : [];
 
         if (snapshot.loading) {
-          el.myCommentsTodayMeta.textContent = `${todayLabel} | Buscando tickets comentados por ti...`;
+          el.myCommentsTodayMeta.textContent = '';
           el.myCommentsTodayBody.innerHTML = '<div class="empty">Cargando resumen de hoy...</div>';
           return;
         }
 
-        const refreshed = snapshot.refreshedAt ? ` | Actualizado: ${TimeService.dtLabel(snapshot.refreshedAt)}` : '';
-        const failed = snapshot.failedIssues ? ` | ${snapshot.failedIssues} ticket(s) con error` : '';
-        el.myCommentsTodayMeta.textContent = `${todayLabel} | ${items.length} ticket(s) | ${snapshot.totalComments || 0} comentario(s)${failed}${refreshed}`;
+        el.myCommentsTodayMeta.textContent = '';
 
         if (!items.length) {
           const emptyLabel = state.issues.length
@@ -4225,11 +4208,7 @@
               <tbody>
                 ${items.map((item) => `
                   <tr>
-                    <td>
-                      <button class="my-comments-ticket-link" type="button" data-open-issue-key="${escapeHtml(item.issueKey)}">
-                        ${escapeHtml(item.issueKey)}
-                      </button>
-                    </td>
+                    <td>${escapeHtml(item.issueKey)}</td>
                     <td>${escapeHtml(item.colegio || 'SIN_COLEGIO')}</td>
                     <td>${escapeHtml(item.agent || 'Yo')}</td>
                     <td>${escapeHtml(TimeService.dtLabel(item.startCreated || new Date()))}</td>
@@ -4242,38 +4221,17 @@
         `;
       }
 
-      async function openIssueFromMyCommentsToday(issueKey) {
-        const key = String(issueKey || '').trim();
-        if (!key) return;
-        if (!state.issues.some((it) => it.key === key)) {
-          showMsg('error', `El ticket ${key} ya no esta en la lista actual.`);
-          return;
-        }
-        closeMyCommentsTodayModal();
-        state.selectedIssueKey = key;
-        if (el.issueSel) {
-          el.issueSel.value = key;
-        }
-        uiStateSave();
-        try {
-          await loadIssueData(key);
-          renderCompact();
-        } catch (e) {
-          applyError(e, `No se pudo cargar detalle de ${key}.`);
-        }
-      }
-
       async function showMyCommentsTodayModal() {
         if (!state.connected) {
           showMsg('error', 'Conecta tu cuenta Jira primero.');
           return;
         }
         openMyCommentsTodayModal();
-        state.myCommentsToday = { loading: true, items: [], refreshedAt: null, failedIssues: 0, totalComments: 0 };
+        state.myCommentsToday = { loading: true, items: [], refreshedAt: null, failedIssues: 0 };
         renderTop();
         renderMyCommentsTodayModal();
         if (!state.me || !state.issues.length) {
-          state.myCommentsToday = { loading: false, items: [], refreshedAt: new Date(), failedIssues: 0, totalComments: 0 };
+          state.myCommentsToday = { loading: false, items: [], refreshedAt: new Date(), failedIssues: 0 };
           renderTop();
           renderMyCommentsTodayModal();
           return;
@@ -4281,7 +4239,6 @@
         const todayInput = TimeService.toInputDate(new Date());
         const rows = [];
         let failedIssues = 0;
-        let totalComments = 0;
         const agentName = state.me && state.me.displayName ? String(state.me.displayName || '').trim() : 'Yo';
         try {
           await mapLimit(state.issues.slice(), 4, async (issue) => {
@@ -4293,7 +4250,6 @@
                 return true;
               });
               if (!dayComments.length) return;
-              totalComments += dayComments.length;
               rows.push({
                 issueKey: issue.key,
                 colegio: normalizeSchool(issue.summary || ''),
@@ -4310,8 +4266,7 @@
             loading: false,
             items: sortDesc(rows, (item) => item.endCreated || ''),
             refreshedAt: new Date(),
-            failedIssues,
-            totalComments
+            failedIssues
           };
           renderTop();
           renderMyCommentsTodayModal();
@@ -7036,7 +6991,7 @@
         state.selectedIssueKey = '';
         state.commentsByIssue = {};
         state.worklogsByIssue = {};
-        state.myCommentsToday = { loading: false, items: [], refreshedAt: null, failedIssues: 0, totalComments: 0 };
+        state.myCommentsToday = { loading: false, items: [], refreshedAt: null, failedIssues: 0 };
         state.timelineLinksByIssue = {};
         state.manualWorklogToCommentByIssue = {};
         state.selectedCommentId = '';
@@ -7279,7 +7234,7 @@
           try {
             await showMyCommentsTodayModal();
           } catch (e) {
-            state.myCommentsToday = { loading: false, items: [], refreshedAt: new Date(), failedIssues: 0, totalComments: 0 };
+            state.myCommentsToday = { loading: false, items: [], refreshedAt: new Date(), failedIssues: 0 };
             renderTop();
             renderMyCommentsTodayModal();
             applyError(e, 'No se pudieron cargar tus comentarios de hoy.');
@@ -7287,16 +7242,6 @@
         });
         el.myCommentsTodayCloseBtn.addEventListener('click', closeMyCommentsTodayModal);
         el.myCommentsTodayModal.addEventListener('click', async (ev) => {
-          const openBtn = ev.target && ev.target.closest
-            ? ev.target.closest('button[data-open-issue-key]')
-            : null;
-          if (openBtn) {
-            const issueKey = String(openBtn.getAttribute('data-open-issue-key') || '').trim();
-            if (issueKey) {
-              await openIssueFromMyCommentsToday(issueKey);
-            }
-            return;
-          }
           const closeBtn = ev.target && ev.target.closest
             ? ev.target.closest('button[data-act="close-my-comments-modal"]')
             : null;

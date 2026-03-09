@@ -2495,6 +2495,7 @@
         oauthPending: 'jira_oauth_pending',
         oauthDone: 'jira_oauth_done',
         adminAccess: 'jira_focus_admin_access',
+        userDisplayName: 'jira_focus_user_display_name',
         timer: 'jira_focus_timer_state',
         ui: 'jira_focus_ui_state',
         lastActivity: 'jira_focus_last_activity',
@@ -2503,6 +2504,8 @@
       const JIRA_ADMIN_DISPLAY_NAME = 'Bruno Ricardo Adrian Angulo Perez';
       const JIRA_ADMIN_QUERY_PARAM = 'jira_admin';
       const JIRA_ADMIN_COOKIE_NAME = 'jira_focus_admin_access';
+      const JIRA_USER_QUERY_PARAM = 'jira_user';
+      const JIRA_USER_COOKIE_NAME = 'jira_focus_user_display_name';
       const OAUTH = {
         authorizeUrl: 'https://auth.atlassian.com/authorize',
         tokenUrl: 'https://auth.atlassian.com/oauth/token',
@@ -4000,8 +4003,9 @@
         return;
       }
 
-      function syncParentAdminAccessFlag(isAdmin) {
+      function syncParentAdminAccessFlag(isAdmin, displayName) {
         const desired = isAdmin ? '1' : '0';
+        const normalizedDisplayName = String(displayName || '').trim();
         try {
           const maxAge = isAdmin ? '31536000' : '0';
           document.cookie = JIRA_ADMIN_COOKIE_NAME + '=' + desired + '; path=/; max-age=' + maxAge + '; SameSite=Lax';
@@ -4009,20 +4013,40 @@
           // No-op when cookies are not available.
         }
         try {
-          if (window.parent && window.parent !== window) {
-            window.parent.postMessage({
+          const userMaxAge = normalizedDisplayName ? '31536000' : '0';
+          const userValue = normalizedDisplayName ? encodeURIComponent(normalizedDisplayName) : '';
+          document.cookie = JIRA_USER_COOKIE_NAME + '=' + userValue + '; path=/; max-age=' + userMaxAge + '; SameSite=Lax';
+        } catch (_err) {
+          // No-op when cookies are not available.
+        }
+        try {
+          const targetWindow = window.top && window.top !== window
+            ? window.top
+            : (window.parent && window.parent !== window ? window.parent : null);
+          if (targetWindow) {
+            targetWindow.postMessage({
               type: 'jira-focus-admin-access',
-              enabled: isAdmin
+              enabled: isAdmin,
+              displayName: normalizedDisplayName
             }, '*');
           }
         } catch (_err) {
           // No-op when parent messaging is not available.
         }
         try {
-          const targetWindow = window.parent && window.parent !== window ? window.parent : window;
+          const targetWindow = window.top && window.top !== window
+            ? window.top
+            : (window.parent && window.parent !== window ? window.parent : window);
           const targetUrl = new URL(targetWindow.location.href);
           const current = targetUrl.searchParams.get(JIRA_ADMIN_QUERY_PARAM) || '0';
-          if (current === desired) return;
+          const currentUser = targetUrl.searchParams.get(JIRA_USER_QUERY_PARAM) || '';
+          const desiredUser = normalizedDisplayName;
+          if (current === desired && currentUser === desiredUser) return;
+          if (desiredUser) {
+            targetUrl.searchParams.set(JIRA_USER_QUERY_PARAM, desiredUser);
+          } else {
+            targetUrl.searchParams.delete(JIRA_USER_QUERY_PARAM);
+          }
           if (desired === '1') {
             targetUrl.searchParams.set(JIRA_ADMIN_QUERY_PARAM, '1');
           } else {
@@ -4039,12 +4063,17 @@
           ? String(state.me.displayName || '').trim()
           : '';
         const isAdmin = state.connected && displayName.toLowerCase() === JIRA_ADMIN_DISPLAY_NAME.toLowerCase();
+        if (displayName) {
+          StorageService.set(STORAGE.userDisplayName, displayName);
+        } else {
+          StorageService.del(STORAGE.userDisplayName);
+        }
         if (isAdmin) {
           StorageService.set(STORAGE.adminAccess, '1');
         } else {
           StorageService.del(STORAGE.adminAccess);
         }
-        syncParentAdminAccessFlag(isAdmin);
+        syncParentAdminAccessFlag(isAdmin, displayName);
       }
 
       function renderTop() {

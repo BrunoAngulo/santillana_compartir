@@ -6,7 +6,7 @@ from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
-from urllib.parse import urljoin
+from urllib.parse import unquote, urljoin
 
 import pandas as pd
 import requests
@@ -66,6 +66,8 @@ RESTRICTED_SECTIONS_PASSWORD = "Palabr@leatoria123!"
 JIRA_ADMIN_DISPLAY_NAME = "Bruno Ricardo Adrian Angulo Perez"
 JIRA_ADMIN_QUERY_PARAM = "jira_admin"
 JIRA_ADMIN_COOKIE_NAME = "jira_focus_admin_access"
+JIRA_USER_QUERY_PARAM = "jira_user"
+JIRA_USER_COOKIE_NAME = "jira_focus_user_display_name"
 RICHMONDSTUDIO_TEST_LEVEL_OPTIONS: List[Tuple[str, str]] = [
     ("lower primary", "lower_primary"),
     ("upper primary", "upper_primary"),
@@ -109,18 +111,55 @@ RICHMONDSTUDIO_GRADE_SUGGESTION_BY_LABEL = {
 RICHMONDSTUDIO_GRADE_CODE_OPTIONS = [f"grade{idx}" for idx in range(1, 21)]
 
 
+def _normalize_display_name(value: object) -> str:
+    return str(value or "").strip().lower()
+
+
+def _sync_jira_user_identity() -> None:
+    jira_user_value = st.query_params.get(JIRA_USER_QUERY_PARAM, "")
+    if isinstance(jira_user_value, list):
+        jira_user_value = jira_user_value[0] if jira_user_value else ""
+    try:
+        if not jira_user_value:
+            jira_user_value = st.context.cookies.get(JIRA_USER_COOKIE_NAME, "") or ""
+    except Exception:
+        pass
+    jira_user_text = unquote(str(jira_user_value or "").strip())
+    if jira_user_text:
+        st.session_state["jira_focus_user_display_name"] = jira_user_text
+
+
 def _restricted_sections_unlocked() -> bool:
     jira_admin_flag = st.query_params.get(JIRA_ADMIN_QUERY_PARAM, "")
     if isinstance(jira_admin_flag, list):
         jira_admin_flag = jira_admin_flag[0] if jira_admin_flag else ""
+    jira_user_flag = st.query_params.get(JIRA_USER_QUERY_PARAM, "")
+    if isinstance(jira_user_flag, list):
+        jira_user_flag = jira_user_flag[0] if jira_user_flag else ""
     jira_admin_cookie = ""
+    jira_user_cookie = ""
     try:
         jira_admin_cookie = str(st.context.cookies.get(JIRA_ADMIN_COOKIE_NAME, "") or "").strip()
+        jira_user_cookie = str(st.context.cookies.get(JIRA_USER_COOKIE_NAME, "") or "").strip()
     except Exception:
         jira_admin_cookie = ""
-    return bool(st.session_state.get("restricted_sections_unlocked", False)) or str(
-        jira_admin_flag or ""
-    ).strip() == "1" or jira_admin_cookie == "1"
+        jira_user_cookie = ""
+
+    admin_name_norm = _normalize_display_name(JIRA_ADMIN_DISPLAY_NAME)
+    jira_user_flag_norm = _normalize_display_name(unquote(str(jira_user_flag or "").strip()))
+    jira_user_cookie_norm = _normalize_display_name(unquote(jira_user_cookie))
+    session_jira_user_norm = _normalize_display_name(
+        st.session_state.get("jira_focus_user_display_name", "")
+    )
+
+    return (
+        bool(st.session_state.get("restricted_sections_unlocked", False))
+        or str(jira_admin_flag or "").strip() == "1"
+        or jira_admin_cookie == "1"
+        or jira_user_flag_norm == admin_name_norm
+        or jira_user_cookie_norm == admin_name_norm
+        or session_jira_user_norm == admin_name_norm
+    )
 
 
 @st.dialog("Acceso restringido", width="small")
@@ -156,6 +195,7 @@ def _render_restricted_blur(section_name: str, key_suffix: str) -> None:
             _show_restricted_unlock_dialog()
 
 
+_sync_jira_user_identity()
 if _restricted_sections_unlocked():
     st.session_state["restricted_sections_unlocked"] = True
 
@@ -196,6 +236,12 @@ st.components.v1.html(
         let syncTimer = null;
 
         function applyDesired(desired) {{
+          let desiredUser = '';
+          try {{
+            desiredUser = window.localStorage.getItem('jira_focus_user_display_name') || '';
+          }} catch (_err) {{
+            desiredUser = '';
+          }}
           try {{
             const maxAge = desired === '1' ? '31536000' : '0';
             document.cookie = {f"{JIRA_ADMIN_COOKIE_NAME}="!r} + desired + '; path=/; max-age=' + maxAge + '; SameSite=Lax';
@@ -203,14 +249,29 @@ st.components.v1.html(
             // No-op when cookies are not available.
           }}
           try {{
-            const targetWindow = window.parent && window.parent !== window ? window.parent : window;
+            const userMaxAge = desiredUser ? '31536000' : '0';
+            const userValue = desiredUser ? encodeURIComponent(desiredUser) : '';
+            document.cookie = {f"{JIRA_USER_COOKIE_NAME}="!r} + userValue + '; path=/; max-age=' + userMaxAge + '; SameSite=Lax';
+          }} catch (_err) {{
+            // No-op when cookies are not available.
+          }}
+          try {{
+            const targetWindow = window.top && window.top !== window
+              ? window.top
+              : (window.parent && window.parent !== window ? window.parent : window);
             const targetUrl = new URL(targetWindow.location.href);
             const current = targetUrl.searchParams.get(queryKey) || '0';
-            if (current === desired) return;
+            const currentUser = targetUrl.searchParams.get({JIRA_USER_QUERY_PARAM!r}) || '';
+            if (current === desired && currentUser === desiredUser) return;
             if (desired === '1') {{
               targetUrl.searchParams.set(queryKey, '1');
             }} else {{
               targetUrl.searchParams.delete(queryKey);
+            }}
+            if (desiredUser) {{
+              targetUrl.searchParams.set({JIRA_USER_QUERY_PARAM!r}, desiredUser);
+            }} else {{
+              targetUrl.searchParams.delete({JIRA_USER_QUERY_PARAM!r});
             }}
             targetWindow.location.replace(targetUrl.toString());
           }} catch (_err) {{
@@ -229,10 +290,21 @@ st.components.v1.html(
         }}
 
         try {{
-          const targetWindow = window.parent && window.parent !== window ? window.parent : window;
+          const targetWindow = window.top && window.top !== window
+            ? window.top
+            : (window.parent && window.parent !== window ? window.parent : window);
           targetWindow.addEventListener('message', function (event) {{
             const data = event && event.data ? event.data : null;
             if (!data || data.type !== 'jira-focus-admin-access') return;
+            try {{
+              if (data.displayName) {{
+                window.localStorage.setItem('jira_focus_user_display_name', String(data.displayName || '').trim());
+              }} else {{
+                window.localStorage.removeItem('jira_focus_user_display_name');
+              }}
+            }} catch (_err) {{
+              // No-op when localStorage is not available.
+            }}
             applyDesired(data.enabled ? '1' : '0');
           }});
         }} catch (_err) {{
@@ -251,7 +323,7 @@ st.components.v1.html(
 st.markdown("**Menu principal**")
 menu_option = st.radio(
     "Menu",
-    ["Procesos Pegasus", "Jira Focus Web"],
+    ["Procesos Pegasus", "Richmond Studio", "Jira Focus Web"],
     horizontal=True,
     label_visibility="collapsed",
     key="main_top_menu",
@@ -272,63 +344,64 @@ if menu_option == "Jira Focus Web":
     render_jira_focus_web()
     st.stop()
 
-st.markdown(
-    """
-    <section class="bg-white border border-gray-200 rounded-lg px-4 py-3 mb-3 shadow-sm">
-      <div class="text-xs font-semibold uppercase tracking-wider text-blue-700 mb-1">Panel Operativo</div>
-      <h1 class="text-2xl font-bold text-gray-900 m-0">Procesos Pegasus</h1>
-      <p class="text-sm text-gray-600 mt-1 mb-0">
-        Gestion integrada de clases, profesores y alumnos con ejecucion directa desde web.
-      </p>
-    </section>
-    """,
-    unsafe_allow_html=True,
-)
-if "shared_pegasus_token" not in st.session_state:
-    st.session_state["shared_pegasus_token"] = _clean_token_value(
-        os.environ.get("PEGASUS_TOKEN", "")
+if menu_option != "Richmond Studio":
+    st.markdown(
+        """
+        <section class="bg-white border border-gray-200 rounded-lg px-4 py-3 mb-3 shadow-sm">
+          <div class="text-xs font-semibold uppercase tracking-wider text-blue-700 mb-1">Panel Operativo</div>
+          <h1 class="text-2xl font-bold text-gray-900 m-0">Procesos Pegasus</h1>
+          <p class="text-sm text-gray-600 mt-1 mb-0">
+            Gestion integrada de clases, profesores y alumnos con ejecucion directa desde web.
+          </p>
+        </section>
+        """,
+        unsafe_allow_html=True,
     )
-if "shared_pegasus_token_input" not in st.session_state:
-    st.session_state["shared_pegasus_token_input"] = str(
-        st.session_state.get("shared_pegasus_token", "")
-    )
-
-st.markdown("**Configuracion global**")
-global_col_token, global_col_colegio = st.columns([2.7, 1.1])
-with global_col_token:
-    token_col_input, token_col_save, token_col_clear = st.columns([4.1, 1, 1], gap="small")
-    with token_col_input:
-        st.text_input(
-            "Token (sin Bearer)",
-            type="password",
-            key="shared_pegasus_token_input",
-            on_change=_sync_shared_token_from_input,
-            help="Se usa en todas las funciones y queda guardado en la sesion actual.",
+    if "shared_pegasus_token" not in st.session_state:
+        st.session_state["shared_pegasus_token"] = _clean_token_value(
+            os.environ.get("PEGASUS_TOKEN", "")
         )
-    with token_col_save:
-        if st.button("Guardar", key="shared_token_save_btn", use_container_width=True):
-            _sync_shared_token_from_input()
-    with token_col_clear:
-        if st.button("Limpiar", key="shared_token_clear_btn", use_container_width=True):
-            st.session_state["shared_pegasus_token"] = ""
-            st.session_state["shared_pegasus_token_input"] = ""
-            st.rerun()
-    if st.session_state.get("shared_pegasus_token"):
-        st.caption("Token guardado en sesion.")
-with global_col_colegio:
-    st.text_input(
-        "Colegio Clave (global)",
-        key="shared_colegio_id",
-        placeholder="2326",
-        help="Se reutiliza en las funciones que requieren colegio.",
+    if "shared_pegasus_token_input" not in st.session_state:
+        st.session_state["shared_pegasus_token_input"] = str(
+            st.session_state.get("shared_pegasus_token", "")
+        )
+
+    st.markdown("**Configuracion global**")
+    global_col_token, global_col_colegio = st.columns([2.7, 1.1])
+    with global_col_token:
+        token_col_input, token_col_save, token_col_clear = st.columns([4.1, 1, 1], gap="small")
+        with token_col_input:
+            st.text_input(
+                "Token (sin Bearer)",
+                type="password",
+                key="shared_pegasus_token_input",
+                on_change=_sync_shared_token_from_input,
+                help="Se usa en todas las funciones y queda guardado en la sesion actual.",
+            )
+        with token_col_save:
+            if st.button("Guardar", key="shared_token_save_btn", use_container_width=True):
+                _sync_shared_token_from_input()
+        with token_col_clear:
+            if st.button("Limpiar", key="shared_token_clear_btn", use_container_width=True):
+                st.session_state["shared_pegasus_token"] = ""
+                st.session_state["shared_pegasus_token_input"] = ""
+                st.rerun()
+        if st.session_state.get("shared_pegasus_token"):
+            st.caption("Token guardado en sesion.")
+    with global_col_colegio:
+        st.text_input(
+            "Colegio Clave (global)",
+            key="shared_colegio_id",
+            placeholder="2326",
+            help="Se reutiliza en las funciones que requieren colegio.",
+        )
+    tab_crud_clases, tab_crud_profesores, tab_crud_alumnos = st.tabs(
+        [
+            "CRUD Clases",
+            "CRUD Profesores",
+            "CRUD Alumnos",
+        ]
     )
-tab_crud_clases, tab_crud_profesores, tab_crud_alumnos = st.tabs(
-    [
-        "CRUD Clases",
-        "CRUD Profesores",
-        "CRUD Alumnos",
-    ]
-)
 
 
 def _clean_token(token: str) -> str:
@@ -1778,6 +1851,783 @@ def _build_alumno_export_key(
     if nombre_txt or ap_pat_txt or ap_mat_txt or login_txt:
         return f"sig:{nombre_txt}|{ap_pat_txt}|{ap_mat_txt}|{login_txt}"
     return ""
+
+
+def render_richmond_studio_view() -> None:
+    st.markdown(
+        """
+        <section class="bg-white border border-gray-200 rounded-lg px-4 py-3 mb-3 shadow-sm">
+          <div class="text-xs font-semibold uppercase tracking-wider text-blue-700 mb-1">Panel Operativo</div>
+          <h1 class="text-2xl font-bold text-gray-900 m-0">Richmond Studio</h1>
+          <p class="text-sm text-gray-600 mt-1 mb-0">
+            Gestion de clases y exportes de RS en una vista separada de Pegasus.
+          </p>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    timeout = 30
+    rs_token_default = _get_richmondstudio_token()
+    if "rs_groups_bearer_token" not in st.session_state:
+        st.session_state["rs_groups_bearer_token"] = rs_token_default
+    if "rs_bearer_token" not in st.session_state:
+        st.session_state["rs_bearer_token"] = rs_token_default
+
+    st.markdown("**Configuracion RS**")
+    rs_token = _clean_token(
+        st.text_input(
+            "Bearer token RS",
+            type="password",
+            key="rs_groups_bearer_token",
+            help="Se usa para clases RS y EXCEL RS.",
+        )
+    )
+    st.session_state["rs_bearer_token"] = rs_token
+
+    tab_rs_clases, tab_rs_excel = st.tabs(["Clases RS", "EXCEL RS"])
+    with tab_rs_clases:
+        st.markdown("**RS | Listado y creacion masiva de clases**")
+        st.caption(
+            "Lista clases de Richmond Studio, filtralas y crea varias filas en una sola grilla."
+        )
+        with st.container(border=True):
+            if "rs_groups_create_rows" not in st.session_state:
+                st.session_state["rs_groups_create_rows"] = [
+                    _default_richmondstudio_group_row()
+                ]
+            col_rs_a, col_rs_b, col_rs_c = st.columns([1, 1, 1], gap="small")
+            run_rs_groups_load = col_rs_a.button(
+                "Cargar clases RS",
+                key="rs_rs_groups_load_btn",
+                use_container_width=True,
+            )
+            if col_rs_b.button(
+                "Nueva fila RS",
+                key="rs_rs_groups_new_row_btn",
+                use_container_width=True,
+            ):
+                current_rs_rows = _normalize_richmondstudio_create_rows(
+                    st.session_state.get("rs_groups_create_rows") or []
+                )
+                current_rs_rows.append(_default_richmondstudio_group_row())
+                st.session_state["rs_groups_create_rows"] = current_rs_rows
+            current_rs_rows = _normalize_richmondstudio_create_rows(
+                st.session_state.get("rs_groups_create_rows") or []
+            )
+            duplicate_options = list(range(len(current_rs_rows)))
+            duplicate_labels = {
+                idx: f"Fila {idx + 1}: {str(row.get('Class name') or '').strip() or 'Sin nombre'}"
+                for idx, row in enumerate(current_rs_rows)
+            }
+            duplicate_idx = 0
+            if duplicate_options:
+                duplicate_idx = int(
+                    col_rs_c.selectbox(
+                        "Duplicar fila",
+                        options=duplicate_options,
+                        format_func=lambda idx: duplicate_labels.get(
+                            int(idx), f"Fila {int(idx) + 1}"
+                        ),
+                        key="rs_rs_groups_duplicate_source",
+                    )
+                )
+            if col_rs_c.button(
+                "Duplicar fila",
+                key="rs_rs_groups_duplicate_btn",
+                use_container_width=True,
+                disabled=not duplicate_options,
+            ):
+                current_rs_rows = _normalize_richmondstudio_create_rows(
+                    st.session_state.get("rs_groups_create_rows") or []
+                )
+                if current_rs_rows:
+                    base_row = dict(
+                        current_rs_rows[min(max(duplicate_idx, 0), len(current_rs_rows) - 1)]
+                    )
+                    base_row["Crear"] = True
+                    st.session_state["rs_groups_create_rows"] = current_rs_rows + [base_row]
+
+            if run_rs_groups_load:
+                if not rs_token:
+                    st.error("Ingresa el bearer token de Richmond Studio.")
+                    st.stop()
+                try:
+                    with st.spinner("Consultando clases RS..."):
+                        rs_groups_loaded = _fetch_richmondstudio_groups(
+                            rs_token,
+                            timeout=int(timeout),
+                            include_users=True,
+                        )
+                except Exception as exc:  # pragma: no cover - UI
+                    st.error(f"Error RS: {exc}")
+                    st.stop()
+
+                rs_group_rows = [
+                    _normalize_richmondstudio_group_row(item)
+                    for item in rs_groups_loaded
+                    if isinstance(item, dict)
+                ]
+                st.session_state["rs_groups_loaded_rows"] = _normalize_richmondstudio_loaded_rows(
+                    sorted(
+                        rs_group_rows,
+                        key=lambda row: (
+                            str(row.get("Class name") or "").upper(),
+                            str(row.get("Code") or "").upper(),
+                        ),
+                    )
+                )
+                st.success(f"Clases RS cargadas: {len(rs_group_rows)}.")
+
+            rs_loaded_rows = _normalize_richmondstudio_loaded_rows(
+                st.session_state.get("rs_groups_loaded_rows") or []
+            )
+            st.session_state["rs_groups_loaded_rows"] = rs_loaded_rows
+            if rs_loaded_rows:
+                st.markdown("**Listado RS**")
+                col_rs_filter_a, col_rs_filter_b, col_rs_filter_c = st.columns(
+                    [2.4, 1.2, 1],
+                    gap="small",
+                )
+                rs_filter_text = col_rs_filter_a.text_input(
+                    "Filtrar por Class name o Code",
+                    key="rs_rs_groups_filter_text",
+                    placeholder="Ej: 2026 Ingles 2SA",
+                )
+                rs_filter_level = col_rs_filter_b.selectbox(
+                    "Test level",
+                    options=["Todos"] + RICHMONDSTUDIO_TEST_LEVEL_LABELS,
+                    key="rs_rs_groups_filter_level",
+                )
+                rs_filter_iread = col_rs_filter_c.selectbox(
+                    "iRead",
+                    options=["Todos", "Si", "No"],
+                    key="rs_rs_groups_filter_iread",
+                )
+
+                rs_filter_text_norm = str(rs_filter_text or "").strip().lower()
+                rs_filtered_rows = []
+                rs_filtered_edit_rows = []
+                for row in rs_loaded_rows:
+                    class_name_txt = str(row.get("Class name") or "")
+                    code_txt = str(row.get("Code") or "")
+                    level_txt = str(row.get("Test level") or "")
+                    iread_txt = _richmondstudio_display_bool(row.get("iRead"))
+                    hay_texto = not rs_filter_text_norm or (
+                        rs_filter_text_norm in class_name_txt.lower()
+                        or rs_filter_text_norm in code_txt.lower()
+                    )
+                    hay_level = rs_filter_level == "Todos" or level_txt == rs_filter_level
+                    hay_iread = rs_filter_iread == "Todos" or iread_txt == rs_filter_iread
+                    if hay_texto and hay_level and hay_iread:
+                        rs_filtered_edit_rows.append(dict(row))
+                        rs_filtered_rows.append(
+                            {
+                                "Class name": class_name_txt,
+                                "Grade": str(row.get("Grade") or ""),
+                                "Dates": str(row.get("Dates") or ""),
+                                "iRead": iread_txt,
+                                "Code": code_txt,
+                                "Students": int(row.get("Students") or 0),
+                            }
+                        )
+                st.caption(
+                    f"Mostrando {len(rs_filtered_rows)} de {len(rs_loaded_rows)} clases RS."
+                )
+                _show_dataframe(rs_filtered_rows, use_container_width=True)
+                st.markdown("**RS | Editar o eliminar clases cargadas**")
+                rs_edit_columns = [
+                    "Seleccionar",
+                    "ID",
+                    "Class name",
+                    "Description",
+                    "Grade code",
+                    "Test level",
+                    "Start date",
+                    "End date",
+                    "iRead",
+                    "Code",
+                    "Students",
+                ]
+                rs_edit_df = pd.DataFrame(
+                    [
+                        {column: row.get(column) for column in rs_edit_columns}
+                        for row in rs_filtered_edit_rows
+                    ]
+                )
+                edited_rs_loaded_df = st.data_editor(
+                    rs_edit_df,
+                    key="rs_rs_groups_loaded_editor",
+                    hide_index=True,
+                    use_container_width=True,
+                    disabled=["ID", "Code", "Students"],
+                    column_config={
+                        "Seleccionar": st.column_config.CheckboxColumn("Seleccionar"),
+                        "ID": st.column_config.TextColumn("ID"),
+                        "Class name": st.column_config.TextColumn(
+                            "Class name",
+                            required=True,
+                            width="large",
+                        ),
+                        "Description": st.column_config.TextColumn(
+                            "Description",
+                            width="large",
+                        ),
+                        "Grade code": st.column_config.SelectboxColumn(
+                            "Grade code",
+                            options=RICHMONDSTUDIO_GRADE_CODE_OPTIONS,
+                            required=True,
+                        ),
+                        "Test level": st.column_config.SelectboxColumn(
+                            "Test level",
+                            options=[""] + RICHMONDSTUDIO_TEST_LEVEL_LABELS,
+                            required=False,
+                        ),
+                        "Start date": st.column_config.DateColumn(
+                            "Start date",
+                            format="YYYY-MM-DD",
+                            required=True,
+                        ),
+                        "End date": st.column_config.DateColumn(
+                            "End date",
+                            format="YYYY-MM-DD",
+                            required=True,
+                        ),
+                        "iRead": st.column_config.CheckboxColumn("iRead"),
+                        "Code": st.column_config.TextColumn("Code"),
+                        "Students": st.column_config.NumberColumn("Students", format="%d"),
+                    },
+                )
+                if isinstance(edited_rs_loaded_df, pd.DataFrame):
+                    edited_lookup = {
+                        str(item.get("ID") or "").strip(): item
+                        for item in edited_rs_loaded_df.to_dict("records")
+                        if str(item.get("ID") or "").strip()
+                    }
+                    merged_rows: List[Dict[str, object]] = []
+                    for row in rs_loaded_rows:
+                        row_id = str(row.get("ID") or "").strip()
+                        if row_id and row_id in edited_lookup:
+                            merged_row = dict(row)
+                            merged_row.update(edited_lookup[row_id])
+                            merged_rows.append(merged_row)
+                        else:
+                            merged_rows.append(dict(row))
+                    rs_loaded_rows = _normalize_richmondstudio_loaded_rows(merged_rows)
+                    st.session_state["rs_groups_loaded_rows"] = rs_loaded_rows
+
+                col_rs_update, col_rs_delete = st.columns([1, 1], gap="small")
+                run_rs_groups_update = col_rs_update.button(
+                    "Actualizar clases RS",
+                    key="rs_rs_groups_update_btn",
+                    use_container_width=True,
+                )
+                run_rs_groups_delete = col_rs_delete.button(
+                    "Eliminar clases RS",
+                    key="rs_rs_groups_delete_btn",
+                    use_container_width=True,
+                )
+                confirm_rs_delete = st.checkbox(
+                    "Confirmar eliminacion de clases RS seleccionadas",
+                    key="rs_rs_groups_delete_confirm",
+                    value=False,
+                )
+                if run_rs_groups_update:
+                    rows_to_update = [
+                        row for row in rs_loaded_rows if bool(row.get("Seleccionar"))
+                    ]
+                    if not rows_to_update:
+                        st.error("Selecciona al menos una clase RS para actualizar.")
+                        st.stop()
+
+                    resultados_rs_update: List[Dict[str, str]] = []
+                    ok_rs_update = 0
+                    err_rs_update = 0
+                    progress_rs_update = st.progress(0)
+                    status_rs_update = st.empty()
+
+                    for idx_rs, row in enumerate(rows_to_update, start=1):
+                        class_name = str(row.get("Class name") or "").strip()
+                        group_id = str(row.get("ID") or "").strip()
+                        try:
+                            payload_rs = _build_richmondstudio_group_update_payload(row)
+                            status_rs_update.write(
+                                f"Actualizando {idx_rs}/{len(rows_to_update)}: {class_name}"
+                            )
+                            _update_richmondstudio_group(
+                                rs_token,
+                                group_id,
+                                payload_rs,
+                                timeout=int(timeout),
+                            )
+                            resultados_rs_update.append(
+                                {
+                                    "Class name": class_name,
+                                    "Resultado": "OK",
+                                    "ID": group_id,
+                                    "Detalle": "Actualizada correctamente.",
+                                }
+                            )
+                            ok_rs_update += 1
+                        except Exception as exc:  # pragma: no cover - UI
+                            resultados_rs_update.append(
+                                {
+                                    "Class name": class_name,
+                                    "Resultado": "Error",
+                                    "ID": group_id,
+                                    "Detalle": str(exc),
+                                }
+                            )
+                            err_rs_update += 1
+                        progress_rs_update.progress(
+                            int((idx_rs / len(rows_to_update)) * 100)
+                        )
+
+                    status_rs_update.empty()
+                    progress_rs_update.empty()
+                    if ok_rs_update:
+                        try:
+                            rs_groups_loaded = _fetch_richmondstudio_groups(
+                                rs_token,
+                                timeout=int(timeout),
+                                include_users=True,
+                            )
+                            rs_group_rows = [
+                                _normalize_richmondstudio_group_row(item)
+                                for item in rs_groups_loaded
+                                if isinstance(item, dict)
+                            ]
+                            st.session_state["rs_groups_loaded_rows"] = _normalize_richmondstudio_loaded_rows(
+                                sorted(
+                                    rs_group_rows,
+                                    key=lambda row: (
+                                        str(row.get("Class name") or "").upper(),
+                                        str(row.get("Code") or "").upper(),
+                                    ),
+                                )
+                            )
+                        except Exception:
+                            pass
+
+                    if ok_rs_update and not err_rs_update:
+                        st.success(f"Clases RS actualizadas correctamente: {ok_rs_update}.")
+                    elif ok_rs_update and err_rs_update:
+                        st.warning(
+                            f"Resultado parcial RS: OK {ok_rs_update} | Error {err_rs_update}."
+                        )
+                    else:
+                        st.error("No se pudo actualizar ninguna clase RS.")
+                    _show_dataframe(resultados_rs_update, use_container_width=True)
+
+                if run_rs_groups_delete:
+                    if not confirm_rs_delete:
+                        st.error("Marca la confirmacion para eliminar clases RS.")
+                        st.stop()
+
+                    rows_to_delete = [
+                        row for row in rs_loaded_rows if bool(row.get("Seleccionar"))
+                    ]
+                    if not rows_to_delete:
+                        st.error("Selecciona al menos una clase RS para eliminar.")
+                        st.stop()
+
+                    resultados_rs_delete: List[Dict[str, str]] = []
+                    ok_rs_delete = 0
+                    err_rs_delete = 0
+                    progress_rs_delete = st.progress(0)
+                    status_rs_delete = st.empty()
+
+                    for idx_rs, row in enumerate(rows_to_delete, start=1):
+                        class_name = str(row.get("Class name") or "").strip()
+                        group_id = str(row.get("ID") or "").strip()
+                        try:
+                            status_rs_delete.write(
+                                f"Eliminando {idx_rs}/{len(rows_to_delete)}: {class_name}"
+                            )
+                            _delete_richmondstudio_group(
+                                rs_token,
+                                group_id,
+                                timeout=int(timeout),
+                            )
+                            resultados_rs_delete.append(
+                                {
+                                    "Class name": class_name,
+                                    "Resultado": "OK",
+                                    "ID": group_id,
+                                    "Detalle": "Eliminada correctamente.",
+                                }
+                            )
+                            ok_rs_delete += 1
+                        except Exception as exc:  # pragma: no cover - UI
+                            resultados_rs_delete.append(
+                                {
+                                    "Class name": class_name,
+                                    "Resultado": "Error",
+                                    "ID": group_id,
+                                    "Detalle": str(exc),
+                                }
+                            )
+                            err_rs_delete += 1
+                        progress_rs_delete.progress(
+                            int((idx_rs / len(rows_to_delete)) * 100)
+                        )
+
+                    status_rs_delete.empty()
+                    progress_rs_delete.empty()
+                    if ok_rs_delete:
+                        try:
+                            rs_groups_loaded = _fetch_richmondstudio_groups(
+                                rs_token,
+                                timeout=int(timeout),
+                                include_users=True,
+                            )
+                            rs_group_rows = [
+                                _normalize_richmondstudio_group_row(item)
+                                for item in rs_groups_loaded
+                                if isinstance(item, dict)
+                            ]
+                            st.session_state["rs_groups_loaded_rows"] = _normalize_richmondstudio_loaded_rows(
+                                sorted(
+                                    rs_group_rows,
+                                    key=lambda row: (
+                                        str(row.get("Class name") or "").upper(),
+                                        str(row.get("Code") or "").upper(),
+                                    ),
+                                )
+                            )
+                        except Exception:
+                            st.session_state["rs_groups_loaded_rows"] = [
+                                row
+                                for row in rs_loaded_rows
+                                if not bool(row.get("Seleccionar"))
+                            ]
+
+                    if ok_rs_delete and not err_rs_delete:
+                        st.success(f"Clases RS eliminadas correctamente: {ok_rs_delete}.")
+                    elif ok_rs_delete and err_rs_delete:
+                        st.warning(
+                            f"Resultado parcial RS: OK {ok_rs_delete} | Error {err_rs_delete}."
+                        )
+                    else:
+                        st.error("No se pudo eliminar ninguna clase RS.")
+                    _show_dataframe(resultados_rs_delete, use_container_width=True)
+            else:
+                st.caption("Aun no has cargado clases RS.")
+
+        with st.container(border=True):
+            st.markdown("**RS | Crear clases en bloque**")
+            st.caption(
+                "Agrega filas como si fuera Excel. Description se completa con Class name si lo dejas vacio. Al crear: inicio = hoy, fin = 31/12 del ano actual y Test level vacio se manda como null."
+            )
+            rs_create_rows = _normalize_richmondstudio_create_rows(
+                st.session_state.get("rs_groups_create_rows") or []
+            )
+            rs_create_df = pd.DataFrame(rs_create_rows)
+            edited_rs_create_df = st.data_editor(
+                rs_create_df,
+                key="rs_rs_groups_create_editor",
+                hide_index=True,
+                use_container_width=True,
+                num_rows="dynamic",
+                column_config={
+                    "Crear": st.column_config.CheckboxColumn(
+                        "Crear",
+                        help="Marca las filas que quieres enviar a RS.",
+                        default=True,
+                    ),
+                    "Class name": st.column_config.TextColumn(
+                        "Class name",
+                        required=True,
+                        width="large",
+                    ),
+                    "Description": st.column_config.TextColumn(
+                        "Description",
+                        width="large",
+                    ),
+                    "Grade": st.column_config.SelectboxColumn(
+                        "Grade",
+                        options=RICHMONDSTUDIO_GRADE_LABELS,
+                        required=True,
+                    ),
+                    "Grade code": st.column_config.SelectboxColumn(
+                        "Grade code",
+                        options=RICHMONDSTUDIO_GRADE_CODE_OPTIONS,
+                        required=True,
+                    ),
+                    "Test level": st.column_config.SelectboxColumn(
+                        "Test level",
+                        options=[""] + RICHMONDSTUDIO_TEST_LEVEL_LABELS,
+                        required=False,
+                    ),
+                    "iRead": st.column_config.CheckboxColumn("iRead"),
+                },
+            )
+            if isinstance(edited_rs_create_df, pd.DataFrame):
+                st.session_state["rs_groups_create_rows"] = _normalize_richmondstudio_create_rows(
+                    edited_rs_create_df.to_dict("records")
+                )
+
+            run_rs_groups_create = st.button(
+                "Crear clases RS",
+                type="primary",
+                key="rs_rs_groups_create_btn",
+                use_container_width=True,
+            )
+            if run_rs_groups_create:
+                rows_to_create = _normalize_richmondstudio_create_rows(
+                    st.session_state.get("rs_groups_create_rows") or []
+                )
+                selected_rows = [
+                    row
+                    for row in rows_to_create
+                    if bool(row.get("Crear")) and str(row.get("Class name") or "").strip()
+                ]
+                if not selected_rows:
+                    st.error("No hay filas marcadas con Class name para crear.")
+                    st.stop()
+
+                resultados_rs: List[Dict[str, object]] = []
+                ok_rs = 0
+                err_rs = 0
+                progress_rs = st.progress(0)
+                status_rs = st.empty()
+
+                for idx_rs, row in enumerate(selected_rows, start=1):
+                    class_name = str(row.get("Class name") or "").strip()
+                    try:
+                        payload_rs = _build_richmondstudio_group_payload(row)
+                        status_rs.write(
+                            f"Creando {idx_rs}/{len(selected_rows)}: {class_name}"
+                        )
+                        created_rs = _create_richmondstudio_group(
+                            rs_token,
+                            payload_rs,
+                            timeout=int(timeout),
+                        )
+                        created_data = (
+                            created_rs.get("data")
+                            if isinstance(created_rs.get("data"), dict)
+                            else {}
+                        )
+                        created_attrs = (
+                            created_data.get("attributes")
+                            if isinstance(created_data.get("attributes"), dict)
+                            else {}
+                        )
+                        resultados_rs.append(
+                            {
+                                "Class name": class_name,
+                                "Resultado": "OK",
+                                "ID": str(created_data.get("id") or "").strip(),
+                                "Code": str(created_attrs.get("code") or "").strip(),
+                                "Detalle": "Creada correctamente.",
+                            }
+                        )
+                        ok_rs += 1
+                    except Exception as exc:  # pragma: no cover - UI
+                        resultados_rs.append(
+                            {
+                                "Class name": class_name,
+                                "Resultado": "Error",
+                                "ID": "",
+                                "Code": "",
+                                "Detalle": str(exc),
+                            }
+                        )
+                        err_rs += 1
+                    progress_rs.progress(int((idx_rs / len(selected_rows)) * 100))
+
+                status_rs.empty()
+                progress_rs.empty()
+                if ok_rs:
+                    try:
+                        rs_groups_loaded = _fetch_richmondstudio_groups(
+                            rs_token,
+                            timeout=int(timeout),
+                            include_users=True,
+                        )
+                        rs_group_rows = [
+                            _normalize_richmondstudio_group_row(item)
+                            for item in rs_groups_loaded
+                            if isinstance(item, dict)
+                        ]
+                        st.session_state["rs_groups_loaded_rows"] = _normalize_richmondstudio_loaded_rows(
+                            sorted(
+                                rs_group_rows,
+                                key=lambda row: (
+                                    str(row.get("Class name") or "").upper(),
+                                    str(row.get("Code") or "").upper(),
+                                ),
+                            )
+                        )
+                    except Exception:
+                        pass
+
+                if ok_rs and not err_rs:
+                    st.success(f"Clases RS creadas correctamente: {ok_rs}.")
+                elif ok_rs and err_rs:
+                    st.warning(f"Resultado parcial RS: OK {ok_rs} | Error {err_rs}.")
+                else:
+                    st.error("No se pudo crear ninguna clase RS.")
+                _show_dataframe(resultados_rs, use_container_width=True)
+    with tab_rs_excel:
+        with st.container(border=True):
+            st.markdown("**EXCEL RS**")
+            st.caption(
+                "Richmond Studio: CLASS NAME, CLASS CODE, STUDENT NAME, IDENTIFIER. Solo roles student/teacher."
+            )
+            run_rs_excel = st.button(
+                "EXCEL RS",
+                type="primary",
+                key="rs_rs_excel_generate",
+            )
+
+            if run_rs_excel:
+                if not rs_token:
+                    st.error("Ingresa el bearer token de Richmond Studio.")
+                    st.stop()
+                try:
+                    with st.spinner("Consultando Richmond Studio..."):
+                        rs_users = _fetch_richmondstudio_users(rs_token, timeout=30)
+                        rs_groups = _fetch_richmondstudio_groups(rs_token, timeout=30)
+                except Exception as exc:  # pragma: no cover - UI
+                    st.error(f"Error: {exc}")
+                    st.stop()
+
+                allowed_roles = {"student", "teacher"}
+                excluded_roles: Dict[str, int] = {}
+                filtered_users: List[Dict[str, object]] = []
+                for item in rs_users:
+                    attrs = (
+                        item.get("attributes")
+                        if isinstance(item.get("attributes"), dict)
+                        else {}
+                    )
+                    role = str(attrs.get("role") or "").strip().lower()
+                    if role not in allowed_roles:
+                        role_key = role or "sin_rol"
+                        excluded_roles[role_key] = int(excluded_roles.get(role_key, 0)) + 1
+                        continue
+                    filtered_users.append(item)
+
+                group_lookup: Dict[str, Dict[str, str]] = {}
+                for group_item in rs_groups:
+                    group_id = str(group_item.get("id") or "").strip()
+                    if not group_id:
+                        continue
+                    attrs = (
+                        group_item.get("attributes")
+                        if isinstance(group_item.get("attributes"), dict)
+                        else {}
+                    )
+                    group_lookup[group_id] = {
+                        "class_name": str(
+                            attrs.get("name") or attrs.get("description") or ""
+                        ).strip(),
+                        "class_code": str(attrs.get("code") or "").strip(),
+                    }
+
+                rows_rs: List[Dict[str, str]] = []
+                for item in filtered_users:
+                    attrs = item.get("attributes") if isinstance(item.get("attributes"), dict) else {}
+                    relationships = (
+                        item.get("relationships")
+                        if isinstance(item.get("relationships"), dict)
+                        else {}
+                    )
+                    groups_rel = (
+                        relationships.get("groups")
+                        if isinstance(relationships.get("groups"), dict)
+                        else {}
+                    )
+                    groups_data = groups_rel.get("data") if isinstance(groups_rel.get("data"), list) else []
+
+                    first_name = str(attrs.get("firstName") or "").strip()
+                    last_name = str(attrs.get("lastName") or "").strip()
+                    student_name = " ".join(part for part in [first_name, last_name] if part).strip()
+                    identifier = str(attrs.get("identifier") or "").strip()
+
+                    group_ids: List[str] = []
+                    seen_group_ids = set()
+                    for rel in groups_data:
+                        if not isinstance(rel, dict):
+                            continue
+                        group_id = str(rel.get("id") or "").strip()
+                        if not group_id or group_id in seen_group_ids:
+                            continue
+                        seen_group_ids.add(group_id)
+                        group_ids.append(group_id)
+
+                    if group_ids:
+                        for group_id in group_ids:
+                            group_meta = group_lookup.get(group_id) or {}
+                            rows_rs.append(
+                                {
+                                    "CLASS NAME": str(group_meta.get("class_name") or "").strip(),
+                                    "CLASS CODE": str(group_meta.get("class_code") or "").strip(),
+                                    "STUDENT NAME": student_name,
+                                    "IDENTIFIER": identifier,
+                                }
+                            )
+                    else:
+                        rows_rs.append(
+                            {
+                                "CLASS NAME": "",
+                                "CLASS CODE": "",
+                                "STUDENT NAME": student_name,
+                                "IDENTIFIER": identifier,
+                            }
+                        )
+                rows_rs = [
+                    row
+                    for row in rows_rs
+                    if row.get("CLASS NAME")
+                    or row.get("CLASS CODE")
+                    or row.get("STUDENT NAME")
+                    or row.get("IDENTIFIER")
+                ]
+                rows_rs = sorted(
+                    rows_rs,
+                    key=lambda row: (
+                        str(row.get("CLASS NAME") or "").lower(),
+                        str(row.get("CLASS CODE") or "").lower(),
+                        str(row.get("STUDENT NAME") or "").lower(),
+                        str(row.get("IDENTIFIER") or "").lower(),
+                    ),
+                )
+
+                rs_excel_bytes = _export_simple_excel(rows_rs, sheet_name="users")
+                st.session_state["rs_excel_bytes"] = rs_excel_bytes
+                st.session_state["rs_excel_count"] = int(len(rows_rs))
+                st.success(
+                    "EXCEL RS listo. Filas: {filas} | Usuarios validos: {validos}/{total}.".format(
+                        filas=len(rows_rs),
+                        validos=len(filtered_users),
+                        total=len(rs_users),
+                    )
+                )
+                if excluded_roles:
+                    excluded_txt = ", ".join(
+                        f"{role}: {count}"
+                        for role, count in sorted(excluded_roles.items(), key=lambda item: item[0])
+                    )
+                    st.caption(f"Roles excluidos: {excluded_txt}")
+                if rows_rs:
+                    _show_dataframe(rows_rs[:200], use_container_width=True)
+
+            if st.session_state.get("rs_excel_bytes"):
+                st.download_button(
+                    label="Descargar EXCEL RS",
+                    data=st.session_state["rs_excel_bytes"],
+                    file_name="excel_rs.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="rs_rs_excel_download",
+                )
+
+
+if menu_option == "Richmond Studio":
+    render_richmond_studio_view()
+    st.stop()
 
 with tab_crud_clases:
     if not _restricted_sections_unlocked():

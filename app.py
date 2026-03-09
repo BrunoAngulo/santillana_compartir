@@ -1094,6 +1094,35 @@ def _normalize_richmondstudio_loaded_rows(rows: List[Dict[str, object]]) -> List
     return normalized
 
 
+def _richmondstudio_loaded_editor_df(
+    rows: List[Dict[str, object]], columns: List[str]
+) -> pd.DataFrame:
+    prepared_rows: List[Dict[str, object]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        prepared: Dict[str, object] = {column: row.get(column) for column in columns}
+        for date_key in ("Start date", "End date"):
+            raw_value = prepared.get(date_key)
+            if raw_value in ("", None):
+                prepared[date_key] = None
+                continue
+            try:
+                prepared[date_key] = date.fromisoformat(
+                    _coerce_iso_date(raw_value, date_key)
+                )
+            except ValueError:
+                prepared[date_key] = None
+        prepared["Seleccionar"] = bool(prepared.get("Seleccionar", False))
+        prepared["iRead"] = bool(prepared.get("iRead", False))
+        try:
+            prepared["Students"] = int(prepared.get("Students") or 0)
+        except (TypeError, ValueError):
+            prepared["Students"] = 0
+        prepared_rows.append(prepared)
+    return pd.DataFrame(prepared_rows, columns=columns)
+
+
 def _build_richmondstudio_group_payload(row: Dict[str, object]) -> Dict[str, object]:
     class_name = str(row.get("Class name") or "").strip()
     if not class_name:
@@ -2049,11 +2078,9 @@ def render_richmond_studio_view() -> None:
                     "Code",
                     "Students",
                 ]
-                rs_edit_df = pd.DataFrame(
-                    [
-                        {column: row.get(column) for column in rs_edit_columns}
-                        for row in rs_filtered_edit_rows
-                    ]
+                rs_edit_df = _richmondstudio_loaded_editor_df(
+                    rs_filtered_edit_rows,
+                    rs_edit_columns,
                 )
                 edited_rs_loaded_df = st.data_editor(
                     rs_edit_df,
@@ -3420,11 +3447,9 @@ with tab_crud_clases:
                     "Code",
                     "Students",
                 ]
-                rs_edit_df = pd.DataFrame(
-                    [
-                        {column: row.get(column) for column in rs_edit_columns}
-                        for row in rs_filtered_edit_rows
-                    ]
+                rs_edit_df = _richmondstudio_loaded_editor_df(
+                    rs_filtered_edit_rows,
+                    rs_edit_columns,
                 )
                 edited_rs_loaded_df = st.data_editor(
                     rs_edit_df,

@@ -1698,6 +1698,20 @@ def _resolve_alumno_login_password(
     return login, password
 
 
+def _resolve_alumno_dni(item: Dict[str, object]) -> str:
+    source = _extract_alumno_payload(item)
+    persona = source.get("persona") if isinstance(source.get("persona"), dict) else {}
+    for raw in (
+        persona.get("idOficial"),
+        source.get("idOficial"),
+        item.get("idOficial"),
+    ):
+        value = str(raw or "").strip()
+        if value:
+            return value
+    return ""
+
+
 def _to_int_or_default(value: object, default: int) -> int:
     try:
         return int(value)
@@ -5140,6 +5154,7 @@ with tab_crud_alumnos:
                             by_alumno_id=by_alumno_id,
                             by_persona_id=by_persona_id,
                         )
+                        dni = _resolve_alumno_dni(item)
                         rows_excel.append(
                             {
                                 "_nivel_order": int(ctx["nivel_order"]),
@@ -5154,6 +5169,7 @@ with tab_crud_alumnos:
                                 "Nombre": str(persona.get("nombre") or ""),
                                 "Apellido Paterno": str(persona.get("apellidoPaterno") or ""),
                                 "Apellido Materno": str(persona.get("apellidoMaterno") or ""),
+                                "DNI": dni,
                                 "Login": login,
                                 "Password": password,
                                 "_dedupe_key": dedupe_key,
@@ -5248,6 +5264,7 @@ with tab_crud_alumnos:
                                 by_alumno_id=by_alumno_id,
                                 by_persona_id=by_persona_id,
                             )
+                            dni = _resolve_alumno_dni(item)
                             rows_excel.append(
                                 {
                                     "_nivel_order": nivel_order_fb,
@@ -5259,6 +5276,7 @@ with tab_crud_alumnos:
                                     "Nombre": str(persona.get("nombre") or ""),
                                     "Apellido Paterno": str(persona.get("apellidoPaterno") or ""),
                                     "Apellido Materno": str(persona.get("apellidoMaterno") or ""),
+                                    "DNI": dni,
                                     "Login": login,
                                     "Password": password,
                                     "_dedupe_key": dedupe_key,
@@ -5289,6 +5307,7 @@ with tab_crud_alumnos:
                     "Nombre",
                     "Apellido Paterno",
                     "Apellido Materno",
+                    "DNI",
                     "Login",
                     "Password",
                 ]

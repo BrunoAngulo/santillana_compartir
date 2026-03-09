@@ -7,6 +7,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import unquote, urljoin
+from uuid import uuid4
 
 import pandas as pd
 import requests
@@ -109,13 +110,11 @@ RICHMONDSTUDIO_GRADE_TEXT_BY_CODE = {
     code: label for code, label in RICHMONDSTUDIO_GRADE_OPTIONS
 }
 RICHMONDSTUDIO_GRADE_OPTION_BY_CODE = {
-    code: f"{code} | {label}" for code, label in RICHMONDSTUDIO_GRADE_OPTIONS
+    code: label for code, label in RICHMONDSTUDIO_GRADE_OPTIONS
 }
-RICHMONDSTUDIO_GRADE_LABELS = [
-    RICHMONDSTUDIO_GRADE_OPTION_BY_CODE[code] for code in RICHMONDSTUDIO_GRADE_CODE_OPTIONS
-]
+RICHMONDSTUDIO_GRADE_LABELS = [label for _code, label in RICHMONDSTUDIO_GRADE_OPTIONS]
 RICHMONDSTUDIO_GRADE_SUGGESTION_BY_LABEL = {
-    display: code for code, display in RICHMONDSTUDIO_GRADE_OPTION_BY_CODE.items()
+    label: code for code, label in RICHMONDSTUDIO_GRADE_OPTIONS
 }
 
 
@@ -137,6 +136,10 @@ def _richmondstudio_grade_code_from_value(value: object) -> str:
     if prefix in RICHMONDSTUDIO_GRADE_CODE_OPTIONS:
         return prefix
     return ""
+
+
+def _richmondstudio_new_create_row_id() -> str:
+    return f"rs-row-{uuid4().hex}"
 
 
 def _normalize_display_name(value: object) -> str:
@@ -907,6 +910,7 @@ def _build_richmondstudio_group_payload(row: Dict[str, object]) -> Dict[str, obj
 def _default_richmondstudio_group_row() -> Dict[str, object]:
     default_grade_code = "grade7"
     return {
+        "_row_id": _richmondstudio_new_create_row_id(),
         "Crear": True,
         "Class name": "",
         "Description": "",
@@ -924,12 +928,14 @@ def _normalize_richmondstudio_create_rows(rows: List[Dict[str, object]]) -> List
     for row in rows:
         if not isinstance(row, dict):
             continue
+        row_id = str(row.get("_row_id") or "").strip() or _richmondstudio_new_create_row_id()
         grade_option = str(row.get("Grade") or "").strip() or default_grade_option
         grade_code = _richmondstudio_grade_code_from_value(grade_option) or _richmondstudio_grade_code_from_value(row.get("Grade code"))
         if not grade_code or grade_code not in RICHMONDSTUDIO_GRADE_CODE_OPTIONS:
             grade_code = default_grade_code
         normalized.append(
             {
+                "_row_id": row_id,
                 "Crear": bool(row.get("Crear", True)),
                 "Class name": str(row.get("Class name") or "").strip(),
                 "Description": str(row.get("Description") or "").strip(),
@@ -944,6 +950,148 @@ def _normalize_richmondstudio_create_rows(rows: List[Dict[str, object]]) -> List
             }
         )
     return normalized
+
+
+def _render_richmondstudio_create_rows_form(
+    state_key: str,
+    widget_prefix: str,
+) -> List[Dict[str, object]]:
+    rows = _normalize_richmondstudio_create_rows(st.session_state.get(state_key) or [])
+    if not rows:
+        rows = [_default_richmondstudio_group_row()]
+        st.session_state[state_key] = rows
+
+    add_col, info_col = st.columns([1, 2.2], gap="small")
+    if add_col.button(
+        "Agregar otra clase",
+        key=f"{widget_prefix}_add_row_btn",
+        use_container_width=True,
+    ):
+        rows.append(_default_richmondstudio_group_row())
+        st.session_state[state_key] = _normalize_richmondstudio_create_rows(rows)
+        st.rerun()
+    info_col.caption(
+        "Cada bloque crea una clase. Puedes duplicar una fila para cambiar solo lo necesario."
+    )
+
+    updated_rows: List[Dict[str, object]] = []
+    duplicate_after_row_id = ""
+    remove_row_id = ""
+
+    for idx, row in enumerate(rows, start=1):
+        row_id = str(row.get("_row_id") or "").strip() or _richmondstudio_new_create_row_id()
+        current_grade = str(row.get("Grade") or "").strip()
+        current_test_level = str(row.get("Test level") or "").strip()
+        grade_index = (
+            RICHMONDSTUDIO_GRADE_LABELS.index(current_grade)
+            if current_grade in RICHMONDSTUDIO_GRADE_LABELS
+            else 0
+        )
+        test_level_options = [""] + RICHMONDSTUDIO_TEST_LEVEL_LABELS
+        test_level_index = (
+            test_level_options.index(current_test_level)
+            if current_test_level in test_level_options
+            else 0
+        )
+
+        with st.container(border=True):
+            title_cols = st.columns([2.4, 1, 1], gap="small")
+            title_cols[0].markdown(
+                f"**Clase {idx}**"
+                + (
+                    f" - {str(row.get('Class name') or '').strip()}"
+                    if str(row.get("Class name") or "").strip()
+                    else ""
+                )
+            )
+            if title_cols[1].button(
+                "Duplicar",
+                key=f"{widget_prefix}_duplicate_{row_id}",
+                use_container_width=True,
+            ):
+                duplicate_after_row_id = row_id
+            if title_cols[2].button(
+                "Eliminar",
+                key=f"{widget_prefix}_remove_{row_id}",
+                use_container_width=True,
+                disabled=len(rows) <= 1,
+            ):
+                remove_row_id = row_id
+
+            row_cols_a = st.columns([1.1, 1.4, 1.4], gap="small")
+            create_flag = row_cols_a[0].checkbox(
+                "Crear",
+                value=bool(row.get("Crear", True)),
+                key=f"{widget_prefix}_create_{row_id}",
+            )
+            class_name = row_cols_a[1].text_input(
+                "Class name",
+                value=str(row.get("Class name") or "").strip(),
+                key=f"{widget_prefix}_class_name_{row_id}",
+                placeholder="2026 Ingles 2SB",
+            )
+            description = row_cols_a[2].text_input(
+                "Description",
+                value=str(row.get("Description") or "").strip(),
+                key=f"{widget_prefix}_description_{row_id}",
+                placeholder="Se completa con Class name si lo dejas vacio",
+            )
+
+            row_cols_b = st.columns([1.4, 1.4, 0.8], gap="small")
+            grade_label = row_cols_b[0].selectbox(
+                "Grado",
+                options=RICHMONDSTUDIO_GRADE_LABELS,
+                index=grade_index,
+                key=f"{widget_prefix}_grade_{row_id}",
+            )
+            test_level = row_cols_b[1].selectbox(
+                "Test level",
+                options=test_level_options,
+                index=test_level_index,
+                key=f"{widget_prefix}_test_level_{row_id}",
+            )
+            iread = row_cols_b[2].checkbox(
+                "iRead",
+                value=bool(row.get("iRead", False)),
+                key=f"{widget_prefix}_iread_{row_id}",
+            )
+
+            updated_rows.append(
+                {
+                    "_row_id": row_id,
+                    "Crear": create_flag,
+                    "Class name": str(class_name or "").strip(),
+                    "Description": str(description or "").strip(),
+                    "Grade": str(grade_label or "").strip(),
+                    "Grade code": _richmondstudio_grade_code_from_value(grade_label),
+                    "Test level": str(test_level or "").strip(),
+                    "iRead": bool(iread),
+                }
+            )
+
+    if remove_row_id:
+        updated_rows = [
+            row for row in updated_rows if str(row.get("_row_id") or "").strip() != remove_row_id
+        ]
+        if not updated_rows:
+            updated_rows = [_default_richmondstudio_group_row()]
+        st.session_state[state_key] = _normalize_richmondstudio_create_rows(updated_rows)
+        st.rerun()
+
+    if duplicate_after_row_id:
+        duplicated_rows: List[Dict[str, object]] = []
+        for row in updated_rows:
+            duplicated_rows.append(dict(row))
+            if str(row.get("_row_id") or "").strip() == duplicate_after_row_id:
+                duplicated_row = dict(row)
+                duplicated_row["_row_id"] = _richmondstudio_new_create_row_id()
+                duplicated_row["Crear"] = True
+                duplicated_rows.append(duplicated_row)
+        st.session_state[state_key] = _normalize_richmondstudio_create_rows(duplicated_rows)
+        st.rerun()
+
+    st.session_state[state_key] = _normalize_richmondstudio_create_rows(updated_rows)
+    return st.session_state[state_key]
 
 
 def _richmondstudio_level_from_test_level(
@@ -1160,19 +1308,21 @@ def _build_richmondstudio_group_payload(row: Dict[str, object]) -> Dict[str, obj
     test_level_label = str(row.get("Test level") or "").strip()
     grade_level = str(RICHMONDSTUDIO_TEST_LEVEL_BY_LABEL.get(test_level_label, "")).strip()
     start_date_obj, end_date_obj = _richmondstudio_default_dates()
+    attributes: Dict[str, object] = {
+        "name": class_name,
+        "description": description,
+        "grade": grade_code,
+        "startDate": start_date_obj.isoformat(),
+        "endDate": end_date_obj.isoformat(),
+        "iread": bool(row.get("iRead", False)),
+    }
+    if grade_level:
+        attributes["gradeLevel"] = grade_level
 
     return {
         "data": {
             "type": "groups",
-            "attributes": {
-                "name": class_name,
-                "description": description,
-                "grade": grade_code,
-                "gradeLevel": grade_level or None,
-                "startDate": start_date_obj.isoformat(),
-                "endDate": end_date_obj.isoformat(),
-                "iread": bool(row.get("iRead", False)),
-            },
+            "attributes": attributes,
             "relationships": {"users": {"data": []}},
         }
     }
@@ -1197,20 +1347,22 @@ def _build_richmondstudio_group_update_payload(row: Dict[str, object]) -> Dict[s
     users_data = row.get("_users_data")
     if not isinstance(users_data, list):
         users_data = []
+    attributes = {
+        "name": class_name,
+        "description": description,
+        "grade": grade_code,
+        "startDate": _coerce_iso_date(row.get("Start date"), "Start date"),
+        "endDate": _coerce_iso_date(row.get("End date"), "End date"),
+        "iread": bool(row.get("iRead", False)),
+    }
+    if grade_level:
+        attributes["gradeLevel"] = grade_level
 
     return {
         "data": {
             "type": "groups",
             "id": group_id,
-            "attributes": {
-                "name": class_name,
-                "description": description,
-                "grade": grade_code,
-                "gradeLevel": grade_level or None,
-                "startDate": _coerce_iso_date(row.get("Start date"), "Start date"),
-                "endDate": _coerce_iso_date(row.get("End date"), "End date"),
-                "iread": bool(row.get("iRead", False)),
-            },
+            "attributes": attributes,
             "relationships": {"users": {"data": users_data}},
         }
     }
@@ -1944,57 +2096,11 @@ def render_richmond_studio_view() -> None:
                 st.session_state["rs_groups_create_rows"] = [
                     _default_richmondstudio_group_row()
                 ]
-            col_rs_a, col_rs_b, col_rs_c = st.columns([1, 1, 1], gap="small")
-            run_rs_groups_load = col_rs_a.button(
+            run_rs_groups_load = st.button(
                 "Cargar clases RS",
                 key="rs_rs_groups_load_btn",
                 use_container_width=True,
             )
-            if col_rs_b.button(
-                "Agregar fila abajo",
-                key="rs_rs_groups_new_row_btn",
-                use_container_width=True,
-            ):
-                current_rs_rows = _normalize_richmondstudio_create_rows(
-                    st.session_state.get("rs_groups_create_rows") or []
-                )
-                current_rs_rows.append(_default_richmondstudio_group_row())
-                st.session_state["rs_groups_create_rows"] = current_rs_rows
-            current_rs_rows = _normalize_richmondstudio_create_rows(
-                st.session_state.get("rs_groups_create_rows") or []
-            )
-            duplicate_options = list(range(len(current_rs_rows)))
-            duplicate_labels = {
-                idx: f"Fila {idx + 1}: {str(row.get('Class name') or '').strip() or 'Sin nombre'}"
-                for idx, row in enumerate(current_rs_rows)
-            }
-            duplicate_idx = 0
-            if duplicate_options:
-                duplicate_idx = int(
-                    col_rs_c.selectbox(
-                        "Fila base",
-                        options=duplicate_options,
-                        format_func=lambda idx: duplicate_labels.get(
-                            int(idx), f"Fila {int(idx) + 1}"
-                        ),
-                        key="rs_rs_groups_duplicate_source",
-                    )
-                )
-            if col_rs_c.button(
-                "Duplicar fila base",
-                key="rs_rs_groups_duplicate_btn",
-                use_container_width=True,
-                disabled=not duplicate_options,
-            ):
-                current_rs_rows = _normalize_richmondstudio_create_rows(
-                    st.session_state.get("rs_groups_create_rows") or []
-                )
-                if current_rs_rows:
-                    base_row = dict(
-                        current_rs_rows[min(max(duplicate_idx, 0), len(current_rs_rows) - 1)]
-                    )
-                    base_row["Crear"] = True
-                    st.session_state["rs_groups_create_rows"] = current_rs_rows + [base_row]
 
             if run_rs_groups_load:
                 if not rs_token:
@@ -2363,64 +2469,12 @@ def render_richmond_studio_view() -> None:
         with st.container(border=True):
             st.markdown("**RS | Crear clases en bloque**")
             st.caption(
-                "Agrega filas como si fuera Excel. Description se completa con Class name si lo dejas vacio. Al crear: inicio = hoy, fin = 31/12 del ano actual y Test level vacio se manda como null."
+                "Llena una clase por bloque. Description se completa con Class name si lo dejas vacio. Al crear: inicio = hoy, fin = 31/12 del ano actual y Test level vacio se manda como null."
             )
-            rs_create_rows = _normalize_richmondstudio_create_rows(
-                st.session_state.get("rs_groups_create_rows") or []
+            rs_create_rows = _render_richmondstudio_create_rows_form(
+                state_key="rs_groups_create_rows",
+                widget_prefix="rs_rs_groups_create_form",
             )
-            rs_create_columns = [
-                "Crear",
-                "Class name",
-                "Description",
-                "Grade",
-                "Test level",
-                "iRead",
-            ]
-            rs_create_df = pd.DataFrame(
-                [
-                    {column: row.get(column) for column in rs_create_columns}
-                    for row in rs_create_rows
-                ],
-                columns=rs_create_columns,
-            )
-            edited_rs_create_df = st.data_editor(
-                rs_create_df,
-                key="rs_rs_groups_create_editor",
-                hide_index=True,
-                use_container_width=True,
-                num_rows="dynamic",
-                column_config={
-                    "Crear": st.column_config.CheckboxColumn(
-                        "Crear",
-                        help="Marca las filas que quieres enviar a RS.",
-                        default=True,
-                    ),
-                    "Class name": st.column_config.TextColumn(
-                        "Class name",
-                        required=True,
-                        width="large",
-                    ),
-                    "Description": st.column_config.TextColumn(
-                        "Description",
-                        width="large",
-                    ),
-                    "Grade": st.column_config.SelectboxColumn(
-                        "Grade",
-                        options=RICHMONDSTUDIO_GRADE_LABELS,
-                        required=True,
-                    ),
-                    "Test level": st.column_config.SelectboxColumn(
-                        "Test level",
-                        options=[""] + RICHMONDSTUDIO_TEST_LEVEL_LABELS,
-                        required=False,
-                    ),
-                    "iRead": st.column_config.CheckboxColumn("iRead"),
-                },
-            )
-            if isinstance(edited_rs_create_df, pd.DataFrame):
-                st.session_state["rs_groups_create_rows"] = _normalize_richmondstudio_create_rows(
-                    edited_rs_create_df.to_dict("records")
-                )
 
             run_rs_groups_create = st.button(
                 "Crear clases RS",

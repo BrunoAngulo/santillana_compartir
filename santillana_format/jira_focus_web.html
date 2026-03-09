@@ -2060,6 +2060,105 @@
       overflow: auto;
     }
 
+    .my-comments-modal-card {
+      width: min(760px, 100%);
+    }
+
+    .my-comments-modal-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+
+    .my-comments-modal-head h3 {
+      margin: 0;
+    }
+
+    .my-comments-modal-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .my-comments-ticket {
+      border: 1px solid #d7e3f1;
+      border-radius: 12px;
+      padding: 10px;
+      background: linear-gradient(180deg, #ffffff 0%, #f7fbff 100%);
+    }
+
+    .my-comments-ticket-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+
+    .my-comments-ticket-title {
+      flex: 1 1 320px;
+      min-width: 0;
+    }
+
+    .my-comments-ticket-title strong,
+    .my-comments-ticket-title span {
+      display: block;
+      overflow-wrap: anywhere;
+    }
+
+    .my-comments-ticket-title span {
+      margin-top: 4px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .my-comments-ticket-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .my-comments-entry {
+      border-top: 1px solid #e5edf6;
+      padding-top: 8px;
+      margin-top: 8px;
+    }
+
+    .my-comments-entry:first-of-type {
+      border-top: 0;
+      padding-top: 0;
+      margin-top: 0;
+    }
+
+    .my-comments-entry-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    .my-comments-entry-text {
+      white-space: normal;
+      overflow-wrap: anywhere;
+      font-size: 13px;
+      line-height: 1.45;
+      color: var(--text);
+    }
+
+    .my-comments-modal-foot {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 12px;
+    }
+
     .hide {
       display: none !important;
     }
@@ -2259,6 +2358,7 @@
       <span class="pill" id="syncPill">Listo</span>
       <span class="pill" id="userPill">Usuario: -</span>
       <button class="btn" id="refreshIssuesBtn" type="button" disabled>Recargar tickets</button>
+      <button class="btn" id="myCommentsTodayBtn" type="button" disabled>Mis comentarios hoy</button>
       <button class="btn danger" id="disconnectBtn" type="button" disabled>Desconectar</button>
     </div>
   </div>
@@ -2482,6 +2582,24 @@
   </div>
 
   <div class="hide" aria-hidden="true"></div>
+
+  <div class="modal" id="myCommentsTodayModal" aria-hidden="true">
+    <div class="modal-card my-comments-modal-card">
+      <div class="my-comments-modal-head">
+        <div>
+          <h3>Mis comentarios de hoy</h3>
+          <div class="muted" id="myCommentsTodayMeta">Sin datos.</div>
+        </div>
+        <button class="btn" id="myCommentsTodayCloseBtn" type="button">Cerrar</button>
+      </div>
+      <div id="myCommentsTodayBody" class="my-comments-modal-list">
+        <div class="empty">Sin datos.</div>
+      </div>
+      <div class="my-comments-modal-foot">
+        <button class="btn" type="button" data-act="close-my-comments-modal">Cerrar</button>
+      </div>
+    </div>
+  </div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
@@ -2637,6 +2755,7 @@
         selectedTimelineActivity: '',
         selectedTimelineMinutes: 0,
         selectedWorklogId: '',
+        myCommentsToday: { loading: false, items: [], refreshedAt: null, failedIssues: 0 },
         timelineLinksByIssue: {},
         manualWorklogToCommentByIssue: {},
         chartDesign: DEFAULT_CHART_DESIGN,
@@ -3869,14 +3988,15 @@
       }
       function cacheElements() {
         [
-          'connPill', 'syncPill', 'userPill', 'refreshIssuesBtn', 'disconnectBtn', 'msg',
+          'connPill', 'syncPill', 'userPill', 'refreshIssuesBtn', 'myCommentsTodayBtn', 'disconnectBtn', 'msg',
           'loginView', 'connectBtn',
           'mainView', 'issueSel', 'issueInsight', 'activityTypeSel', 'activityDueInp', 'activityInp', 'minutesInp', 'registerBtn', 'jiraDurationPill', 'timerVal', 'timerState', 'startBtn', 'pauseBtn',
           'resetBtn', 'applyTimerBtn', 'suggestionBox', 'applySugActBtn', 'applySugTimeBtn', 'registerSugBtn', 'todayTotal', 'weekTotal', 'issueCount', 'dashMeta',
           'refreshDashBtn', 'recentBox', 'commentsPanel', 'commentsBox', 'worklogsPanel', 'worklogBody', 'worklogsMeta', 'deleteAllWorklogsBtn', 'timelineBox', 'timelineMeta', 'ganttBox', 'genReportBtn', 'exportReportBtn', 'reportMeta',
           'reportBody', 'timelinePanel', 'chartDesignSel', 'chartDesignHelp', 'activityFocusBox', 'activityQuickSel', 'activityQuickMeta', 'compactBtn', 'floatBox', 'floatIssue', 'floatTimer', 'floatState', 'floatStartBtn', 'floatPauseBtn', 'floatExpandBtn',
           'regInlineBox', 'regInlineMeta', 'regTypeSel', 'regDateInp', 'regMinInp', 'regInlineOkBtn', 'regInlineCancelBtn',
-          'editInlineBox', 'editMeta', 'editTypeSel', 'editActInp', 'editDateInp', 'editTimeInp', 'editMinInp', 'editSaveBtn', 'editDeleteBtn', 'editCancelBtn', 'activityList'
+          'editInlineBox', 'editMeta', 'editTypeSel', 'editActInp', 'editDateInp', 'editTimeInp', 'editMinInp', 'editSaveBtn', 'editDeleteBtn', 'editCancelBtn', 'activityList',
+          'myCommentsTodayModal', 'myCommentsTodayMeta', 'myCommentsTodayBody', 'myCommentsTodayCloseBtn'
         ].forEach((id) => { el[id] = document.getElementById(id); });
       }
 
@@ -4088,8 +4208,165 @@
           : 'Usuario: -';
         el.disconnectBtn.disabled = !state.connected;
         el.refreshIssuesBtn.disabled = !state.connected;
+        if (el.myCommentsTodayBtn) {
+          el.myCommentsTodayBtn.disabled = !state.connected || !!state.myCommentsToday.loading;
+          el.myCommentsTodayBtn.textContent = state.myCommentsToday.loading ? 'Buscando...' : 'Mis comentarios hoy';
+        }
         el.loginView.classList.toggle('hide', state.connected);
         el.mainView.classList.toggle('hide', !state.connected);
+      }
+
+      function openMyCommentsTodayModal() {
+        if (!el.myCommentsTodayModal) return;
+        el.myCommentsTodayModal.classList.add('show');
+        el.myCommentsTodayModal.setAttribute('aria-hidden', 'false');
+      }
+
+      function closeMyCommentsTodayModal() {
+        if (!el.myCommentsTodayModal) return;
+        el.myCommentsTodayModal.classList.remove('show');
+        el.myCommentsTodayModal.setAttribute('aria-hidden', 'true');
+      }
+
+      function renderMyCommentsTodayModal() {
+        if (!el.myCommentsTodayMeta || !el.myCommentsTodayBody) return;
+        const todayLabel = TimeService.ddmmyyyy(new Date());
+        const snapshot = state.myCommentsToday || { loading: false, items: [], refreshedAt: null, failedIssues: 0 };
+        const items = Array.isArray(snapshot.items) ? snapshot.items : [];
+
+        if (snapshot.loading) {
+          el.myCommentsTodayMeta.textContent = `${todayLabel} | Buscando tus comentarios...`;
+          el.myCommentsTodayBody.innerHTML = '<div class="empty">Cargando comentarios de hoy...</div>';
+          return;
+        }
+
+        const groupedMap = new Map();
+        items.forEach((item) => {
+          const key = String(item && item.issueKey ? item.issueKey : '').trim();
+          if (!key) return;
+          if (!groupedMap.has(key)) {
+            groupedMap.set(key, {
+              issueKey: key,
+              issueSummary: String(item.issueSummary || '').trim(),
+              comments: []
+            });
+          }
+          groupedMap.get(key).comments.push(item);
+        });
+        const groups = Array.from(groupedMap.values());
+        const refreshed = snapshot.refreshedAt ? ` | Actualizado: ${TimeService.dtLabel(snapshot.refreshedAt)}` : '';
+        const failed = snapshot.failedIssues ? ` | ${snapshot.failedIssues} ticket(s) con error` : '';
+        el.myCommentsTodayMeta.textContent = `${todayLabel} | ${items.length} comentario(s) en ${groups.length} ticket(s)${failed}${refreshed}`;
+
+        if (!items.length) {
+          const emptyLabel = state.issues.length
+            ? 'No registras comentarios hoy en los tickets cargados.'
+            : 'No hay tickets cargados.';
+          el.myCommentsTodayBody.innerHTML = `<div class="empty">${escapeHtml(emptyLabel)}</div>`;
+          return;
+        }
+
+        el.myCommentsTodayBody.innerHTML = groups.map((group) => {
+          const total = group.comments.length;
+          const commentsHtml = group.comments.map((item) => `
+            <div class="my-comments-entry">
+              <div class="my-comments-entry-meta">
+                <span>${escapeHtml(TimeService.dtLabel(item.created || new Date()))}</span>
+                <span>${escapeHtml(item.commentId ? `Comentario ${item.commentId}` : 'Comentario')}</span>
+              </div>
+              <div class="my-comments-entry-text">${escapeHtml(item.preview || '(sin texto)')}</div>
+            </div>
+          `).join('');
+          return `
+            <section class="my-comments-ticket">
+              <div class="my-comments-ticket-head">
+                <div class="my-comments-ticket-title">
+                  <strong>${escapeHtml(group.issueKey)}</strong>
+                  <span>${escapeHtml(group.issueSummary || 'Sin resumen')}</span>
+                </div>
+                <div class="my-comments-ticket-actions">
+                  <span class="pill">${escapeHtml(`${total} comentario(s)`)}</span>
+                  <button class="btn" type="button" data-open-issue-key="${escapeHtml(group.issueKey)}">Abrir ticket</button>
+                </div>
+              </div>
+              ${commentsHtml}
+            </section>
+          `;
+        }).join('');
+      }
+
+      async function openIssueFromMyCommentsToday(issueKey) {
+        const key = String(issueKey || '').trim();
+        if (!key) return;
+        if (!state.issues.some((it) => it.key === key)) {
+          showMsg('error', `El ticket ${key} ya no esta en la lista actual.`);
+          return;
+        }
+        closeMyCommentsTodayModal();
+        state.selectedIssueKey = key;
+        if (el.issueSel) {
+          el.issueSel.value = key;
+        }
+        uiStateSave();
+        try {
+          await loadIssueData(key);
+          renderCompact();
+        } catch (e) {
+          applyError(e, `No se pudo cargar detalle de ${key}.`);
+        }
+      }
+
+      async function showMyCommentsTodayModal() {
+        if (!state.connected) {
+          showMsg('error', 'Conecta tu cuenta Jira primero.');
+          return;
+        }
+        openMyCommentsTodayModal();
+        state.myCommentsToday = { loading: true, items: [], refreshedAt: null, failedIssues: 0 };
+        renderTop();
+        renderMyCommentsTodayModal();
+        if (!state.me || !state.issues.length) {
+          state.myCommentsToday = { loading: false, items: [], refreshedAt: new Date(), failedIssues: 0 };
+          renderTop();
+          renderMyCommentsTodayModal();
+          return;
+        }
+        const todayInput = TimeService.toInputDate(new Date());
+        const rows = [];
+        let failedIssues = 0;
+        try {
+          await mapLimit(state.issues.slice(), 4, async (issue) => {
+            try {
+              const comments = await fetchCommentsForIssue(issue.key, true);
+              comments.forEach((comment) => {
+                if (!isCommentByCurrentUser(comment)) return;
+                if (!isCommentOnInputDate(comment, todayInput)) return;
+                const text = commentText(comment);
+                rows.push({
+                  issueKey: issue.key,
+                  issueSummary: issue.summary || '',
+                  commentId: String(comment && comment.id ? comment.id : '').trim(),
+                  created: comment && comment.created ? comment.created : '',
+                  preview: commentPreview(text)
+                });
+              });
+            } catch (_error) {
+              failedIssues += 1;
+            }
+          });
+        } finally {
+          state.myCommentsToday = {
+            loading: false,
+            items: sortDesc(rows, (item) => item.created || ''),
+            refreshedAt: new Date(),
+            failedIssues
+          };
+          renderTop();
+          renderMyCommentsTodayModal();
+          if (state.selectedIssueKey) {
+            renderIssueData();
+          }
+        }
       }
 
       function renderIssueInsight() {
@@ -5465,6 +5742,49 @@
         return items.slice().sort((a, b) => new Date(dateFn(b)).getTime() - new Date(dateFn(a)).getTime());
       }
 
+      function normalizeCommentsPayload(payload) {
+        return (Array.isArray(payload && payload.comments) ? payload.comments : [])
+          .slice()
+          .sort((a, b) => new Date(a.created || 0).getTime() - new Date(b.created || 0).getTime());
+      }
+
+      async function fetchCommentsForIssue(issueKey, force = false) {
+        const key = String(issueKey || '').trim();
+        if (!key) return [];
+        if (!force && Array.isArray(state.commentsByIssue[key])) {
+          return state.commentsByIssue[key];
+        }
+        const payload = await JiraService.comments(key);
+        const comments = normalizeCommentsPayload(payload);
+        state.commentsByIssue[key] = comments;
+        return comments;
+      }
+
+      function isCommentByCurrentUser(comment) {
+        if (!comment || !state.me) return false;
+        const commentAuthorId = comment && comment.author && comment.author.accountId ? String(comment.author.accountId || '').trim() : '';
+        const myAuthorId = state.me && state.me.accountId ? String(state.me.accountId || '').trim() : '';
+        if (commentAuthorId && myAuthorId) {
+          return commentAuthorId === myAuthorId;
+        }
+        const commentAuthorName = normalizePlain(comment && comment.author && comment.author.displayName ? comment.author.displayName : '');
+        const myAuthorName = normalizePlain(state.me && state.me.displayName ? state.me.displayName : '');
+        return !!commentAuthorName && !!myAuthorName && commentAuthorName === myAuthorName;
+      }
+
+      function isCommentOnInputDate(comment, inputDate) {
+        const value = String(inputDate || '').trim();
+        if (!comment || !comment.created || !value) return false;
+        return TimeService.toInputDate(comment.created) === value;
+      }
+
+      function commentPreview(text, maxLen = 280) {
+        const clean = String(text || '').replace(/\s+/g, ' ').trim();
+        if (!clean) return '(sin texto)';
+        if (clean.length <= maxLen) return clean;
+        return `${clean.slice(0, Math.max(1, maxLen - 3)).trimEnd()}...`;
+      }
+
       function renderComments(issueKey) {
         const comments = (state.commentsByIssue[issueKey] || [])
           .slice()
@@ -6603,12 +6923,10 @@
         if (!issueKey) return;
         const [_, c, w] = await Promise.all([
           refreshIssueSubtasks(issueKey),
-          JiraService.comments(issueKey),
+          fetchCommentsForIssue(issueKey, true),
           JiraService.worklogs(issueKey)
         ]);
-        const comments = (Array.isArray(c.comments) ? c.comments : [])
-          .slice()
-          .sort((a, b) => new Date(a.created || 0).getTime() - new Date(b.created || 0).getTime());
+        const comments = Array.isArray(c) ? c : [];
         const worklogs = sortDesc(Array.isArray(w.worklogs) ? w.worklogs : [], (x) => x.started || x.created || '');
         state.commentsByIssue[issueKey] = comments;
         state.worklogsByIssue[issueKey] = worklogs;
@@ -6773,6 +7091,7 @@
         state.selectedIssueKey = '';
         state.commentsByIssue = {};
         state.worklogsByIssue = {};
+        state.myCommentsToday = { loading: false, items: [], refreshedAt: null, failedIssues: 0 };
         state.timelineLinksByIssue = {};
         state.manualWorklogToCommentByIssue = {};
         state.selectedCommentId = '';
@@ -6790,6 +7109,7 @@
         state.subtaskPhaseLoadedStampByIssue = {};
         state.subtaskPhaseLoading = false;
         state.subtaskPhaseApplying = false;
+        closeMyCommentsTodayModal();
         JiraService.setCloudId('');
       }
 
@@ -7009,6 +7329,40 @@
           if (!state.connected) return;
           try { await loadIssues(); await refreshDashboard(); showMsg('ok', 'Tickets actualizados.'); }
           catch (e) { applyError(e, 'No se pudieron recargar tickets.'); }
+        });
+        el.myCommentsTodayBtn.addEventListener('click', async () => {
+          try {
+            await showMyCommentsTodayModal();
+          } catch (e) {
+            state.myCommentsToday = { loading: false, items: [], refreshedAt: new Date(), failedIssues: 0 };
+            renderTop();
+            renderMyCommentsTodayModal();
+            applyError(e, 'No se pudieron cargar tus comentarios de hoy.');
+          }
+        });
+        el.myCommentsTodayCloseBtn.addEventListener('click', closeMyCommentsTodayModal);
+        el.myCommentsTodayModal.addEventListener('click', async (ev) => {
+          const openBtn = ev.target && ev.target.closest
+            ? ev.target.closest('button[data-open-issue-key]')
+            : null;
+          if (openBtn) {
+            const issueKey = String(openBtn.getAttribute('data-open-issue-key') || '').trim();
+            if (issueKey) {
+              await openIssueFromMyCommentsToday(issueKey);
+            }
+            return;
+          }
+          const closeBtn = ev.target && ev.target.closest
+            ? ev.target.closest('button[data-act="close-my-comments-modal"]')
+            : null;
+          if (closeBtn || ev.target === el.myCommentsTodayModal) {
+            closeMyCommentsTodayModal();
+          }
+        });
+        document.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Escape' && el.myCommentsTodayModal && el.myCommentsTodayModal.classList.contains('show')) {
+            closeMyCommentsTodayModal();
+          }
         });
         el.deleteAllWorklogsBtn.addEventListener('click', async () => {
           try {

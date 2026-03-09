@@ -971,8 +971,19 @@ def _render_richmondstudio_create_rows_form(
         st.session_state[state_key] = _normalize_richmondstudio_create_rows(rows)
         st.rerun()
     info_col.caption(
-        "Cada bloque crea una clase. Puedes duplicar una fila para cambiar solo lo necesario."
+        "Cada fila crea una clase. Puedes duplicar una fila para cambiar solo lo necesario."
     )
+
+    header_cols = st.columns([0.35, 0.55, 1.7, 1.7, 1.45, 1.25, 0.6, 0.8, 0.8], gap="small")
+    header_cols[0].caption("#")
+    header_cols[1].caption("Crear")
+    header_cols[2].caption("Class name")
+    header_cols[3].caption("Description")
+    header_cols[4].caption("Grado")
+    header_cols[5].caption("Test level")
+    header_cols[6].caption("iRead")
+    header_cols[7].caption(" ")
+    header_cols[8].caption(" ")
 
     updated_rows: List[Dict[str, object]] = []
     duplicate_after_row_id = ""
@@ -993,81 +1004,75 @@ def _render_richmondstudio_create_rows_form(
             if current_test_level in test_level_options
             else 0
         )
+        row_cols = st.columns([0.35, 0.55, 1.7, 1.7, 1.45, 1.25, 0.6, 0.8, 0.8], gap="small")
+        row_cols[0].markdown(f"**{idx}**")
+        create_flag = row_cols[1].checkbox(
+            "Crear",
+            value=bool(row.get("Crear", True)),
+            key=f"{widget_prefix}_create_{row_id}",
+            label_visibility="collapsed",
+        )
+        class_name = row_cols[2].text_input(
+            "Class name",
+            value=str(row.get("Class name") or "").strip(),
+            key=f"{widget_prefix}_class_name_{row_id}",
+            placeholder="2026 Ingles 2SB",
+            label_visibility="collapsed",
+        )
+        description = row_cols[3].text_input(
+            "Description",
+            value=str(row.get("Description") or "").strip(),
+            key=f"{widget_prefix}_description_{row_id}",
+            placeholder="Se completa con Class name si lo dejas vacio",
+            label_visibility="collapsed",
+        )
+        grade_label = row_cols[4].selectbox(
+            "Grado",
+            options=RICHMONDSTUDIO_GRADE_LABELS,
+            index=grade_index,
+            key=f"{widget_prefix}_grade_{row_id}",
+            label_visibility="collapsed",
+        )
+        test_level = row_cols[5].selectbox(
+            "Test level",
+            options=test_level_options,
+            index=test_level_index,
+            key=f"{widget_prefix}_test_level_{row_id}",
+            label_visibility="collapsed",
+        )
+        iread = row_cols[6].checkbox(
+            "iRead",
+            value=bool(row.get("iRead", False)),
+            key=f"{widget_prefix}_iread_{row_id}",
+            label_visibility="collapsed",
+        )
+        if row_cols[7].button(
+            "Duplicar",
+            key=f"{widget_prefix}_duplicate_{row_id}",
+            use_container_width=True,
+        ):
+            duplicate_after_row_id = row_id
+        if row_cols[8].button(
+            "Eliminar",
+            key=f"{widget_prefix}_remove_{row_id}",
+            use_container_width=True,
+            disabled=len(rows) <= 1,
+        ):
+            remove_row_id = row_id
 
-        with st.container(border=True):
-            title_cols = st.columns([2.4, 1, 1], gap="small")
-            title_cols[0].markdown(
-                f"**Clase {idx}**"
-                + (
-                    f" - {str(row.get('Class name') or '').strip()}"
-                    if str(row.get("Class name") or "").strip()
-                    else ""
-                )
-            )
-            if title_cols[1].button(
-                "Duplicar",
-                key=f"{widget_prefix}_duplicate_{row_id}",
-                use_container_width=True,
-            ):
-                duplicate_after_row_id = row_id
-            if title_cols[2].button(
-                "Eliminar",
-                key=f"{widget_prefix}_remove_{row_id}",
-                use_container_width=True,
-                disabled=len(rows) <= 1,
-            ):
-                remove_row_id = row_id
-
-            row_cols_a = st.columns([1.1, 1.4, 1.4], gap="small")
-            create_flag = row_cols_a[0].checkbox(
-                "Crear",
-                value=bool(row.get("Crear", True)),
-                key=f"{widget_prefix}_create_{row_id}",
-            )
-            class_name = row_cols_a[1].text_input(
-                "Class name",
-                value=str(row.get("Class name") or "").strip(),
-                key=f"{widget_prefix}_class_name_{row_id}",
-                placeholder="2026 Ingles 2SB",
-            )
-            description = row_cols_a[2].text_input(
-                "Description",
-                value=str(row.get("Description") or "").strip(),
-                key=f"{widget_prefix}_description_{row_id}",
-                placeholder="Se completa con Class name si lo dejas vacio",
-            )
-
-            row_cols_b = st.columns([1.4, 1.4, 0.8], gap="small")
-            grade_label = row_cols_b[0].selectbox(
-                "Grado",
-                options=RICHMONDSTUDIO_GRADE_LABELS,
-                index=grade_index,
-                key=f"{widget_prefix}_grade_{row_id}",
-            )
-            test_level = row_cols_b[1].selectbox(
-                "Test level",
-                options=test_level_options,
-                index=test_level_index,
-                key=f"{widget_prefix}_test_level_{row_id}",
-            )
-            iread = row_cols_b[2].checkbox(
-                "iRead",
-                value=bool(row.get("iRead", False)),
-                key=f"{widget_prefix}_iread_{row_id}",
-            )
-
-            updated_rows.append(
-                {
-                    "_row_id": row_id,
-                    "Crear": create_flag,
-                    "Class name": str(class_name or "").strip(),
-                    "Description": str(description or "").strip(),
-                    "Grade": str(grade_label or "").strip(),
-                    "Grade code": _richmondstudio_grade_code_from_value(grade_label),
-                    "Test level": str(test_level or "").strip(),
-                    "iRead": bool(iread),
-                }
-            )
+        updated_rows.append(
+            {
+                "_row_id": row_id,
+                "Crear": create_flag,
+                "Class name": str(class_name or "").strip(),
+                "Description": str(description or "").strip(),
+                "Grade": str(grade_label or "").strip(),
+                "Grade code": _richmondstudio_grade_code_from_value(grade_label),
+                "Test level": str(test_level or "").strip(),
+                "iRead": bool(iread),
+            }
+        )
+        st.divider()
 
     if remove_row_id:
         updated_rows = [

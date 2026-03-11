@@ -5,7 +5,7 @@ import unicodedata
 from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 from urllib.parse import unquote, urljoin
 from uuid import uuid4
 
@@ -2299,7 +2299,16 @@ def _build_auto_move_simulation(
     empresa_id: int,
     ciclo_id: int,
     timeout: int,
+    on_status: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, object]:
+    def _status(message: str) -> None:
+        if callable(on_status):
+            try:
+                on_status(str(message))
+            except Exception:
+                pass
+
+    _status("Listando niveles, grados y secciones del colegio...")
     niveles = _fetch_niveles_grados_grupos_censo(
         token=token,
         colegio_id=int(colegio_id),
@@ -2336,10 +2345,12 @@ def _build_auto_move_simulation(
         raise RuntimeError(
             "No hay seccion Y disponible en los grados configurados para este colegio."
         )
+    _status(f"Seccion Y detectada en {len(grade_keys_with_y)} grados.")
     contexts: List[Dict[str, object]] = []
     for grade_key in grade_keys_with_y:
         contexts.extend(contexts_by_grade.get(grade_key, []))
 
+    _status("Listando clases del colegio...")
     try:
         clases_rows, _ = listar_y_mapear_clases(
             token=token,
@@ -2352,10 +2363,24 @@ def _build_auto_move_simulation(
         )
     except Exception:
         clases_rows = []
+        _status("No se pudieron listar clases. Continuando con alumnos...")
+    else:
+        _status(f"Clases listadas: {len(clases_rows)}.")
 
     errores_fetch: List[str] = []
     alumnos_all_raw: List[Dict[str, object]] = []
-    for ctx in contexts:
+    total_contexts = len(contexts)
+    _status(f"Listando alumnos por seccion ({total_contexts} combinaciones)...")
+    for idx_ctx, ctx in enumerate(contexts, start=1):
+        _status(
+            "Listando alumnos {idx}/{total} | nivelId={nivel} gradoId={grado} grupoId={grupo}".format(
+                idx=idx_ctx,
+                total=total_contexts,
+                nivel=ctx.get("nivel_id"),
+                grado=ctx.get("grado_id"),
+                grupo=ctx.get("grupo_id"),
+            )
+        )
         try:
             alumnos_ctx = _fetch_alumnos_censo(
                 token=token,
@@ -2411,6 +2436,7 @@ def _build_auto_move_simulation(
             str(row.get("nombre") or "").upper(),
         ),
     )
+    _status(f"Alumnos consolidados: {len(alumnos_all)}.")
     grupo_id_by_seccion_by_grade: Dict[Tuple[int, int], Dict[str, int]] = {}
     default_destino_by_grade: Dict[Tuple[int, int], Tuple[str, Optional[int]]] = {}
     for grade_key in grade_keys_with_y:
@@ -2459,6 +2485,7 @@ def _build_auto_move_simulation(
             str(row.get("nombre_completo") or "").upper(),
         )
     )
+    _status(f"Alumnos pagados en seccion Y: {len(pagados_y)}.")
 
     plan_rows: List[Dict[str, object]] = []
     for idx, pagado in enumerate(pagados_y, start=1):
@@ -2586,6 +2613,7 @@ def _build_auto_move_simulation(
                 "Alumno a cambiar": alumno_cambiar,
             }
         )
+    _status(f"Simulacion completada. Cambios sugeridos: {len(plan_rows)}.")
 
     return {
         "niveles": niveles,
@@ -6279,6 +6307,7 @@ with tab_crud_alumnos:
                     "auto_move_colegio_id",
                     "auto_move_removed_ref_ids",
                     "auto_move_group_map_by_grade",
+                    "auto_move_status_messages",
                 ):
                     st.session_state.pop(state_key, None)
                 st.rerun()
@@ -6295,6 +6324,17 @@ with tab_crud_alumnos:
                     st.stop()
 
                 try:
+                    status_box = st.empty()
+                    status_messages: List[str] = []
+
+                    def _on_status(message: str) -> None:
+                        msg = str(message or "").strip()
+                        if not msg:
+                            return
+                        if not status_messages or status_messages[-1] != msg:
+                            status_messages.append(msg)
+                        status_box.info(msg)
+
                     with st.spinner("Preparando simulacion de cambios..."):
                         simulation = _build_auto_move_simulation(
                             token=token,
@@ -6302,6 +6342,7 @@ with tab_crud_alumnos:
                             empresa_id=int(empresa_id),
                             ciclo_id=int(ciclo_id),
                             timeout=int(timeout),
+                            on_status=_on_status,
                         )
                 except Exception as exc:  # pragma: no cover - UI
                     st.error(f"Error: {exc}")
@@ -6316,6 +6357,7 @@ with tab_crud_alumnos:
                     simulation.get("grupo_id_by_seccion_by_grade") or {}
                 )
                 st.session_state["auto_move_removed_ref_ids"] = []
+                st.session_state["auto_move_status_messages"] = status_messages
 
                 total_plan = len(st.session_state["auto_move_plan_rows"])
                 st.success(f"Simulacion lista. Alumnos candidatos a modificar: {total_plan}")
@@ -6328,9 +6370,19 @@ with tab_crud_alumnos:
                 if pending > 0:
                     st.caption(f"... y {pending} errores mas.")
 
+            status_messages_cached = st.session_state.get("auto_move_status_messages") or []
+            if status_messages_cached:
+                st.markdown("**Mensajes generales**")
+                for msg in status_messages_cached[:30]:
+                    st.caption(f"- {msg}")
+                remaining_msgs = len(status_messages_cached) - 30
+                if remaining_msgs > 0:
+                    st.caption(f"... y {remaining_msgs} mensajes mas.")
+
             plan_rows_cached = st.session_state.get("auto_move_plan_rows") or []
             if not plan_rows_cached:
                 st.caption("No hay lista preparada aun.")
+                st.caption("Presiona 'Analizar y preparar lista de cambios' para iniciar.")
             else:
                 st.markdown("**Lista de cambios para autorizar**")
                 editor_rows_cached = st.session_state.get("auto_move_editor_rows") or []
@@ -6408,35 +6460,31 @@ with tab_crud_alumnos:
                     nivel_txt = str(pagado.get("nivel") or "").strip()
                     grado_small = " | ".join(part for part in [nivel_txt, grado_txt] if part)
 
-                    col_left, col_right = st.columns(2, gap="large")
+                    col_left, col_right = st.columns(2, gap="small")
                     with col_left:
                         if grado_small:
                             st.caption(grado_small)
-                        st.markdown("**Alumno a agregar (Seccion Y)**")
+                        st.caption("Alumno a agregar (Seccion Y)")
                         st.markdown(f"`{alumno_y_label}`")
 
                     with col_right:
                         if grado_small:
                             st.caption(grado_small)
-                        header_col, close_col = st.columns([10, 1], gap="small")
-                        with header_col:
-                            st.markdown("**Alumno referencial**")
-                        with close_col:
-                            if has_reference and not is_removed:
-                                if st.button(
-                                    "X",
-                                    key=f"auto_move_remove_ref_{int(plan_id)}",
-                                    help="Quitar referencia",
-                                    use_container_width=True,
-                                ):
-                                    removed_ref_ids.add(int(plan_id))
-                                    st.session_state["auto_move_removed_ref_ids"] = sorted(removed_ref_ids)
-                                    st.rerun()
-                        if has_reference and is_removed:
-                            st.markdown("`-|REFERENCIA ELIMINADA|-`")
+                        st.caption("Alumno referencial")
+                        if has_reference and not is_removed:
+                            if st.button(
+                                f"X {alumno_ref_label}",
+                                key=f"auto_move_remove_ref_{int(plan_id)}",
+                                help="Quitar referencia",
+                                use_container_width=True,
+                            ):
+                                removed_ref_ids.add(int(plan_id))
+                                st.session_state["auto_move_removed_ref_ids"] = sorted(removed_ref_ids)
+                                st.rerun()
+                        elif has_reference and is_removed:
+                            st.markdown("`REFERENCIA ELIMINADA`")
                         else:
-                            st.markdown(f"`{alumno_ref_label}`")
-                    st.divider()
+                            st.markdown("`SIN REFERENCIA`")
 
                 st.session_state["auto_move_removed_ref_ids"] = sorted(removed_ref_ids)
 

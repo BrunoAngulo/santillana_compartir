@@ -308,6 +308,24 @@ st.components.v1.html(
         const queryKey = {JIRA_ADMIN_QUERY_PARAM!r};
         let syncTimer = null;
 
+        function getTargetWindow() {{
+          try {{
+            if (window.parent && window.parent !== window) {{
+              return window.parent;
+            }}
+          }} catch (_err) {{
+            // No-op
+          }}
+          try {{
+            if (window.top && window.top !== window) {{
+              return window.top;
+            }}
+          }} catch (_err) {{
+            // No-op
+          }}
+          return window;
+        }}
+
         function readStoredLogin() {{
           let loginValue = '';
           try {{
@@ -325,6 +343,24 @@ st.components.v1.html(
             }}
             if (!loginValue) {{
               loginValue = (window.localStorage.getItem('emailAddress') || '').trim().toLowerCase();
+            }}
+            if (!loginValue) {{
+              const prefix = 'jira_focus_user_login';
+              const total = Number(window.localStorage.length || 0);
+              for (let i = 0; i < total; i += 1) {{
+                const keyName = String(window.localStorage.key(i) || '');
+                if (!keyName.toLowerCase().startsWith(prefix)) continue;
+                if (keyName.length <= prefix.length) continue;
+                const suffixLogin = keyName.slice(prefix.length).trim().toLowerCase();
+                if (!suffixLogin || !suffixLogin.includes('@')) continue;
+                loginValue = suffixLogin;
+                try {{
+                  window.localStorage.removeItem(keyName);
+                }} catch (_innerErr) {{
+                  // No-op when localStorage key cannot be removed.
+                }}
+                break;
+              }}
             }}
             if (loginValue) {{
               window.localStorage.setItem('jira_focus_user_login', loginValue);
@@ -366,9 +402,7 @@ st.components.v1.html(
             // No-op when cookies are not available.
           }}
           try {{
-            const targetWindow = window.top && window.top !== window
-              ? window.top
-              : (window.parent && window.parent !== window ? window.parent : window);
+            const targetWindow = getTargetWindow();
             const targetUrl = new URL(targetWindow.location.href);
             const current = targetUrl.searchParams.get(queryKey) || '0';
             const currentUser = targetUrl.searchParams.get({JIRA_USER_QUERY_PARAM!r}) || '';
@@ -406,9 +440,7 @@ st.components.v1.html(
         }}
 
         try {{
-          const targetWindow = window.top && window.top !== window
-            ? window.top
-            : (window.parent && window.parent !== window ? window.parent : window);
+          const targetWindow = getTargetWindow();
           targetWindow.addEventListener('message', function (event) {{
             const data = event && event.data ? event.data : null;
             if (!data || data.type !== 'jira-focus-admin-access') return;
@@ -4901,7 +4933,7 @@ with tab_crud_alumnos:
 
 with tab_crud_clases:
     if not _restricted_sections_unlocked():
-        _render_restricted_blur("CRUD Clases", "clases_2")
+        pass
     else:
         st.markdown("**2) Gestion de clases**")
         st.caption("Lista clases y ejecuta acciones sobre seleccion.")

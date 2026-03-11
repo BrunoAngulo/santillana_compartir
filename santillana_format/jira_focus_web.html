@@ -4105,6 +4105,20 @@
         };
       }
 
+      function getTargetWindow() {
+        try {
+          if (window.parent && window.parent !== window) return window.parent;
+        } catch (_err) {
+          // No-op
+        }
+        try {
+          if (window.top && window.top !== window) return window.top;
+        } catch (_err) {
+          // No-op
+        }
+        return window;
+      }
+
       function syncParentAdminAccessFlag(isAdmin, displayName, userProfile, login) {
         const desired = isAdmin ? '1' : '0';
         const normalizedDisplayName = String(displayName || '').trim();
@@ -4130,9 +4144,7 @@
           // No-op when cookies are not available.
         }
         try {
-          const targetWindow = window.top && window.top !== window
-            ? window.top
-            : (window.parent && window.parent !== window ? window.parent : null);
+          const targetWindow = getTargetWindow();
           if (targetWindow) {
             targetWindow.postMessage({
               type: 'jira-focus-admin-access',
@@ -4146,9 +4158,7 @@
           // No-op when parent messaging is not available.
         }
         try {
-          const targetWindow = window.top && window.top !== window
-            ? window.top
-            : (window.parent && window.parent !== window ? window.parent : window);
+          const targetWindow = getTargetWindow();
           const targetUrl = new URL(targetWindow.location.href);
           const current = targetUrl.searchParams.get(JIRA_ADMIN_QUERY_PARAM) || '0';
           const currentUser = targetUrl.searchParams.get(JIRA_USER_QUERY_PARAM) || '';

@@ -75,7 +75,7 @@ GESTION_ESCOLAR_CICLO_ID_DEFAULT = 207
 AUTO_MOVE_SECCION_ORIGEN = "Y"
 RICHMONDSTUDIO_USERS_URL = "https://richmondstudio.global/api/users"
 RICHMONDSTUDIO_GROUPS_URL = "https://richmondstudio.global/api/groups"
-RESTRICTED_SECTIONS_PASSWORD = "Palabr@leatoria123!"
+RESTRICTED_SECTIONS_PASSWORD = "Ted2026"
 RESTRICTED_SECTIONS_ENABLED = True
 JIRA_ADMIN_DISPLAY_NAME = "Bruno Ricardo Adrian Angulo Perez"
 JIRA_ADMIN_QUERY_PARAM = "jira_admin"
@@ -7011,6 +7011,12 @@ with tab_crud_alumnos:
                 "Solo usa Colegio Clave global. Toma todos los grados con seccion Y, "
                 "compara alumnos pagados de Y contra no pagados por apellidos y luego DNI."
             )
+            if not _restricted_sections_unlocked():
+                _render_restricted_blur(
+                    "Simulador web: seccion Y en todos los grados",
+                    "simulador_web_y",
+                )
+                st.stop()
 
             col_prepare, col_clear = st.columns([2, 1], gap="small")
             run_prepare_auto_plan = col_prepare.button(

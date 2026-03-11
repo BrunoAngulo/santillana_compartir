@@ -76,6 +76,7 @@ AUTO_MOVE_SECCION_ORIGEN = "Y"
 RICHMONDSTUDIO_USERS_URL = "https://richmondstudio.global/api/users"
 RICHMONDSTUDIO_GROUPS_URL = "https://richmondstudio.global/api/groups"
 RESTRICTED_SECTIONS_PASSWORD = "Palabr@leatoria123!"
+RESTRICTED_SECTIONS_ENABLED = True
 JIRA_ADMIN_DISPLAY_NAME = "Bruno Ricardo Adrian Angulo Perez"
 JIRA_ADMIN_QUERY_PARAM = "jira_admin"
 JIRA_ADMIN_COOKIE_NAME = "jira_focus_admin_access"
@@ -210,6 +211,8 @@ def _sync_jira_user_identity() -> None:
 
 
 def _restricted_sections_unlocked() -> bool:
+    if not RESTRICTED_SECTIONS_ENABLED:
+        return True
     jira_admin_flag = st.query_params.get(JIRA_ADMIN_QUERY_PARAM, "")
     if isinstance(jira_admin_flag, list):
         jira_admin_flag = jira_admin_flag[0] if jira_admin_flag else ""
@@ -549,7 +552,6 @@ if menu_option != "Richmond Studio":
         with token_col_input:
             st.text_input(
                 "Token (sin Bearer)",
-                type="password",
                 key="shared_pegasus_token_input",
                 on_change=_sync_shared_token_from_input,
                 help="Se usa en todas las funciones y queda guardado en la sesion actual.",
@@ -3484,7 +3486,6 @@ def render_richmond_studio_view() -> None:
     rs_token = _clean_token(
         st.text_input(
             "Bearer token RS",
-            type="password",
             key="rs_groups_bearer_token",
             help="Se usa para clases RS y EXCEL RS.",
         )
@@ -4968,7 +4969,6 @@ with tab_crud_clases:
         with st.container(border=True):
             rs_token = st.text_input(
                 "Bearer token RS",
-                type="password",
                 key="rs_groups_bearer_token",
                 help="Se usa para GET, POST, PUT y DELETE sobre /api/groups.",
             )

@@ -72,8 +72,6 @@ CENSO_PLANTILLA_EDICION_URL = (
     "/ciclos/{ciclo_id}/colegios/{colegio_id}/descargarPlantillaEdicionMasiva"
 )
 GESTION_ESCOLAR_CICLO_ID_DEFAULT = 207
-AUTO_MOVE_NIVEL_ID = 40
-AUTO_MOVE_GRADO_ID = 130
 AUTO_MOVE_SECCION_ORIGEN = "Y"
 RICHMONDSTUDIO_USERS_URL = "https://richmondstudio.global/api/users"
 RICHMONDSTUDIO_GROUPS_URL = "https://richmondstudio.global/api/groups"
@@ -2119,8 +2117,8 @@ def _normalize_seccion_key(value: object) -> str:
 
 def _build_contexts_for_nivel_grado(
     niveles: List[Dict[str, object]],
-    nivel_id: int,
-    grado_id: int,
+    nivel_id: Optional[int] = None,
+    grado_id: Optional[int] = None,
 ) -> List[Dict[str, object]]:
     contexts: List[Dict[str, object]] = []
     seen: Set[Tuple[int, int, int]] = set()
@@ -2129,7 +2127,9 @@ def _build_contexts_for_nivel_grado(
             continue
         nivel = nivel_entry.get("nivel") if isinstance(nivel_entry.get("nivel"), dict) else {}
         nivel_id_tmp = _safe_int(nivel.get("nivelId"))
-        if nivel_id_tmp != int(nivel_id):
+        if nivel_id_tmp is None:
+            continue
+        if nivel_id is not None and nivel_id_tmp != int(nivel_id):
             continue
         nivel_nombre = str(nivel.get("nivel") or "").strip()
         grados = nivel_entry.get("grados") or []
@@ -2140,7 +2140,9 @@ def _build_contexts_for_nivel_grado(
                 continue
             grado = grado_entry.get("grado") if isinstance(grado_entry.get("grado"), dict) else {}
             grado_id_tmp = _safe_int(grado.get("gradoId"))
-            if grado_id_tmp != int(grado_id):
+            if grado_id_tmp is None:
+                continue
+            if grado_id is not None and grado_id_tmp != int(grado_id):
                 continue
             grado_nombre = str(grado.get("grado") or "").strip()
             grupos = grado_entry.get("grupos") or []
@@ -2153,7 +2155,7 @@ def _build_contexts_for_nivel_grado(
                 grupo_id = _safe_int(grupo.get("grupoId"))
                 if grupo_id is None:
                     continue
-                key = (int(nivel_id), int(grado_id), int(grupo_id))
+                key = (int(nivel_id_tmp), int(grado_id_tmp), int(grupo_id))
                 if key in seen:
                     continue
                 seen.add(key)
@@ -2161,9 +2163,9 @@ def _build_contexts_for_nivel_grado(
                 seccion_norm = _normalize_seccion_key(seccion)
                 contexts.append(
                     {
-                        "nivel_id": int(nivel_id),
+                        "nivel_id": int(nivel_id_tmp),
                         "nivel": nivel_nombre,
-                        "grado_id": int(grado_id),
+                        "grado_id": int(grado_id_tmp),
                         "grado": grado_nombre,
                         "grupo_id": int(grupo_id),
                         "seccion": seccion,
@@ -2172,6 +2174,8 @@ def _build_contexts_for_nivel_grado(
                 )
     contexts.sort(
         key=lambda row: (
+            int(row.get("nivel_id") or 0),
+            int(row.get("grado_id") or 0),
             _grupo_sort_key(
                 str(row.get("seccion_norm") or ""),
                 str(row.get("seccion") or ""),
@@ -2309,16 +2313,38 @@ def _build_auto_move_simulation(
         ciclo_id=int(ciclo_id),
         timeout=int(timeout),
     )
-    contexts = _build_contexts_for_nivel_grado(
-        niveles=niveles,
-        nivel_id=AUTO_MOVE_NIVEL_ID,
-        grado_id=AUTO_MOVE_GRADO_ID,
+    contexts_all = _build_contexts_for_nivel_grado(niveles=niveles)
+    if not contexts_all:
+        raise RuntimeError("No hay niveles/grados/secciones configurados para este colegio.")
+
+    contexts_by_grade: Dict[Tuple[int, int], List[Dict[str, object]]] = {}
+    for ctx in contexts_all:
+        nivel_id_ctx = _safe_int(ctx.get("nivel_id"))
+        grado_id_ctx = _safe_int(ctx.get("grado_id"))
+        if nivel_id_ctx is None or grado_id_ctx is None:
+            continue
+        grade_key = (int(nivel_id_ctx), int(grado_id_ctx))
+        contexts_by_grade.setdefault(grade_key, []).append(ctx)
+
+    grade_keys_with_y = sorted(
+        [
+            key
+            for key, ctxs in contexts_by_grade.items()
+            if any(
+                _normalize_seccion_key(ctx.get("seccion_norm") or ctx.get("seccion"))
+                == AUTO_MOVE_SECCION_ORIGEN
+                for ctx in ctxs
+            )
+        ],
+        key=lambda item: (int(item[0]), int(item[1])),
     )
-    if not contexts:
+    if not grade_keys_with_y:
         raise RuntimeError(
-            "No hay secciones configuradas para 5to de secundaria "
-            "(nivelId=40, gradoId=130)."
+            "No hay seccion Y disponible en los grados configurados para este colegio."
         )
+    contexts: List[Dict[str, object]] = []
+    for grade_key in grade_keys_with_y:
+        contexts.extend(contexts_by_grade.get(grade_key, []))
 
     try:
         clases_rows, _ = listar_y_mapear_clases(
@@ -2391,21 +2417,34 @@ def _build_auto_move_simulation(
             str(row.get("nombre") or "").upper(),
         ),
     )
-    grupo_id_by_seccion = _build_grupo_id_by_seccion_from_contexts(contexts)
-    default_seccion, default_grupo_id = _pick_default_destino(
-        grupo_id_by_seccion=grupo_id_by_seccion,
-        origen_seccion=AUTO_MOVE_SECCION_ORIGEN,
-    )
+    grupo_id_by_seccion_by_grade: Dict[Tuple[int, int], Dict[str, int]] = {}
+    default_destino_by_grade: Dict[Tuple[int, int], Tuple[str, Optional[int]]] = {}
+    for grade_key in grade_keys_with_y:
+        grade_contexts = contexts_by_grade.get(grade_key) or []
+        mapping = _build_grupo_id_by_seccion_from_contexts(grade_contexts)
+        if not mapping:
+            continue
+        grupo_id_by_seccion_by_grade[grade_key] = mapping
+        default_destino_by_grade[grade_key] = _pick_default_destino(
+            grupo_id_by_seccion=mapping,
+            origen_seccion=AUTO_MOVE_SECCION_ORIGEN,
+        )
 
     no_pagados = [row for row in alumnos_all if not _to_bool(row.get("con_pago"))]
-    no_pagados_index: Dict[Tuple[str, str], List[Dict[str, object]]] = {}
+    no_pagados_index: Dict[Tuple[int, int, str, str], List[Dict[str, object]]] = {}
     for row in no_pagados:
-        key = (
-            _normalize_compare_text(row.get("apellido_paterno")),
-            _normalize_compare_text(row.get("apellido_materno")),
-        )
-        if not key[0] or not key[1]:
+        nivel_id_row = _safe_int(row.get("nivel_id"))
+        grado_id_row = _safe_int(row.get("grado_id"))
+        apellido_paterno = _normalize_compare_text(row.get("apellido_paterno"))
+        apellido_materno = _normalize_compare_text(row.get("apellido_materno"))
+        if (
+            nivel_id_row is None
+            or grado_id_row is None
+            or not apellido_paterno
+            or not apellido_materno
+        ):
             continue
+        key = (int(nivel_id_row), int(grado_id_row), apellido_paterno, apellido_materno)
         no_pagados_index.setdefault(key, []).append(row)
 
     pagados_y = [
@@ -2413,19 +2452,35 @@ def _build_auto_move_simulation(
         for row in alumnos_all
         if _to_bool(row.get("con_pago"))
         and _normalize_seccion_key(row.get("seccion_norm") or row.get("seccion")) == AUTO_MOVE_SECCION_ORIGEN
+        and (
+            _safe_int(row.get("nivel_id")),
+            _safe_int(row.get("grado_id")),
+        )
+        in grade_keys_with_y
     ]
-    pagados_y.sort(key=lambda row: str(row.get("nombre_completo") or "").upper())
+    pagados_y.sort(
+        key=lambda row: (
+            int(_safe_int(row.get("nivel_id")) or 0),
+            int(_safe_int(row.get("grado_id")) or 0),
+            str(row.get("nombre_completo") or "").upper(),
+        )
+    )
 
     plan_rows: List[Dict[str, object]] = []
     for idx, pagado in enumerate(pagados_y, start=1):
-        apellido_key = (
-            _normalize_compare_text(pagado.get("apellido_paterno")),
-            _normalize_compare_text(pagado.get("apellido_materno")),
-        )
+        nivel_id = _safe_int(pagado.get("nivel_id"))
+        grado_id = _safe_int(pagado.get("grado_id"))
+        if nivel_id is None or grado_id is None:
+            continue
+        grade_key = (int(nivel_id), int(grado_id))
+
+        apellido_paterno = _normalize_compare_text(pagado.get("apellido_paterno"))
+        apellido_materno = _normalize_compare_text(pagado.get("apellido_materno"))
         dni_pagado = _normalize_compare_id(pagado.get("id_oficial"))
         match_no_pagado: Dict[str, object] = {}
-        if apellido_key[0] and apellido_key[1]:
-            for candidato in no_pagados_index.get(apellido_key, []):
+        if apellido_paterno and apellido_materno:
+            compare_key = (int(nivel_id), int(grado_id), apellido_paterno, apellido_materno)
+            for candidato in no_pagados_index.get(compare_key, []):
                 if _safe_int(candidato.get("alumno_id")) == _safe_int(pagado.get("alumno_id")):
                     continue
                 dni_candidato = _normalize_compare_id(candidato.get("id_oficial"))
@@ -2433,6 +2488,8 @@ def _build_auto_move_simulation(
                     match_no_pagado = candidato
                     break
 
+        grupo_id_by_seccion = grupo_id_by_seccion_by_grade.get(grade_key, {})
+        default_seccion, default_grupo_id = default_destino_by_grade.get(grade_key, ("", None))
         seccion_destino = ""
         grupo_destino_id = None
         motivo = ""
@@ -2455,11 +2512,8 @@ def _build_auto_move_simulation(
             grupo_destino_id = _safe_int(pagado.get("grupo_id"))
             if not seccion_destino:
                 seccion_destino = _normalize_seccion_key(pagado.get("seccion_norm") or pagado.get("seccion"))
-
-        nivel_id = _safe_int(pagado.get("nivel_id")) or AUTO_MOVE_NIVEL_ID
-        grado_id = _safe_int(pagado.get("grado_id")) or AUTO_MOVE_GRADO_ID
         clases_destino = []
-        if grupo_destino_id is not None:
+        if grupo_destino_id is not None and nivel_id is not None and grado_id is not None:
             clases_destino = _build_clases_destino_for_plan(
                 clases_rows=clases_rows,
                 nivel_id=int(nivel_id),
@@ -2506,6 +2560,8 @@ def _build_auto_move_simulation(
     for row in alumnos_all:
         alumnos_grid.append(
             {
+                "NivelId": row.get("nivel_id"),
+                "GradoId": row.get("grado_id"),
                 "AlumnoId": row.get("alumno_id"),
                 "PersonaId": row.get("persona_id"),
                 "Apellido Paterno": row.get("apellido_paterno"),
@@ -2523,30 +2579,19 @@ def _build_auto_move_simulation(
     editor_rows: List[Dict[str, object]] = []
     for plan in plan_rows:
         pagado = plan.get("alumno_pagado") if isinstance(plan.get("alumno_pagado"), dict) else {}
-        parecido = plan.get("alumno_parecido") if isinstance(plan.get("alumno_parecido"), dict) else {}
         inactivar = plan.get("alumno_inactivar") if isinstance(plan.get("alumno_inactivar"), dict) else {}
-        acciones: List[str] = []
-        if plan.get("requiere_inactivar"):
-            acciones.append("Inactivar no pagado")
-        if plan.get("requiere_mover"):
-            acciones.append("Mover de seccion")
-        if plan.get("clases_destino"):
-            acciones.append("Asignar clases destino")
-        if not acciones:
-            acciones.append("Sin cambios")
+        alumno_y = _format_alumno_label(pagado)
+        if inactivar:
+            alumno_cambiar = _format_alumno_label(inactivar)
+        else:
+            destino = str(plan.get("seccion_destino") or "-")
+            alumno_cambiar = f"Sin parecido. Mover a seccion {destino}."
         editor_rows.append(
             {
-                "Aplicar": True,
-                "X": False,
                 "PlanId": int(plan.get("plan_id") or 0),
-                "Alumno pagado (Y)": _format_alumno_label(pagado),
-                "Se parece a (no pagado)": _format_alumno_label(parecido) if parecido else "-",
-                "Alumno a inactivar": _format_alumno_label(inactivar) if inactivar else "-",
-                "Mover a seccion": str(plan.get("seccion_destino") or "-"),
-                "Grupo destino": plan.get("grupo_destino_id") or "-",
-                "Clases destino": len(plan.get("clases_destino") or []),
-                "Acciones": " + ".join(acciones),
-                "Comparacion": str(plan.get("comparacion") or ""),
+                "Alumno Y": alumno_y,
+                "Alumno a cambiar": alumno_cambiar,
+                "Accion": "Aplicar",
             }
         )
 
@@ -2557,7 +2602,7 @@ def _build_auto_move_simulation(
         "alumnos_all_grid": alumnos_grid,
         "plan_rows": plan_rows,
         "editor_rows": editor_rows,
-        "grupo_id_by_seccion": grupo_id_by_seccion,
+        "grupo_id_by_seccion_by_grade": grupo_id_by_seccion_by_grade,
     }
 
 
@@ -2780,9 +2825,15 @@ def _apply_auto_move_changes(
         move_done = False
         grupo_origen_id = _safe_int(plan.get("grupo_origen_id"))
         grupo_destino_id = _safe_int(plan.get("grupo_destino_id"))
-        nivel_id = _safe_int(plan.get("nivel_id")) or AUTO_MOVE_NIVEL_ID
-        grado_id = _safe_int(plan.get("grado_id")) or AUTO_MOVE_GRADO_ID
-        if alumno_pagado_id is not None and grupo_origen_id is not None and grupo_destino_id is not None:
+        nivel_id = _safe_int(plan.get("nivel_id"))
+        grado_id = _safe_int(plan.get("grado_id"))
+        if (
+            alumno_pagado_id is not None
+            and grupo_origen_id is not None
+            and grupo_destino_id is not None
+            and nivel_id is not None
+            and grado_id is not None
+        ):
             if int(grupo_origen_id) == int(grupo_destino_id):
                 result_row["Mover"] = "SKIP mismo grupo"
             else:
@@ -2807,6 +2858,8 @@ def _apply_auto_move_changes(
                 else:
                     summary["mover_error"] += 1
                     result_row["Mover"] = f"ERROR ({move_msg})"
+        elif alumno_pagado_id is not None:
+            result_row["Mover"] = "SKIP datos incompletos"
 
         clases_destino = plan.get("clases_destino") if isinstance(plan.get("clases_destino"), list) else []
         if move_done and clases_destino and alumno_pagado_id is not None:
@@ -6206,10 +6259,10 @@ with tab_crud_alumnos:
     
 
         with st.container(border=True):
-            st.markdown("**5) Simulador web: 5to secundaria seccion Y**")
+            st.markdown("**5) Simulador web: seccion Y en todos los grados**")
             st.caption(
-                "Solo usa Colegio Clave global. Compara alumnos pagados de Y contra no pagados "
-                "por apellidos y luego DNI. Prepara inactivar, mover y asignar clases destino."
+                "Solo usa Colegio Clave global. Toma todos los grados con seccion Y, "
+                "compara alumnos pagados de Y contra no pagados por apellidos y luego DNI."
             )
 
             col_prepare, col_clear = st.columns([2, 1], gap="small")
@@ -6269,11 +6322,6 @@ with tab_crud_alumnos:
                 total_plan = len(st.session_state["auto_move_plan_rows"])
                 st.success(f"Simulacion lista. Alumnos candidatos a modificar: {total_plan}")
 
-            alumnos_grid_cached = st.session_state.get("auto_move_alumnos_grid") or []
-            if alumnos_grid_cached:
-                with st.expander("Ver alumnos 5to secundaria en todas las secciones", expanded=False):
-                    _show_dataframe(alumnos_grid_cached, use_container_width=True)
-
             errors_cached = st.session_state.get("auto_move_errors") or []
             if errors_cached:
                 st.warning("Hubo errores consultando algunas secciones.")
@@ -6299,27 +6347,17 @@ with tab_crud_alumnos:
                         use_container_width=True,
                         disabled=[
                             "PlanId",
-                            "Alumno pagado (Y)",
-                            "Se parece a (no pagado)",
-                            "Alumno a inactivar",
-                            "Mover a seccion",
-                            "Grupo destino",
-                            "Clases destino",
-                            "Acciones",
-                            "Comparacion",
+                            "Alumno Y",
+                            "Alumno a cambiar",
                         ],
                         column_config={
-                            "Aplicar": st.column_config.CheckboxColumn(
-                                "Aplicar",
-                                help="Solo se ejecutan filas marcadas.",
-                            ),
-                            "X": st.column_config.CheckboxColumn(
-                                "X",
-                                help="Marca para quitar la fila del guardado.",
-                            ),
                             "PlanId": st.column_config.NumberColumn("PlanId", format="%d"),
-                            "Grupo destino": st.column_config.NumberColumn("Grupo destino", format="%d"),
-                            "Clases destino": st.column_config.NumberColumn("Clases destino", format="%d"),
+                            "Accion": st.column_config.SelectboxColumn(
+                                "Accion",
+                                options=["Aplicar", "X"],
+                                required=True,
+                                help="Selecciona X para no cambiar esa fila.",
+                            ),
                         },
                     )
                     if isinstance(edited_df, pd.DataFrame):
@@ -6336,10 +6374,9 @@ with tab_crud_alumnos:
                     authorized_plans: List[Dict[str, object]] = []
                     resumen_autorizados: List[Dict[str, object]] = []
                     for row in edited_rows:
-                        apply_row = _to_bool(row.get("Aplicar"))
-                        drop_row = _to_bool(row.get("X"))
+                        accion = str(row.get("Accion") or "").strip().upper()
                         plan_id = _safe_int(row.get("PlanId"))
-                        if not apply_row or drop_row or plan_id is None:
+                        if accion == "X" or plan_id is None:
                             continue
                         plan = plan_by_id.get(int(plan_id))
                         if not isinstance(plan, dict):
@@ -6348,12 +6385,8 @@ with tab_crud_alumnos:
                         resumen_autorizados.append(
                             {
                                 "PlanId": int(plan_id),
-                                "Comparacion": str(plan.get("comparacion") or ""),
-                                "Accion": str(row.get("Acciones") or ""),
-                                "Destino": (
-                                    f"Seccion {plan.get('seccion_destino', '-')}"
-                                    f" | Grupo {plan.get('grupo_destino_id', '-')}"
-                                ),
+                                "Alumno Y": str(row.get("Alumno Y") or ""),
+                                "Alumno a cambiar": str(row.get("Alumno a cambiar") or ""),
                             }
                         )
 

@@ -2286,17 +2286,12 @@ def _build_clases_destino_for_plan(
 
 
 def _format_alumno_label(row: Dict[str, object]) -> str:
-    alumno_id = _safe_int(row.get("alumno_id"))
     persona_id = _safe_int(row.get("persona_id"))
     nombre = str(row.get("nombre_completo") or "").strip()
     if not nombre:
         nombre = "SIN NOMBRE"
     dni = str(row.get("id_oficial") or "").strip()
-    seccion = str(row.get("seccion_norm") or row.get("seccion") or "").strip()
-    return (
-        f"{nombre} | alumnoId={alumno_id or '-'} | personaId={persona_id or '-'} "
-        f"| DNI={dni or '-'} | Seccion={seccion or '-'}"
-    )
+    return f"{persona_id or '-'}|{nombre}|{dni or '-'}"
 
 
 def _build_auto_move_simulation(
@@ -2584,8 +2579,7 @@ def _build_auto_move_simulation(
         if inactivar:
             alumno_cambiar = _format_alumno_label(inactivar)
         else:
-            destino = str(plan.get("seccion_destino") or "-")
-            alumno_cambiar = f"Sin parecido. Mover a seccion {destino}."
+            alumno_cambiar = "-|SIN COINCIDENCIA|-"
         editor_rows.append(
             {
                 "PlanId": int(plan.get("plan_id") or 0),
@@ -6285,6 +6279,7 @@ with tab_crud_alumnos:
                     "auto_move_alumnos_grid",
                     "auto_move_errors",
                     "auto_move_colegio_id",
+                    "auto_move_accion_by_plan",
                 ):
                     st.session_state.pop(state_key, None)
                 st.rerun()
@@ -6336,35 +6331,43 @@ with tab_crud_alumnos:
                 st.caption("No hay lista preparada aun.")
             else:
                 st.markdown("**Lista de cambios para autorizar**")
-                editor_df = pd.DataFrame(editor_rows_cached)
-                if editor_df.empty:
+                if not editor_rows_cached:
                     st.info("No hay alumnos para modificar.")
                 else:
-                    edited_df = st.data_editor(
-                        editor_df,
-                        key="auto_move_editor",
-                        hide_index=True,
-                        use_container_width=True,
-                        disabled=[
-                            "PlanId",
-                            "Alumno Y",
-                            "Alumno a cambiar",
-                        ],
-                        column_config={
-                            "PlanId": st.column_config.NumberColumn("PlanId", format="%d"),
-                            "Accion": st.column_config.SelectboxColumn(
+                    action_state_raw = st.session_state.get("auto_move_accion_by_plan", {})
+                    if isinstance(action_state_raw, dict):
+                        action_state = dict(action_state_raw)
+                    else:
+                        action_state = {}
+                    edited_rows: List[Dict[str, object]] = []
+                    for row in editor_rows_cached:
+                        plan_id = _safe_int(row.get("PlanId"))
+                        if plan_id is None:
+                            continue
+                        action_saved = str(
+                            action_state.get(str(plan_id), row.get("Accion") or "Aplicar")
+                        ).strip()
+                        default_action = "X" if action_saved.upper() == "X" else "Aplicar"
+                        col_text, col_action = st.columns([9, 2], gap="small")
+                        with col_text:
+                            st.markdown(
+                                f"`{row.get('Alumno Y', '')}`  ->  "
+                                f"`{row.get('Alumno a cambiar', '')}`"
+                            )
+                        with col_action:
+                            selected_action = st.selectbox(
                                 "Accion",
                                 options=["Aplicar", "X"],
-                                required=True,
-                                help="Selecciona X para no cambiar esa fila.",
-                            ),
-                        },
-                    )
-                    if isinstance(edited_df, pd.DataFrame):
-                        edited_rows = edited_df.to_dict("records")
-                        st.session_state["auto_move_editor_rows"] = edited_rows
-                    else:
-                        edited_rows = editor_rows_cached
+                                index=0 if default_action == "Aplicar" else 1,
+                                key=f"auto_move_action_{int(plan_id)}",
+                                label_visibility="collapsed",
+                            )
+                        action_state[str(plan_id)] = selected_action
+                        edited_row = dict(row)
+                        edited_row["Accion"] = selected_action
+                        edited_rows.append(edited_row)
+                    st.session_state["auto_move_accion_by_plan"] = action_state
+                    st.session_state["auto_move_editor_rows"] = edited_rows
 
                     plan_by_id = {
                         int(plan.get("plan_id")): plan
@@ -6372,7 +6375,6 @@ with tab_crud_alumnos:
                         if _safe_int(plan.get("plan_id")) is not None
                     }
                     authorized_plans: List[Dict[str, object]] = []
-                    resumen_autorizados: List[Dict[str, object]] = []
                     for row in edited_rows:
                         accion = str(row.get("Accion") or "").strip().upper()
                         plan_id = _safe_int(row.get("PlanId"))
@@ -6382,19 +6384,10 @@ with tab_crud_alumnos:
                         if not isinstance(plan, dict):
                             continue
                         authorized_plans.append(plan)
-                        resumen_autorizados.append(
-                            {
-                                "PlanId": int(plan_id),
-                                "Alumno Y": str(row.get("Alumno Y") or ""),
-                                "Alumno a cambiar": str(row.get("Alumno a cambiar") or ""),
-                            }
-                        )
 
                     st.caption(
                         f"Filas listas para guardar: {len(authorized_plans)}/{len(plan_rows_cached)}"
                     )
-                    if resumen_autorizados:
-                        _show_dataframe(resumen_autorizados, use_container_width=True)
 
                     confirm_apply_auto = st.checkbox(
                         "Confirmo ejecutar los cambios autorizados.",
@@ -6446,7 +6439,23 @@ with tab_crud_alumnos:
                             f"SKIP={summary_apply['asignar_skip']}"
                         )
                         if results_apply:
-                            _show_dataframe(results_apply, use_container_width=True)
+                            details = []
+                            for item in results_apply[:80]:
+                                if not isinstance(item, dict):
+                                    continue
+                                details.append(
+                                    "- {alumno} | Inactivar: {inactivar} | Mover: {mover} | Asignar: {asignar}".format(
+                                        alumno=str(item.get("Alumno pagado") or ""),
+                                        inactivar=str(item.get("Inactivar no pagado") or ""),
+                                        mover=str(item.get("Mover") or ""),
+                                        asignar=str(item.get("Asignar clases") or ""),
+                                    )
+                                )
+                            if details:
+                                st.markdown("**Detalle de ejecucion**")
+                                st.markdown("\n".join(details))
+                            if len(results_apply) > 80:
+                                st.caption(f"... y {len(results_apply) - 80} filas mas.")
     
 
 

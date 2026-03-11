@@ -6,7 +6,7 @@ from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set, Tuple
-from urllib.parse import unquote, urljoin
+from urllib.parse import unquote, urlencode, urljoin
 from uuid import uuid4
 
 import pandas as pd
@@ -6436,6 +6436,26 @@ with tab_crud_alumnos:
                         item_int = _safe_int(item)
                         if item_int is not None:
                             removed_ref_ids.add(int(item_int))
+                remove_ref_value = st.query_params.get("auto_remove_ref", "")
+                if isinstance(remove_ref_value, list):
+                    remove_ref_value = remove_ref_value[0] if remove_ref_value else ""
+                remove_ref_id = _safe_int(remove_ref_value)
+                if remove_ref_id is not None:
+                    if int(remove_ref_id) in plan_by_id:
+                        removed_ref_ids.add(int(remove_ref_id))
+                        st.session_state["auto_move_removed_ref_ids"] = sorted(removed_ref_ids)
+                    try:
+                        qp_without_remove: Dict[str, object] = {}
+                        for qp_key, qp_value in st.query_params.items():
+                            if str(qp_key) == "auto_remove_ref":
+                                continue
+                            qp_without_remove[str(qp_key)] = qp_value
+                        st.query_params.clear()
+                        for qp_key, qp_value in qp_without_remove.items():
+                            st.query_params[qp_key] = qp_value
+                    except Exception:
+                        pass
+                    st.rerun()
 
                 sorted_plan_ids = sorted(plan_by_id.keys())
                 if not sorted_plan_ids:
@@ -6458,7 +6478,14 @@ with tab_crud_alumnos:
 
                     grado_txt = str(pagado.get("grado") or plan.get("grado_id") or "").strip()
                     nivel_txt = str(pagado.get("nivel") or "").strip()
-                    grado_small = " | ".join(part for part in [nivel_txt, grado_txt] if part)
+                    seccion_txt = _normalize_seccion_key(
+                        pagado.get("seccion_norm") or pagado.get("seccion") or AUTO_MOVE_SECCION_ORIGEN
+                    )
+                    grado_base = " | ".join(part for part in [nivel_txt, grado_txt] if part)
+                    if grado_base and seccion_txt:
+                        grado_small = f"{grado_base} ({seccion_txt})"
+                    else:
+                        grado_small = grado_base or (f"Seccion ({seccion_txt})" if seccion_txt else "")
 
                     col_left, col_right = st.columns(2, gap="small")
                     with col_left:
@@ -6470,17 +6497,31 @@ with tab_crud_alumnos:
                     with col_right:
                         if grado_small:
                             st.caption(grado_small)
-                        st.caption("Alumno referencial")
                         if has_reference and not is_removed:
-                            if st.button(
-                                f"X {alumno_ref_label}",
-                                key=f"auto_move_remove_ref_{int(plan_id)}",
-                                help="Quitar referencia",
-                                use_container_width=True,
-                            ):
-                                removed_ref_ids.add(int(plan_id))
-                                st.session_state["auto_move_removed_ref_ids"] = sorted(removed_ref_ids)
-                                st.rerun()
+                            params_click: Dict[str, str] = {}
+                            try:
+                                for qp_key, qp_value in st.query_params.items():
+                                    if str(qp_key) == "auto_remove_ref":
+                                        continue
+                                    if isinstance(qp_value, list):
+                                        params_click[str(qp_key)] = (
+                                            str(qp_value[0]) if qp_value else ""
+                                        )
+                                    else:
+                                        params_click[str(qp_key)] = str(qp_value)
+                            except Exception:
+                                params_click = {}
+                            params_click["auto_remove_ref"] = str(int(plan_id))
+                            ref_href = "?" + urlencode(params_click)
+                            st.markdown(
+                                (
+                                    f'<a href="{ref_href}" '
+                                    'style="text-decoration:none;color:inherit;">'
+                                    f"X {alumno_ref_label}"
+                                    "</a>"
+                                ),
+                                unsafe_allow_html=True,
+                            )
                         elif has_reference and is_removed:
                             st.markdown("`REFERENCIA ELIMINADA`")
                         else:

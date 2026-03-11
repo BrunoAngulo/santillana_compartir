@@ -2557,6 +2557,7 @@
         oauthDone: 'jira_oauth_done',
         adminAccess: 'jira_focus_admin_access',
         userDisplayName: 'jira_focus_user_display_name',
+        userLogin: 'jira_focus_user_login',
         userProfile: 'jira_focus_user_profile',
         timer: 'jira_focus_timer_state',
         ui: 'jira_focus_ui_state',
@@ -2568,6 +2569,8 @@
       const JIRA_ADMIN_COOKIE_NAME = 'jira_focus_admin_access';
       const JIRA_USER_QUERY_PARAM = 'jira_user';
       const JIRA_USER_COOKIE_NAME = 'jira_focus_user_display_name';
+      const JIRA_LOGIN_QUERY_PARAM = 'jira_login';
+      const JIRA_LOGIN_COOKIE_NAME = 'jira_focus_user_login';
       const OAUTH = {
         authorizeUrl: 'https://auth.atlassian.com/authorize',
         tokenUrl: 'https://auth.atlassian.com/oauth/token',
@@ -4073,6 +4076,7 @@
         const accountId = String(me.accountId || '').trim();
         const displayName = String(me.displayName || '').trim();
         const emailAddress = String(me.emailAddress || '').trim();
+        const login = emailAddress ? emailAddress.toLowerCase() : '';
         const accountType = String(me.accountType || '').trim();
         const timeZone = String(me.timeZone || '').trim();
         const locale = String(me.locale || '').trim();
@@ -4090,6 +4094,7 @@
           accountId,
           displayName,
           emailAddress,
+          login,
           accountType,
           active: !!me.active,
           timeZone,
@@ -4100,9 +4105,10 @@
         };
       }
 
-      function syncParentAdminAccessFlag(isAdmin, displayName, userProfile) {
+      function syncParentAdminAccessFlag(isAdmin, displayName, userProfile, login) {
         const desired = isAdmin ? '1' : '0';
         const normalizedDisplayName = String(displayName || '').trim();
+        const normalizedLogin = String(login || '').trim().toLowerCase();
         try {
           const maxAge = isAdmin ? '31536000' : '0';
           document.cookie = JIRA_ADMIN_COOKIE_NAME + '=' + desired + '; path=/; max-age=' + maxAge + '; SameSite=Lax';
@@ -4117,6 +4123,13 @@
           // No-op when cookies are not available.
         }
         try {
+          const loginMaxAge = normalizedLogin ? '31536000' : '0';
+          const loginValue = normalizedLogin ? encodeURIComponent(normalizedLogin) : '';
+          document.cookie = JIRA_LOGIN_COOKIE_NAME + '=' + loginValue + '; path=/; max-age=' + loginMaxAge + '; SameSite=Lax';
+        } catch (_err) {
+          // No-op when cookies are not available.
+        }
+        try {
           const targetWindow = window.top && window.top !== window
             ? window.top
             : (window.parent && window.parent !== window ? window.parent : null);
@@ -4125,6 +4138,7 @@
               type: 'jira-focus-admin-access',
               enabled: isAdmin,
               displayName: normalizedDisplayName,
+              login: normalizedLogin,
               userProfile: userProfile || null
             }, '*');
           }
@@ -4138,12 +4152,19 @@
           const targetUrl = new URL(targetWindow.location.href);
           const current = targetUrl.searchParams.get(JIRA_ADMIN_QUERY_PARAM) || '0';
           const currentUser = targetUrl.searchParams.get(JIRA_USER_QUERY_PARAM) || '';
+          const currentLogin = String(targetUrl.searchParams.get(JIRA_LOGIN_QUERY_PARAM) || '').trim().toLowerCase();
           const desiredUser = normalizedDisplayName;
-          if (current === desired && currentUser === desiredUser) return;
+          const desiredLogin = normalizedLogin;
+          if (current === desired && currentUser === desiredUser && currentLogin === desiredLogin) return;
           if (desiredUser) {
             targetUrl.searchParams.set(JIRA_USER_QUERY_PARAM, desiredUser);
           } else {
             targetUrl.searchParams.delete(JIRA_USER_QUERY_PARAM);
+          }
+          if (desiredLogin) {
+            targetUrl.searchParams.set(JIRA_LOGIN_QUERY_PARAM, desiredLogin);
+          } else {
+            targetUrl.searchParams.delete(JIRA_LOGIN_QUERY_PARAM);
           }
           if (desired === '1') {
             targetUrl.searchParams.set(JIRA_ADMIN_QUERY_PARAM, '1');
@@ -4160,12 +4181,20 @@
         const displayName = state.me && state.me.displayName
           ? String(state.me.displayName || '').trim()
           : '';
+        const login = state.me && state.me.emailAddress
+          ? String(state.me.emailAddress || '').trim().toLowerCase()
+          : '';
         const userProfile = buildStoredUserProfile(state.me);
         const isAdmin = state.connected && displayName.toLowerCase() === JIRA_ADMIN_DISPLAY_NAME.toLowerCase();
         if (displayName) {
           StorageService.set(STORAGE.userDisplayName, displayName);
         } else {
           StorageService.del(STORAGE.userDisplayName);
+        }
+        if (login) {
+          StorageService.set(STORAGE.userLogin, login);
+        } else {
+          StorageService.del(STORAGE.userLogin);
         }
         if (userProfile) {
           StorageService.set(STORAGE.userProfile, JSON.stringify(userProfile));
@@ -4177,7 +4206,7 @@
         } else {
           StorageService.del(STORAGE.adminAccess);
         }
-        syncParentAdminAccessFlag(isAdmin, displayName, userProfile);
+        syncParentAdminAccessFlag(isAdmin, displayName, userProfile, login);
       }
 
       function renderTop() {

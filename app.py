@@ -81,6 +81,9 @@ JIRA_ADMIN_QUERY_PARAM = "jira_admin"
 JIRA_ADMIN_COOKIE_NAME = "jira_focus_admin_access"
 JIRA_USER_QUERY_PARAM = "jira_user"
 JIRA_USER_COOKIE_NAME = "jira_focus_user_display_name"
+JIRA_LOGIN_QUERY_PARAM = "jira_login"
+JIRA_LOGIN_COOKIE_NAME = "jira_focus_user_login"
+JIRA_UNLOCK_LOGIN = "bangulo@santillana.com"
 RICHMONDSTUDIO_TEST_LEVEL_OPTIONS: List[Tuple[str, str]] = [
     ("lower primary", "lower_primary"),
     ("upper primary", "upper_primary"),
@@ -158,18 +161,30 @@ def _normalize_display_name(value: object) -> str:
     return str(value or "").strip().lower()
 
 
+def _normalize_login(value: object) -> str:
+    return str(value or "").strip().lower()
+
+
 def _sync_jira_user_identity() -> None:
     jira_user_value = st.query_params.get(JIRA_USER_QUERY_PARAM, "")
     if isinstance(jira_user_value, list):
         jira_user_value = jira_user_value[0] if jira_user_value else ""
+    jira_login_value = st.query_params.get(JIRA_LOGIN_QUERY_PARAM, "")
+    if isinstance(jira_login_value, list):
+        jira_login_value = jira_login_value[0] if jira_login_value else ""
     try:
         if not jira_user_value:
             jira_user_value = st.context.cookies.get(JIRA_USER_COOKIE_NAME, "") or ""
+        if not jira_login_value:
+            jira_login_value = st.context.cookies.get(JIRA_LOGIN_COOKIE_NAME, "") or ""
     except Exception:
         pass
     jira_user_text = unquote(str(jira_user_value or "").strip())
     if jira_user_text:
         st.session_state["jira_focus_user_display_name"] = jira_user_text
+    jira_login_text = _normalize_login(unquote(str(jira_login_value or "").strip()))
+    if jira_login_text:
+        st.session_state["jira_focus_user_login"] = jira_login_text
 
 
 def _restricted_sections_unlocked() -> bool:
@@ -179,20 +194,32 @@ def _restricted_sections_unlocked() -> bool:
     jira_user_flag = st.query_params.get(JIRA_USER_QUERY_PARAM, "")
     if isinstance(jira_user_flag, list):
         jira_user_flag = jira_user_flag[0] if jira_user_flag else ""
+    jira_login_flag = st.query_params.get(JIRA_LOGIN_QUERY_PARAM, "")
+    if isinstance(jira_login_flag, list):
+        jira_login_flag = jira_login_flag[0] if jira_login_flag else ""
     jira_admin_cookie = ""
     jira_user_cookie = ""
+    jira_login_cookie = ""
     try:
         jira_admin_cookie = str(st.context.cookies.get(JIRA_ADMIN_COOKIE_NAME, "") or "").strip()
         jira_user_cookie = str(st.context.cookies.get(JIRA_USER_COOKIE_NAME, "") or "").strip()
+        jira_login_cookie = str(st.context.cookies.get(JIRA_LOGIN_COOKIE_NAME, "") or "").strip()
     except Exception:
         jira_admin_cookie = ""
         jira_user_cookie = ""
+        jira_login_cookie = ""
 
     admin_name_norm = _normalize_display_name(JIRA_ADMIN_DISPLAY_NAME)
     jira_user_flag_norm = _normalize_display_name(unquote(str(jira_user_flag or "").strip()))
     jira_user_cookie_norm = _normalize_display_name(unquote(jira_user_cookie))
     session_jira_user_norm = _normalize_display_name(
         st.session_state.get("jira_focus_user_display_name", "")
+    )
+    unlock_login_norm = _normalize_login(JIRA_UNLOCK_LOGIN)
+    jira_login_flag_norm = _normalize_login(unquote(str(jira_login_flag or "").strip()))
+    jira_login_cookie_norm = _normalize_login(unquote(jira_login_cookie))
+    session_jira_login_norm = _normalize_login(
+        st.session_state.get("jira_focus_user_login", "")
     )
 
     return (
@@ -202,6 +229,9 @@ def _restricted_sections_unlocked() -> bool:
         or jira_user_flag_norm == admin_name_norm
         or jira_user_cookie_norm == admin_name_norm
         or session_jira_user_norm == admin_name_norm
+        or jira_login_flag_norm == unlock_login_norm
+        or jira_login_cookie_norm == unlock_login_norm
+        or session_jira_login_norm == unlock_login_norm
     )
 
 
@@ -280,10 +310,13 @@ st.components.v1.html(
 
         function applyDesired(desired) {{
           let desiredUser = '';
+          let desiredLogin = '';
           try {{
             desiredUser = window.localStorage.getItem('jira_focus_user_display_name') || '';
+            desiredLogin = (window.localStorage.getItem('jira_focus_user_login') || '').trim().toLowerCase();
           }} catch (_err) {{
             desiredUser = '';
+            desiredLogin = '';
           }}
           try {{
             const maxAge = desired === '1' ? '31536000' : '0';
@@ -299,13 +332,21 @@ st.components.v1.html(
             // No-op when cookies are not available.
           }}
           try {{
+            const loginMaxAge = desiredLogin ? '31536000' : '0';
+            const loginValue = desiredLogin ? encodeURIComponent(desiredLogin) : '';
+            document.cookie = {f"{JIRA_LOGIN_COOKIE_NAME}="!r} + loginValue + '; path=/; max-age=' + loginMaxAge + '; SameSite=Lax';
+          }} catch (_err) {{
+            // No-op when cookies are not available.
+          }}
+          try {{
             const targetWindow = window.top && window.top !== window
               ? window.top
               : (window.parent && window.parent !== window ? window.parent : window);
             const targetUrl = new URL(targetWindow.location.href);
             const current = targetUrl.searchParams.get(queryKey) || '0';
             const currentUser = targetUrl.searchParams.get({JIRA_USER_QUERY_PARAM!r}) || '';
-            if (current === desired && currentUser === desiredUser) return;
+            const currentLogin = (targetUrl.searchParams.get({JIRA_LOGIN_QUERY_PARAM!r}) || '').trim().toLowerCase();
+            if (current === desired && currentUser === desiredUser && currentLogin === desiredLogin) return;
             if (desired === '1') {{
               targetUrl.searchParams.set(queryKey, '1');
             }} else {{
@@ -315,6 +356,11 @@ st.components.v1.html(
               targetUrl.searchParams.set({JIRA_USER_QUERY_PARAM!r}, desiredUser);
             }} else {{
               targetUrl.searchParams.delete({JIRA_USER_QUERY_PARAM!r});
+            }}
+            if (desiredLogin) {{
+              targetUrl.searchParams.set({JIRA_LOGIN_QUERY_PARAM!r}, desiredLogin);
+            }} else {{
+              targetUrl.searchParams.delete({JIRA_LOGIN_QUERY_PARAM!r});
             }}
             targetWindow.location.replace(targetUrl.toString());
           }} catch (_err) {{
@@ -344,6 +390,18 @@ st.components.v1.html(
                 window.localStorage.setItem('jira_focus_user_display_name', String(data.displayName || '').trim());
               }} else {{
                 window.localStorage.removeItem('jira_focus_user_display_name');
+              }}
+              const loginValue = data.login
+                ? String(data.login || '').trim().toLowerCase()
+                : (
+                  data.userProfile && data.userProfile.emailAddress
+                    ? String(data.userProfile.emailAddress || '').trim().toLowerCase()
+                    : ''
+                );
+              if (loginValue) {{
+                window.localStorage.setItem('jira_focus_user_login', loginValue);
+              }} else {{
+                window.localStorage.removeItem('jira_focus_user_login');
               }}
               if (data.userProfile && typeof data.userProfile === 'object') {{
                 window.localStorage.setItem('jira_focus_user_profile', JSON.stringify(data.userProfile));
@@ -2950,6 +3008,387 @@ def _apply_auto_move_changes(
     return summary, resultados
 
 
+def _build_manual_move_grade_catalog(
+    niveles_data: List[Dict[str, object]],
+) -> List[Dict[str, object]]:
+    catalog: List[Dict[str, object]] = []
+    for nivel_entry in niveles_data:
+        if not isinstance(nivel_entry, dict):
+            continue
+        nivel = nivel_entry.get("nivel") if isinstance(nivel_entry.get("nivel"), dict) else {}
+        nivel_id = _safe_int(nivel.get("nivelId"))
+        if nivel_id is None:
+            continue
+        nivel_nombre = str(nivel.get("nivel") or "").strip()
+        grados = nivel_entry.get("grados") if isinstance(nivel_entry.get("grados"), list) else []
+        for grado_entry in grados:
+            if not isinstance(grado_entry, dict):
+                continue
+            grado = grado_entry.get("grado") if isinstance(grado_entry.get("grado"), dict) else {}
+            grado_id = _safe_int(grado.get("gradoId"))
+            if grado_id is None:
+                continue
+            grado_nombre = str(grado.get("grado") or "").strip()
+            grupos_raw = grado_entry.get("grupos") if isinstance(grado_entry.get("grupos"), list) else []
+            grupos: List[Dict[str, object]] = []
+            seen_grupo_ids: Set[int] = set()
+            for grupo_entry in grupos_raw:
+                if not isinstance(grupo_entry, dict):
+                    continue
+                grupo = grupo_entry.get("grupo") if isinstance(grupo_entry.get("grupo"), dict) else {}
+                grupo_id = _safe_int(grupo.get("grupoId"))
+                if grupo_id is None or int(grupo_id) in seen_grupo_ids:
+                    continue
+                seen_grupo_ids.add(int(grupo_id))
+                grupo_nombre = str(grupo.get("grupo") or "").strip()
+                seccion = _normalize_seccion_key(grupo.get("grupoClave") or grupo_nombre)
+                if not seccion:
+                    seccion = str(grupo.get("grupoClave") or grupo_nombre or "").strip()
+                grupos.append(
+                    {
+                        "grupo_id": int(grupo_id),
+                        "seccion": seccion,
+                        "grupo": grupo_nombre,
+                    }
+                )
+            grupos.sort(
+                key=lambda row: _grupo_sort_key(
+                    str(row.get("seccion") or ""),
+                    str(row.get("grupo") or ""),
+                )
+            )
+            if not grupos:
+                continue
+            catalog.append(
+                {
+                    "nivel_id": int(nivel_id),
+                    "nivel": nivel_nombre,
+                    "grado_id": int(grado_id),
+                    "grado": grado_nombre,
+                    "grupos": grupos,
+                }
+            )
+
+    catalog.sort(
+        key=lambda row: (
+            int(row.get("nivel_id") or 0),
+            int(row.get("grado_id") or 0),
+            str(row.get("nivel") or "").upper(),
+            str(row.get("grado") or "").upper(),
+        )
+    )
+    return catalog
+
+
+def _manual_move_alumno_option_label(row: Dict[str, object]) -> str:
+    base = _format_alumno_label(row)
+    nivel = str(row.get("nivel") or "").strip()
+    grado = str(row.get("grado") or "").strip()
+    seccion = _normalize_seccion_key(row.get("seccion_norm") or row.get("seccion") or "")
+    grado_txt = " | ".join(part for part in [nivel, grado] if part)
+    if grado_txt and seccion:
+        return f"{base} | {grado_txt} ({seccion})"
+    if grado_txt:
+        return f"{base} | {grado_txt}"
+    if seccion:
+        return f"{base} | Seccion ({seccion})"
+    return base
+
+
+def _fetch_alumnos_catalog_for_manual_move(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+    on_status: Optional[Callable[[str], None]] = None,
+) -> Dict[str, object]:
+    def _status(message: str) -> None:
+        if callable(on_status):
+            try:
+                on_status(str(message))
+            except Exception:
+                pass
+
+    _status("Listando niveles, grados y secciones del colegio...")
+    niveles = _fetch_niveles_grados_grupos_censo(
+        token=token,
+        colegio_id=int(colegio_id),
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        timeout=int(timeout),
+    )
+    contexts = _build_contexts_for_nivel_grado(niveles=niveles)
+    if not contexts:
+        raise RuntimeError("No hay niveles/grados/secciones configurados para este colegio.")
+
+    alumnos_raw: List[Dict[str, object]] = []
+    errors: List[str] = []
+    total_contexts = len(contexts)
+    for idx_ctx, ctx in enumerate(contexts, start=1):
+        _status(
+            "Listando alumnos {idx}/{total} | nivelId={nivel} gradoId={grado} grupoId={grupo}".format(
+                idx=idx_ctx,
+                total=total_contexts,
+                nivel=ctx.get("nivel_id"),
+                grado=ctx.get("grado_id"),
+                grupo=ctx.get("grupo_id"),
+            )
+        )
+        try:
+            alumnos_ctx = _fetch_alumnos_censo(
+                token=token,
+                colegio_id=int(colegio_id),
+                nivel_id=int(ctx["nivel_id"]),
+                grado_id=int(ctx["grado_id"]),
+                grupo_id=int(ctx["grupo_id"]),
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                timeout=int(timeout),
+            )
+        except Exception as exc:
+            errors.append(
+                "nivelId={nivel} gradoId={grado} grupoId={grupo}: {err}".format(
+                    nivel=ctx.get("nivel_id"),
+                    grado=ctx.get("grado_id"),
+                    grupo=ctx.get("grupo_id"),
+                    err=exc,
+                )
+            )
+            continue
+        for item in alumnos_ctx:
+            if not isinstance(item, dict):
+                continue
+            alumnos_raw.append(_flatten_censo_alumno_for_auto_plan(item=item, fallback=ctx))
+
+    by_key: Dict[str, Dict[str, object]] = {}
+    for row in alumnos_raw:
+        alumno_id = _safe_int(row.get("alumno_id"))
+        persona_id = _safe_int(row.get("persona_id"))
+        grupo_id = _safe_int(row.get("grupo_id"))
+        if alumno_id is not None:
+            key = f"alumno:{int(alumno_id)}"
+        elif persona_id is not None and grupo_id is not None:
+            key = f"persona_grupo:{int(persona_id)}:{int(grupo_id)}"
+        elif persona_id is not None:
+            key = f"persona:{int(persona_id)}"
+        else:
+            key = f"anon:{_normalize_plain_text(row.get('nombre_completo'))}:{_normalize_plain_text(row.get('id_oficial'))}"
+        if key in by_key:
+            continue
+        by_key[key] = row
+
+    students = sorted(
+        by_key.values(),
+        key=lambda row: (
+            int(_safe_int(row.get("nivel_id")) or 0),
+            int(_safe_int(row.get("grado_id")) or 0),
+            str(row.get("apellido_paterno") or "").upper(),
+            str(row.get("apellido_materno") or "").upper(),
+            str(row.get("nombre") or "").upper(),
+        ),
+    )
+    _status(f"Listado completo. Alumnos unicos: {len(students)}.")
+    return {
+        "niveles": niveles,
+        "students": students,
+        "errors": errors,
+    }
+
+
+def _apply_single_alumno_move_and_reassign(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+    alumno_row: Dict[str, object],
+    nuevo_nivel_id: int,
+    nuevo_grado_id: int,
+    nuevo_grupo_id: int,
+    nueva_seccion: str,
+    on_status: Optional[Callable[[str], None]] = None,
+) -> Dict[str, object]:
+    def _status(message: str) -> None:
+        if callable(on_status):
+            try:
+                on_status(str(message))
+            except Exception:
+                pass
+
+    alumno_id = _safe_int(alumno_row.get("alumno_id"))
+    if alumno_id is None:
+        raise RuntimeError("Alumno sin alumnoId valido.")
+    nivel_origen_id = _safe_int(alumno_row.get("nivel_id"))
+    grado_origen_id = _safe_int(alumno_row.get("grado_id"))
+    grupo_origen_id = _safe_int(alumno_row.get("grupo_id"))
+    if nivel_origen_id is None or grado_origen_id is None or grupo_origen_id is None:
+        raise RuntimeError("Alumno sin datos completos de nivel/grado/grupo origen.")
+
+    _status("Listando clases del colegio...")
+    clases_rows, _grouped = listar_y_mapear_clases(
+        token=token,
+        colegio_id=int(colegio_id),
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        timeout=int(timeout),
+        ordered=True,
+        on_log=None,
+    )
+    clases_unicas: List[Dict[str, object]] = []
+    seen_class_ids: Set[int] = set()
+    for row in clases_rows:
+        clase_id = _safe_int(row.get("clase_id"))
+        if clase_id is None or int(clase_id) in seen_class_ids:
+            continue
+        seen_class_ids.add(int(clase_id))
+        clases_unicas.append(
+            {
+                "clase_id": int(clase_id),
+                "clase": str(row.get("clase") or "").strip(),
+            }
+        )
+
+    assigned_classes: List[Dict[str, object]] = []
+    scan_errors: List[str] = []
+    total_clases = len(clases_unicas)
+    for idx, clase in enumerate(clases_unicas, start=1):
+        clase_id = int(clase["clase_id"])
+        _status(f"Revisando clases actuales {idx}/{total_clases}...")
+        try:
+            clase_data = _fetch_alumnos_clase_gestion_escolar(
+                token=token,
+                clase_id=int(clase_id),
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                timeout=int(timeout),
+            )
+        except Exception as exc:
+            scan_errors.append(f"clase {clase_id}: {exc}")
+            continue
+
+        clase_alumnos = clase_data.get("claseAlumnos") if isinstance(clase_data, dict) else []
+        if not isinstance(clase_alumnos, list):
+            continue
+        belongs = False
+        for entry in clase_alumnos:
+            if not isinstance(entry, dict):
+                continue
+            alumno_tmp = entry.get("alumno") if isinstance(entry.get("alumno"), dict) else {}
+            alumno_tmp_id = _safe_int(alumno_tmp.get("alumnoId"))
+            if alumno_tmp_id is not None and int(alumno_tmp_id) == int(alumno_id):
+                belongs = True
+                break
+        if belongs:
+            assigned_classes.append(clase)
+
+    move_required = not (
+        int(nivel_origen_id) == int(nuevo_nivel_id)
+        and int(grado_origen_id) == int(nuevo_grado_id)
+        and int(grupo_origen_id) == int(nuevo_grupo_id)
+    )
+    if move_required:
+        _status("Moviendo alumno al nuevo grado/seccion...")
+        move_ok, move_msg = _mover_alumno_web(
+            token=token,
+            colegio_id=int(colegio_id),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            nivel_id=int(nivel_origen_id),
+            grado_id=int(grado_origen_id),
+            grupo_id=int(grupo_origen_id),
+            alumno_id=int(alumno_id),
+            nuevo_nivel_id=int(nuevo_nivel_id),
+            nuevo_grado_id=int(nuevo_grado_id),
+            nuevo_grupo_id=int(nuevo_grupo_id),
+            timeout=int(timeout),
+        )
+    else:
+        move_ok = True
+        move_msg = "SKIP mismo destino"
+
+    result: Dict[str, object] = {
+        "move_ok": bool(move_ok),
+        "move_msg": str(move_msg or ""),
+        "assigned_before_count": len(assigned_classes),
+        "removed_ok": 0,
+        "removed_error": 0,
+        "removed_errors": [],
+        "target_classes_total": 0,
+        "assigned_ok": 0,
+        "assigned_error": 0,
+        "assigned_errors": [],
+        "scan_errors": scan_errors,
+    }
+    if not move_ok:
+        return result
+
+    remove_errors: List[str] = []
+    removed_ok = 0
+    total_assigned = len(assigned_classes)
+    for idx, clase in enumerate(assigned_classes, start=1):
+        clase_id = int(clase["clase_id"])
+        _status(f"Eliminando clases actuales {idx}/{total_assigned}...")
+        try:
+            _delete_alumno_clase_gestion_escolar(
+                token=token,
+                clase_id=int(clase_id),
+                alumno_id=int(alumno_id),
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                timeout=int(timeout),
+            )
+            removed_ok += 1
+        except Exception as exc:
+            remove_errors.append(f"clase {clase_id}: {exc}")
+
+    _status("Buscando clases del nuevo grado/seccion...")
+    target_classes = _build_clases_destino_for_plan(
+        clases_rows=clases_rows,
+        nivel_id=int(nuevo_nivel_id),
+        grado_id=int(nuevo_grado_id),
+        grupo_destino_id=int(nuevo_grupo_id),
+        seccion_destino=str(nueva_seccion or ""),
+    )
+    target_total = len(target_classes)
+    assign_errors: List[str] = []
+    assign_ok = 0
+    assign_err = 0
+    seen_target: Set[int] = set()
+    for idx, clase in enumerate(target_classes, start=1):
+        clase_id = _safe_int(clase.get("clase_id")) if isinstance(clase, dict) else None
+        if clase_id is None or int(clase_id) in seen_target:
+            continue
+        seen_target.add(int(clase_id))
+        _status(f"Asignando clases nuevas {idx}/{target_total}...")
+        ok_assign, msg_assign = _asignar_alumno_a_clase_web(
+            token=token,
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            clase_id=int(clase_id),
+            alumno_id=int(alumno_id),
+            timeout=int(timeout),
+        )
+        if ok_assign:
+            assign_ok += 1
+        else:
+            assign_err += 1
+            assign_errors.append(f"clase {int(clase_id)}: {msg_assign}")
+
+    result.update(
+        {
+            "removed_ok": int(removed_ok),
+            "removed_error": len(remove_errors),
+            "removed_errors": remove_errors,
+            "target_classes_total": int(target_total),
+            "assigned_ok": int(assign_ok),
+            "assigned_error": int(assign_err),
+            "assigned_errors": assign_errors,
+        }
+    )
+    return result
+
+
 def render_richmond_studio_view() -> None:
     st.markdown(
         """
@@ -4085,6 +4524,353 @@ with tab_crud_alumnos:
                     file_name=download_name,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
+
+    with st.container(border=True):
+        st.markdown("**3) Mover alumno de grado/seccion (manual)**")
+        st.caption(
+            "Lista alumnos del colegio, busca uno, define el nuevo grado y seccion. "
+            "El proceso mueve al alumno, elimina sus clases actuales y asigna las del destino."
+        )
+
+        col_load_students, col_clear_students = st.columns([2, 1], gap="small")
+        run_load_students = col_load_students.button(
+            "Listar alumnos del colegio",
+            type="primary",
+            key="alumnos_manual_move_load_btn",
+            use_container_width=True,
+        )
+        run_clear_students = col_clear_students.button(
+            "Limpiar listado",
+            key="alumnos_manual_move_clear_btn",
+            use_container_width=True,
+        )
+
+        if run_clear_students:
+            for state_key in (
+                "alumnos_manual_move_students",
+                "alumnos_manual_move_niveles",
+                "alumnos_manual_move_errors",
+                "alumnos_manual_move_colegio_id",
+            ):
+                st.session_state.pop(state_key, None)
+            st.rerun()
+
+        if run_load_students:
+            token = _get_shared_token()
+            if not token:
+                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+            else:
+                try:
+                    colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                except ValueError as exc:
+                    st.error(f"Error: {exc}")
+                else:
+                    try:
+                        status_box = st.empty()
+
+                        def _on_status_load(message: str) -> None:
+                            msg = str(message or "").strip()
+                            if not msg:
+                                return
+                            status_box.info(msg)
+
+                        with st.spinner("Listando alumnos del colegio..."):
+                            manual_catalog = _fetch_alumnos_catalog_for_manual_move(
+                                token=token,
+                                colegio_id=int(colegio_id_int),
+                                empresa_id=int(empresa_id),
+                                ciclo_id=int(ciclo_id),
+                                timeout=int(timeout),
+                                on_status=_on_status_load,
+                            )
+                        status_box.empty()
+                    except Exception as exc:  # pragma: no cover - UI
+                        st.error(f"Error listando alumnos: {exc}")
+                    else:
+                        students_loaded = manual_catalog.get("students") or []
+                        niveles_loaded = manual_catalog.get("niveles") or []
+                        errors_loaded = manual_catalog.get("errors") or []
+                        st.session_state["alumnos_manual_move_students"] = students_loaded
+                        st.session_state["alumnos_manual_move_niveles"] = niveles_loaded
+                        st.session_state["alumnos_manual_move_errors"] = errors_loaded
+                        st.session_state["alumnos_manual_move_colegio_id"] = int(colegio_id_int)
+                        st.success(
+                            "Listado listo. Alumnos: {students} | Errores de consulta: {errors}".format(
+                                students=len(students_loaded),
+                                errors=len(errors_loaded),
+                            )
+                        )
+
+        loaded_students = st.session_state.get("alumnos_manual_move_students") or []
+        loaded_niveles = st.session_state.get("alumnos_manual_move_niveles") or []
+        loaded_errors = st.session_state.get("alumnos_manual_move_errors") or []
+        loaded_colegio_id = _safe_int(st.session_state.get("alumnos_manual_move_colegio_id"))
+        current_colegio_id = _safe_int(colegio_id_raw)
+
+        if loaded_errors:
+            st.caption(f"Advertencia: hubo {len(loaded_errors)} errores al listar algunas secciones.")
+
+        if loaded_colegio_id is not None and current_colegio_id is not None and int(loaded_colegio_id) != int(current_colegio_id):
+            st.warning("El colegio global cambio. Vuelve a listar alumnos para continuar.")
+        elif not loaded_students:
+            st.caption("Primero presiona 'Listar alumnos del colegio'.")
+        else:
+            search_text = st.text_input(
+                "Buscar alumno (nombre o DNI)",
+                key="alumnos_manual_move_search",
+                placeholder="Ejemplo: CHAVARRI 73847294",
+            ).strip()
+            search_norm = _normalize_plain_text(search_text)
+            tokens = [token for token in search_norm.split() if token]
+            filtered_students: List[Dict[str, object]] = []
+            for row in loaded_students:
+                seccion_tmp = _normalize_seccion_key(row.get("seccion_norm") or row.get("seccion") or "")
+                haystack = _normalize_plain_text(
+                    " ".join(
+                        part
+                        for part in [
+                            row.get("nombre_completo"),
+                            row.get("id_oficial"),
+                            row.get("nivel"),
+                            row.get("grado"),
+                            seccion_tmp,
+                        ]
+                        if part
+                    )
+                )
+                if not tokens or all(token in haystack for token in tokens):
+                    filtered_students.append(row)
+
+            st.caption(f"Resultados: {len(filtered_students)} alumno(s).")
+            if not filtered_students:
+                st.info("No hay alumnos con ese filtro.")
+            else:
+                selected_student_idx = int(
+                    st.selectbox(
+                        "Alumno",
+                        options=list(range(len(filtered_students))),
+                        format_func=lambda idx: _manual_move_alumno_option_label(
+                            filtered_students[int(idx)]
+                        ),
+                        key="alumnos_manual_move_student_select",
+                    )
+                )
+                selected_student = filtered_students[selected_student_idx]
+                selected_alumno_id = _safe_int(selected_student.get("alumno_id"))
+                if selected_alumno_id is None:
+                    st.error("El alumno seleccionado no tiene alumnoId valido.")
+                else:
+                    seccion_origen = _normalize_seccion_key(
+                        selected_student.get("seccion_norm") or selected_student.get("seccion") or ""
+                    )
+                    st.caption(
+                        "Origen actual: {nivel} | {grado} ({seccion})".format(
+                            nivel=str(selected_student.get("nivel") or "").strip() or "-",
+                            grado=str(selected_student.get("grado") or "").strip() or "-",
+                            seccion=seccion_origen or "-",
+                        )
+                    )
+
+                    grade_catalog = _build_manual_move_grade_catalog(loaded_niveles)
+                    if not grade_catalog:
+                        st.warning("No hay grados/secciones disponibles para destino.")
+                    else:
+                        default_grade_idx = 0
+                        selected_nivel_id = _safe_int(selected_student.get("nivel_id"))
+                        selected_grado_id = _safe_int(selected_student.get("grado_id"))
+                        for idx, entry in enumerate(grade_catalog):
+                            if (
+                                _safe_int(entry.get("nivel_id")) == selected_nivel_id
+                                and _safe_int(entry.get("grado_id")) == selected_grado_id
+                            ):
+                                default_grade_idx = idx
+                                break
+
+                        target_grade_idx = int(
+                            st.selectbox(
+                                "Nuevo grado",
+                                options=list(range(len(grade_catalog))),
+                                index=default_grade_idx,
+                                format_func=lambda idx: "{nivel} | {grado}".format(
+                                    nivel=str(grade_catalog[int(idx)].get("nivel") or "").strip(),
+                                    grado=str(grade_catalog[int(idx)].get("grado") or "").strip(),
+                                ),
+                                key="alumnos_manual_move_target_grade",
+                            )
+                        )
+                        target_grade = grade_catalog[target_grade_idx]
+                        target_groups = (
+                            target_grade.get("grupos")
+                            if isinstance(target_grade.get("grupos"), list)
+                            else []
+                        )
+                        if not target_groups:
+                            st.warning("No hay secciones para el grado seleccionado.")
+                        else:
+                            default_group_idx = 0
+                            for idx, group in enumerate(target_groups):
+                                if _normalize_seccion_key(group.get("seccion") or "") == seccion_origen:
+                                    default_group_idx = idx
+                                    break
+                            target_group_idx = int(
+                                st.selectbox(
+                                    "Nueva seccion",
+                                    options=list(range(len(target_groups))),
+                                    index=default_group_idx,
+                                    format_func=lambda idx: "{sec} ({grp})".format(
+                                        sec=str(target_groups[int(idx)].get("seccion") or "").strip(),
+                                        grp=str(target_groups[int(idx)].get("grupo") or "").strip() or "Grupo",
+                                    ),
+                                    key="alumnos_manual_move_target_group",
+                                )
+                            )
+                            target_group = target_groups[target_group_idx]
+                            seccion_destino = _normalize_seccion_key(target_group.get("seccion") or "")
+                            if not seccion_destino:
+                                seccion_destino = str(target_group.get("seccion") or "").strip()
+
+                            st.caption(
+                                "Cambio propuesto: {origen} -> {destino}".format(
+                                    origen=(
+                                        f"{str(selected_student.get('nivel') or '').strip()} | "
+                                        f"{str(selected_student.get('grado') or '').strip()} "
+                                        f"({seccion_origen or '-'})"
+                                    ),
+                                    destino=(
+                                        f"{str(target_grade.get('nivel') or '').strip()} | "
+                                        f"{str(target_grade.get('grado') or '').strip()} "
+                                        f"({seccion_destino or '-'})"
+                                    ),
+                                )
+                            )
+
+                            confirm_single_move = st.checkbox(
+                                "Confirmo mover al alumno y reasignar clases",
+                                key="alumnos_manual_move_confirm",
+                            )
+                            run_single_move = st.button(
+                                "Aplicar cambio del alumno",
+                                key="alumnos_manual_move_apply_btn",
+                                type="primary",
+                                use_container_width=True,
+                                disabled=not confirm_single_move,
+                            )
+
+                            if run_single_move:
+                                token = _get_shared_token()
+                                if not token:
+                                    st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                                else:
+                                    try:
+                                        colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                                    except ValueError as exc:
+                                        st.error(f"Error: {exc}")
+                                    else:
+                                        if loaded_colegio_id is not None and int(loaded_colegio_id) != int(colegio_id_int):
+                                            st.error("El colegio global cambio. Vuelve a listar alumnos.")
+                                        else:
+                                            try:
+                                                status_exec = st.empty()
+
+                                                def _on_status_exec(message: str) -> None:
+                                                    msg = str(message or "").strip()
+                                                    if not msg:
+                                                        return
+                                                    status_exec.info(msg)
+
+                                                with st.spinner("Aplicando cambio del alumno..."):
+                                                    result = _apply_single_alumno_move_and_reassign(
+                                                        token=token,
+                                                        colegio_id=int(colegio_id_int),
+                                                        empresa_id=int(empresa_id),
+                                                        ciclo_id=int(ciclo_id),
+                                                        timeout=int(timeout),
+                                                        alumno_row=selected_student,
+                                                        nuevo_nivel_id=int(target_grade.get("nivel_id") or 0),
+                                                        nuevo_grado_id=int(target_grade.get("grado_id") or 0),
+                                                        nuevo_grupo_id=int(target_group.get("grupo_id") or 0),
+                                                        nueva_seccion=seccion_destino,
+                                                        on_status=_on_status_exec,
+                                                    )
+                                                status_exec.empty()
+                                            except Exception as exc:  # pragma: no cover - UI
+                                                st.error(f"Error aplicando cambio: {exc}")
+                                            else:
+                                                move_ok = _to_bool(result.get("move_ok"))
+                                                move_msg = str(result.get("move_msg") or "")
+                                                removed_ok = int(result.get("removed_ok") or 0)
+                                                removed_error = int(result.get("removed_error") or 0)
+                                                assigned_ok = int(result.get("assigned_ok") or 0)
+                                                assigned_error = int(result.get("assigned_error") or 0)
+                                                assigned_before_count = int(result.get("assigned_before_count") or 0)
+                                                target_classes_total = int(result.get("target_classes_total") or 0)
+                                                scan_errors_result = (
+                                                    result.get("scan_errors")
+                                                    if isinstance(result.get("scan_errors"), list)
+                                                    else []
+                                                )
+                                                removed_errors_result = (
+                                                    result.get("removed_errors")
+                                                    if isinstance(result.get("removed_errors"), list)
+                                                    else []
+                                                )
+                                                assigned_errors_result = (
+                                                    result.get("assigned_errors")
+                                                    if isinstance(result.get("assigned_errors"), list)
+                                                    else []
+                                                )
+
+                                                if not move_ok:
+                                                    st.error(f"No se pudo mover al alumno: {move_msg}")
+                                                else:
+                                                    total_errors_move = (
+                                                        int(removed_error)
+                                                        + int(assigned_error)
+                                                        + len(scan_errors_result)
+                                                    )
+                                                    if total_errors_move == 0:
+                                                        st.success("Cambio aplicado correctamente.")
+                                                    else:
+                                                        st.warning("Cambio aplicado con observaciones.")
+                                                    st.caption(
+                                                        "Resumen: "
+                                                        f"Mover={move_msg or 'OK'} | "
+                                                        f"Clases actuales detectadas={assigned_before_count} | "
+                                                        f"Eliminar clases OK={removed_ok}, ERROR={removed_error} | "
+                                                        f"Asignar nuevas (total={target_classes_total}) OK={assigned_ok}, ERROR={assigned_error}"
+                                                    )
+
+                                                    cached_students = (
+                                                        st.session_state.get("alumnos_manual_move_students") or []
+                                                    )
+                                                    for row in cached_students:
+                                                        if _safe_int(row.get("alumno_id")) != int(selected_alumno_id):
+                                                            continue
+                                                        row["nivel_id"] = _safe_int(target_grade.get("nivel_id"))
+                                                        row["grado_id"] = _safe_int(target_grade.get("grado_id"))
+                                                        row["grupo_id"] = _safe_int(target_group.get("grupo_id"))
+                                                        row["nivel"] = str(target_grade.get("nivel") or "").strip()
+                                                        row["grado"] = str(target_grade.get("grado") or "").strip()
+                                                        row["seccion"] = seccion_destino
+                                                        row["seccion_norm"] = seccion_destino
+                                                        break
+                                                    st.session_state["alumnos_manual_move_students"] = cached_students
+
+                                                if scan_errors_result:
+                                                    st.caption(
+                                                        "Errores al revisar clases actuales: "
+                                                        f"{len(scan_errors_result)}"
+                                                    )
+                                                if removed_errors_result:
+                                                    st.caption(
+                                                        "Errores al eliminar clases: "
+                                                        f"{len(removed_errors_result)}"
+                                                    )
+                                                if assigned_errors_result:
+                                                    st.caption(
+                                                        "Errores al asignar clases: "
+                                                        f"{len(assigned_errors_result)}"
+                                                    )
 
 with tab_crud_clases:
     if not _restricted_sections_unlocked():

@@ -308,12 +308,39 @@ st.components.v1.html(
         const queryKey = {JIRA_ADMIN_QUERY_PARAM!r};
         let syncTimer = null;
 
+        function readStoredLogin() {{
+          let loginValue = '';
+          try {{
+            loginValue = (window.localStorage.getItem('jira_focus_user_login') || '').trim().toLowerCase();
+            if (!loginValue) {{
+              const rawProfile = window.localStorage.getItem('jira_focus_user_profile') || '';
+              if (rawProfile) {{
+                const parsedProfile = JSON.parse(rawProfile);
+                if (parsedProfile && typeof parsedProfile === 'object') {{
+                  loginValue = String(
+                    parsedProfile.login || parsedProfile.emailAddress || ''
+                  ).trim().toLowerCase();
+                }}
+              }}
+            }}
+            if (!loginValue) {{
+              loginValue = (window.localStorage.getItem('emailAddress') || '').trim().toLowerCase();
+            }}
+            if (loginValue) {{
+              window.localStorage.setItem('jira_focus_user_login', loginValue);
+            }}
+          }} catch (_err) {{
+            loginValue = '';
+          }}
+          return loginValue;
+        }}
+
         function applyDesired(desired) {{
           let desiredUser = '';
           let desiredLogin = '';
           try {{
             desiredUser = window.localStorage.getItem('jira_focus_user_display_name') || '';
-            desiredLogin = (window.localStorage.getItem('jira_focus_user_login') || '').trim().toLowerCase();
+            desiredLogin = readStoredLogin();
           }} catch (_err) {{
             desiredUser = '';
             desiredLogin = '';

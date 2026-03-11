@@ -4753,6 +4753,7 @@ with tab_crud_alumnos:
                 "alumnos_manual_move_niveles",
                 "alumnos_manual_move_errors",
                 "alumnos_manual_move_colegio_id",
+                "alumnos_manual_move_rows",
             ):
                 st.session_state.pop(state_key, None)
             st.rerun()
@@ -4818,7 +4819,7 @@ with tab_crud_alumnos:
             st.caption("Primero presiona 'Listar alumnos del colegio'.")
         else:
             search_text = st.text_input(
-                "Buscar alumno (nombre o DNI)",
+                "Filtro alumnos (nombre o DNI)",
                 key="alumnos_manual_move_search",
                 placeholder="Ejemplo: CHAVARRI 73847294",
             ).strip()
@@ -4843,236 +4844,216 @@ with tab_crud_alumnos:
                 if not tokens or all(token in haystack for token in tokens):
                     filtered_students.append(row)
 
-            st.caption(f"Resultados: {len(filtered_students)} alumno(s).")
+            st.caption(f"Resultados del filtro: {len(filtered_students)} alumno(s).")
             if not filtered_students:
                 st.info("No hay alumnos con ese filtro.")
             else:
-                selected_student_idx = int(
-                    st.selectbox(
-                        "Alumno",
-                        options=list(range(len(filtered_students))),
-                        format_func=lambda idx: _manual_move_alumno_option_label(
-                            filtered_students[int(idx)]
-                        ),
-                        key="alumnos_manual_move_student_select",
-                    )
-                )
-                selected_student = filtered_students[selected_student_idx]
-                selected_alumno_id = _safe_int(selected_student.get("alumno_id"))
-                if selected_alumno_id is None:
-                    st.error("El alumno seleccionado no tiene alumnoId valido.")
+                student_options: List[str] = []
+                student_by_option: Dict[str, Dict[str, object]] = {}
+                for row in filtered_students:
+                    alumno_id = _safe_int(row.get("alumno_id"))
+                    if alumno_id is None:
+                        continue
+                    option = f"{int(alumno_id)} | {_manual_move_alumno_option_label(row)}"
+                    student_options.append(option)
+                    student_by_option[option] = row
+
+                grade_catalog = _build_manual_move_grade_catalog(loaded_niveles)
+                destino_options: List[str] = []
+                destino_payload_by_option: Dict[str, Dict[str, object]] = {}
+                for grade in grade_catalog:
+                    grupos = grade.get("grupos") if isinstance(grade.get("grupos"), list) else []
+                    for group in grupos:
+                        seccion = _normalize_seccion_key(group.get("seccion") or "")
+                        if not seccion:
+                            seccion = str(group.get("seccion") or "").strip()
+                        option = "{nivel} | {grado} ({seccion})".format(
+                            nivel=str(grade.get("nivel") or "").strip(),
+                            grado=str(grade.get("grado") or "").strip(),
+                            seccion=seccion or "-",
+                        )
+                        if option in destino_payload_by_option:
+                            continue
+                        destino_options.append(option)
+                        destino_payload_by_option[option] = {
+                            "nivel_id": _safe_int(grade.get("nivel_id")),
+                            "grado_id": _safe_int(grade.get("grado_id")),
+                            "grupo_id": _safe_int(group.get("grupo_id")),
+                            "seccion": seccion,
+                            "nivel": str(grade.get("nivel") or "").strip(),
+                            "grado": str(grade.get("grado") or "").strip(),
+                        }
+
+                if not student_options:
+                    st.warning("No hay alumnos validos para mover.")
+                elif not destino_options:
+                    st.warning("No hay grados/secciones disponibles para destino.")
                 else:
-                    seccion_origen = _normalize_seccion_key(
-                        selected_student.get("seccion_norm") or selected_student.get("seccion") or ""
+                    default_row = {
+                        "Aplicar": True,
+                        "Alumno": student_options[0],
+                        "Nuevo grado y seccion": destino_options[0],
+                    }
+                    current_rows = st.session_state.get("alumnos_manual_move_rows")
+                    if not isinstance(current_rows, list) or not current_rows:
+                        current_rows = [dict(default_row)]
+
+                    col_add_row, col_reset_rows = st.columns([1, 1], gap="small")
+                    if col_add_row.button(
+                        "Agregar fila",
+                        key="alumnos_manual_move_add_row_btn",
+                        use_container_width=True,
+                    ):
+                        current_rows.append(dict(default_row))
+                    if col_reset_rows.button(
+                        "Limpiar filas",
+                        key="alumnos_manual_move_reset_rows_btn",
+                        use_container_width=True,
+                    ):
+                        current_rows = [dict(default_row)]
+
+                    editor_df = pd.DataFrame(current_rows)
+                    edited_df = st.data_editor(
+                        editor_df,
+                        key="alumnos_manual_move_editor",
+                        hide_index=True,
+                        use_container_width=True,
+                        column_config={
+                            "Aplicar": st.column_config.CheckboxColumn("Aplicar"),
+                            "Alumno": st.column_config.SelectboxColumn(
+                                "Alumno",
+                                options=student_options,
+                                required=True,
+                                width="large",
+                            ),
+                            "Nuevo grado y seccion": st.column_config.SelectboxColumn(
+                                "Nuevo grado y seccion",
+                                options=destino_options,
+                                required=True,
+                                width="large",
+                            ),
+                        },
                     )
-                    st.caption(
-                        "Origen actual: {nivel} | {grado} ({seccion})".format(
-                            nivel=str(selected_student.get("nivel") or "").strip() or "-",
-                            grado=str(selected_student.get("grado") or "").strip() or "-",
-                            seccion=seccion_origen or "-",
-                        )
+                    if isinstance(edited_df, pd.DataFrame):
+                        st.session_state["alumnos_manual_move_rows"] = edited_df.to_dict("records")
+
+                    confirm_batch_move = st.checkbox(
+                        "Confirmo mover los alumnos seleccionados y reasignar clases",
+                        key="alumnos_manual_move_batch_confirm",
+                    )
+                    run_batch_move = st.button(
+                        "Aplicar cambios por filas",
+                        key="alumnos_manual_move_batch_apply_btn",
+                        type="primary",
+                        use_container_width=True,
+                        disabled=not confirm_batch_move,
                     )
 
-                    grade_catalog = _build_manual_move_grade_catalog(loaded_niveles)
-                    if not grade_catalog:
-                        st.warning("No hay grados/secciones disponibles para destino.")
-                    else:
-                        default_grade_idx = 0
-                        selected_nivel_id = _safe_int(selected_student.get("nivel_id"))
-                        selected_grado_id = _safe_int(selected_student.get("grado_id"))
-                        for idx, entry in enumerate(grade_catalog):
-                            if (
-                                _safe_int(entry.get("nivel_id")) == selected_nivel_id
-                                and _safe_int(entry.get("grado_id")) == selected_grado_id
-                            ):
-                                default_grade_idx = idx
-                                break
-
-                        target_grade_idx = int(
-                            st.selectbox(
-                                "Nuevo grado",
-                                options=list(range(len(grade_catalog))),
-                                index=default_grade_idx,
-                                format_func=lambda idx: "{nivel} | {grado}".format(
-                                    nivel=str(grade_catalog[int(idx)].get("nivel") or "").strip(),
-                                    grado=str(grade_catalog[int(idx)].get("grado") or "").strip(),
-                                ),
-                                key="alumnos_manual_move_target_grade",
-                            )
-                        )
-                        target_grade = grade_catalog[target_grade_idx]
-                        target_groups = (
-                            target_grade.get("grupos")
-                            if isinstance(target_grade.get("grupos"), list)
-                            else []
-                        )
-                        if not target_groups:
-                            st.warning("No hay secciones para el grado seleccionado.")
+                    if run_batch_move:
+                        token = _get_shared_token()
+                        if not token:
+                            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
                         else:
-                            default_group_idx = 0
-                            for idx, group in enumerate(target_groups):
-                                if _normalize_seccion_key(group.get("seccion") or "") == seccion_origen:
-                                    default_group_idx = idx
-                                    break
-                            target_group_idx = int(
-                                st.selectbox(
-                                    "Nueva seccion",
-                                    options=list(range(len(target_groups))),
-                                    index=default_group_idx,
-                                    format_func=lambda idx: "{sec} ({grp})".format(
-                                        sec=str(target_groups[int(idx)].get("seccion") or "").strip(),
-                                        grp=str(target_groups[int(idx)].get("grupo") or "").strip() or "Grupo",
-                                    ),
-                                    key="alumnos_manual_move_target_group",
-                                )
-                            )
-                            target_group = target_groups[target_group_idx]
-                            seccion_destino = _normalize_seccion_key(target_group.get("seccion") or "")
-                            if not seccion_destino:
-                                seccion_destino = str(target_group.get("seccion") or "").strip()
-
-                            st.caption(
-                                "Cambio propuesto: {origen} -> {destino}".format(
-                                    origen=(
-                                        f"{str(selected_student.get('nivel') or '').strip()} | "
-                                        f"{str(selected_student.get('grado') or '').strip()} "
-                                        f"({seccion_origen or '-'})"
-                                    ),
-                                    destino=(
-                                        f"{str(target_grade.get('nivel') or '').strip()} | "
-                                        f"{str(target_grade.get('grado') or '').strip()} "
-                                        f"({seccion_destino or '-'})"
-                                    ),
-                                )
-                            )
-
-                            confirm_single_move = st.checkbox(
-                                "Confirmo mover al alumno y reasignar clases",
-                                key="alumnos_manual_move_confirm",
-                            )
-                            run_single_move = st.button(
-                                "Aplicar cambio del alumno",
-                                key="alumnos_manual_move_apply_btn",
-                                type="primary",
-                                use_container_width=True,
-                                disabled=not confirm_single_move,
-                            )
-
-                            if run_single_move:
-                                token = _get_shared_token()
-                                if not token:
-                                    st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                            try:
+                                colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                            except ValueError as exc:
+                                st.error(f"Error: {exc}")
+                            else:
+                                if loaded_colegio_id is not None and int(loaded_colegio_id) != int(colegio_id_int):
+                                    st.error("El colegio global cambio. Vuelve a listar alumnos.")
                                 else:
-                                    try:
-                                        colegio_id_int = _parse_colegio_id(colegio_id_raw)
-                                    except ValueError as exc:
-                                        st.error(f"Error: {exc}")
+                                    rows_to_apply = st.session_state.get("alumnos_manual_move_rows") or []
+                                    selected_rows = [
+                                        row for row in rows_to_apply if _to_bool(row.get("Aplicar"))
+                                    ]
+                                    if not selected_rows:
+                                        st.warning("Marca al menos una fila para aplicar cambios.")
                                     else:
-                                        if loaded_colegio_id is not None and int(loaded_colegio_id) != int(colegio_id_int):
-                                            st.error("El colegio global cambio. Vuelve a listar alumnos.")
-                                        else:
-                                            try:
-                                                status_exec = st.empty()
+                                        move_ok_total = 0
+                                        move_error_total = 0
+                                        detail_lines: List[str] = []
+                                        cached_students = st.session_state.get("alumnos_manual_move_students") or []
 
-                                                def _on_status_exec(message: str) -> None:
-                                                    msg = str(message or "").strip()
-                                                    if not msg:
-                                                        return
-                                                    status_exec.info(msg)
-
-                                                with st.spinner("Aplicando cambio del alumno..."):
+                                        with st.spinner("Aplicando cambios por filas..."):
+                                            for idx, row in enumerate(selected_rows, start=1):
+                                                alumno_option = str(row.get("Alumno") or "").strip()
+                                                destino_option = str(row.get("Nuevo grado y seccion") or "").strip()
+                                                alumno_row = student_by_option.get(alumno_option)
+                                                destino_payload = destino_payload_by_option.get(destino_option)
+                                                if not isinstance(alumno_row, dict) or not isinstance(destino_payload, dict):
+                                                    move_error_total += 1
+                                                    detail_lines.append(
+                                                        f"Fila {idx}: seleccion invalida de alumno o destino."
+                                                    )
+                                                    continue
+                                                try:
                                                     result = _apply_single_alumno_move_and_reassign(
                                                         token=token,
                                                         colegio_id=int(colegio_id_int),
                                                         empresa_id=int(empresa_id),
                                                         ciclo_id=int(ciclo_id),
                                                         timeout=int(timeout),
-                                                        alumno_row=selected_student,
-                                                        nuevo_nivel_id=int(target_grade.get("nivel_id") or 0),
-                                                        nuevo_grado_id=int(target_grade.get("grado_id") or 0),
-                                                        nuevo_grupo_id=int(target_group.get("grupo_id") or 0),
-                                                        nueva_seccion=seccion_destino,
-                                                        on_status=_on_status_exec,
+                                                        alumno_row=alumno_row,
+                                                        nuevo_nivel_id=int(destino_payload.get("nivel_id") or 0),
+                                                        nuevo_grado_id=int(destino_payload.get("grado_id") or 0),
+                                                        nuevo_grupo_id=int(destino_payload.get("grupo_id") or 0),
+                                                        nueva_seccion=str(destino_payload.get("seccion") or ""),
                                                     )
-                                                status_exec.empty()
-                                            except Exception as exc:  # pragma: no cover - UI
-                                                st.error(f"Error aplicando cambio: {exc}")
-                                            else:
+                                                except Exception as exc:  # pragma: no cover - UI
+                                                    move_error_total += 1
+                                                    detail_lines.append(f"Fila {idx}: Error aplicando cambio: {exc}")
+                                                    continue
+
                                                 move_ok = _to_bool(result.get("move_ok"))
                                                 move_msg = str(result.get("move_msg") or "")
-                                                removed_ok = int(result.get("removed_ok") or 0)
-                                                removed_error = int(result.get("removed_error") or 0)
-                                                assigned_ok = int(result.get("assigned_ok") or 0)
-                                                assigned_error = int(result.get("assigned_error") or 0)
-                                                assigned_before_count = int(result.get("assigned_before_count") or 0)
-                                                target_classes_total = int(result.get("target_classes_total") or 0)
-                                                scan_errors_result = (
-                                                    result.get("scan_errors")
-                                                    if isinstance(result.get("scan_errors"), list)
-                                                    else []
-                                                )
-                                                removed_errors_result = (
-                                                    result.get("removed_errors")
-                                                    if isinstance(result.get("removed_errors"), list)
-                                                    else []
-                                                )
-                                                assigned_errors_result = (
-                                                    result.get("assigned_errors")
-                                                    if isinstance(result.get("assigned_errors"), list)
-                                                    else []
-                                                )
-
                                                 if not move_ok:
-                                                    st.error(f"No se pudo mover al alumno: {move_msg}")
-                                                else:
-                                                    total_errors_move = (
-                                                        int(removed_error)
-                                                        + int(assigned_error)
-                                                        + len(scan_errors_result)
+                                                    move_error_total += 1
+                                                    detail_lines.append(
+                                                        f"Fila {idx}: No se pudo mover ({move_msg or 'sin detalle'})."
                                                     )
-                                                    if total_errors_move == 0:
-                                                        st.success("Cambio aplicado correctamente.")
-                                                    else:
-                                                        st.warning("Cambio aplicado con observaciones.")
-                                                    st.caption(
-                                                        "Resumen: "
-                                                        f"Mover={move_msg or 'OK'} | "
-                                                        f"Clases actuales detectadas={assigned_before_count} | "
-                                                        f"Eliminar clases OK={removed_ok}, ERROR={removed_error} | "
-                                                        f"Asignar nuevas (total={target_classes_total}) OK={assigned_ok}, ERROR={assigned_error}"
-                                                    )
+                                                    continue
 
-                                                    cached_students = (
-                                                        st.session_state.get("alumnos_manual_move_students") or []
+                                                move_ok_total += 1
+                                                detail_lines.append(
+                                                    "Fila {idx}: OK | Mover={move} | Eliminar OK={rok}, ERROR={rerr} | "
+                                                    "Asignar OK={aok}, ERROR={aerr}".format(
+                                                        idx=idx,
+                                                        move=move_msg or "OK",
+                                                        rok=int(result.get("removed_ok") or 0),
+                                                        rerr=int(result.get("removed_error") or 0),
+                                                        aok=int(result.get("assigned_ok") or 0),
+                                                        aerr=int(result.get("assigned_error") or 0),
                                                     )
-                                                    for row in cached_students:
-                                                        if _safe_int(row.get("alumno_id")) != int(selected_alumno_id):
-                                                            continue
-                                                        row["nivel_id"] = _safe_int(target_grade.get("nivel_id"))
-                                                        row["grado_id"] = _safe_int(target_grade.get("grado_id"))
-                                                        row["grupo_id"] = _safe_int(target_group.get("grupo_id"))
-                                                        row["nivel"] = str(target_grade.get("nivel") or "").strip()
-                                                        row["grado"] = str(target_grade.get("grado") or "").strip()
-                                                        row["seccion"] = seccion_destino
-                                                        row["seccion_norm"] = seccion_destino
-                                                        break
-                                                    st.session_state["alumnos_manual_move_students"] = cached_students
+                                                )
 
-                                                if scan_errors_result:
-                                                    st.caption(
-                                                        "Errores al revisar clases actuales: "
-                                                        f"{len(scan_errors_result)}"
-                                                    )
-                                                if removed_errors_result:
-                                                    st.caption(
-                                                        "Errores al eliminar clases: "
-                                                        f"{len(removed_errors_result)}"
-                                                    )
-                                                if assigned_errors_result:
-                                                    st.caption(
-                                                        "Errores al asignar clases: "
-                                                        f"{len(assigned_errors_result)}"
-                                                    )
+                                                alumno_id = _safe_int(alumno_row.get("alumno_id"))
+                                                if alumno_id is None:
+                                                    continue
+                                                for current in cached_students:
+                                                    if _safe_int(current.get("alumno_id")) != int(alumno_id):
+                                                        continue
+                                                    current["nivel_id"] = _safe_int(destino_payload.get("nivel_id"))
+                                                    current["grado_id"] = _safe_int(destino_payload.get("grado_id"))
+                                                    current["grupo_id"] = _safe_int(destino_payload.get("grupo_id"))
+                                                    current["nivel"] = str(destino_payload.get("nivel") or "").strip()
+                                                    current["grado"] = str(destino_payload.get("grado") or "").strip()
+                                                    current["seccion"] = str(destino_payload.get("seccion") or "").strip()
+                                                    current["seccion_norm"] = str(destino_payload.get("seccion") or "").strip()
+                                                    break
+
+                                        st.session_state["alumnos_manual_move_students"] = cached_students
+                                        if move_error_total == 0:
+                                            st.success(
+                                                f"Cambios aplicados correctamente en {move_ok_total} fila(s)."
+                                            )
+                                        else:
+                                            st.warning(
+                                                "Proceso completado con observaciones. "
+                                                f"OK={move_ok_total}, ERROR={move_error_total}."
+                                            )
+                                        if detail_lines:
+                                            st.markdown("**Detalle por fila**")
+                                            st.markdown("\n".join(f"- {line}" for line in detail_lines[:120]))
 
 with tab_crud_clases:
     if not _restricted_sections_unlocked():

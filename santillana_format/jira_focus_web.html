@@ -4268,7 +4268,7 @@
               const lastCommentTs = tsOf(dayComments[dayComments.length - 1] && dayComments[dayComments.length - 1].created ? dayComments[dayComments.length - 1].created : 0);
               rows.push({
                 issueKey: issue.key,
-                colegio: normalizeSchool(issue.summary || ''),
+                colegio: String(issue.summary || '').trim(),
                 agent: agentName,
                 startCreated: Number.isFinite(minStartTs) ? new Date(minStartTs) : (Number.isFinite(firstCommentTs) ? new Date(firstCommentTs) : ''),
                 endCreated: Number.isFinite(maxEndTs) ? new Date(maxEndTs) : (Number.isFinite(lastCommentTs) ? new Date(lastCommentTs) : '')

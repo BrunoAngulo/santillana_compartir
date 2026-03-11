@@ -27,12 +27,10 @@ NIVEL_MAP = {
 
 GRADOS_POR_NIVEL = {
     38: {
+        112: "2 anos",
         113: "3 anos",
         114: "4 anos",
         115: "5 anos",
-        116: "6 anos",
-        117: "7 anos",
-        118: "8 anos",
     },
     39: {
         119: "1ro primaria",
@@ -40,6 +38,7 @@ GRADOS_POR_NIVEL = {
         121: "3ro primaria",
         122: "4to primaria",
         123: "5to primaria",
+        124: "6to primaria",
     },
     40: {
         126: "1ro secundaria",

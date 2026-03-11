@@ -5,7 +5,7 @@ import unicodedata
 from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 from urllib.parse import unquote, urljoin
 from uuid import uuid4
 
@@ -33,6 +33,7 @@ from santillana_format.profesores import (
 )
 from santillana_format.profesores_clases import asignar_profesores_clases
 from santillana_format.profesores_password import actualizar_passwords_docentes
+from santillana_format.clases_api import listar_y_mapear_clases
 
 
 GESTION_ESCOLAR_URL = (
@@ -56,11 +57,24 @@ CENSO_NIVELES_GRADOS_GRUPOS_URL = (
     "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
     "/ciclos/{ciclo_id}/colegios/{colegio_id}/alumnos/nivelesGradosGrupos"
 )
+CENSO_ALUMNO_ACTIVAR_INACTIVAR_URL = (
+    "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
+    "/ciclos/{ciclo_id}/colegios/{colegio_id}/niveles/{nivel_id}"
+    "/grados/{grado_id}/grupos/{grupo_id}/alumnos/{alumno_id}/activarInactivar"
+)
+CENSO_ALUMNO_MOVER_URL = (
+    "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
+    "/ciclos/{ciclo_id}/colegios/{colegio_id}/niveles/{nivel_id}"
+    "/grados/{grado_id}/grupos/{grupo_id}/alumnos/{alumno_id}/mover"
+)
 CENSO_PLANTILLA_EDICION_URL = (
     "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
     "/ciclos/{ciclo_id}/colegios/{colegio_id}/descargarPlantillaEdicionMasiva"
 )
 GESTION_ESCOLAR_CICLO_ID_DEFAULT = 207
+AUTO_MOVE_NIVEL_ID = 40
+AUTO_MOVE_GRADO_ID = 130
+AUTO_MOVE_SECCION_ORIGEN = "Y"
 RICHMONDSTUDIO_USERS_URL = "https://richmondstudio.global/api/users"
 RICHMONDSTUDIO_GROUPS_URL = "https://richmondstudio.global/api/groups"
 RESTRICTED_SECTIONS_PASSWORD = "Palabr@leatoria123!"
@@ -2084,6 +2098,757 @@ def _build_alumno_export_key(
     return ""
 
 
+def _normalize_compare_text(value: object) -> str:
+    text = _normalize_plain_text(value)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _normalize_compare_id(value: object) -> str:
+    return re.sub(r"\W+", "", _normalize_compare_text(value))
+
+
+def _normalize_seccion_key(value: object) -> str:
+    text = _normalize_compare_text(value)
+    if text.startswith("GRUPO "):
+        text = text[6:].strip()
+    if len(text) > 1:
+        text = text[-1]
+    return text
+
+
+def _build_contexts_for_nivel_grado(
+    niveles: List[Dict[str, object]],
+    nivel_id: int,
+    grado_id: int,
+) -> List[Dict[str, object]]:
+    contexts: List[Dict[str, object]] = []
+    seen: Set[Tuple[int, int, int]] = set()
+    for nivel_entry in niveles:
+        if not isinstance(nivel_entry, dict):
+            continue
+        nivel = nivel_entry.get("nivel") if isinstance(nivel_entry.get("nivel"), dict) else {}
+        nivel_id_tmp = _safe_int(nivel.get("nivelId"))
+        if nivel_id_tmp != int(nivel_id):
+            continue
+        nivel_nombre = str(nivel.get("nivel") or "").strip()
+        grados = nivel_entry.get("grados") or []
+        if not isinstance(grados, list):
+            continue
+        for grado_entry in grados:
+            if not isinstance(grado_entry, dict):
+                continue
+            grado = grado_entry.get("grado") if isinstance(grado_entry.get("grado"), dict) else {}
+            grado_id_tmp = _safe_int(grado.get("gradoId"))
+            if grado_id_tmp != int(grado_id):
+                continue
+            grado_nombre = str(grado.get("grado") or "").strip()
+            grupos = grado_entry.get("grupos") or []
+            if not isinstance(grupos, list):
+                continue
+            for grupo_entry in grupos:
+                if not isinstance(grupo_entry, dict):
+                    continue
+                grupo = grupo_entry.get("grupo") if isinstance(grupo_entry.get("grupo"), dict) else {}
+                grupo_id = _safe_int(grupo.get("grupoId"))
+                if grupo_id is None:
+                    continue
+                key = (int(nivel_id), int(grado_id), int(grupo_id))
+                if key in seen:
+                    continue
+                seen.add(key)
+                seccion = str(grupo.get("grupoClave") or grupo.get("grupo") or "").strip()
+                seccion_norm = _normalize_seccion_key(seccion)
+                contexts.append(
+                    {
+                        "nivel_id": int(nivel_id),
+                        "nivel": nivel_nombre,
+                        "grado_id": int(grado_id),
+                        "grado": grado_nombre,
+                        "grupo_id": int(grupo_id),
+                        "seccion": seccion,
+                        "seccion_norm": seccion_norm,
+                    }
+                )
+    contexts.sort(
+        key=lambda row: (
+            _grupo_sort_key(
+                str(row.get("seccion_norm") or ""),
+                str(row.get("seccion") or ""),
+            ),
+            int(row.get("grupo_id") or 0),
+        )
+    )
+    return contexts
+
+
+def _flatten_censo_alumno_for_auto_plan(
+    item: Dict[str, object],
+    fallback: Dict[str, object],
+) -> Dict[str, object]:
+    persona = item.get("persona") if isinstance(item.get("persona"), dict) else {}
+    nivel = item.get("nivel") if isinstance(item.get("nivel"), dict) else {}
+    grado = item.get("grado") if isinstance(item.get("grado"), dict) else {}
+    grupo = item.get("grupo") if isinstance(item.get("grupo"), dict) else {}
+    seccion = str(grupo.get("grupoClave") or fallback.get("seccion") or "").strip()
+    seccion_norm = _normalize_seccion_key(seccion)
+    return {
+        "alumno_id": _safe_int(item.get("alumnoId")),
+        "persona_id": _safe_int(persona.get("personaId")),
+        "nombre": str(persona.get("nombre") or "").strip(),
+        "apellido_paterno": str(persona.get("apellidoPaterno") or "").strip(),
+        "apellido_materno": str(persona.get("apellidoMaterno") or "").strip(),
+        "nombre_completo": str(persona.get("nombreCompleto") or "").strip(),
+        "id_oficial": str(persona.get("idOficial") or "").strip(),
+        "nivel_id": _safe_int(nivel.get("nivelId")) or _safe_int(fallback.get("nivel_id")),
+        "grado_id": _safe_int(grado.get("gradoId")) or _safe_int(fallback.get("grado_id")),
+        "grupo_id": _safe_int(grupo.get("grupoId")) or _safe_int(fallback.get("grupo_id")),
+        "nivel": str(nivel.get("nivel") or fallback.get("nivel") or "").strip(),
+        "grado": str(grado.get("grado") or fallback.get("grado") or "").strip(),
+        "seccion": seccion,
+        "seccion_norm": seccion_norm,
+        "activo": _to_bool(item.get("activo")),
+        "con_pago": _to_bool(item.get("conPago")),
+        "fecha_desde": str(item.get("fechaDesde") or "").strip(),
+    }
+
+
+def _build_grupo_id_by_seccion_from_contexts(
+    contexts: List[Dict[str, object]]
+) -> Dict[str, int]:
+    mapping: Dict[str, int] = {}
+    for ctx in contexts:
+        grupo_id = _safe_int(ctx.get("grupo_id"))
+        seccion = _normalize_seccion_key(ctx.get("seccion_norm") or ctx.get("seccion") or "")
+        if grupo_id is None or not seccion:
+            continue
+        mapping[seccion] = int(grupo_id)
+    return mapping
+
+
+def _pick_default_destino(
+    grupo_id_by_seccion: Dict[str, int],
+    origen_seccion: str,
+) -> Tuple[str, Optional[int]]:
+    origen = _normalize_seccion_key(origen_seccion)
+    if "A" in grupo_id_by_seccion and "A" != origen:
+        return "A", int(grupo_id_by_seccion["A"])
+    secciones_ordenadas = sorted(grupo_id_by_seccion.keys())
+    for seccion in secciones_ordenadas:
+        if seccion and seccion != origen:
+            return seccion, int(grupo_id_by_seccion[seccion])
+    if origen and origen in grupo_id_by_seccion:
+        return origen, int(grupo_id_by_seccion[origen])
+    if secciones_ordenadas:
+        seccion = secciones_ordenadas[0]
+        return seccion, int(grupo_id_by_seccion[seccion])
+    return "", None
+
+
+def _build_clases_destino_for_plan(
+    clases_rows: List[Dict[str, object]],
+    nivel_id: int,
+    grado_id: int,
+    grupo_destino_id: int,
+    seccion_destino: str,
+) -> List[Dict[str, object]]:
+    seccion_norm = _normalize_seccion_key(seccion_destino)
+    clases: List[Dict[str, object]] = []
+    seen: Set[int] = set()
+    for clase in clases_rows:
+        clase_id = _safe_int(clase.get("clase_id"))
+        clase_nivel_id = _safe_int(clase.get("nivel_id"))
+        clase_grado_id = _safe_int(clase.get("grado_id"))
+        if clase_id is None or clase_nivel_id != int(nivel_id) or clase_grado_id != int(grado_id):
+            continue
+        clase_grupo_id = _safe_int(clase.get("grupo_id"))
+        clase_seccion = _normalize_seccion_key(clase.get("seccion"))
+        if clase_grupo_id is not None:
+            if int(clase_grupo_id) != int(grupo_destino_id):
+                continue
+        elif seccion_norm and clase_seccion != seccion_norm:
+            continue
+        if int(clase_id) in seen:
+            continue
+        seen.add(int(clase_id))
+        clases.append(
+            {
+                "clase_id": int(clase_id),
+                "clase": str(clase.get("clase") or "").strip(),
+            }
+        )
+    clases.sort(key=lambda item: (str(item.get("clase") or "").upper(), int(item.get("clase_id") or 0)))
+    return clases
+
+
+def _format_alumno_label(row: Dict[str, object]) -> str:
+    alumno_id = _safe_int(row.get("alumno_id"))
+    persona_id = _safe_int(row.get("persona_id"))
+    nombre = str(row.get("nombre_completo") or "").strip()
+    if not nombre:
+        nombre = "SIN NOMBRE"
+    dni = str(row.get("id_oficial") or "").strip()
+    seccion = str(row.get("seccion_norm") or row.get("seccion") or "").strip()
+    return (
+        f"{nombre} | alumnoId={alumno_id or '-'} | personaId={persona_id or '-'} "
+        f"| DNI={dni or '-'} | Seccion={seccion or '-'}"
+    )
+
+
+def _build_auto_move_simulation(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+) -> Dict[str, object]:
+    niveles = _fetch_niveles_grados_grupos_censo(
+        token=token,
+        colegio_id=int(colegio_id),
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        timeout=int(timeout),
+    )
+    contexts = _build_contexts_for_nivel_grado(
+        niveles=niveles,
+        nivel_id=AUTO_MOVE_NIVEL_ID,
+        grado_id=AUTO_MOVE_GRADO_ID,
+    )
+    if not contexts:
+        raise RuntimeError(
+            "No hay secciones configuradas para 5to de secundaria "
+            "(nivelId=40, gradoId=130)."
+        )
+
+    try:
+        clases_rows, _ = listar_y_mapear_clases(
+            token=token,
+            colegio_id=int(colegio_id),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+            ordered=True,
+            on_log=None,
+        )
+    except Exception:
+        clases_rows = []
+
+    errores_fetch: List[str] = []
+    alumnos_all_raw: List[Dict[str, object]] = []
+    for ctx in contexts:
+        try:
+            alumnos_ctx = _fetch_alumnos_censo(
+                token=token,
+                colegio_id=int(colegio_id),
+                nivel_id=int(ctx["nivel_id"]),
+                grado_id=int(ctx["grado_id"]),
+                grupo_id=int(ctx["grupo_id"]),
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                timeout=int(timeout),
+            )
+        except Exception as exc:
+            errores_fetch.append(
+                "nivelId={nivel} gradoId={grado} grupoId={grupo}: {err}".format(
+                    nivel=ctx.get("nivel_id"),
+                    grado=ctx.get("grado_id"),
+                    grupo=ctx.get("grupo_id"),
+                    err=exc,
+                )
+            )
+            continue
+        for item in alumnos_ctx:
+            if not isinstance(item, dict):
+                continue
+            alumnos_all_raw.append(_flatten_censo_alumno_for_auto_plan(item=item, fallback=ctx))
+
+    alumnos_by_id: Dict[str, Dict[str, object]] = {}
+    for row in alumnos_all_raw:
+        alumno_id = _safe_int(row.get("alumno_id"))
+        persona_id = _safe_int(row.get("persona_id"))
+        grupo_id = _safe_int(row.get("grupo_id"))
+        if alumno_id is not None:
+            key = f"alumno:{int(alumno_id)}"
+        elif persona_id is not None and grupo_id is not None:
+            key = f"persona_grupo:{int(persona_id)}:{int(grupo_id)}"
+        elif persona_id is not None:
+            key = f"persona:{int(persona_id)}"
+        else:
+            continue
+        if key in alumnos_by_id:
+            continue
+        alumnos_by_id[key] = row
+
+    alumnos_all = sorted(
+        alumnos_by_id.values(),
+        key=lambda row: (
+            _grupo_sort_key(
+                str(row.get("seccion_norm") or ""),
+                str(row.get("seccion") or ""),
+            ),
+            str(row.get("apellido_paterno") or "").upper(),
+            str(row.get("apellido_materno") or "").upper(),
+            str(row.get("nombre") or "").upper(),
+        ),
+    )
+    grupo_id_by_seccion = _build_grupo_id_by_seccion_from_contexts(contexts)
+    default_seccion, default_grupo_id = _pick_default_destino(
+        grupo_id_by_seccion=grupo_id_by_seccion,
+        origen_seccion=AUTO_MOVE_SECCION_ORIGEN,
+    )
+
+    no_pagados = [row for row in alumnos_all if not _to_bool(row.get("con_pago"))]
+    no_pagados_index: Dict[Tuple[str, str], List[Dict[str, object]]] = {}
+    for row in no_pagados:
+        key = (
+            _normalize_compare_text(row.get("apellido_paterno")),
+            _normalize_compare_text(row.get("apellido_materno")),
+        )
+        if not key[0] or not key[1]:
+            continue
+        no_pagados_index.setdefault(key, []).append(row)
+
+    pagados_y = [
+        row
+        for row in alumnos_all
+        if _to_bool(row.get("con_pago"))
+        and _normalize_seccion_key(row.get("seccion_norm") or row.get("seccion")) == AUTO_MOVE_SECCION_ORIGEN
+    ]
+    pagados_y.sort(key=lambda row: str(row.get("nombre_completo") or "").upper())
+
+    plan_rows: List[Dict[str, object]] = []
+    for idx, pagado in enumerate(pagados_y, start=1):
+        apellido_key = (
+            _normalize_compare_text(pagado.get("apellido_paterno")),
+            _normalize_compare_text(pagado.get("apellido_materno")),
+        )
+        dni_pagado = _normalize_compare_id(pagado.get("id_oficial"))
+        match_no_pagado: Dict[str, object] = {}
+        if apellido_key[0] and apellido_key[1]:
+            for candidato in no_pagados_index.get(apellido_key, []):
+                if _safe_int(candidato.get("alumno_id")) == _safe_int(pagado.get("alumno_id")):
+                    continue
+                dni_candidato = _normalize_compare_id(candidato.get("id_oficial"))
+                if dni_pagado and dni_candidato and dni_pagado == dni_candidato:
+                    match_no_pagado = candidato
+                    break
+
+        seccion_destino = ""
+        grupo_destino_id = None
+        motivo = ""
+        if match_no_pagado:
+            seccion_destino = _normalize_seccion_key(
+                match_no_pagado.get("seccion_norm") or match_no_pagado.get("seccion")
+            )
+            if seccion_destino:
+                grupo_destino_id = _safe_int(grupo_id_by_seccion.get(seccion_destino))
+            if grupo_destino_id is None:
+                seccion_destino = default_seccion
+                grupo_destino_id = _safe_int(default_grupo_id)
+            motivo = "Coincide por apellido paterno+materno y DNI con alumno no pagado."
+        else:
+            seccion_destino = default_seccion
+            grupo_destino_id = _safe_int(default_grupo_id)
+            motivo = "Sin parecido no pagado (apellidos + DNI): solo movimiento de seccion."
+
+        if grupo_destino_id is None:
+            grupo_destino_id = _safe_int(pagado.get("grupo_id"))
+            if not seccion_destino:
+                seccion_destino = _normalize_seccion_key(pagado.get("seccion_norm") or pagado.get("seccion"))
+
+        nivel_id = _safe_int(pagado.get("nivel_id")) or AUTO_MOVE_NIVEL_ID
+        grado_id = _safe_int(pagado.get("grado_id")) or AUTO_MOVE_GRADO_ID
+        clases_destino = []
+        if grupo_destino_id is not None:
+            clases_destino = _build_clases_destino_for_plan(
+                clases_rows=clases_rows,
+                nivel_id=int(nivel_id),
+                grado_id=int(grado_id),
+                grupo_destino_id=int(grupo_destino_id),
+                seccion_destino=seccion_destino,
+            )
+
+        comparacion = ""
+        if match_no_pagado:
+            comparacion = (
+                f"Este alumno se parece a: {_format_alumno_label(match_no_pagado)} "
+                "(apellidos + DNI)."
+            )
+        else:
+            comparacion = "No se encontro alumno no pagado parecido (apellidos + DNI)."
+
+        grupo_origen_id = _safe_int(pagado.get("grupo_id"))
+        plan_rows.append(
+            {
+                "plan_id": int(idx),
+                "alumno_pagado": pagado,
+                "alumno_parecido": match_no_pagado,
+                "alumno_inactivar": match_no_pagado,
+                "nivel_id": int(nivel_id),
+                "grado_id": int(grado_id),
+                "grupo_origen_id": int(grupo_origen_id) if grupo_origen_id is not None else None,
+                "grupo_destino_id": int(grupo_destino_id) if grupo_destino_id is not None else None,
+                "seccion_origen": _normalize_seccion_key(pagado.get("seccion_norm") or pagado.get("seccion")),
+                "seccion_destino": seccion_destino,
+                "motivo": motivo,
+                "comparacion": comparacion,
+                "clases_destino": clases_destino,
+                "requiere_inactivar": bool(match_no_pagado),
+                "requiere_mover": (
+                    grupo_origen_id is not None
+                    and grupo_destino_id is not None
+                    and int(grupo_origen_id) != int(grupo_destino_id)
+                ),
+            }
+        )
+
+    alumnos_grid: List[Dict[str, object]] = []
+    for row in alumnos_all:
+        alumnos_grid.append(
+            {
+                "AlumnoId": row.get("alumno_id"),
+                "PersonaId": row.get("persona_id"),
+                "Apellido Paterno": row.get("apellido_paterno"),
+                "Apellido Materno": row.get("apellido_materno"),
+                "Nombre": row.get("nombre"),
+                "DNI": row.get("id_oficial"),
+                "Seccion": row.get("seccion_norm") or row.get("seccion"),
+                "GrupoId": row.get("grupo_id"),
+                "Activo": "SI" if _to_bool(row.get("activo")) else "NO",
+                "ConPago": "SI" if _to_bool(row.get("con_pago")) else "NO",
+                "Fecha Desde": row.get("fecha_desde"),
+            }
+        )
+
+    editor_rows: List[Dict[str, object]] = []
+    for plan in plan_rows:
+        pagado = plan.get("alumno_pagado") if isinstance(plan.get("alumno_pagado"), dict) else {}
+        parecido = plan.get("alumno_parecido") if isinstance(plan.get("alumno_parecido"), dict) else {}
+        inactivar = plan.get("alumno_inactivar") if isinstance(plan.get("alumno_inactivar"), dict) else {}
+        acciones: List[str] = []
+        if plan.get("requiere_inactivar"):
+            acciones.append("Inactivar no pagado")
+        if plan.get("requiere_mover"):
+            acciones.append("Mover de seccion")
+        if plan.get("clases_destino"):
+            acciones.append("Asignar clases destino")
+        if not acciones:
+            acciones.append("Sin cambios")
+        editor_rows.append(
+            {
+                "Aplicar": True,
+                "X": False,
+                "PlanId": int(plan.get("plan_id") or 0),
+                "Alumno pagado (Y)": _format_alumno_label(pagado),
+                "Se parece a (no pagado)": _format_alumno_label(parecido) if parecido else "-",
+                "Alumno a inactivar": _format_alumno_label(inactivar) if inactivar else "-",
+                "Mover a seccion": str(plan.get("seccion_destino") or "-"),
+                "Grupo destino": plan.get("grupo_destino_id") or "-",
+                "Clases destino": len(plan.get("clases_destino") or []),
+                "Acciones": " + ".join(acciones),
+                "Comparacion": str(plan.get("comparacion") or ""),
+            }
+        )
+
+    return {
+        "niveles": niveles,
+        "contexts": contexts,
+        "errors": errores_fetch,
+        "alumnos_all_grid": alumnos_grid,
+        "plan_rows": plan_rows,
+        "editor_rows": editor_rows,
+        "grupo_id_by_seccion": grupo_id_by_seccion,
+    }
+
+
+def _set_alumno_activo_web(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    nivel_id: int,
+    grado_id: int,
+    grupo_id: int,
+    alumno_id: int,
+    activo: int,
+    observaciones: str,
+    timeout: int,
+) -> Tuple[bool, str]:
+    url = CENSO_ALUMNO_ACTIVAR_INACTIVAR_URL.format(
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        colegio_id=int(colegio_id),
+        nivel_id=int(nivel_id),
+        grado_id=int(grado_id),
+        grupo_id=int(grupo_id),
+        alumno_id=int(alumno_id),
+    )
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    payload = {
+        "activo": int(activo),
+        "razonInactivoId": 0,
+        "observaciones": str(observaciones or ""),
+    }
+    method_calls = [
+        ("PUT", requests.put),
+        ("POST", requests.post),
+        ("PATCH", requests.patch),
+    ]
+    last_error = "HTTP 405"
+    for method_name, method_call in method_calls:
+        try:
+            response = method_call(url, headers=headers, json=payload, timeout=int(timeout))
+        except requests.RequestException as exc:
+            return False, f"Error de red: {exc}"
+
+        status_code = response.status_code
+        try:
+            body = response.json()
+        except ValueError:
+            body = {}
+
+        if response.ok:
+            if isinstance(body, dict) and body.get("success", True) is False:
+                message = str(body.get("message") or "Respuesta invalida").strip()
+                return False, message
+            return True, method_name
+
+        message = str(body.get("message") or "").strip() if isinstance(body, dict) else ""
+        if status_code == 405:
+            last_error = message or f"{method_name} HTTP 405"
+            continue
+        return False, message or f"{method_name} HTTP {status_code}"
+    return False, last_error
+
+
+def _mover_alumno_web(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    nivel_id: int,
+    grado_id: int,
+    grupo_id: int,
+    alumno_id: int,
+    nuevo_nivel_id: int,
+    nuevo_grado_id: int,
+    nuevo_grupo_id: int,
+    timeout: int,
+) -> Tuple[bool, str]:
+    url = CENSO_ALUMNO_MOVER_URL.format(
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        colegio_id=int(colegio_id),
+        nivel_id=int(nivel_id),
+        grado_id=int(grado_id),
+        grupo_id=int(grupo_id),
+        alumno_id=int(alumno_id),
+    )
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    payload = {
+        "nuevoNivelId": int(nuevo_nivel_id),
+        "nuevoGradoId": int(nuevo_grado_id),
+        "nuevoGrupoId": int(nuevo_grupo_id),
+    }
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=int(timeout))
+    except requests.RequestException as exc:
+        return False, f"Error de red: {exc}"
+
+    status_code = response.status_code
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+
+    if not response.ok:
+        message = str(body.get("message") or "").strip() if isinstance(body, dict) else ""
+        return False, message or f"HTTP {status_code}"
+
+    if isinstance(body, dict) and body.get("success", True) is False:
+        message = str(body.get("message") or "Respuesta invalida").strip()
+        return False, message
+    return True, ""
+
+
+def _asignar_alumno_a_clase_web(
+    token: str,
+    empresa_id: int,
+    ciclo_id: int,
+    clase_id: int,
+    alumno_id: int,
+    timeout: int,
+) -> Tuple[bool, str]:
+    url = GESTION_ESCOLAR_ALUMNOS_CLASE_URL.format(
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        clase_id=int(clase_id),
+    )
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    payload = {"alumnoId": int(alumno_id)}
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=int(timeout))
+    except requests.RequestException as exc:
+        return False, f"Error de red: {exc}"
+
+    status_code = response.status_code
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+
+    if not response.ok:
+        message = str(body.get("message") or "").strip() if isinstance(body, dict) else ""
+        return False, message or f"HTTP {status_code}"
+
+    if isinstance(body, dict) and body.get("success", True) is False:
+        message = str(body.get("message") or "Respuesta invalida").strip()
+        return False, message
+    return True, ""
+
+
+def _apply_auto_move_changes(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+    plan_rows: List[Dict[str, object]],
+) -> Tuple[Dict[str, int], List[Dict[str, object]]]:
+    summary = {
+        "total": len(plan_rows),
+        "inactivar_ok": 0,
+        "inactivar_error": 0,
+        "mover_ok": 0,
+        "mover_error": 0,
+        "asignar_ok": 0,
+        "asignar_error": 0,
+        "asignar_skip": 0,
+    }
+    resultados: List[Dict[str, object]] = []
+    inactivados_seen: Set[int] = set()
+    for plan in plan_rows:
+        pagado = plan.get("alumno_pagado") if isinstance(plan.get("alumno_pagado"), dict) else {}
+        inactivar = plan.get("alumno_inactivar") if isinstance(plan.get("alumno_inactivar"), dict) else {}
+        alumno_pagado_id = _safe_int(pagado.get("alumno_id"))
+        label_pagado = _format_alumno_label(pagado)
+        result_row = {
+            "Alumno pagado": label_pagado,
+            "Comparacion": str(plan.get("comparacion") or ""),
+            "Inactivar no pagado": "No aplica",
+            "Mover": "No aplica",
+            "Asignar clases": "No aplica",
+            "Detalle": "",
+        }
+
+        alumno_inactivar_id = _safe_int(inactivar.get("alumno_id"))
+        if _to_bool(plan.get("requiere_inactivar")) and alumno_inactivar_id is not None:
+            if int(alumno_inactivar_id) in inactivados_seen:
+                result_row["Inactivar no pagado"] = "SKIP repetido"
+            else:
+                nivel_inactivar_id = _safe_int(inactivar.get("nivel_id"))
+                grado_inactivar_id = _safe_int(inactivar.get("grado_id"))
+                grupo_inactivar_id = _safe_int(inactivar.get("grupo_id"))
+                if (
+                    nivel_inactivar_id is None
+                    or grado_inactivar_id is None
+                    or grupo_inactivar_id is None
+                ):
+                    result_row["Inactivar no pagado"] = "SKIP datos incompletos"
+                else:
+                    inactivar_ok, inactivar_msg = _set_alumno_activo_web(
+                        token=token,
+                        colegio_id=int(colegio_id),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        nivel_id=int(nivel_inactivar_id),
+                        grado_id=int(grado_inactivar_id),
+                        grupo_id=int(grupo_inactivar_id),
+                        alumno_id=int(alumno_inactivar_id),
+                        activo=0,
+                        observaciones="Inactivado por comparacion automatica (no pagado).",
+                        timeout=int(timeout),
+                    )
+                    if inactivar_ok:
+                        summary["inactivar_ok"] += 1
+                        inactivados_seen.add(int(alumno_inactivar_id))
+                        result_row["Inactivar no pagado"] = f"OK ({inactivar_msg})"
+                    else:
+                        summary["inactivar_error"] += 1
+                        result_row["Inactivar no pagado"] = f"ERROR ({inactivar_msg})"
+
+        move_done = False
+        grupo_origen_id = _safe_int(plan.get("grupo_origen_id"))
+        grupo_destino_id = _safe_int(plan.get("grupo_destino_id"))
+        nivel_id = _safe_int(plan.get("nivel_id")) or AUTO_MOVE_NIVEL_ID
+        grado_id = _safe_int(plan.get("grado_id")) or AUTO_MOVE_GRADO_ID
+        if alumno_pagado_id is not None and grupo_origen_id is not None and grupo_destino_id is not None:
+            if int(grupo_origen_id) == int(grupo_destino_id):
+                result_row["Mover"] = "SKIP mismo grupo"
+            else:
+                move_ok, move_msg = _mover_alumno_web(
+                    token=token,
+                    colegio_id=int(colegio_id),
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    nivel_id=int(nivel_id),
+                    grado_id=int(grado_id),
+                    grupo_id=int(grupo_origen_id),
+                    alumno_id=int(alumno_pagado_id),
+                    nuevo_nivel_id=int(nivel_id),
+                    nuevo_grado_id=int(grado_id),
+                    nuevo_grupo_id=int(grupo_destino_id),
+                    timeout=int(timeout),
+                )
+                if move_ok:
+                    summary["mover_ok"] += 1
+                    move_done = True
+                    result_row["Mover"] = "OK"
+                else:
+                    summary["mover_error"] += 1
+                    result_row["Mover"] = f"ERROR ({move_msg})"
+
+        clases_destino = plan.get("clases_destino") if isinstance(plan.get("clases_destino"), list) else []
+        if move_done and clases_destino and alumno_pagado_id is not None:
+            seen_clase_ids: Set[int] = set()
+            assign_ok_count = 0
+            assign_err_count = 0
+            for clase in clases_destino:
+                clase_id = _safe_int(clase.get("clase_id")) if isinstance(clase, dict) else None
+                if clase_id is None or int(clase_id) in seen_clase_ids:
+                    continue
+                seen_clase_ids.add(int(clase_id))
+                ok_assign, err_assign = _asignar_alumno_a_clase_web(
+                    token=token,
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    clase_id=int(clase_id),
+                    alumno_id=int(alumno_pagado_id),
+                    timeout=int(timeout),
+                )
+                if ok_assign:
+                    assign_ok_count += 1
+                    summary["asignar_ok"] += 1
+                else:
+                    assign_err_count += 1
+                    summary["asignar_error"] += 1
+                    if result_row["Detalle"]:
+                        result_row["Detalle"] = f"{result_row['Detalle']} | {err_assign}"
+                    else:
+                        result_row["Detalle"] = str(err_assign)
+            result_row["Asignar clases"] = f"OK {assign_ok_count} | ERROR {assign_err_count}"
+        elif move_done and alumno_pagado_id is not None:
+            result_row["Asignar clases"] = "Sin clases destino"
+            summary["asignar_skip"] += 1
+        else:
+            result_row["Asignar clases"] = "SKIP (sin movimiento)"
+            summary["asignar_skip"] += len(clases_destino)
+
+        resultados.append(result_row)
+
+    return summary, resultados
+
+
 def render_richmond_studio_view() -> None:
     st.markdown(
         """
@@ -4014,6 +4779,11 @@ with tab_crud_clases:
                 key="clases_delete_load_options",
                 use_container_width=True,
             )
+            run_listar_mapear_clases = st.button(
+                "Listar y mapear (grado/seccion)",
+                key="clases_list_map_btn",
+                use_container_width=True,
+            )
             delete_options = st.session_state.get("clases_delete_options") or []
             if delete_options:
                 if "clases_delete_rows" not in st.session_state:
@@ -4083,6 +4853,81 @@ with tab_crud_clases:
                     st.caption(f"Seleccionadas: {selected_total}/{total_editor}")
             else:
                 st.caption("Sin clases cargadas para seleccion.")
+
+            if run_listar_mapear_clases:
+                if not token:
+                    st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                    st.stop()
+                try:
+                    colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                except ValueError as exc:
+                    st.error(f"Error: {exc}")
+                    st.stop()
+
+                try:
+                    with st.spinner("Listando y mapeando clases..."):
+                        rows_clases, grouped = listar_y_mapear_clases(
+                            token=token,
+                            colegio_id=int(colegio_id_int),
+                            empresa_id=int(empresa_id),
+                            ciclo_id=int(ciclo_id),
+                            timeout=int(timeout),
+                            ordered=True,
+                            on_log=None,
+                        )
+                except Exception as exc:  # pragma: no cover - UI
+                    st.error(f"Error: {exc}")
+                    st.stop()
+
+                df_rows = pd.DataFrame(rows_clases)
+                if not df_rows.empty:
+                    view_cols = [
+                        "clase_id",
+                        "clase",
+                        "nivel",
+                        "grado",
+                        "seccion",
+                        "grado_id",
+                        "grupo_id",
+                        "colegio_grado_grupo_id",
+                    ]
+                    st.markdown("**Clases (por fila)**")
+                    _show_dataframe(
+                        df_rows[[c for c in view_cols if c in df_rows.columns]].to_dict("records"),
+                        use_container_width=True,
+                    )
+
+                grouped_rows: List[Dict[str, object]] = []
+                for entry in grouped.values():
+                    clases_list = entry.get("clases") or []
+                    sample = ", ".join(
+                        str(it.get("clase") or "")
+                        for it in list(clases_list)[:3]
+                        if isinstance(it, dict)
+                    )
+                    grouped_rows.append(
+                        {
+                            "Nivel": entry.get("nivel"),
+                            "Grado": entry.get("grado"),
+                            "Seccion": entry.get("seccion"),
+                            "GradoId": entry.get("grado_id"),
+                            "GrupoId": entry.get("grupo_id"),
+                            "ColegioGradoGrupoId": entry.get("colegio_grado_grupo_id"),
+                            "Clases": len(clases_list) if isinstance(clases_list, list) else 0,
+                            "Ejemplo": sample,
+                        }
+                    )
+                grouped_rows = sorted(
+                    grouped_rows,
+                    key=lambda r: (
+                        str(r.get("Nivel") or ""),
+                        str(r.get("Grado") or ""),
+                        str(r.get("Seccion") or ""),
+                    ),
+                )
+                if grouped_rows:
+                    st.markdown("**Mapeo (grado + seccion)**")
+                    _show_dataframe(grouped_rows, use_container_width=True)
 
             confirm_delete_selected = st.checkbox(
                 "Confirmo eliminar las clases seleccionadas.",
@@ -5358,6 +6203,218 @@ with tab_crud_alumnos:
                     restantes = len(errores_excel) - 20
                     if restantes > 0:
                         st.caption(f"... y {restantes} errores mÃ¡s.")
+    
+
+        with st.container(border=True):
+            st.markdown("**5) Simulador web: 5to secundaria seccion Y**")
+            st.caption(
+                "Solo usa Colegio Clave global. Compara alumnos pagados de Y contra no pagados "
+                "por apellidos y luego DNI. Prepara inactivar, mover y asignar clases destino."
+            )
+
+            col_prepare, col_clear = st.columns([2, 1], gap="small")
+            run_prepare_auto_plan = col_prepare.button(
+                "Analizar y preparar lista de cambios",
+                type="primary",
+                key="auto_move_prepare_btn",
+                use_container_width=True,
+            )
+            clear_auto_plan = col_clear.button(
+                "Limpiar lista",
+                key="auto_move_clear_btn",
+                use_container_width=True,
+            )
+
+            if clear_auto_plan:
+                for state_key in (
+                    "auto_move_plan_rows",
+                    "auto_move_editor_rows",
+                    "auto_move_alumnos_grid",
+                    "auto_move_errors",
+                    "auto_move_colegio_id",
+                ):
+                    st.session_state.pop(state_key, None)
+                st.rerun()
+
+            if run_prepare_auto_plan:
+                token = _get_shared_token()
+                if not token:
+                    st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                    st.stop()
+                try:
+                    colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                except ValueError as exc:
+                    st.error(f"Error: {exc}")
+                    st.stop()
+
+                try:
+                    with st.spinner("Preparando simulacion de cambios..."):
+                        simulation = _build_auto_move_simulation(
+                            token=token,
+                            colegio_id=int(colegio_id_int),
+                            empresa_id=int(empresa_id),
+                            ciclo_id=int(ciclo_id),
+                            timeout=int(timeout),
+                        )
+                except Exception as exc:  # pragma: no cover - UI
+                    st.error(f"Error: {exc}")
+                    st.stop()
+
+                st.session_state["auto_move_plan_rows"] = simulation.get("plan_rows") or []
+                st.session_state["auto_move_editor_rows"] = simulation.get("editor_rows") or []
+                st.session_state["auto_move_alumnos_grid"] = simulation.get("alumnos_all_grid") or []
+                st.session_state["auto_move_errors"] = simulation.get("errors") or []
+                st.session_state["auto_move_colegio_id"] = int(colegio_id_int)
+
+                total_plan = len(st.session_state["auto_move_plan_rows"])
+                st.success(f"Simulacion lista. Alumnos candidatos a modificar: {total_plan}")
+
+            alumnos_grid_cached = st.session_state.get("auto_move_alumnos_grid") or []
+            if alumnos_grid_cached:
+                with st.expander("Ver alumnos 5to secundaria en todas las secciones", expanded=False):
+                    _show_dataframe(alumnos_grid_cached, use_container_width=True)
+
+            errors_cached = st.session_state.get("auto_move_errors") or []
+            if errors_cached:
+                st.warning("Hubo errores consultando algunas secciones.")
+                st.write("\n".join(f"- {item}" for item in errors_cached[:20]))
+                pending = len(errors_cached) - 20
+                if pending > 0:
+                    st.caption(f"... y {pending} errores mas.")
+
+            plan_rows_cached = st.session_state.get("auto_move_plan_rows") or []
+            editor_rows_cached = st.session_state.get("auto_move_editor_rows") or []
+            if not plan_rows_cached:
+                st.caption("No hay lista preparada aun.")
+            else:
+                st.markdown("**Lista de cambios para autorizar**")
+                editor_df = pd.DataFrame(editor_rows_cached)
+                if editor_df.empty:
+                    st.info("No hay alumnos para modificar.")
+                else:
+                    edited_df = st.data_editor(
+                        editor_df,
+                        key="auto_move_editor",
+                        hide_index=True,
+                        use_container_width=True,
+                        disabled=[
+                            "PlanId",
+                            "Alumno pagado (Y)",
+                            "Se parece a (no pagado)",
+                            "Alumno a inactivar",
+                            "Mover a seccion",
+                            "Grupo destino",
+                            "Clases destino",
+                            "Acciones",
+                            "Comparacion",
+                        ],
+                        column_config={
+                            "Aplicar": st.column_config.CheckboxColumn(
+                                "Aplicar",
+                                help="Solo se ejecutan filas marcadas.",
+                            ),
+                            "X": st.column_config.CheckboxColumn(
+                                "X",
+                                help="Marca para quitar la fila del guardado.",
+                            ),
+                            "PlanId": st.column_config.NumberColumn("PlanId", format="%d"),
+                            "Grupo destino": st.column_config.NumberColumn("Grupo destino", format="%d"),
+                            "Clases destino": st.column_config.NumberColumn("Clases destino", format="%d"),
+                        },
+                    )
+                    if isinstance(edited_df, pd.DataFrame):
+                        edited_rows = edited_df.to_dict("records")
+                        st.session_state["auto_move_editor_rows"] = edited_rows
+                    else:
+                        edited_rows = editor_rows_cached
+
+                    plan_by_id = {
+                        int(plan.get("plan_id")): plan
+                        for plan in plan_rows_cached
+                        if _safe_int(plan.get("plan_id")) is not None
+                    }
+                    authorized_plans: List[Dict[str, object]] = []
+                    resumen_autorizados: List[Dict[str, object]] = []
+                    for row in edited_rows:
+                        apply_row = _to_bool(row.get("Aplicar"))
+                        drop_row = _to_bool(row.get("X"))
+                        plan_id = _safe_int(row.get("PlanId"))
+                        if not apply_row or drop_row or plan_id is None:
+                            continue
+                        plan = plan_by_id.get(int(plan_id))
+                        if not isinstance(plan, dict):
+                            continue
+                        authorized_plans.append(plan)
+                        resumen_autorizados.append(
+                            {
+                                "PlanId": int(plan_id),
+                                "Comparacion": str(plan.get("comparacion") or ""),
+                                "Accion": str(row.get("Acciones") or ""),
+                                "Destino": (
+                                    f"Seccion {plan.get('seccion_destino', '-')}"
+                                    f" | Grupo {plan.get('grupo_destino_id', '-')}"
+                                ),
+                            }
+                        )
+
+                    st.caption(
+                        f"Filas listas para guardar: {len(authorized_plans)}/{len(plan_rows_cached)}"
+                    )
+                    if resumen_autorizados:
+                        _show_dataframe(resumen_autorizados, use_container_width=True)
+
+                    confirm_apply_auto = st.checkbox(
+                        "Confirmo ejecutar los cambios autorizados.",
+                        key="auto_move_confirm_apply",
+                    )
+                    run_apply_auto = st.button(
+                        "Guardar cambios autorizados",
+                        key="auto_move_apply_btn",
+                        use_container_width=True,
+                    )
+
+                    if run_apply_auto:
+                        token = _get_shared_token()
+                        if not token:
+                            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                            st.stop()
+                        if not confirm_apply_auto:
+                            st.error("Debes confirmar antes de guardar.")
+                            st.stop()
+                        if not authorized_plans:
+                            st.warning("No hay filas autorizadas para ejecutar.")
+                            st.stop()
+                        colegio_id_exec = _safe_int(st.session_state.get("auto_move_colegio_id"))
+                        if colegio_id_exec is None:
+                            try:
+                                colegio_id_exec = _parse_colegio_id(colegio_id_raw)
+                            except ValueError as exc:
+                                st.error(f"Error: {exc}")
+                                st.stop()
+                        try:
+                            with st.spinner("Aplicando cambios autorizados..."):
+                                summary_apply, results_apply = _apply_auto_move_changes(
+                                    token=token,
+                                    colegio_id=int(colegio_id_exec),
+                                    empresa_id=int(empresa_id),
+                                    ciclo_id=int(ciclo_id),
+                                    timeout=int(timeout),
+                                    plan_rows=authorized_plans,
+                                )
+                        except Exception as exc:  # pragma: no cover - UI
+                            st.error(f"Error aplicando cambios: {exc}")
+                            st.stop()
+
+                        st.success(
+                            "Ejecucion completada. "
+                            f"Inactivar OK={summary_apply['inactivar_ok']} ERROR={summary_apply['inactivar_error']} | "
+                            f"Mover OK={summary_apply['mover_ok']} ERROR={summary_apply['mover_error']} | "
+                            f"Asignar OK={summary_apply['asignar_ok']} ERROR={summary_apply['asignar_error']} "
+                            f"SKIP={summary_apply['asignar_skip']}"
+                        )
+                        if results_apply:
+                            _show_dataframe(results_apply, use_container_width=True)
+    
 
 
 

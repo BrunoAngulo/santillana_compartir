@@ -165,6 +165,28 @@ def _normalize_login(value: object) -> str:
     return str(value or "").strip().lower()
 
 
+def _get_jira_login_candidates() -> Set[str]:
+    login_values: Set[str] = set()
+    jira_login_query = st.query_params.get(JIRA_LOGIN_QUERY_PARAM, "")
+    if isinstance(jira_login_query, list):
+        jira_login_query = jira_login_query[0] if jira_login_query else ""
+    jira_login_cookie = ""
+    try:
+        jira_login_cookie = st.context.cookies.get(JIRA_LOGIN_COOKIE_NAME, "") or ""
+    except Exception:
+        jira_login_cookie = ""
+    session_login = st.session_state.get("jira_focus_user_login", "")
+    for raw in (jira_login_query, jira_login_cookie, session_login):
+        normalized = _normalize_login(unquote(str(raw or "").strip()))
+        if normalized:
+            login_values.add(normalized)
+    return login_values
+
+
+def _has_unlock_login() -> bool:
+    return _normalize_login(JIRA_UNLOCK_LOGIN) in _get_jira_login_candidates()
+
+
 def _sync_jira_user_identity() -> None:
     jira_user_value = st.query_params.get(JIRA_USER_QUERY_PARAM, "")
     if isinstance(jira_user_value, list):
@@ -194,32 +216,20 @@ def _restricted_sections_unlocked() -> bool:
     jira_user_flag = st.query_params.get(JIRA_USER_QUERY_PARAM, "")
     if isinstance(jira_user_flag, list):
         jira_user_flag = jira_user_flag[0] if jira_user_flag else ""
-    jira_login_flag = st.query_params.get(JIRA_LOGIN_QUERY_PARAM, "")
-    if isinstance(jira_login_flag, list):
-        jira_login_flag = jira_login_flag[0] if jira_login_flag else ""
     jira_admin_cookie = ""
     jira_user_cookie = ""
-    jira_login_cookie = ""
     try:
         jira_admin_cookie = str(st.context.cookies.get(JIRA_ADMIN_COOKIE_NAME, "") or "").strip()
         jira_user_cookie = str(st.context.cookies.get(JIRA_USER_COOKIE_NAME, "") or "").strip()
-        jira_login_cookie = str(st.context.cookies.get(JIRA_LOGIN_COOKIE_NAME, "") or "").strip()
     except Exception:
         jira_admin_cookie = ""
         jira_user_cookie = ""
-        jira_login_cookie = ""
 
     admin_name_norm = _normalize_display_name(JIRA_ADMIN_DISPLAY_NAME)
     jira_user_flag_norm = _normalize_display_name(unquote(str(jira_user_flag or "").strip()))
     jira_user_cookie_norm = _normalize_display_name(unquote(jira_user_cookie))
     session_jira_user_norm = _normalize_display_name(
         st.session_state.get("jira_focus_user_display_name", "")
-    )
-    unlock_login_norm = _normalize_login(JIRA_UNLOCK_LOGIN)
-    jira_login_flag_norm = _normalize_login(unquote(str(jira_login_flag or "").strip()))
-    jira_login_cookie_norm = _normalize_login(unquote(jira_login_cookie))
-    session_jira_login_norm = _normalize_login(
-        st.session_state.get("jira_focus_user_login", "")
     )
 
     return (
@@ -229,9 +239,7 @@ def _restricted_sections_unlocked() -> bool:
         or jira_user_flag_norm == admin_name_norm
         or jira_user_cookie_norm == admin_name_norm
         or session_jira_user_norm == admin_name_norm
-        or jira_login_flag_norm == unlock_login_norm
-        or jira_login_cookie_norm == unlock_login_norm
-        or session_jira_login_norm == unlock_login_norm
+        or _has_unlock_login()
     )
 
 
@@ -265,6 +273,9 @@ def _render_restricted_blur(section_name: str, key_suffix: str) -> None:
             key=f"restricted_unlock_open_{key_suffix}",
             use_container_width=True,
         ):
+            if _has_unlock_login():
+                st.session_state["restricted_sections_unlocked"] = True
+                st.rerun()
             _show_restricted_unlock_dialog()
 
 

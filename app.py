@@ -4597,7 +4597,138 @@ with tab_crud_alumnos:
                 )
 
     with st.container(border=True):
-        st.markdown("**3) Mover alumno de grado/seccion (manual)**")
+        st.markdown("**3) Censo de alumnos activos**")
+        st.caption(
+            "Consulta todas las secciones del colegio y muestra solo alumnos activos."
+        )
+        col_censo_run, col_censo_clear = st.columns([2, 1], gap="small")
+        run_censo_activos = col_censo_run.button(
+            "Cargar censo de alumnos activos",
+            type="primary",
+            key="alumnos_censo_activos_load_btn",
+            use_container_width=True,
+        )
+        clear_censo_activos = col_censo_clear.button(
+            "Limpiar censo",
+            key="alumnos_censo_activos_clear_btn",
+            use_container_width=True,
+        )
+
+        if clear_censo_activos:
+            for state_key in (
+                "alumnos_censo_activos_rows",
+                "alumnos_censo_activos_errors",
+                "alumnos_censo_activos_colegio_id",
+            ):
+                st.session_state.pop(state_key, None)
+            st.rerun()
+
+        if run_censo_activos:
+            token = _get_shared_token()
+            if not token:
+                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                st.stop()
+            try:
+                colegio_id_int = _parse_colegio_id(colegio_id_raw)
+            except ValueError as exc:
+                st.error(f"Error: {exc}")
+                st.stop()
+
+            niveles = _fetch_niveles_grados_grupos_censo(
+                token=token,
+                colegio_id=int(colegio_id_int),
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                timeout=int(timeout),
+            )
+            contexts = _build_contexts_for_nivel_grado(niveles=niveles)
+            rows_activos: List[Dict[str, object]] = []
+            errors_activos: List[str] = []
+            for ctx in contexts:
+                try:
+                    alumnos_ctx = _fetch_alumnos_censo(
+                        token=token,
+                        colegio_id=int(colegio_id_int),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        nivel_id=int(ctx.get("nivel_id") or 0),
+                        grado_id=int(ctx.get("grado_id") or 0),
+                        grupo_id=int(ctx.get("grupo_id") or 0),
+                        timeout=int(timeout),
+                    )
+                except Exception as exc:  # pragma: no cover - UI
+                    errors_activos.append(
+                        "Error en {nivel} | {grado} ({seccion}): {err}".format(
+                            nivel=str(ctx.get("nivel") or ""),
+                            grado=str(ctx.get("grado") or ""),
+                            seccion=str(ctx.get("seccion") or ""),
+                            err=str(exc),
+                        )
+                    )
+                    continue
+                for item in alumnos_ctx:
+                    if not isinstance(item, dict):
+                        continue
+                    flat = _flatten_censo_alumno_for_auto_plan(item=item, fallback=ctx)
+                    if not _to_bool(flat.get("activo")):
+                        continue
+                    rows_activos.append(
+                        {
+                            "Alumno ID": flat.get("alumno_id") or "",
+                            "Persona ID": flat.get("persona_id") or "",
+                            "Nombre completo": flat.get("nombre_completo") or "",
+                            "DNI": flat.get("id_oficial") or "",
+                            "Nivel": flat.get("nivel") or "",
+                            "Grado": flat.get("grado") or "",
+                            "Seccion": flat.get("seccion_norm") or flat.get("seccion") or "",
+                            "Con pago": "SI" if _to_bool(flat.get("con_pago")) else "NO",
+                        }
+                    )
+
+            rows_activos = sorted(
+                rows_activos,
+                key=lambda row: (
+                    str(row.get("Nivel") or ""),
+                    str(row.get("Grado") or ""),
+                    str(row.get("Seccion") or ""),
+                    str(row.get("Nombre completo") or ""),
+                ),
+            )
+            st.session_state["alumnos_censo_activos_rows"] = rows_activos
+            st.session_state["alumnos_censo_activos_errors"] = errors_activos
+            st.session_state["alumnos_censo_activos_colegio_id"] = int(colegio_id_int)
+            st.success(
+                "Censo cargado. Activos: {total} | Errores de consulta: {errors}".format(
+                    total=len(rows_activos),
+                    errors=len(errors_activos),
+                )
+            )
+
+        censo_rows_cached = st.session_state.get("alumnos_censo_activos_rows") or []
+        censo_errors_cached = st.session_state.get("alumnos_censo_activos_errors") or []
+        if censo_rows_cached:
+            _show_dataframe(censo_rows_cached, use_container_width=True)
+            censo_colegio_id = _safe_int(st.session_state.get("alumnos_censo_activos_colegio_id"))
+            file_suffix = str(censo_colegio_id) if censo_colegio_id is not None else "colegio"
+            st.download_button(
+                label="Descargar censo activos",
+                data=_export_simple_excel(censo_rows_cached, sheet_name="activos"),
+                file_name=f"censo_alumnos_activos_{file_suffix}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="alumnos_censo_activos_download",
+            )
+        else:
+            st.caption("Presiona 'Cargar censo de alumnos activos' para iniciar.")
+
+        if censo_errors_cached:
+            st.warning("Hubo errores al consultar algunas secciones del censo.")
+            st.write("\n".join(f"- {item}" for item in censo_errors_cached[:20]))
+            pending = len(censo_errors_cached) - 20
+            if pending > 0:
+                st.caption(f"... y {pending} errores mas.")
+
+    with st.container(border=True):
+        st.markdown("**4) Mover alumno de grado/seccion (manual)**")
         st.caption(
             "Lista alumnos del colegio, busca uno, define el nuevo grado y seccion. "
             "El proceso mueve al alumno, elimina sus clases actuales y asigna las del destino."

@@ -6491,12 +6491,15 @@ with tab_crud_alumnos:
                     with col_left:
                         if grado_small:
                             st.caption(grado_small)
-                        st.caption("Alumno a agregar (Seccion Y)")
                         st.markdown(f"`{alumno_y_label}`")
 
                     with col_right:
                         if grado_small:
                             st.caption(grado_small)
+                        ref_text_style = (
+                            "font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; "
+                            "font-size: 0.92rem; line-height: 1.2;"
+                        )
                         if has_reference and not is_removed:
                             params_click: Dict[str, str] = {}
                             try:
@@ -6515,17 +6518,22 @@ with tab_crud_alumnos:
                             ref_href = "?" + urlencode(params_click)
                             st.markdown(
                                 (
-                                    f'<a href="{ref_href}" '
-                                    'style="text-decoration:none;color:inherit;">'
-                                    f"X {alumno_ref_label}"
-                                    "</a>"
+                                    f'<div style="{ref_text_style}">'
+                                    f'<a href="{ref_href}" style="text-decoration:none;color:inherit;">'
+                                    f"X {alumno_ref_label}</a></div>"
                                 ),
                                 unsafe_allow_html=True,
                             )
                         elif has_reference and is_removed:
-                            st.markdown("`REFERENCIA ELIMINADA`")
+                            st.markdown(
+                                f'<div style="{ref_text_style}">SIN REFERENCIA</div>',
+                                unsafe_allow_html=True,
+                            )
                         else:
-                            st.markdown("`SIN REFERENCIA`")
+                            st.markdown(
+                                f'<div style="{ref_text_style}">SIN REFERENCIA</div>',
+                                unsafe_allow_html=True,
+                            )
 
                 st.session_state["auto_move_removed_ref_ids"] = sorted(removed_ref_ids)
 

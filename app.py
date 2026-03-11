@@ -2286,12 +2286,11 @@ def _build_clases_destino_for_plan(
 
 
 def _format_alumno_label(row: Dict[str, object]) -> str:
-    persona_id = _safe_int(row.get("persona_id"))
     nombre = str(row.get("nombre_completo") or "").strip()
     if not nombre:
         nombre = "SIN NOMBRE"
     dni = str(row.get("id_oficial") or "").strip()
-    return f"{persona_id or '-'}|{nombre}|{dni or '-'}"
+    return f"{nombre}|{dni or '-'}"
 
 
 def _build_auto_move_simulation(
@@ -6330,193 +6329,230 @@ with tab_crud_alumnos:
                     st.caption(f"... y {pending} errores mas.")
 
             plan_rows_cached = st.session_state.get("auto_move_plan_rows") or []
-            editor_rows_cached = st.session_state.get("auto_move_editor_rows") or []
             if not plan_rows_cached:
                 st.caption("No hay lista preparada aun.")
             else:
                 st.markdown("**Lista de cambios para autorizar**")
-                if not editor_rows_cached:
+                editor_rows_cached = st.session_state.get("auto_move_editor_rows") or []
+                has_legacy_format = any(
+                    "alumnoId=" in str(row.get("Alumno Y") or "")
+                    or "alumnoId=" in str(row.get("Alumno a cambiar") or "")
+                    or str(row.get("Alumno Y") or "").count("|") >= 2
+                    or str(row.get("Alumno a cambiar") or "").count("|") >= 2
+                    for row in editor_rows_cached
+                    if isinstance(row, dict)
+                )
+                if has_legacy_format:
+                    rebuilt_editor_rows: List[Dict[str, object]] = []
+                    for plan in plan_rows_cached:
+                        if not isinstance(plan, dict):
+                            continue
+                        pagado = (
+                            plan.get("alumno_pagado")
+                            if isinstance(plan.get("alumno_pagado"), dict)
+                            else {}
+                        )
+                        inactivar = (
+                            plan.get("alumno_inactivar")
+                            if isinstance(plan.get("alumno_inactivar"), dict)
+                            else {}
+                        )
+                        plan_id = _safe_int(plan.get("plan_id"))
+                        if plan_id is None:
+                            continue
+                        rebuilt_editor_rows.append(
+                            {
+                                "PlanId": int(plan_id),
+                                "Alumno Y": _format_alumno_label(pagado),
+                                "Alumno a cambiar": (
+                                    _format_alumno_label(inactivar)
+                                    if inactivar
+                                    else "-|SIN COINCIDENCIA|-"
+                                ),
+                            }
+                        )
+                    st.session_state["auto_move_editor_rows"] = rebuilt_editor_rows
+                plan_by_id = {
+                    int(plan.get("plan_id")): plan
+                    for plan in plan_rows_cached
+                    if _safe_int(plan.get("plan_id")) is not None
+                }
+                removed_raw = st.session_state.get("auto_move_removed_ref_ids", [])
+                removed_ref_ids: Set[int] = set()
+                if isinstance(removed_raw, (list, tuple, set)):
+                    for item in removed_raw:
+                        item_int = _safe_int(item)
+                        if item_int is not None:
+                            removed_ref_ids.add(int(item_int))
+
+                sorted_plan_ids = sorted(plan_by_id.keys())
+                if not sorted_plan_ids:
                     st.info("No hay alumnos para modificar.")
-                else:
-                    plan_by_id = {
-                        int(plan.get("plan_id")): plan
-                        for plan in plan_rows_cached
-                        if _safe_int(plan.get("plan_id")) is not None
-                    }
-                    removed_raw = st.session_state.get("auto_move_removed_ref_ids", [])
-                    removed_ref_ids: Set[int] = set()
-                    if isinstance(removed_raw, (list, tuple, set)):
-                        for item in removed_raw:
-                            item_int = _safe_int(item)
-                            if item_int is not None:
-                                removed_ref_ids.add(int(item_int))
+                for plan_id in sorted_plan_ids:
+                    plan = plan_by_id.get(int(plan_id)) or {}
+                    pagado = plan.get("alumno_pagado") if isinstance(plan.get("alumno_pagado"), dict) else {}
+                    referencial = (
+                        plan.get("alumno_inactivar")
+                        if isinstance(plan.get("alumno_inactivar"), dict)
+                        else {}
+                    )
+                    has_reference = bool(
+                        _to_bool(plan.get("requiere_inactivar"))
+                        and _safe_int(referencial.get("alumno_id")) is not None
+                    )
+                    is_removed = int(plan_id) in removed_ref_ids
+                    alumno_y_label = _format_alumno_label(pagado)
+                    alumno_ref_label = _format_alumno_label(referencial) if referencial else "-|SIN REFERENCIA|-"
 
-                    for row in editor_rows_cached:
-                        plan_id = _safe_int(row.get("PlanId"))
-                        if plan_id is None:
-                            continue
-                        plan = plan_by_id.get(int(plan_id))
-                        has_reference = bool(
-                            isinstance(plan, dict)
-                            and _to_bool(plan.get("requiere_inactivar"))
-                            and isinstance(plan.get("alumno_inactivar"), dict)
-                            and _safe_int((plan.get("alumno_inactivar") or {}).get("alumno_id")) is not None
+                    grado_txt = str(pagado.get("grado") or plan.get("grado_id") or "").strip()
+                    nivel_txt = str(pagado.get("nivel") or "").strip()
+                    grado_small = " | ".join(part for part in [nivel_txt, grado_txt] if part)
+
+                    col_left, col_right = st.columns(2, gap="large")
+                    with col_left:
+                        if grado_small:
+                            st.caption(grado_small)
+                        st.markdown("**Alumno a agregar (Seccion Y)**")
+                        st.markdown(f"`{alumno_y_label}`")
+
+                    with col_right:
+                        if grado_small:
+                            st.caption(grado_small)
+                        header_col, close_col = st.columns([10, 1], gap="small")
+                        with header_col:
+                            st.markdown("**Alumno referencial**")
+                        with close_col:
+                            if has_reference and not is_removed:
+                                if st.button(
+                                    "X",
+                                    key=f"auto_move_remove_ref_{int(plan_id)}",
+                                    help="Quitar referencia",
+                                    use_container_width=True,
+                                ):
+                                    removed_ref_ids.add(int(plan_id))
+                                    st.session_state["auto_move_removed_ref_ids"] = sorted(removed_ref_ids)
+                                    st.rerun()
+                        if has_reference and is_removed:
+                            st.markdown("`-|REFERENCIA ELIMINADA|-`")
+                        else:
+                            st.markdown(f"`{alumno_ref_label}`")
+                    st.divider()
+
+                st.session_state["auto_move_removed_ref_ids"] = sorted(removed_ref_ids)
+
+                group_map_by_grade = st.session_state.get("auto_move_group_map_by_grade", {})
+                authorized_plans: List[Dict[str, object]] = []
+                for base_plan in plan_rows_cached:
+                    plan_id = _safe_int(base_plan.get("plan_id"))
+                    if plan_id is None:
+                        continue
+                    plan = dict(base_plan) if isinstance(base_plan, dict) else {}
+                    if not plan:
+                        continue
+                    if int(plan_id) in removed_ref_ids:
+                        plan["alumno_parecido"] = {}
+                        plan["alumno_inactivar"] = {}
+                        plan["requiere_inactivar"] = False
+                        plan["comparacion"] = (
+                            "Referencia eliminada manualmente: solo movimiento de seccion."
                         )
-                        is_removed = int(plan_id) in removed_ref_ids
-
-                        col_text, col_btn = st.columns([9, 2], gap="small")
-                        with col_text:
-                            st.markdown(
-                                f"`{row.get('Alumno Y', '')}`  ->  "
-                                f"`{row.get('Alumno a cambiar', '')}`"
+                        plan["motivo"] = (
+                            "Referencia eliminada manualmente: no se inactiva alumno parecido."
+                        )
+                        nivel_id_tmp = _safe_int(plan.get("nivel_id"))
+                        grado_id_tmp = _safe_int(plan.get("grado_id"))
+                        mapping: Dict[str, int] = {}
+                        if (
+                            isinstance(group_map_by_grade, dict)
+                            and nivel_id_tmp is not None
+                            and grado_id_tmp is not None
+                        ):
+                            mapping_raw = group_map_by_grade.get(
+                                (int(nivel_id_tmp), int(grado_id_tmp))
                             )
-                            if has_reference and is_removed:
-                                st.caption("Referencia quitada: no se inactivara alumno parecido.")
-                        with col_btn:
-                            if has_reference:
-                                if not is_removed:
-                                    if st.button(
-                                        "Quitar referencia",
-                                        key=f"auto_move_remove_ref_{int(plan_id)}",
-                                        use_container_width=True,
-                                    ):
-                                        removed_ref_ids.add(int(plan_id))
-                                        st.session_state["auto_move_removed_ref_ids"] = sorted(removed_ref_ids)
-                                        st.rerun()
-                                else:
-                                    if st.button(
-                                        "Restaurar referencia",
-                                        key=f"auto_move_restore_ref_{int(plan_id)}",
-                                        use_container_width=True,
-                                    ):
-                                        removed_ref_ids.discard(int(plan_id))
-                                        st.session_state["auto_move_removed_ref_ids"] = sorted(removed_ref_ids)
-                                        st.rerun()
-                            else:
-                                st.caption("Sin referencia")
-
-                    st.session_state["auto_move_removed_ref_ids"] = sorted(removed_ref_ids)
-
-                    group_map_by_grade = st.session_state.get("auto_move_group_map_by_grade", {})
-                    authorized_plans: List[Dict[str, object]] = []
-                    for base_plan in plan_rows_cached:
-                        plan_id = _safe_int(base_plan.get("plan_id"))
-                        if plan_id is None:
-                            continue
-                        plan = dict(base_plan) if isinstance(base_plan, dict) else {}
-                        if not plan:
-                            continue
-                        if int(plan_id) in removed_ref_ids:
-                            plan["alumno_parecido"] = {}
-                            plan["alumno_inactivar"] = {}
-                            plan["requiere_inactivar"] = False
-                            plan["comparacion"] = (
-                                "Referencia eliminada manualmente: solo movimiento de seccion."
-                            )
-                            plan["motivo"] = (
-                                "Referencia eliminada manualmente: no se inactiva alumno parecido."
-                            )
-                            nivel_id_tmp = _safe_int(plan.get("nivel_id"))
-                            grado_id_tmp = _safe_int(plan.get("grado_id"))
-                            mapping: Dict[str, int] = {}
-                            if (
-                                isinstance(group_map_by_grade, dict)
-                                and nivel_id_tmp is not None
-                                and grado_id_tmp is not None
-                            ):
+                            if not isinstance(mapping_raw, dict):
                                 mapping_raw = group_map_by_grade.get(
-                                    (int(nivel_id_tmp), int(grado_id_tmp))
+                                    f"{int(nivel_id_tmp)}:{int(grado_id_tmp)}"
                                 )
-                                if not isinstance(mapping_raw, dict):
-                                    mapping_raw = group_map_by_grade.get(
-                                        f"{int(nivel_id_tmp)}:{int(grado_id_tmp)}"
-                                    )
-                                if isinstance(mapping_raw, dict):
-                                    mapping = mapping_raw
-                            if mapping:
-                                destino_sec, destino_gid = _pick_default_destino(
-                                    grupo_id_by_seccion=mapping,
-                                    origen_seccion=AUTO_MOVE_SECCION_ORIGEN,
-                                )
-                                if destino_gid is not None:
-                                    plan["seccion_destino"] = destino_sec
-                                    plan["grupo_destino_id"] = int(destino_gid)
-                        authorized_plans.append(plan)
+                            if isinstance(mapping_raw, dict):
+                                mapping = mapping_raw
+                        if mapping:
+                            destino_sec, destino_gid = _pick_default_destino(
+                                grupo_id_by_seccion=mapping,
+                                origen_seccion=AUTO_MOVE_SECCION_ORIGEN,
+                            )
+                            if destino_gid is not None:
+                                plan["seccion_destino"] = destino_sec
+                                plan["grupo_destino_id"] = int(destino_gid)
+                    authorized_plans.append(plan)
 
-                    st.caption(
-                        "Cambios listos para guardar: {total} | Referencias quitadas: {removed}".format(
-                            total=len(authorized_plans),
-                            removed=len(removed_ref_ids),
-                        )
+                st.caption(
+                    "Cambios listos para guardar: {total} | Referencias quitadas: {removed}".format(
+                        total=len(authorized_plans),
+                        removed=len(removed_ref_ids),
                     )
+                )
 
-                    confirm_apply_auto = st.checkbox(
-                        "Confirmo ejecutar los cambios autorizados.",
-                        key="auto_move_confirm_apply",
-                    )
-                    run_apply_auto = st.button(
-                        "Guardar cambios autorizados",
-                        key="auto_move_apply_btn",
-                        use_container_width=True,
-                    )
+                run_apply_auto = st.button(
+                    "Guardar cambios autorizados",
+                    key="auto_move_apply_btn",
+                    use_container_width=True,
+                )
 
-                    if run_apply_auto:
-                        token = _get_shared_token()
-                        if not token:
-                            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-                            st.stop()
-                        if not confirm_apply_auto:
-                            st.error("Debes confirmar antes de guardar.")
-                            st.stop()
-                        if not authorized_plans:
-                            st.warning("No hay filas autorizadas para ejecutar.")
-                            st.stop()
-                        colegio_id_exec = _safe_int(st.session_state.get("auto_move_colegio_id"))
-                        if colegio_id_exec is None:
-                            try:
-                                colegio_id_exec = _parse_colegio_id(colegio_id_raw)
-                            except ValueError as exc:
-                                st.error(f"Error: {exc}")
-                                st.stop()
+                if run_apply_auto:
+                    token = _get_shared_token()
+                    if not token:
+                        st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                        st.stop()
+                    if not authorized_plans:
+                        st.warning("No hay filas autorizadas para ejecutar.")
+                        st.stop()
+                    colegio_id_exec = _safe_int(st.session_state.get("auto_move_colegio_id"))
+                    if colegio_id_exec is None:
                         try:
-                            with st.spinner("Aplicando cambios autorizados..."):
-                                summary_apply, results_apply = _apply_auto_move_changes(
-                                    token=token,
-                                    colegio_id=int(colegio_id_exec),
-                                    empresa_id=int(empresa_id),
-                                    ciclo_id=int(ciclo_id),
-                                    timeout=int(timeout),
-                                    plan_rows=authorized_plans,
-                                )
-                        except Exception as exc:  # pragma: no cover - UI
-                            st.error(f"Error aplicando cambios: {exc}")
+                            colegio_id_exec = _parse_colegio_id(colegio_id_raw)
+                        except ValueError as exc:
+                            st.error(f"Error: {exc}")
                             st.stop()
+                    try:
+                        with st.spinner("Aplicando cambios autorizados..."):
+                            summary_apply, results_apply = _apply_auto_move_changes(
+                                token=token,
+                                colegio_id=int(colegio_id_exec),
+                                empresa_id=int(empresa_id),
+                                ciclo_id=int(ciclo_id),
+                                timeout=int(timeout),
+                                plan_rows=authorized_plans,
+                            )
+                    except Exception as exc:  # pragma: no cover - UI
+                        st.error(f"Error aplicando cambios: {exc}")
+                        st.stop()
 
-                        st.success(
-                            "Ejecucion completada. "
-                            f"Inactivar OK={summary_apply['inactivar_ok']} ERROR={summary_apply['inactivar_error']} | "
-                            f"Mover OK={summary_apply['mover_ok']} ERROR={summary_apply['mover_error']} | "
-                            f"Asignar OK={summary_apply['asignar_ok']} ERROR={summary_apply['asignar_error']} "
-                            f"SKIP={summary_apply['asignar_skip']}"
-                        )
-                        if results_apply:
-                            details = []
-                            for item in results_apply[:80]:
-                                if not isinstance(item, dict):
-                                    continue
-                                details.append(
-                                    "- {alumno} | Inactivar: {inactivar} | Mover: {mover} | Asignar: {asignar}".format(
-                                        alumno=str(item.get("Alumno pagado") or ""),
-                                        inactivar=str(item.get("Inactivar no pagado") or ""),
-                                        mover=str(item.get("Mover") or ""),
-                                        asignar=str(item.get("Asignar clases") or ""),
-                                    )
+                    st.success(
+                        "Ejecucion completada. "
+                        f"Inactivar OK={summary_apply['inactivar_ok']} ERROR={summary_apply['inactivar_error']} | "
+                        f"Mover OK={summary_apply['mover_ok']} ERROR={summary_apply['mover_error']} | "
+                        f"Asignar OK={summary_apply['asignar_ok']} ERROR={summary_apply['asignar_error']} "
+                        f"SKIP={summary_apply['asignar_skip']}"
+                    )
+                    if results_apply:
+                        details = []
+                        for item in results_apply[:80]:
+                            if not isinstance(item, dict):
+                                continue
+                            details.append(
+                                "- {alumno} | Inactivar: {inactivar} | Mover: {mover} | Asignar: {asignar}".format(
+                                    alumno=str(item.get("Alumno pagado") or ""),
+                                    inactivar=str(item.get("Inactivar no pagado") or ""),
+                                    mover=str(item.get("Mover") or ""),
+                                    asignar=str(item.get("Asignar clases") or ""),
                                 )
-                            if details:
-                                st.markdown("**Detalle de ejecucion**")
-                                st.markdown("\n".join(details))
-                            if len(results_apply) > 80:
-                                st.caption(f"... y {len(results_apply) - 80} filas mas.")
+                            )
+                        if details:
+                            st.markdown("**Detalle de ejecucion**")
+                            st.markdown("\n".join(details))
+                        if len(results_apply) > 80:
+                            st.caption(f"... y {len(results_apply) - 80} filas mas.")
     
 
 

@@ -2557,6 +2557,7 @@
         oauthDone: 'jira_oauth_done',
         adminAccess: 'jira_focus_admin_access',
         userDisplayName: 'jira_focus_user_display_name',
+        userProfile: 'jira_focus_user_profile',
         timer: 'jira_focus_timer_state',
         ui: 'jira_focus_ui_state',
         lastActivity: 'jira_focus_last_activity',
@@ -4066,7 +4067,40 @@
         return;
       }
 
-      function syncParentAdminAccessFlag(isAdmin, displayName) {
+      function buildStoredUserProfile(meRaw) {
+        const me = meRaw && typeof meRaw === 'object' ? meRaw : null;
+        if (!me) return null;
+        const accountId = String(me.accountId || '').trim();
+        const displayName = String(me.displayName || '').trim();
+        const emailAddress = String(me.emailAddress || '').trim();
+        const accountType = String(me.accountType || '').trim();
+        const timeZone = String(me.timeZone || '').trim();
+        const locale = String(me.locale || '').trim();
+        const selfUrl = String(me.self || '').trim();
+        const avatarUrls = me.avatarUrls && typeof me.avatarUrls === 'object' ? me.avatarUrls : {};
+        const avatarUrl = String(
+          avatarUrls['48x48']
+          || avatarUrls['32x32']
+          || avatarUrls['24x24']
+          || avatarUrls['16x16']
+          || ''
+        ).trim();
+        if (!accountId && !displayName && !emailAddress) return null;
+        return {
+          accountId,
+          displayName,
+          emailAddress,
+          accountType,
+          active: !!me.active,
+          timeZone,
+          locale,
+          self: selfUrl,
+          avatarUrl,
+          syncedAt: new Date().toISOString()
+        };
+      }
+
+      function syncParentAdminAccessFlag(isAdmin, displayName, userProfile) {
         const desired = isAdmin ? '1' : '0';
         const normalizedDisplayName = String(displayName || '').trim();
         try {
@@ -4090,7 +4124,8 @@
             targetWindow.postMessage({
               type: 'jira-focus-admin-access',
               enabled: isAdmin,
-              displayName: normalizedDisplayName
+              displayName: normalizedDisplayName,
+              userProfile: userProfile || null
             }, '*');
           }
         } catch (_err) {
@@ -4125,18 +4160,24 @@
         const displayName = state.me && state.me.displayName
           ? String(state.me.displayName || '').trim()
           : '';
+        const userProfile = buildStoredUserProfile(state.me);
         const isAdmin = state.connected && displayName.toLowerCase() === JIRA_ADMIN_DISPLAY_NAME.toLowerCase();
         if (displayName) {
           StorageService.set(STORAGE.userDisplayName, displayName);
         } else {
           StorageService.del(STORAGE.userDisplayName);
         }
+        if (userProfile) {
+          StorageService.set(STORAGE.userProfile, JSON.stringify(userProfile));
+        } else {
+          StorageService.del(STORAGE.userProfile);
+        }
         if (isAdmin) {
           StorageService.set(STORAGE.adminAccess, '1');
         } else {
           StorageService.del(STORAGE.adminAccess);
         }
-        syncParentAdminAccessFlag(isAdmin, displayName);
+        syncParentAdminAccessFlag(isAdmin, displayName, userProfile);
       }
 
       function renderTop() {

@@ -345,6 +345,11 @@ st.components.v1.html(
               }} else {{
                 window.localStorage.removeItem('jira_focus_user_display_name');
               }}
+              if (data.userProfile && typeof data.userProfile === 'object') {{
+                window.localStorage.setItem('jira_focus_user_profile', JSON.stringify(data.userProfile));
+              }} else {{
+                window.localStorage.removeItem('jira_focus_user_profile');
+              }}
             }} catch (_err) {{
               // No-op when localStorage is not available.
             }}
@@ -2323,7 +2328,7 @@ def _build_auto_move_simulation(
             except Exception:
                 pass
 
-    _status("Listando niveles, grados y secciones del colegio...")
+    _status("Paso 1/5: listando niveles, grados y secciones del colegio...")
     niveles = _fetch_niveles_grados_grupos_censo(
         token=token,
         colegio_id=int(colegio_id),
@@ -2360,12 +2365,14 @@ def _build_auto_move_simulation(
         raise RuntimeError(
             "No hay seccion Y disponible en los grados configurados para este colegio."
         )
-    _status(f"Seccion Y detectada en {len(grade_keys_with_y)} grados.")
+    _status(
+        f"Paso 1/5 completo: seccion Y detectada en {len(grade_keys_with_y)} grado(s)."
+    )
     contexts: List[Dict[str, object]] = []
     for grade_key in grade_keys_with_y:
         contexts.extend(contexts_by_grade.get(grade_key, []))
 
-    _status("Listando clases del colegio...")
+    _status("Paso 2/5: listando clases del colegio...")
     try:
         clases_rows, _ = listar_y_mapear_clases(
             token=token,
@@ -2378,17 +2385,17 @@ def _build_auto_move_simulation(
         )
     except Exception:
         clases_rows = []
-        _status("No se pudieron listar clases. Continuando con alumnos...")
+        _status("Paso 2/5: no se pudieron listar clases; continuo con alumnos...")
     else:
-        _status(f"Clases listadas: {len(clases_rows)}.")
+        _status(f"Paso 2/5 completo: clases listadas ({len(clases_rows)}).")
 
     errores_fetch: List[str] = []
     alumnos_all_raw: List[Dict[str, object]] = []
     total_contexts = len(contexts)
-    _status(f"Listando alumnos por seccion ({total_contexts} combinaciones)...")
+    _status(f"Paso 3/5: listando alumnos por seccion ({total_contexts} consultas)...")
     for idx_ctx, ctx in enumerate(contexts, start=1):
         _status(
-            "Listando alumnos {idx}/{total} | nivelId={nivel} gradoId={grado} grupoId={grupo}".format(
+            "Paso 3/5: listando alumnos {idx}/{total} | nivelId={nivel} gradoId={grado} grupoId={grupo}".format(
                 idx=idx_ctx,
                 total=total_contexts,
                 nivel=ctx.get("nivel_id"),
@@ -2451,7 +2458,7 @@ def _build_auto_move_simulation(
             str(row.get("nombre") or "").upper(),
         ),
     )
-    _status(f"Alumnos consolidados: {len(alumnos_all)}.")
+    _status(f"Paso 3/5 completo: alumnos consolidados ({len(alumnos_all)}).")
     grupo_id_by_seccion_by_grade: Dict[Tuple[int, int], Dict[str, int]] = {}
     default_destino_by_grade: Dict[Tuple[int, int], Tuple[str, Optional[int]]] = {}
     for grade_key in grade_keys_with_y:
@@ -2500,7 +2507,11 @@ def _build_auto_move_simulation(
             str(row.get("nombre_completo") or "").upper(),
         )
     )
-    _status(f"Alumnos pagados en seccion Y: {len(pagados_y)}.")
+    _status(
+        "Paso 4/5: comparando alumnos pagados de seccion Y con no pagados "
+        "(apellidos + DNI)..."
+    )
+    _status(f"Paso 4/5: alumnos pagados en seccion Y detectados ({len(pagados_y)}).")
 
     plan_rows: List[Dict[str, object]] = []
     for idx, pagado in enumerate(pagados_y, start=1):
@@ -2628,7 +2639,9 @@ def _build_auto_move_simulation(
                 "Alumno a cambiar": alumno_cambiar,
             }
         )
-    _status(f"Simulacion completada. Cambios sugeridos: {len(plan_rows)}.")
+    _status(
+        f"Paso 5/5: simulacion lista. Cambios sugeridos para revisar: {len(plan_rows)}."
+    )
 
     return {
         "niveles": niveles,
@@ -4073,163 +4086,6 @@ with tab_crud_alumnos:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
 
-    with st.container(border=True):
-        st.markdown("**3) EXCEL RS**")
-        st.caption(
-            "Richmond Studio: CLASS NAME, CLASS CODE, STUDENT NAME, IDENTIFIER. "
-            "Solo roles student/teacher."
-        )
-        rs_token_raw = st.text_input(
-            "Bearer token RS",
-            type="password",
-            key="rs_bearer_token",
-            placeholder="password",
-        )
-        run_rs_excel = st.button("EXCEL RS", type="primary", key="rs_excel_generate")
-
-        if run_rs_excel:
-            rs_token = _clean_token(str(rs_token_raw or ""))
-            if not rs_token:
-                st.error("Ingresa el bearer token de Richmond Studio.")
-                st.stop()
-            try:
-                with st.spinner("Consultando Richmond Studio..."):
-                    rs_users = _fetch_richmondstudio_users(rs_token, timeout=30)
-                    rs_groups = _fetch_richmondstudio_groups(rs_token, timeout=30)
-            except Exception as exc:  # pragma: no cover - UI
-                st.error(f"Error: {exc}")
-                st.stop()
-
-            allowed_roles = {"student", "teacher"}
-            excluded_roles: Dict[str, int] = {}
-            filtered_users: List[Dict[str, object]] = []
-            for item in rs_users:
-                attrs = (
-                    item.get("attributes")
-                    if isinstance(item.get("attributes"), dict)
-                    else {}
-                )
-                role = str(attrs.get("role") or "").strip().lower()
-                if role not in allowed_roles:
-                    role_key = role or "sin_rol"
-                    excluded_roles[role_key] = int(excluded_roles.get(role_key, 0)) + 1
-                    continue
-                filtered_users.append(item)
-
-            group_lookup: Dict[str, Dict[str, str]] = {}
-            for group_item in rs_groups:
-                group_id = str(group_item.get("id") or "").strip()
-                if not group_id:
-                    continue
-                attrs = (
-                    group_item.get("attributes")
-                    if isinstance(group_item.get("attributes"), dict)
-                    else {}
-                )
-                group_lookup[group_id] = {
-                    "class_name": str(
-                        attrs.get("name") or attrs.get("description") or ""
-                    ).strip(),
-                    "class_code": str(attrs.get("code") or "").strip(),
-                }
-
-            rows_rs: List[Dict[str, str]] = []
-            for item in filtered_users:
-                attrs = item.get("attributes") if isinstance(item.get("attributes"), dict) else {}
-                relationships = (
-                    item.get("relationships")
-                    if isinstance(item.get("relationships"), dict)
-                    else {}
-                )
-                groups_rel = (
-                    relationships.get("groups")
-                    if isinstance(relationships.get("groups"), dict)
-                    else {}
-                )
-                groups_data = groups_rel.get("data") if isinstance(groups_rel.get("data"), list) else []
-
-                first_name = str(attrs.get("firstName") or "").strip()
-                last_name = str(attrs.get("lastName") or "").strip()
-                student_name = " ".join(part for part in [first_name, last_name] if part).strip()
-                identifier = str(attrs.get("identifier") or "").strip()
-
-                group_ids: List[str] = []
-                seen_group_ids = set()
-                for rel in groups_data:
-                    if not isinstance(rel, dict):
-                        continue
-                    group_id = str(rel.get("id") or "").strip()
-                    if not group_id or group_id in seen_group_ids:
-                        continue
-                    seen_group_ids.add(group_id)
-                    group_ids.append(group_id)
-
-                if group_ids:
-                    for group_id in group_ids:
-                        group_meta = group_lookup.get(group_id) or {}
-                        rows_rs.append(
-                            {
-                                "CLASS NAME": str(group_meta.get("class_name") or "").strip(),
-                                "CLASS CODE": str(group_meta.get("class_code") or "").strip(),
-                                "STUDENT NAME": student_name,
-                                "IDENTIFIER": identifier,
-                            }
-                        )
-                else:
-                    rows_rs.append(
-                        {
-                            "CLASS NAME": "",
-                            "CLASS CODE": "",
-                            "STUDENT NAME": student_name,
-                            "IDENTIFIER": identifier,
-                        }
-                    )
-            rows_rs = [
-                row
-                for row in rows_rs
-                if row.get("CLASS NAME")
-                or row.get("CLASS CODE")
-                or row.get("STUDENT NAME")
-                or row.get("IDENTIFIER")
-            ]
-            rows_rs = sorted(
-                rows_rs,
-                key=lambda row: (
-                    str(row.get("CLASS NAME") or "").lower(),
-                    str(row.get("CLASS CODE") or "").lower(),
-                    str(row.get("STUDENT NAME") or "").lower(),
-                    str(row.get("IDENTIFIER") or "").lower(),
-                ),
-            )
-
-            rs_excel_bytes = _export_simple_excel(rows_rs, sheet_name="users")
-            st.session_state["rs_excel_bytes"] = rs_excel_bytes
-            st.session_state["rs_excel_count"] = int(len(rows_rs))
-            st.success(
-                "EXCEL RS listo. Filas: {filas} | Usuarios validos: {validos}/{total}.".format(
-                    filas=len(rows_rs),
-                    validos=len(filtered_users),
-                    total=len(rs_users),
-                )
-            )
-            if excluded_roles:
-                excluded_txt = ", ".join(
-                    f"{role}: {count}"
-                    for role, count in sorted(excluded_roles.items(), key=lambda item: item[0])
-                )
-                st.caption(f"Roles excluidos: {excluded_txt}")
-            if rows_rs:
-                _show_dataframe(rows_rs[:200], use_container_width=True)
-
-        if st.session_state.get("rs_excel_bytes"):
-            st.download_button(
-                label="Descargar EXCEL RS",
-                data=st.session_state["rs_excel_bytes"],
-                file_name="excel_rs.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="rs_excel_download",
-            )
-    
 with tab_crud_clases:
     if not _restricted_sections_unlocked():
         _render_restricted_blur("CRUD Clases", "clases_2")
@@ -6293,8 +6149,8 @@ with tab_crud_alumnos:
                         st.caption(f"... y {restantes} errores mÃ¡s.")
     
 
-        with st.container(border=True):
-            st.markdown("**5) Simulador web: seccion Y en todos los grados**")
+        with tab_crud_clases, st.container(border=True):
+            st.markdown("**3) Simulador web: seccion Y en todos los grados**")
             st.caption(
                 "Solo usa Colegio Clave global. Toma todos los grados con seccion Y, "
                 "compara alumnos pagados de Y contra no pagados por apellidos y luego DNI."
@@ -6339,6 +6195,14 @@ with tab_crud_alumnos:
                     st.stop()
 
                 try:
+                    status_box = st.empty()
+
+                    def _on_status(message: str) -> None:
+                        msg = str(message or "").strip()
+                        if not msg:
+                            return
+                        status_box.info(msg)
+
                     with st.spinner("Preparando simulacion de cambios..."):
                         simulation = _build_auto_move_simulation(
                             token=token,
@@ -6346,8 +6210,9 @@ with tab_crud_alumnos:
                             empresa_id=int(empresa_id),
                             ciclo_id=int(ciclo_id),
                             timeout=int(timeout),
-                            on_status=None,
+                            on_status=_on_status,
                         )
+                    status_box.empty()
                 except Exception as exc:  # pragma: no cover - UI
                     st.error(f"Error: {exc}")
                     st.stop()
@@ -6633,7 +6498,7 @@ with tab_crud_alumnos:
                         st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
                         st.stop()
                     if not authorized_plans:
-                        st.warning("No hay filas autorizadas para ejecutar.")
+                        st.warning("No hay cambios autorizados para guardar.")
                         st.stop()
                     colegio_id_exec = _safe_int(st.session_state.get("auto_move_colegio_id"))
                     if colegio_id_exec is None:
@@ -6643,7 +6508,13 @@ with tab_crud_alumnos:
                             st.error(f"Error: {exc}")
                             st.stop()
                     try:
-                        with st.spinner("Aplicando cambios autorizados..."):
+                        st.info(
+                            "Iniciando guardado de cambios autorizados: "
+                            f"{len(authorized_plans)} alumno(s)."
+                        )
+                        with st.spinner(
+                            "Guardando cambios (inactivar referencia, mover seccion y asignar clases)..."
+                        ):
                             summary_apply, results_apply = _apply_auto_move_changes(
                                 token=token,
                                 colegio_id=int(colegio_id_exec),
@@ -6653,15 +6524,28 @@ with tab_crud_alumnos:
                                 plan_rows=authorized_plans,
                             )
                     except Exception as exc:  # pragma: no cover - UI
-                        st.error(f"Error aplicando cambios: {exc}")
+                        st.error(f"No se pudieron guardar los cambios: {exc}")
                         st.stop()
 
-                    st.success(
-                        "Ejecucion completada. "
-                        f"Inactivar OK={summary_apply['inactivar_ok']} ERROR={summary_apply['inactivar_error']} | "
-                        f"Mover OK={summary_apply['mover_ok']} ERROR={summary_apply['mover_error']} | "
-                        f"Asignar OK={summary_apply['asignar_ok']} ERROR={summary_apply['asignar_error']} "
-                        f"SKIP={summary_apply['asignar_skip']}"
+                    inactivar_ok = int(summary_apply.get("inactivar_ok", 0))
+                    inactivar_error = int(summary_apply.get("inactivar_error", 0))
+                    mover_ok = int(summary_apply.get("mover_ok", 0))
+                    mover_error = int(summary_apply.get("mover_error", 0))
+                    asignar_ok = int(summary_apply.get("asignar_ok", 0))
+                    asignar_error = int(summary_apply.get("asignar_error", 0))
+                    asignar_skip = int(summary_apply.get("asignar_skip", 0))
+                    total_errors = inactivar_error + mover_error + asignar_error
+
+                    if total_errors == 0:
+                        st.success("Cambios guardados correctamente.")
+                    else:
+                        st.warning("Guardado completado con observaciones.")
+
+                    st.caption(
+                        "Resumen: "
+                        f"Inactivar OK={inactivar_ok}, ERROR={inactivar_error} | "
+                        f"Mover OK={mover_ok}, ERROR={mover_error} | "
+                        f"Asignar clases OK={asignar_ok}, ERROR={asignar_error}, SKIP={asignar_skip}"
                     )
                     if results_apply:
                         details = []
@@ -6677,7 +6561,7 @@ with tab_crud_alumnos:
                                 )
                             )
                         if details:
-                            st.markdown("**Detalle de ejecucion**")
+                            st.markdown("**Detalle por alumno**")
                             st.markdown("\n".join(details))
                         if len(results_apply) > 80:
                             st.caption(f"... y {len(results_apply) - 80} filas mas.")

@@ -2585,7 +2585,6 @@ def _build_auto_move_simulation(
                 "PlanId": int(plan.get("plan_id") or 0),
                 "Alumno Y": alumno_y,
                 "Alumno a cambiar": alumno_cambiar,
-                "Accion": "Aplicar",
             }
         )
 
@@ -6279,7 +6278,8 @@ with tab_crud_alumnos:
                     "auto_move_alumnos_grid",
                     "auto_move_errors",
                     "auto_move_colegio_id",
-                    "auto_move_accion_by_plan",
+                    "auto_move_removed_ref_ids",
+                    "auto_move_group_map_by_grade",
                 ):
                     st.session_state.pop(state_key, None)
                 st.rerun()
@@ -6313,6 +6313,10 @@ with tab_crud_alumnos:
                 st.session_state["auto_move_alumnos_grid"] = simulation.get("alumnos_all_grid") or []
                 st.session_state["auto_move_errors"] = simulation.get("errors") or []
                 st.session_state["auto_move_colegio_id"] = int(colegio_id_int)
+                st.session_state["auto_move_group_map_by_grade"] = (
+                    simulation.get("grupo_id_by_seccion_by_grade") or {}
+                )
+                st.session_state["auto_move_removed_ref_ids"] = []
 
                 total_plan = len(st.session_state["auto_move_plan_rows"])
                 st.success(f"Simulacion lista. Alumnos candidatos a modificar: {total_plan}")
@@ -6334,59 +6338,116 @@ with tab_crud_alumnos:
                 if not editor_rows_cached:
                     st.info("No hay alumnos para modificar.")
                 else:
-                    action_state_raw = st.session_state.get("auto_move_accion_by_plan", {})
-                    if isinstance(action_state_raw, dict):
-                        action_state = dict(action_state_raw)
-                    else:
-                        action_state = {}
-                    edited_rows: List[Dict[str, object]] = []
-                    for row in editor_rows_cached:
-                        plan_id = _safe_int(row.get("PlanId"))
-                        if plan_id is None:
-                            continue
-                        action_saved = str(
-                            action_state.get(str(plan_id), row.get("Accion") or "Aplicar")
-                        ).strip()
-                        default_action = "X" if action_saved.upper() == "X" else "Aplicar"
-                        col_text, col_action = st.columns([9, 2], gap="small")
-                        with col_text:
-                            st.markdown(
-                                f"`{row.get('Alumno Y', '')}`  ->  "
-                                f"`{row.get('Alumno a cambiar', '')}`"
-                            )
-                        with col_action:
-                            selected_action = st.selectbox(
-                                "Accion",
-                                options=["Aplicar", "X"],
-                                index=0 if default_action == "Aplicar" else 1,
-                                key=f"auto_move_action_{int(plan_id)}",
-                                label_visibility="collapsed",
-                            )
-                        action_state[str(plan_id)] = selected_action
-                        edited_row = dict(row)
-                        edited_row["Accion"] = selected_action
-                        edited_rows.append(edited_row)
-                    st.session_state["auto_move_accion_by_plan"] = action_state
-                    st.session_state["auto_move_editor_rows"] = edited_rows
-
                     plan_by_id = {
                         int(plan.get("plan_id")): plan
                         for plan in plan_rows_cached
                         if _safe_int(plan.get("plan_id")) is not None
                     }
-                    authorized_plans: List[Dict[str, object]] = []
-                    for row in edited_rows:
-                        accion = str(row.get("Accion") or "").strip().upper()
+                    removed_raw = st.session_state.get("auto_move_removed_ref_ids", [])
+                    removed_ref_ids: Set[int] = set()
+                    if isinstance(removed_raw, (list, tuple, set)):
+                        for item in removed_raw:
+                            item_int = _safe_int(item)
+                            if item_int is not None:
+                                removed_ref_ids.add(int(item_int))
+
+                    for row in editor_rows_cached:
                         plan_id = _safe_int(row.get("PlanId"))
-                        if accion == "X" or plan_id is None:
+                        if plan_id is None:
                             continue
                         plan = plan_by_id.get(int(plan_id))
-                        if not isinstance(plan, dict):
+                        has_reference = bool(
+                            isinstance(plan, dict)
+                            and _to_bool(plan.get("requiere_inactivar"))
+                            and isinstance(plan.get("alumno_inactivar"), dict)
+                            and _safe_int((plan.get("alumno_inactivar") or {}).get("alumno_id")) is not None
+                        )
+                        is_removed = int(plan_id) in removed_ref_ids
+
+                        col_text, col_btn = st.columns([9, 2], gap="small")
+                        with col_text:
+                            st.markdown(
+                                f"`{row.get('Alumno Y', '')}`  ->  "
+                                f"`{row.get('Alumno a cambiar', '')}`"
+                            )
+                            if has_reference and is_removed:
+                                st.caption("Referencia quitada: no se inactivara alumno parecido.")
+                        with col_btn:
+                            if has_reference:
+                                if not is_removed:
+                                    if st.button(
+                                        "Quitar referencia",
+                                        key=f"auto_move_remove_ref_{int(plan_id)}",
+                                        use_container_width=True,
+                                    ):
+                                        removed_ref_ids.add(int(plan_id))
+                                        st.session_state["auto_move_removed_ref_ids"] = sorted(removed_ref_ids)
+                                        st.rerun()
+                                else:
+                                    if st.button(
+                                        "Restaurar referencia",
+                                        key=f"auto_move_restore_ref_{int(plan_id)}",
+                                        use_container_width=True,
+                                    ):
+                                        removed_ref_ids.discard(int(plan_id))
+                                        st.session_state["auto_move_removed_ref_ids"] = sorted(removed_ref_ids)
+                                        st.rerun()
+                            else:
+                                st.caption("Sin referencia")
+
+                    st.session_state["auto_move_removed_ref_ids"] = sorted(removed_ref_ids)
+
+                    group_map_by_grade = st.session_state.get("auto_move_group_map_by_grade", {})
+                    authorized_plans: List[Dict[str, object]] = []
+                    for base_plan in plan_rows_cached:
+                        plan_id = _safe_int(base_plan.get("plan_id"))
+                        if plan_id is None:
                             continue
+                        plan = dict(base_plan) if isinstance(base_plan, dict) else {}
+                        if not plan:
+                            continue
+                        if int(plan_id) in removed_ref_ids:
+                            plan["alumno_parecido"] = {}
+                            plan["alumno_inactivar"] = {}
+                            plan["requiere_inactivar"] = False
+                            plan["comparacion"] = (
+                                "Referencia eliminada manualmente: solo movimiento de seccion."
+                            )
+                            plan["motivo"] = (
+                                "Referencia eliminada manualmente: no se inactiva alumno parecido."
+                            )
+                            nivel_id_tmp = _safe_int(plan.get("nivel_id"))
+                            grado_id_tmp = _safe_int(plan.get("grado_id"))
+                            mapping: Dict[str, int] = {}
+                            if (
+                                isinstance(group_map_by_grade, dict)
+                                and nivel_id_tmp is not None
+                                and grado_id_tmp is not None
+                            ):
+                                mapping_raw = group_map_by_grade.get(
+                                    (int(nivel_id_tmp), int(grado_id_tmp))
+                                )
+                                if not isinstance(mapping_raw, dict):
+                                    mapping_raw = group_map_by_grade.get(
+                                        f"{int(nivel_id_tmp)}:{int(grado_id_tmp)}"
+                                    )
+                                if isinstance(mapping_raw, dict):
+                                    mapping = mapping_raw
+                            if mapping:
+                                destino_sec, destino_gid = _pick_default_destino(
+                                    grupo_id_by_seccion=mapping,
+                                    origen_seccion=AUTO_MOVE_SECCION_ORIGEN,
+                                )
+                                if destino_gid is not None:
+                                    plan["seccion_destino"] = destino_sec
+                                    plan["grupo_destino_id"] = int(destino_gid)
                         authorized_plans.append(plan)
 
                     st.caption(
-                        f"Filas listas para guardar: {len(authorized_plans)}/{len(plan_rows_cached)}"
+                        "Cambios listos para guardar: {total} | Referencias quitadas: {removed}".format(
+                            total=len(authorized_plans),
+                            removed=len(removed_ref_ids),
+                        )
                     )
 
                     confirm_apply_auto = st.checkbox(

@@ -6498,7 +6498,10 @@ with tab_crud_alumnos:
                             st.caption(grado_small)
                         ref_text_style = (
                             "font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; "
-                            "font-size: 0.92rem; line-height: 1.2;"
+                            "font-size: 0.92rem; line-height: 1.2; "
+                            "display:inline-block; padding:0.08rem 0.42rem; "
+                            "border:1px solid #86efac; border-radius:0.35rem; "
+                            "background:#f0fdf4; color:#15803d; font-weight:600;"
                         )
                         if has_reference and not is_removed:
                             params_click: Dict[str, str] = {}
@@ -6515,11 +6518,15 @@ with tab_crud_alumnos:
                             except Exception:
                                 params_click = {}
                             params_click["auto_remove_ref"] = str(int(plan_id))
-                            ref_href = "?" + urlencode(params_click)
+                            ref_href = "/?" + urlencode(params_click)
+                            ref_onclick = (
+                                "window.top.location.assign('" + ref_href + "'); return false;"
+                            )
                             st.markdown(
                                 (
                                     f'<div style="{ref_text_style}">'
-                                    f'<a href="{ref_href}" style="text-decoration:none;color:inherit;">'
+                                    f'<a href="{ref_href}" onclick="{ref_onclick}" '
+                                    'style="text-decoration:none;color:inherit;">'
                                     f"X {alumno_ref_label}</a></div>"
                                 ),
                                 unsafe_allow_html=True,

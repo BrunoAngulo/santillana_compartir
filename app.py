@@ -6,7 +6,7 @@ from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set, Tuple
-from urllib.parse import unquote, urlencode, urljoin
+from urllib.parse import unquote, urljoin
 from uuid import uuid4
 
 import pandas as pd
@@ -2291,6 +2291,21 @@ def _format_alumno_label(row: Dict[str, object]) -> str:
         nombre = "SIN NOMBRE"
     dni = str(row.get("id_oficial") or "").strip()
     return f"{nombre}|{dni or '-'}"
+
+
+def _add_auto_move_removed_ref(plan_id: int) -> None:
+    plan_id_int = _safe_int(plan_id)
+    if plan_id_int is None:
+        return
+    removed_raw = st.session_state.get("auto_move_removed_ref_ids", [])
+    removed_ref_ids: Set[int] = set()
+    if isinstance(removed_raw, (list, tuple, set)):
+        for item in removed_raw:
+            item_int = _safe_int(item)
+            if item_int is not None:
+                removed_ref_ids.add(int(item_int))
+    removed_ref_ids.add(int(plan_id_int))
+    st.session_state["auto_move_removed_ref_ids"] = sorted(removed_ref_ids)
 
 
 def _build_auto_move_simulation(
@@ -6324,17 +6339,6 @@ with tab_crud_alumnos:
                     st.stop()
 
                 try:
-                    status_box = st.empty()
-                    status_messages: List[str] = []
-
-                    def _on_status(message: str) -> None:
-                        msg = str(message or "").strip()
-                        if not msg:
-                            return
-                        if not status_messages or status_messages[-1] != msg:
-                            status_messages.append(msg)
-                        status_box.info(msg)
-
                     with st.spinner("Preparando simulacion de cambios..."):
                         simulation = _build_auto_move_simulation(
                             token=token,
@@ -6342,7 +6346,7 @@ with tab_crud_alumnos:
                             empresa_id=int(empresa_id),
                             ciclo_id=int(ciclo_id),
                             timeout=int(timeout),
-                            on_status=_on_status,
+                            on_status=None,
                         )
                 except Exception as exc:  # pragma: no cover - UI
                     st.error(f"Error: {exc}")
@@ -6357,7 +6361,6 @@ with tab_crud_alumnos:
                     simulation.get("grupo_id_by_seccion_by_grade") or {}
                 )
                 st.session_state["auto_move_removed_ref_ids"] = []
-                st.session_state["auto_move_status_messages"] = status_messages
 
                 total_plan = len(st.session_state["auto_move_plan_rows"])
                 st.success(f"Simulacion lista. Alumnos candidatos a modificar: {total_plan}")
@@ -6369,15 +6372,6 @@ with tab_crud_alumnos:
                 pending = len(errors_cached) - 20
                 if pending > 0:
                     st.caption(f"... y {pending} errores mas.")
-
-            status_messages_cached = st.session_state.get("auto_move_status_messages") or []
-            if status_messages_cached:
-                st.markdown("**Mensajes generales**")
-                for msg in status_messages_cached[:30]:
-                    st.caption(f"- {msg}")
-                remaining_msgs = len(status_messages_cached) - 30
-                if remaining_msgs > 0:
-                    st.caption(f"... y {remaining_msgs} mensajes mas.")
 
             plan_rows_cached = st.session_state.get("auto_move_plan_rows") or []
             if not plan_rows_cached:
@@ -6436,24 +6430,35 @@ with tab_crud_alumnos:
                         item_int = _safe_int(item)
                         if item_int is not None:
                             removed_ref_ids.add(int(item_int))
-                remove_ref_value = st.query_params.get("auto_remove_ref", "")
-                if isinstance(remove_ref_value, list):
-                    remove_ref_value = remove_ref_value[0] if remove_ref_value else ""
-                remove_ref_id = _safe_int(remove_ref_value)
-                if remove_ref_id is not None and int(remove_ref_id) in plan_by_id:
-                    removed_ref_ids.add(int(remove_ref_id))
-                    st.session_state["auto_move_removed_ref_ids"] = sorted(removed_ref_ids)
-                    try:
-                        qp_without_remove: Dict[str, object] = {}
-                        for qp_key, qp_value in st.query_params.items():
-                            if str(qp_key) == "auto_remove_ref":
-                                continue
-                            qp_without_remove[str(qp_key)] = qp_value
-                        st.query_params.clear()
-                        for qp_key, qp_value in qp_without_remove.items():
-                            st.query_params[qp_key] = qp_value
-                    except Exception:
-                        pass
+                st.markdown(
+                    """
+                    <style>
+                    [class*="st-key-auto_move_remove_ref_"] button {
+                        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+                        font-size: 0.92rem;
+                        line-height: 1.2;
+                        display: inline-block;
+                        padding: 0.08rem 0.42rem;
+                        border: 1px solid #86efac;
+                        border-radius: 0.35rem;
+                        background: #f0fdf4;
+                        color: #15803d;
+                        font-weight: 600;
+                        min-height: auto;
+                        height: auto;
+                    }
+                    [class*="st-key-auto_move_remove_ref_"] button:hover {
+                        border-color: #4ade80;
+                        color: #166534;
+                    }
+                    [class*="st-key-auto_move_remove_ref_"] button:focus {
+                        box-shadow: none;
+                        outline: 1px solid #86efac;
+                    }
+                    </style>
+                    """,
+                    unsafe_allow_html=True,
+                )
 
                 sorted_plan_ids = sorted(plan_by_id.keys())
                 if not sorted_plan_ids:
@@ -6502,29 +6507,12 @@ with tab_crud_alumnos:
                             "background:#f0fdf4; color:#15803d; font-weight:600;"
                         )
                         if has_reference and not is_removed:
-                            params_click: Dict[str, str] = {}
-                            try:
-                                for qp_key, qp_value in st.query_params.items():
-                                    if str(qp_key) == "auto_remove_ref":
-                                        continue
-                                    if isinstance(qp_value, list):
-                                        params_click[str(qp_key)] = (
-                                            str(qp_value[0]) if qp_value else ""
-                                        )
-                                    else:
-                                        params_click[str(qp_key)] = str(qp_value)
-                            except Exception:
-                                params_click = {}
-                            params_click["auto_remove_ref"] = str(int(plan_id))
-                            ref_href = "/?" + urlencode(params_click)
-                            st.markdown(
-                                (
-                                    f'<div style="{ref_text_style}">'
-                                    f'<a href="{ref_href}" target="_self" '
-                                    'style="text-decoration:none;color:inherit;">'
-                                    f"X {alumno_ref_label}</a></div>"
-                                ),
-                                unsafe_allow_html=True,
+                            st.button(
+                                f"X {alumno_ref_label}",
+                                key=f"auto_move_remove_ref_{int(plan_id)}",
+                                type="tertiary",
+                                on_click=_add_auto_move_removed_ref,
+                                args=(int(plan_id),),
                             )
                         elif has_reference and is_removed:
                             st.markdown(
@@ -6537,7 +6525,14 @@ with tab_crud_alumnos:
                                 unsafe_allow_html=True,
                             )
 
-                st.session_state["auto_move_removed_ref_ids"] = sorted(removed_ref_ids)
+                removed_ref_ids_current: Set[int] = set(removed_ref_ids)
+                removed_current_raw = st.session_state.get("auto_move_removed_ref_ids", [])
+                if isinstance(removed_current_raw, (list, tuple, set)):
+                    for item in removed_current_raw:
+                        item_int = _safe_int(item)
+                        if item_int is not None:
+                            removed_ref_ids_current.add(int(item_int))
+                st.session_state["auto_move_removed_ref_ids"] = sorted(removed_ref_ids_current)
 
                 group_map_by_grade = st.session_state.get("auto_move_group_map_by_grade", {})
                 authorized_plans: List[Dict[str, object]] = []

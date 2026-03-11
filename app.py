@@ -6479,26 +6479,60 @@ with tab_crud_alumnos:
                     alumno_y_label = _format_alumno_label(pagado)
                     alumno_ref_label = _format_alumno_label(referencial) if referencial else "-|SIN REFERENCIA|-"
 
-                    grado_txt = str(pagado.get("grado") or plan.get("grado_id") or "").strip()
+                    grado_txt = str(pagado.get("grado") or "").strip()
                     nivel_txt = str(pagado.get("nivel") or "").strip()
-                    seccion_txt = _normalize_seccion_key(
-                        pagado.get("seccion_norm") or pagado.get("seccion") or AUTO_MOVE_SECCION_ORIGEN
+                    seccion_origen_txt = _normalize_seccion_key(
+                        plan.get("seccion_origen")
+                        or pagado.get("seccion_norm")
+                        or pagado.get("seccion")
+                        or AUTO_MOVE_SECCION_ORIGEN
                     )
+                    seccion_destino_txt = _normalize_seccion_key(
+                        plan.get("seccion_destino") or ""
+                    )
+                    if not seccion_destino_txt:
+                        seccion_destino_txt = seccion_origen_txt
                     grado_base = " | ".join(part for part in [nivel_txt, grado_txt] if part)
-                    if grado_base and seccion_txt:
-                        grado_small = f"{grado_base} ({seccion_txt})"
+                    left_caption = ""
+                    if grado_base and seccion_origen_txt and seccion_destino_txt:
+                        left_caption = (
+                            f"{grado_base} ({seccion_origen_txt}) -> ({seccion_destino_txt})"
+                        )
+                    elif grado_base and seccion_origen_txt:
+                        left_caption = f"{grado_base} ({seccion_origen_txt})"
                     else:
-                        grado_small = grado_base or (f"Seccion ({seccion_txt})" if seccion_txt else "")
+                        left_caption = grado_base or (
+                            f"Seccion ({seccion_origen_txt})" if seccion_origen_txt else ""
+                        )
+
+                    ref_grado_txt = str(referencial.get("grado") or "").strip()
+                    ref_nivel_txt = str(referencial.get("nivel") or "").strip()
+                    ref_seccion_txt = _normalize_seccion_key(
+                        referencial.get("seccion_norm") or referencial.get("seccion") or ""
+                    )
+                    ref_base = " | ".join(part for part in [ref_nivel_txt, ref_grado_txt] if part)
+                    right_caption = ""
+                    if has_reference and not is_removed:
+                        if ref_base and ref_seccion_txt:
+                            right_caption = f"{ref_base} ({ref_seccion_txt})"
+                        elif ref_base:
+                            right_caption = ref_base
+                        elif ref_seccion_txt:
+                            right_caption = f"Seccion ({ref_seccion_txt})"
+                    elif has_reference and is_removed:
+                        right_caption = "SIN REFERENCIA"
+                    else:
+                        right_caption = "SIN REFERENCIA"
 
                     col_left, col_right = st.columns(2, gap="small")
                     with col_left:
-                        if grado_small:
-                            st.caption(grado_small)
+                        if left_caption:
+                            st.caption(left_caption)
                         st.markdown(f"`{alumno_y_label}`")
 
                     with col_right:
-                        if grado_small:
-                            st.caption(grado_small)
+                        if right_caption:
+                            st.caption(right_caption)
                         ref_text_style = (
                             "font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; "
                             "font-size: 0.92rem; line-height: 1.2; "

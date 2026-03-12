@@ -1,4 +1,5 @@
 import argparse
+import os
 import re
 import sys
 import unicodedata
@@ -15,6 +16,10 @@ CENSO_ALUMNOS_URL = (
 CENSO_NIVELES_GRADOS_GRUPOS_URL = (
     "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
     "/ciclos/{ciclo_id}/colegios/{colegio_id}/alumnos/nivelesGradosGrupos"
+)
+CENSO_PLANTILLA_EDICION_URL = (
+    "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
+    "/ciclos/{ciclo_id}/colegios/{colegio_id}/descargarPlantillaEdicionMasiva"
 )
 ALUMNO_ACTIVAR_URL = (
     "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
@@ -76,6 +81,378 @@ def _normalize_text(value: object) -> str:
 
 def _normalize_id_oficial(value: object) -> str:
     return re.sub(r"\W+", "", _normalize_text(value))
+
+
+def _normalize_seccion_key(value: object) -> str:
+    text = _normalize_text(value)
+    if text.startswith("GRUPO "):
+        text = text[6:].strip()
+    if len(text) > 1 and re.fullmatch(r"[A-Z]", text[-1]):
+        return text[-1]
+    return text
+
+
+def _grupo_sort_key(value: object) -> Tuple[int, str]:
+    text = _normalize_seccion_key(value)
+    if len(text) == 1 and text.isalpha():
+        return 0, text
+    return 1, text
+
+
+def _fetch_login_password_lookup_censo(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+) -> Tuple[Dict[str, Dict[str, str]], Dict[str, Dict[str, str]]]:
+    url = CENSO_PLANTILLA_EDICION_URL.format(
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        colegio_id=int(colegio_id),
+    )
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    try:
+        response = requests.get(url, headers=headers, params={"descargar": 0}, timeout=int(timeout))
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Error de red al consultar plantilla censo: {exc}") from exc
+
+    status_code = response.status_code
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError(f"Plantilla censo: respuesta no JSON (status {status_code})") from exc
+
+    if not response.ok:
+        message = payload.get("message") if isinstance(payload, dict) else ""
+        raise RuntimeError(message or f"Plantilla censo HTTP {status_code}")
+
+    if not isinstance(payload, dict) or not payload.get("success", False):
+        message = payload.get("message") if isinstance(payload, dict) else "Respuesta invalida"
+        raise RuntimeError(message or "Plantilla censo: respuesta invalida")
+
+    data = payload.get("data") or []
+    if not isinstance(data, list):
+        raise RuntimeError("Plantilla censo: campo data no es lista")
+
+    by_alumno_id: Dict[str, Dict[str, str]] = {}
+    by_persona_id: Dict[str, Dict[str, str]] = {}
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        login = str(item.get("login") or "").strip()
+        password = str(item.get("password") or "").strip()
+        alumno_id = str(item.get("alumnoId") or "").strip()
+        persona_id = str(item.get("personaId") or "").strip()
+        if not (login or password):
+            continue
+        value = {"login": login, "password": password}
+        if alumno_id:
+            by_alumno_id[alumno_id] = value
+        if persona_id:
+            by_persona_id[persona_id] = value
+
+    return by_alumno_id, by_persona_id
+
+
+def _extract_alumno_payload(item: Dict[str, object]) -> Dict[str, object]:
+    nested = item.get("alumno")
+    if isinstance(nested, dict):
+        return nested
+    return item
+
+
+def _resolve_alumno_login_password(
+    item: Dict[str, object],
+    by_alumno_id: Dict[str, Dict[str, str]],
+    by_persona_id: Dict[str, Dict[str, str]],
+) -> Tuple[str, str]:
+    source = _extract_alumno_payload(item)
+    persona = source.get("persona") if isinstance(source.get("persona"), dict) else {}
+    login = ""
+    password = str(source.get("password") or item.get("password") or "").strip()
+
+    persona_login = persona.get("personaLogin") if isinstance(persona, dict) else None
+    if isinstance(persona_login, dict):
+        login = str(persona_login.get("login") or "").strip()
+    if not login:
+        login = str(source.get("login") or item.get("login") or "").strip()
+
+    alumno_id = str(source.get("alumnoId") or item.get("alumnoId") or "").strip()
+    persona_id = str(
+        persona.get("personaId") or source.get("personaId") or item.get("personaId") or ""
+    ).strip()
+
+    if (not login or not password) and alumno_id and alumno_id in by_alumno_id:
+        lookup = by_alumno_id[alumno_id]
+        if not login:
+            login = str(lookup.get("login") or "").strip()
+        if not password:
+            password = str(lookup.get("password") or "").strip()
+
+    if (not login or not password) and persona_id and persona_id in by_persona_id:
+        lookup = by_persona_id[persona_id]
+        if not login:
+            login = str(lookup.get("login") or "").strip()
+        if not password:
+            password = str(lookup.get("password") or "").strip()
+
+    return login, password
+
+
+def _build_contexts_for_nivel_grado(niveles: List[Dict[str, object]]) -> List[Dict[str, object]]:
+    contexts: List[Dict[str, object]] = []
+    seen: Set[Tuple[int, int, int]] = set()
+    for nivel_entry in niveles:
+        if not isinstance(nivel_entry, dict):
+            continue
+        nivel = nivel_entry.get("nivel") if isinstance(nivel_entry.get("nivel"), dict) else {}
+        nivel_id = _safe_int(nivel.get("nivelId"))
+        if nivel_id is None:
+            continue
+        nivel_nombre = str(nivel.get("nivel") or "").strip()
+        grados = nivel_entry.get("grados") or []
+        if not isinstance(grados, list):
+            continue
+        for grado_entry in grados:
+            if not isinstance(grado_entry, dict):
+                continue
+            grado = grado_entry.get("grado") if isinstance(grado_entry.get("grado"), dict) else {}
+            grado_id = _safe_int(grado.get("gradoId"))
+            if grado_id is None:
+                continue
+            grado_nombre = str(grado.get("grado") or "").strip()
+            grupos = grado_entry.get("grupos") or []
+            if not isinstance(grupos, list):
+                continue
+            for grupo_entry in grupos:
+                if not isinstance(grupo_entry, dict):
+                    continue
+                grupo = grupo_entry.get("grupo") if isinstance(grupo_entry.get("grupo"), dict) else {}
+                grupo_id = _safe_int(grupo.get("grupoId"))
+                if grupo_id is None:
+                    continue
+                key = (int(nivel_id), int(grado_id), int(grupo_id))
+                if key in seen:
+                    continue
+                seen.add(key)
+                seccion = str(grupo.get("grupoClave") or grupo.get("grupo") or "").strip()
+                contexts.append(
+                    {
+                        "nivel_id": int(nivel_id),
+                        "nivel": nivel_nombre,
+                        "grado_id": int(grado_id),
+                        "grado": grado_nombre,
+                        "grupo_id": int(grupo_id),
+                        "seccion": seccion,
+                        "seccion_norm": _normalize_seccion_key(seccion),
+                    }
+                )
+    contexts.sort(
+        key=lambda row: (
+            int(row.get("nivel_id") or 0),
+            int(row.get("grado_id") or 0),
+            _grupo_sort_key(row.get("seccion_norm") or row.get("seccion") or ""),
+            int(row.get("grupo_id") or 0),
+        )
+    )
+    return contexts
+
+
+def _normalize_censo_activos_rows(rows: List[Dict[str, object]]) -> List[Dict[str, str]]:
+    prepared: List[Dict[str, object]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        prepared.append(
+            {
+                "Nivel": str(row.get("Nivel") or row.get("nivel") or "").strip(),
+                "Grado": str(row.get("Grado") or row.get("grado") or "").strip(),
+                "Grupo": str(row.get("Grupo") or row.get("grupo") or "").strip(),
+                "Nombre del alumno": str(
+                    row.get("Nombre del alumno")
+                    or row.get("nombre_completo")
+                    or row.get("Nombre completo")
+                    or ""
+                ).strip(),
+                "Login": str(row.get("Login") or row.get("login") or "").strip(),
+                "Password": str(row.get("Password") or row.get("password") or "").strip(),
+                "_sort_nivel_id": _safe_int(row.get("_sort_nivel_id")) or 999,
+                "_sort_grado_id": _safe_int(row.get("_sort_grado_id")) or 999,
+                "_sort_grupo": _grupo_sort_key(row.get("Grupo") or row.get("grupo") or ""),
+            }
+        )
+
+    prepared.sort(
+        key=lambda row: (
+            int(row.get("_sort_nivel_id") or 999),
+            int(row.get("_sort_grado_id") or 999),
+            row.get("_sort_grupo") or (9, ""),
+            str(row.get("Nombre del alumno") or ""),
+        )
+    )
+
+    return [
+        {
+            "Nivel": str(row.get("Nivel") or ""),
+            "Grado": str(row.get("Grado") or ""),
+            "Grupo": str(row.get("Grupo") or ""),
+            "Nombre del alumno": str(row.get("Nombre del alumno") or ""),
+            "Login": str(row.get("Login") or ""),
+            "Password": str(row.get("Password") or ""),
+        }
+        for row in prepared
+    ]
+
+
+def _run_censo_activos(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+    niveles: List[Dict[str, object]],
+) -> int:
+    contexts = _build_contexts_for_nivel_grado(niveles=niveles)
+    if not contexts:
+        print("Sin secciones configuradas para este colegio.", file=sys.stderr)
+        return 1
+
+    print("")
+    print(
+        "CENSO DE ALUMNOS ACTIVOS "
+        f"| colegioId={colegio_id} | empresaId={empresa_id} | cicloId={ciclo_id}"
+    )
+
+    try:
+        login_lookup_by_alumno, login_lookup_by_persona = _fetch_login_password_lookup_censo(
+            token=token,
+            colegio_id=int(colegio_id),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+        )
+        print(
+            "Lookup login/password cargado: "
+            f"alumnoId={len(login_lookup_by_alumno)} | personaId={len(login_lookup_by_persona)}"
+        )
+    except Exception as exc:
+        login_lookup_by_alumno = {}
+        login_lookup_by_persona = {}
+        print(f"Advertencia lookup login/password: {exc}", file=sys.stderr)
+
+    rows_activos: List[Dict[str, object]] = []
+    errors: List[str] = []
+    total_contexts = len(contexts)
+    for index, ctx in enumerate(contexts, start=1):
+        print(
+            f"[{index}/{total_contexts}] Consultando "
+            f"{ctx.get('nivel', '')} | {ctx.get('grado', '')} | {ctx.get('seccion_norm') or ctx.get('seccion') or ''} "
+            f"(nivelId={ctx.get('nivel_id')}, gradoId={ctx.get('grado_id')}, grupoId={ctx.get('grupo_id')})"
+        )
+        try:
+            alumnos_ctx = _fetch_alumnos_censo(
+                token=token,
+                colegio_id=int(colegio_id),
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                nivel_id=int(ctx.get("nivel_id") or 0),
+                grado_id=int(ctx.get("grado_id") or 0),
+                grupo_id=int(ctx.get("grupo_id") or 0),
+                timeout=int(timeout),
+            )
+        except Exception as exc:
+            err = (
+                f"Error en {ctx.get('nivel', '')} | {ctx.get('grado', '')} "
+                f"({ctx.get('seccion_norm') or ctx.get('seccion') or ''}): {exc}"
+            )
+            errors.append(err)
+            print(err, file=sys.stderr)
+            continue
+
+        activos_ctx = 0
+        for item in alumnos_ctx:
+            if not isinstance(item, dict):
+                continue
+            source = _extract_alumno_payload(item)
+            persona = source.get("persona") if isinstance(source.get("persona"), dict) else {}
+            if not _is_true(source.get("activo", item.get("activo"))):
+                continue
+            login_txt, _password_txt = _resolve_alumno_login_password(
+                item,
+                login_lookup_by_alumno,
+                login_lookup_by_persona,
+            )
+            rows_activos.append(
+                {
+                    "Nivel": str(
+                        (
+                            source.get("nivel")
+                            if isinstance(source.get("nivel"), dict)
+                            else {}
+                        ).get("nivel")
+                        or ctx.get("nivel")
+                        or ""
+                    ).strip(),
+                    "Grado": str(
+                        (
+                            source.get("grado")
+                            if isinstance(source.get("grado"), dict)
+                            else {}
+                        ).get("grado")
+                        or ctx.get("grado")
+                        or ""
+                    ).strip(),
+                    "Grupo": str(
+                        (
+                            source.get("grupo")
+                            if isinstance(source.get("grupo"), dict)
+                            else {}
+                        ).get("grupoClave")
+                        or ctx.get("seccion_norm")
+                        or ctx.get("seccion")
+                        or ""
+                    ).strip(),
+                    "Nombre del alumno": str(
+                        persona.get("nombreCompleto")
+                        or source.get("nombreCompleto")
+                        or item.get("nombreCompleto")
+                        or ""
+                    ).strip(),
+                    "Login": login_txt,
+                    "Password": "",
+                    "_sort_nivel_id": ctx.get("nivel_id"),
+                    "_sort_grado_id": ctx.get("grado_id"),
+                }
+            )
+            activos_ctx += 1
+        print(f"    Activos encontrados: {activos_ctx}")
+
+    display_rows = _normalize_censo_activos_rows(rows_activos)
+
+    print("")
+    print("Nivel\tGrado\tGrupo\tNombre del alumno\tLogin\tPassword")
+    for row in display_rows:
+        print(
+            f"{row.get('Nivel', '')}\t"
+            f"{row.get('Grado', '')}\t"
+            f"{row.get('Grupo', '')}\t"
+            f"{row.get('Nombre del alumno', '')}\t"
+            f"{row.get('Login', '')}\t"
+            f"{row.get('Password', '')}"
+        )
+
+    print("")
+    print(
+        "Resumen censo activos: "
+        f"secciones={total_contexts} | activos={len(display_rows)} | errores={len(errors)}"
+    )
+    if errors:
+        print("")
+        print("Errores detectados:")
+        for err in errors:
+            print(f"- {err}", file=sys.stderr)
+    return 0 if not errors else 1
 
 
 def _fetch_alumnos_censo(
@@ -589,13 +966,16 @@ def _flatten_usuario(item: Dict[str, object], fallback: Dict[str, object]) -> Di
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Lista clases Pegasus por colegio y ademas lista usuarios de una seccion "
-            "(por defecto Y / grupoId 685). En simulacion por defecto, solo muestra "
-            "activaciones/inactivaciones/movimientos propuestos."
+            "CLI Pegasus para listar clases y ejecutar utilidades de censo por consola. "
+            "Incluye el modo --censo-activos para recorrer todas las secciones del colegio."
         )
     )
     parser.add_argument("colegio_id", type=int, help="Colegio clave ID (ej: 9039)")
-    parser.add_argument("bearer_token", help="Bearer token Pegasus")
+    parser.add_argument(
+        "bearer_token",
+        nargs="?",
+        help="Bearer token Pegasus. Si se omite, usa la variable PEGASUS_TOKEN.",
+    )
     parser.add_argument("--empresa-id", type=int, default=11, help="Empresa ID")
     parser.add_argument("--ciclo-id", type=int, default=207, help="Ciclo ID")
     parser.add_argument("--timeout", type=int, default=30, help="Timeout en segundos")
@@ -647,11 +1027,19 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Aplica activaciones/inactivaciones reales. Sin este flag, es simulacion.",
     )
+    parser.add_argument(
+        "--censo-activos",
+        action="store_true",
+        help=(
+            "Recorre todas las secciones del colegio y muestra por consola el censo "
+            "de alumnos activos con las columnas Nivel, Grado, Grupo, Nombre del alumno, Login y Password."
+        ),
+    )
     args = parser.parse_args(argv)
 
-    token = _clean_token(args.bearer_token)
+    token = _clean_token(args.bearer_token or os.getenv("PEGASUS_TOKEN", ""))
     if not token:
-        print("Error: bearer token vacio.", file=sys.stderr)
+        print("Error: bearer token vacio. Pasa el token o define PEGASUS_TOKEN.", file=sys.stderr)
         return 2
 
     niveles: List[Dict[str, object]] = []
@@ -670,6 +1058,16 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     if args.solo_secciones:
         return 0
+
+    if args.censo_activos:
+        return _run_censo_activos(
+            token=token,
+            colegio_id=int(args.colegio_id),
+            empresa_id=int(args.empresa_id),
+            ciclo_id=int(args.ciclo_id),
+            timeout=int(args.timeout),
+            niveles=niveles,
+        )
 
     if args.listar_alumnos_grado_todas_secciones:
         if args.nivel_id is None or args.grado_id is None:

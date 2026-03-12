@@ -6786,6 +6786,7 @@ with tab_crud_alumnos:
         if clear_censo_activos:
             for state_key in (
                 "alumnos_censo_activos_rows",
+                "alumnos_censo_activos_export_rows",
                 "alumnos_censo_activos_errors",
                 "alumnos_censo_activos_colegio_id",
             ):
@@ -6812,7 +6813,19 @@ with tab_crud_alumnos:
             )
             contexts = _build_contexts_for_nivel_grado(niveles=niveles)
             rows_activos: List[Dict[str, object]] = []
+            export_rows_activos: List[Dict[str, object]] = []
             errors_activos: List[str] = []
+            try:
+                login_lookup_by_alumno, login_lookup_by_persona = _fetch_login_password_lookup_censo(
+                    token=token,
+                    colegio_id=int(colegio_id_int),
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                )
+            except Exception:
+                login_lookup_by_alumno = {}
+                login_lookup_by_persona = {}
             for ctx in contexts:
                 try:
                     alumnos_ctx = _fetch_alumnos_censo(
@@ -6841,6 +6854,11 @@ with tab_crud_alumnos:
                     flat = _flatten_censo_alumno_for_auto_plan(item=item, fallback=ctx)
                     if not _to_bool(flat.get("activo")):
                         continue
+                    login_txt, _password_txt = _resolve_alumno_login_password(
+                        item,
+                        login_lookup_by_alumno,
+                        login_lookup_by_persona,
+                    )
                     rows_activos.append(
                         {
                             "Alumno ID": flat.get("alumno_id") or "",
@@ -6853,6 +6871,16 @@ with tab_crud_alumnos:
                             "Con pago": "SI" if _to_bool(flat.get("con_pago")) else "NO",
                         }
                     )
+                    export_rows_activos.append(
+                        {
+                            "Nivel": flat.get("nivel") or "",
+                            "Grado": flat.get("grado") or "",
+                            "Grupo": flat.get("seccion_norm") or flat.get("seccion") or "",
+                            "Nombre del alumno": flat.get("nombre_completo") or "",
+                            "Login": login_txt,
+                            "Password": "",
+                        }
+                    )
 
             rows_activos = sorted(
                 rows_activos,
@@ -6863,7 +6891,17 @@ with tab_crud_alumnos:
                     str(row.get("Nombre completo") or ""),
                 ),
             )
+            export_rows_activos = sorted(
+                export_rows_activos,
+                key=lambda row: (
+                    str(row.get("Nivel") or ""),
+                    str(row.get("Grado") or ""),
+                    str(row.get("Grupo") or ""),
+                    str(row.get("Nombre del alumno") or ""),
+                ),
+            )
             st.session_state["alumnos_censo_activos_rows"] = rows_activos
+            st.session_state["alumnos_censo_activos_export_rows"] = export_rows_activos
             st.session_state["alumnos_censo_activos_errors"] = errors_activos
             st.session_state["alumnos_censo_activos_colegio_id"] = int(colegio_id_int)
             st.success(
@@ -6874,6 +6912,7 @@ with tab_crud_alumnos:
             )
 
         censo_rows_cached = st.session_state.get("alumnos_censo_activos_rows") or []
+        censo_export_rows_cached = st.session_state.get("alumnos_censo_activos_export_rows") or []
         censo_errors_cached = st.session_state.get("alumnos_censo_activos_errors") or []
         if censo_rows_cached:
             _show_dataframe(censo_rows_cached, use_container_width=True)
@@ -6881,7 +6920,10 @@ with tab_crud_alumnos:
             file_suffix = str(censo_colegio_id) if censo_colegio_id is not None else "colegio"
             st.download_button(
                 label="Descargar censo activos",
-                data=_export_simple_excel(censo_rows_cached, sheet_name="activos"),
+                data=_export_simple_excel(
+                    censo_export_rows_cached or censo_rows_cached,
+                    sheet_name="activos",
+                ),
                 file_name=f"censo_alumnos_activos_{file_suffix}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 key="alumnos_censo_activos_download",

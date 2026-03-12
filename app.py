@@ -1,6 +1,7 @@
 import os
 import re
 import tempfile
+import threading
 import unicodedata
 from datetime import date, datetime
 from io import BytesIO
@@ -132,6 +133,10 @@ RICHMONDSTUDIO_GRADE_LABELS = [label for _code, label in RICHMONDSTUDIO_GRADE_OP
 RICHMONDSTUDIO_GRADE_SUGGESTION_BY_LABEL = {
     label: code for code, label in RICHMONDSTUDIO_GRADE_OPTIONS
 }
+_PARTICIPANTES_SYNC_LOCK = threading.Lock()
+_PARTICIPANTES_SYNC_JOBS: Dict[str, Dict[str, object]] = {}
+_PARTICIPANTES_SYNC_SCOPE_TO_JOB: Dict[Tuple[int, int, int], str] = {}
+_PARTICIPANTES_SYNC_STATUS_LIMIT = 12
 
 
 def _richmondstudio_grade_option_from_code(grade_code: object) -> str:
@@ -2467,6 +2472,319 @@ def _extract_alumno_ids_from_clase_data(clase_data: Dict[str, object]) -> Set[in
     return alumno_ids
 
 
+def _make_participantes_sync_summary(total_clases: int = 0) -> Dict[str, int]:
+    return {
+        "clases_total": int(total_clases),
+        "clases_ok": 0,
+        "clases_skip": 0,
+        "clases_error": 0,
+        "grupos_consultados": 0,
+        "alumnos_objetivo": 0,
+        "alumnos_sin_cambios": 0,
+        "eliminados_ok": 0,
+        "eliminados_error": 0,
+        "agregados_ok": 0,
+        "agregados_error": 0,
+    }
+
+
+def _build_participantes_group_error_lines(
+    group_errors: Dict[Tuple[int, int, int], str]
+) -> List[str]:
+    return [
+        "nivelId={nivel} gradoId={grado} grupoId={grupo}: {err}".format(
+            nivel=key[0],
+            grado=key[1],
+            grupo=key[2],
+            err=message,
+        )
+        for key, message in sorted(group_errors.items(), key=lambda item: item[0])
+    ]
+
+
+class _ParticipantesSyncCancelled(RuntimeError):
+    def __init__(
+        self,
+        summary: Dict[str, int],
+        detail_rows: List[Dict[str, object]],
+        group_errors: Dict[Tuple[int, int, int], str],
+    ) -> None:
+        super().__init__("Proceso cancelado por el usuario.")
+        self.summary = dict(summary)
+        self.detail_rows = [dict(item) for item in detail_rows]
+        self.group_error_lines = _build_participantes_group_error_lines(group_errors)
+
+
+def _copy_participantes_sync_job(job: Dict[str, object]) -> Dict[str, object]:
+    snapshot = dict(job)
+    for key in ("status_messages", "warnings", "group_error_lines", "detail_rows"):
+        value = snapshot.get(key)
+        snapshot[key] = list(value) if isinstance(value, list) else []
+    summary = snapshot.get("summary")
+    snapshot["summary"] = dict(summary) if isinstance(summary, dict) else {}
+    return snapshot
+
+
+def _set_participantes_sync_job(job_id: str, **fields: object) -> None:
+    if not str(job_id or "").strip():
+        return
+    with _PARTICIPANTES_SYNC_LOCK:
+        job = _PARTICIPANTES_SYNC_JOBS.get(str(job_id))
+        if not isinstance(job, dict):
+            return
+        for key, value in fields.items():
+            if isinstance(value, dict):
+                job[key] = dict(value)
+            elif isinstance(value, list):
+                job[key] = list(value)
+            else:
+                job[key] = value
+
+
+def _append_participantes_sync_job_message(job_id: str, message: object) -> None:
+    msg = str(message or "").strip()
+    if not msg:
+        return
+    with _PARTICIPANTES_SYNC_LOCK:
+        job = _PARTICIPANTES_SYNC_JOBS.get(str(job_id))
+        if not isinstance(job, dict):
+            return
+        messages = list(job.get("status_messages") or [])
+        if not messages or messages[-1] != msg:
+            messages.append(msg)
+        job["status_messages"] = messages[-_PARTICIPANTES_SYNC_STATUS_LIMIT:]
+
+
+def _get_participantes_sync_job(job_id: object) -> Optional[Dict[str, object]]:
+    job_key = str(job_id or "").strip()
+    if not job_key:
+        return None
+    with _PARTICIPANTES_SYNC_LOCK:
+        job = _PARTICIPANTES_SYNC_JOBS.get(job_key)
+        if not isinstance(job, dict):
+            return None
+        return _copy_participantes_sync_job(job)
+
+
+def _get_participantes_sync_job_id_for_scope(
+    empresa_id: int,
+    ciclo_id: int,
+    colegio_id: int,
+) -> Optional[str]:
+    scope = (int(empresa_id), int(ciclo_id), int(colegio_id))
+    with _PARTICIPANTES_SYNC_LOCK:
+        job_id = _PARTICIPANTES_SYNC_SCOPE_TO_JOB.get(scope)
+        if not str(job_id or "").strip():
+            return None
+        if not isinstance(_PARTICIPANTES_SYNC_JOBS.get(str(job_id)), dict):
+            return None
+        return str(job_id)
+
+
+def _is_participantes_sync_job_active(job: Optional[Dict[str, object]]) -> bool:
+    if not isinstance(job, dict):
+        return False
+    return str(job.get("state") or "").strip() in {"starting", "running"}
+
+
+def _request_cancel_participantes_sync_job(job_id: object) -> bool:
+    job_key = str(job_id or "").strip()
+    if not job_key:
+        return False
+    with _PARTICIPANTES_SYNC_LOCK:
+        job = _PARTICIPANTES_SYNC_JOBS.get(job_key)
+        if not isinstance(job, dict):
+            return False
+        state = str(job.get("state") or "").strip()
+        if state not in {"starting", "running"}:
+            return False
+        if bool(job.get("cancel_requested")):
+            return True
+        job["cancel_requested"] = True
+    _append_participantes_sync_job_message(
+        job_key,
+        "Cancelacion solicitada. Cerrando el proceso en segundo plano...",
+    )
+    return True
+
+
+def _is_participantes_sync_job_cancel_requested(job_id: object) -> bool:
+    job_key = str(job_id or "").strip()
+    if not job_key:
+        return False
+    with _PARTICIPANTES_SYNC_LOCK:
+        job = _PARTICIPANTES_SYNC_JOBS.get(job_key)
+        if not isinstance(job, dict):
+            return False
+        return bool(job.get("cancel_requested"))
+
+
+def _run_participantes_sync_job(
+    job_id: str,
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+) -> None:
+    _set_participantes_sync_job(job_id, state="running")
+    _append_participantes_sync_job_message(job_id, "Preparando sincronizacion automatica...")
+
+    summary_auto = _make_participantes_sync_summary()
+    detail_rows_auto: List[Dict[str, object]] = []
+    warnings_auto: List[str] = []
+    group_error_lines: List[str] = []
+
+    try:
+        clases = _fetch_clases_gestion_escolar(
+            token=token,
+            colegio_id=int(colegio_id),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+            ordered=True,
+        )
+        if _is_participantes_sync_job_cancel_requested(job_id):
+            raise _ParticipantesSyncCancelled(summary_auto, detail_rows_auto, {})
+
+        niveles_data = _fetch_niveles_grados_grupos_censo(
+            token=token,
+            colegio_id=int(colegio_id),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+        )
+        if _is_participantes_sync_job_cancel_requested(job_id):
+            raise _ParticipantesSyncCancelled(summary_auto, detail_rows_auto, {})
+
+        rows_auto, warnings_auto = _build_auto_group_rows_for_participantes(
+            clases=clases,
+            niveles_data=niveles_data,
+        )
+        summary_auto = _make_participantes_sync_summary(len(rows_auto))
+        _set_participantes_sync_job(
+            job_id,
+            summary=summary_auto,
+            warnings=warnings_auto,
+        )
+        _append_participantes_sync_job_message(
+            job_id,
+            "Clases detectadas={total} | Sincronizables={sync} | Advertencias={warn}".format(
+                total=len(clases),
+                sync=len(rows_auto),
+                warn=len(warnings_auto),
+            ),
+        )
+
+        if rows_auto:
+            summary_auto, detail_rows_auto, group_error_lines = _sync_participantes_por_grado_seccion(
+                token=token,
+                colegio_id=int(colegio_id),
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                timeout=int(timeout),
+                rows_auto=rows_auto,
+                niveles_data=niveles_data,
+                on_status=lambda message: _append_participantes_sync_job_message(job_id, message),
+                on_summary=lambda summary: _set_participantes_sync_job(job_id, summary=summary),
+                prefer_session_state=False,
+                is_cancelled=lambda: _is_participantes_sync_job_cancel_requested(job_id),
+            )
+        else:
+            _append_participantes_sync_job_message(
+                job_id,
+                "No se encontraron clases con grado y seccion resolubles para sincronizar.",
+            )
+    except _ParticipantesSyncCancelled as exc:
+        _set_participantes_sync_job(
+            job_id,
+            state="cancelled",
+            summary=exc.summary,
+            detail_rows=exc.detail_rows,
+            warnings=warnings_auto,
+            group_error_lines=exc.group_error_lines,
+            error="",
+        )
+        _append_participantes_sync_job_message(job_id, "Proceso cancelado por el usuario.")
+        return
+    except Exception as exc:
+        _set_participantes_sync_job(
+            job_id,
+            state="error",
+            summary=summary_auto,
+            detail_rows=detail_rows_auto,
+            warnings=warnings_auto,
+            group_error_lines=group_error_lines,
+            error=str(exc),
+        )
+        _append_participantes_sync_job_message(job_id, f"Error: {exc}")
+        return
+
+    _set_participantes_sync_job(
+        job_id,
+        state="done",
+        summary=summary_auto,
+        detail_rows=detail_rows_auto,
+        warnings=warnings_auto,
+        group_error_lines=group_error_lines,
+        error="",
+    )
+    _append_participantes_sync_job_message(job_id, "Proceso completado.")
+
+
+def _start_participantes_sync_job(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+) -> str:
+    scope = (int(empresa_id), int(ciclo_id), int(colegio_id))
+    with _PARTICIPANTES_SYNC_LOCK:
+        existing_id = _PARTICIPANTES_SYNC_SCOPE_TO_JOB.get(scope)
+        existing_job = _PARTICIPANTES_SYNC_JOBS.get(str(existing_id)) if existing_id else None
+        if isinstance(existing_job, dict) and str(existing_job.get("state") or "").strip() in {
+            "starting",
+            "running",
+        }:
+            return str(existing_id)
+
+        job_id = uuid4().hex
+        _PARTICIPANTES_SYNC_JOBS[job_id] = {
+            "job_id": job_id,
+            "scope": scope,
+            "state": "starting",
+            "cancel_requested": False,
+            "status_messages": [],
+            "summary": _make_participantes_sync_summary(),
+            "warnings": [],
+            "group_error_lines": [],
+            "detail_rows": [],
+            "error": "",
+        }
+        _PARTICIPANTES_SYNC_SCOPE_TO_JOB[scope] = job_id
+
+    worker = threading.Thread(
+        target=_run_participantes_sync_job,
+        args=(
+            job_id,
+            str(token or "").strip(),
+            int(colegio_id),
+            int(empresa_id),
+            int(ciclo_id),
+            int(timeout),
+        ),
+        daemon=True,
+        name=f"participantes-sync-{job_id[:8]}",
+    )
+    with _PARTICIPANTES_SYNC_LOCK:
+        job = _PARTICIPANTES_SYNC_JOBS.get(job_id)
+        if isinstance(job, dict):
+            job["thread"] = worker
+    worker.start()
+    return job_id
+
+
 def _sync_participantes_por_grado_seccion(
     token: str,
     colegio_id: int,
@@ -2476,7 +2794,9 @@ def _sync_participantes_por_grado_seccion(
     rows_auto: List[Dict[str, object]],
     niveles_data: List[Dict[str, object]],
     on_status: Optional[Callable[[str], None]] = None,
+    on_summary: Optional[Callable[[Dict[str, int]], None]] = None,
     prefer_session_state: bool = False,
+    is_cancelled: Optional[Callable[[], bool]] = None,
 ) -> Tuple[Dict[str, int], List[Dict[str, object]], List[str]]:
     def _status(message: str) -> None:
         if callable(on_status):
@@ -2484,6 +2804,23 @@ def _sync_participantes_por_grado_seccion(
                 on_status(str(message or ""))
             except Exception:
                 pass
+
+    def _emit_summary() -> None:
+        if callable(on_summary):
+            try:
+                on_summary(dict(summary))
+            except Exception:
+                pass
+
+    def _raise_if_cancelled() -> None:
+        if not callable(is_cancelled):
+            return
+        try:
+            cancelled = bool(is_cancelled())
+        except Exception:
+            cancelled = False
+        if cancelled:
+            raise _ParticipantesSyncCancelled(summary, detail_rows, group_errors)
 
     contexts = _build_contexts_for_nivel_grado(niveles=niveles_data)
     context_by_key: Dict[Tuple[int, int, int], Dict[str, object]] = {}
@@ -2498,22 +2835,12 @@ def _sync_participantes_por_grado_seccion(
     activos_by_group: Dict[Tuple[int, int, int], Dict[int, Dict[str, object]]] = {}
     group_errors: Dict[Tuple[int, int, int], str] = {}
     detail_rows: List[Dict[str, object]] = []
-    summary = {
-        "clases_total": len(rows_auto),
-        "clases_ok": 0,
-        "clases_skip": 0,
-        "clases_error": 0,
-        "grupos_consultados": 0,
-        "alumnos_objetivo": 0,
-        "alumnos_sin_cambios": 0,
-        "eliminados_ok": 0,
-        "eliminados_error": 0,
-        "agregados_ok": 0,
-        "agregados_error": 0,
-    }
+    summary = _make_participantes_sync_summary(len(rows_auto))
+    _emit_summary()
 
     total_clases = len(rows_auto)
     for idx, row in enumerate(rows_auto, start=1):
+        _raise_if_cancelled()
         clase_id = _safe_int(row.get("clase_id"))
         nivel_id = _safe_int(row.get("nivel_id"))
         grado_id = _safe_int(row.get("grado_id"))
@@ -2535,6 +2862,7 @@ def _sync_participantes_por_grado_seccion(
                     "Detalle": "Metadata incompleta de clase.",
                 }
             )
+            _emit_summary()
             continue
 
         selected_group_id = _resolve_auto_group_selection(
@@ -2558,6 +2886,7 @@ def _sync_participantes_por_grado_seccion(
                     "Detalle": "No se pudo resolver el grupo destino.",
                 }
             )
+            _emit_summary()
             continue
 
         context_key = (int(nivel_id), int(grado_id), int(selected_group_id))
@@ -2601,6 +2930,7 @@ def _sync_participantes_por_grado_seccion(
                     "Detalle": "No existe contexto de censo para el grupo destino.",
                 }
             )
+            _emit_summary()
             continue
 
         if context_key not in activos_by_group and context_key not in group_errors:
@@ -2656,6 +2986,7 @@ def _sync_participantes_por_grado_seccion(
                     "Detalle": f"Error al listar alumnos activos: {group_errors[context_key]}",
                 }
             )
+            _emit_summary()
             continue
 
         alumnos_objetivo = activos_by_group.get(context_key) or {}
@@ -2687,6 +3018,7 @@ def _sync_participantes_por_grado_seccion(
                     "Detalle": f"No se pudo listar alumnos actuales: {exc}",
                 }
             )
+            _emit_summary()
             continue
 
         alumnos_actuales_ids = _extract_alumno_ids_from_clase_data(clase_data)
@@ -2699,6 +3031,7 @@ def _sync_participantes_por_grado_seccion(
         add_errors: List[str] = []
 
         for alumno_id in to_remove:
+            _raise_if_cancelled()
             try:
                 _delete_alumno_clase_gestion_escolar(
                     token=token,
@@ -2714,6 +3047,7 @@ def _sync_participantes_por_grado_seccion(
                 remove_errors.append(f"{int(alumno_id)}: {exc}")
 
         for alumno_id in to_add:
+            _raise_if_cancelled()
             ok_assign, msg_assign = _asignar_alumno_a_clase_web(
                 token=token,
                 empresa_id=int(empresa_id),
@@ -2766,16 +3100,9 @@ def _sync_participantes_por_grado_seccion(
         row["grupo_id_actual"] = int(selected_group_id)
         if seccion_destino:
             row["grupo_clave_actual"] = seccion_destino
+        _emit_summary()
 
-    group_error_lines = [
-        "nivelId={nivel} gradoId={grado} grupoId={grupo}: {err}".format(
-            nivel=key[0],
-            grado=key[1],
-            grupo=key[2],
-            err=message,
-        )
-        for key, message in sorted(group_errors.items(), key=lambda item: item[0])
-    ]
+    group_error_lines = _build_participantes_group_error_lines(group_errors)
     return summary, detail_rows, group_error_lines
 
 
@@ -4670,111 +4997,148 @@ with tab_crud_clases:
                 )
                 run_eliminar_clases = st.button("Eliminar clases", key="clases_eliminar_btn")
 
-        run_actualizar_participantes_auto = False
-        with st.container(border=True):
-            st.markdown("**Asignacion de Participantes**")
-            st.caption(
-                "Sincroniza automaticamente alumnos activos por grado y seccion: "
-                "agrega faltantes y elimina sobrantes en cada clase."
-            )
-            run_actualizar_participantes_auto = st.button(
-                "Actualizar participantes auto",
-                key="clases_auto_group_sync_auto_btn",
-                type="primary",
-                use_container_width=True,
-            )
+        @st.fragment(run_every="2s")
+        def _render_participantes_auto_sync_section() -> None:
+            colegio_id_int: Optional[int] = None
+            colegio_error = ""
+            if str(colegio_id_raw).strip():
+                try:
+                    colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                except ValueError as exc:
+                    colegio_error = str(exc)
 
-        if run_actualizar_participantes_auto:
-            if not token:
-                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-                st.stop()
-            try:
-                colegio_id_int = _parse_colegio_id(colegio_id_raw)
-            except ValueError as exc:
-                st.error(f"Error: {exc}")
-                st.stop()
-
-            status_box = st.empty()
-            status_messages: List[str] = []
-
-            def _on_auto_sync_status(message: str) -> None:
-                msg = str(message or "").strip()
-                if msg:
-                    status_messages.append(msg)
-                    recientes = status_messages[-8:]
-                    status_box.info("\n".join(f"- {item}" for item in recientes))
-
-            try:
-                with st.spinner("Actualizando participantes automaticamente..."):
-                    clases = _fetch_clases_gestion_escolar(
-                        token=token,
-                        colegio_id=colegio_id_int,
+            current_job_id = ""
+            if colegio_id_int is not None:
+                current_job_id = (
+                    _get_participantes_sync_job_id_for_scope(
                         empresa_id=int(empresa_id),
                         ciclo_id=int(ciclo_id),
-                        timeout=int(timeout),
-                        ordered=True,
+                        colegio_id=int(colegio_id_int),
                     )
-                    niveles_data = _fetch_niveles_grados_grupos_censo(
-                        token=token,
-                        colegio_id=colegio_id_int,
-                        empresa_id=int(empresa_id),
-                        ciclo_id=int(ciclo_id),
-                        timeout=int(timeout),
+                    or ""
+                )
+                if current_job_id:
+                    st.session_state["clases_auto_group_job_id"] = current_job_id
+
+            current_job = _get_participantes_sync_job(current_job_id)
+            is_running = _is_participantes_sync_job_active(current_job)
+
+            with st.container(border=True):
+                st.markdown("**Asignacion de Participantes**")
+                st.caption(
+                    "Sincroniza automaticamente alumnos activos por grado y seccion: "
+                    "agrega faltantes y elimina sobrantes en cada clase. El proceso "
+                    "sigue corriendo en segundo plano aunque cambies de ventana."
+                )
+                col_run, col_cancel = st.columns([4, 1], gap="small")
+                with col_run:
+                    run_actualizar_participantes_auto = st.button(
+                        "Actualizar participantes auto",
+                        key="clases_auto_group_sync_auto_btn",
+                        type="primary",
+                        use_container_width=True,
+                        disabled=is_running,
                     )
-                    rows_auto, warnings_auto = _build_auto_group_rows_for_participantes(
-                        clases=clases,
-                        niveles_data=niveles_data,
+                with col_cancel:
+                    run_cancelar_participantes_auto = st.button(
+                        "Cancelar",
+                        key="clases_auto_group_sync_cancel_btn",
+                        use_container_width=True,
+                        disabled=not is_running,
                     )
-                    st.session_state["clases_auto_group_rows"] = rows_auto
-                    st.session_state["clases_auto_group_warnings"] = warnings_auto
-                    st.session_state["clases_auto_group_context"] = {
-                        "colegio_id": int(colegio_id_int),
-                        "ciclo_id": int(ciclo_id),
-                        "empresa_id": int(empresa_id),
-                    }
-                    summary_auto, detail_rows_auto, group_error_lines = (
-                        _sync_participantes_por_grado_seccion(
+
+                if run_actualizar_participantes_auto:
+                    if not token:
+                        st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                    elif colegio_error:
+                        st.error(f"Error: {colegio_error}")
+                    elif colegio_id_int is None:
+                        st.error("Ingresa un Colegio Clave (global) valido.")
+                    else:
+                        current_job_id = _start_participantes_sync_job(
                             token=token,
                             colegio_id=int(colegio_id_int),
                             empresa_id=int(empresa_id),
                             ciclo_id=int(ciclo_id),
                             timeout=int(timeout),
-                            rows_auto=rows_auto,
-                            niveles_data=niveles_data,
-                            on_status=_on_auto_sync_status,
-                            prefer_session_state=False,
                         )
+                        st.session_state["clases_auto_group_job_id"] = current_job_id
+                        current_job = _get_participantes_sync_job(current_job_id)
+                        is_running = _is_participantes_sync_job_active(current_job)
+                        st.success("Proceso iniciado en segundo plano.")
+
+                if run_cancelar_participantes_auto:
+                    if _request_cancel_participantes_sync_job(current_job_id):
+                        current_job = _get_participantes_sync_job(current_job_id)
+                        is_running = _is_participantes_sync_job_active(current_job)
+                        st.warning("Cancelacion solicitada.")
+                    else:
+                        st.info("No hay un proceso activo para cancelar.")
+
+                if colegio_error:
+                    st.caption(f"Colegio actual invalido: {colegio_error}")
+
+                if not isinstance(current_job, dict):
+                    st.caption(
+                        "Usa este bloque para sincronizar en segundo plano los alumnos "
+                        "activos del colegio actual."
                     )
-            except Exception as exc:  # pragma: no cover - UI
-                status_box.empty()
-                st.error(f"Error: {exc}")
-                st.stop()
+                    return
 
-            status_box.empty()
-            if not rows_auto:
-                st.warning("No se encontraron clases con grupo/seccion resoluble para sincronizar.")
-            elif summary_auto.get("clases_error", 0) == 0 and not group_error_lines:
-                st.success("Actualizacion automatica completada.")
-            else:
-                st.warning("Actualizacion automatica completada con observaciones.")
+                state = str(current_job.get("state") or "").strip()
+                summary_auto = (
+                    dict(current_job.get("summary"))
+                    if isinstance(current_job.get("summary"), dict)
+                    else {}
+                )
+                warnings_auto = list(current_job.get("warnings") or [])
+                group_error_lines = list(current_job.get("group_error_lines") or [])
+                status_messages = [
+                    str(item).strip()
+                    for item in list(current_job.get("status_messages") or [])
+                    if str(item).strip()
+                ]
+                cancel_requested = bool(current_job.get("cancel_requested"))
+                error_text = str(current_job.get("error") or "").strip()
 
-            st.caption(
-                "Resumen: "
-                f"Alumnos asignados={summary_auto.get('agregados_ok', 0)} | "
-                f"Alumnos eliminados={summary_auto.get('eliminados_ok', 0)} | "
-                f"Clases sin cambios={summary_auto.get('clases_skip', 0)} | "
-                f"Clases con error={summary_auto.get('clases_error', 0)}"
-            )
-            if warnings_auto:
+                if state in {"starting", "running"}:
+                    if cancel_requested:
+                        st.warning(
+                            "Cancelacion solicitada. El proceso terminara al cerrar el "
+                            "bloque actual."
+                        )
+                    else:
+                        st.info("Proceso en ejecucion en segundo plano.")
+                elif state == "done":
+                    if (
+                        summary_auto.get("clases_error", 0) == 0
+                        and not group_error_lines
+                        and not warnings_auto
+                    ):
+                        st.success("Actualizacion automatica completada.")
+                    else:
+                        st.warning("Actualizacion automatica completada con observaciones.")
+                elif state == "cancelled":
+                    st.warning("Proceso cancelado. Se conserva el resumen parcial.")
+                elif state == "error":
+                    st.error(error_text or "No se pudo completar la sincronizacion.")
+
+                if status_messages:
+                    st.info("\n".join(f"- {item}" for item in status_messages[-8:]))
+
                 st.caption(
-                    "Advertencias de mapeo de clases: "
-                    f"{len(warnings_auto)}"
+                    "Resumen: "
+                    f"Alumnos asignados={summary_auto.get('agregados_ok', 0)} | "
+                    f"Alumnos eliminados={summary_auto.get('eliminados_ok', 0)} | "
+                    f"Clases sin cambios={summary_auto.get('clases_skip', 0)} | "
+                    f"Clases con error={summary_auto.get('clases_error', 0)}"
                 )
-            if group_error_lines:
-                st.caption(
-                    "Errores al consultar secciones: "
-                    f"{len(group_error_lines)}"
-                )
+                if warnings_auto:
+                    st.caption(f"Advertencias de mapeo de clases: {len(warnings_auto)}")
+                if group_error_lines:
+                    st.caption(f"Errores al consultar secciones: {len(group_error_lines)}")
+
+        _render_participantes_auto_sync_section()
 
 
         if run_listar_clases:

@@ -4679,18 +4679,18 @@ with tab_crud_clases:
             with col_c:
                 st.markdown("### Ingresar clave")
                 pwd_unlock = st.text_input(
-                    "Clave admin",
+                    "Clave",
                     type="password",
                     key="clases_auto_group_unlock_input",
-                    placeholder="admin",
+                    placeholder="Ted2026",
                 )
                 col_ok, col_cancel = st.columns(2)
                 if col_ok.button("Desbloquear", key="clases_auto_group_unlock_ok"):
-                    if str(pwd_unlock or "") == "admin":
+                    if str(pwd_unlock or "") == RESTRICTED_SECTIONS_PASSWORD:
                         st.session_state["clases_auto_group_unlocked"] = True
                         st.rerun()
                     else:
-                        st.error("Clave admin incorrecta.")
+                        st.error("Clave incorrecta.")
                 if col_cancel.button("Cancelar", key="clases_auto_group_unlock_cancel"):
                     st.rerun()
 

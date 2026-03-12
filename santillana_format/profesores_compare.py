@@ -136,8 +136,12 @@ def _normalize_header(value: object) -> str:
 
 
 def _normalize_text(value: object) -> str:
-    text = str(value or "").strip().lower()
-    text = unicodedata.normalize("NFD", text)
+    text = str(value or "").strip().casefold()
+    text = (
+        text.replace("ñ", "n")
+        .replace("Ñ", "n")
+    )
+    text = unicodedata.normalize("NFKD", text)
     text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
     text = re.sub(r"[^a-z0-9]+", "", text)
     return text
@@ -196,9 +200,20 @@ def _record_name_key(record: Dict[str, str]) -> str:
     return "|".join(parts)
 
 
+def _record_name_compact_key(record: Dict[str, str]) -> str:
+    return "".join(
+        [
+            _normalize_text(record.get("Nombre")),
+            _normalize_text(record.get("Apellido Paterno")),
+            _normalize_text(record.get("Apellido Materno")),
+        ]
+    )
+
+
 def _build_reference_indexes(df_bd: pd.DataFrame) -> Dict[str, Dict[str, List[int]]]:
     by_dni: Dict[str, List[int]] = {}
     by_name: Dict[str, List[int]] = {}
+    by_name_compact: Dict[str, List[int]] = {}
     for idx, row in df_bd.iterrows():
         record = _row_to_profesor_record(row)
         dni = _normalize_dni(record.get("DNI"))
@@ -207,7 +222,10 @@ def _build_reference_indexes(df_bd: pd.DataFrame) -> Dict[str, Dict[str, List[in
         name_key = _record_name_key(record)
         if name_key.replace("|", ""):
             by_name.setdefault(name_key, []).append(int(idx))
-    return {"dni": by_dni, "name": by_name}
+        name_compact_key = _record_name_compact_key(record)
+        if name_compact_key:
+            by_name_compact.setdefault(name_compact_key, []).append(int(idx))
+    return {"dni": by_dni, "name": by_name, "name_compact": by_name_compact}
 
 
 def _match_reference(
@@ -223,6 +241,11 @@ def _match_reference(
     name_key = _record_name_key(colegio_row)
     if name_key.replace("|", "") and name_key in indexes["name"]:
         idx = indexes["name"][name_key][0]
+        return _row_to_profesor_record(df_bd.iloc[int(idx)]), "Nombre"
+
+    name_compact_key = _record_name_compact_key(colegio_row)
+    if name_compact_key and name_compact_key in indexes["name_compact"]:
+        idx = indexes["name_compact"][name_compact_key][0]
         return _row_to_profesor_record(df_bd.iloc[int(idx)]), "Nombre"
 
     return None, ""

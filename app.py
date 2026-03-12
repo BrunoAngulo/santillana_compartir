@@ -2198,6 +2198,22 @@ def _fetch_grupo_alumnos_count(
     return int(count)
 
 
+def _collect_colegios(clases: List[Dict[str, object]]) -> List[Dict[str, object]]:
+    colegios: Dict[int, str] = {}
+    for item in clases:
+        cnc = item.get("colegioNivelCiclo") if isinstance(item, dict) else None
+        colegio = cnc.get("colegio") if isinstance(cnc, dict) else None
+        if isinstance(colegio, dict):
+            colegio_id = colegio.get("colegioId")
+            colegio_nombre = colegio.get("colegio", "")
+            if colegio_id is not None:
+                colegios[int(colegio_id)] = str(colegio_nombre or "")
+    return [
+        {"colegioId": colegio_id, "colegio": nombre}
+        for colegio_id, nombre in sorted(colegios.items())
+    ]
+
+
 def _build_alumno_export_key(
     item: Dict[str, object],
     source: Dict[str, object],
@@ -2350,6 +2366,417 @@ def _flatten_censo_alumno_for_auto_plan(
         "con_pago": _to_bool(item.get("conPago")),
         "fecha_desde": str(item.get("fechaDesde") or "").strip(),
     }
+
+
+def _build_auto_group_rows_for_participantes(
+    clases: List[Dict[str, object]],
+    niveles_data: List[Dict[str, object]],
+) -> Tuple[List[Dict[str, object]], List[str]]:
+    grupos_por_grado = _build_grupos_disponibles_por_grado(niveles_data)
+    rows_auto: List[Dict[str, object]] = []
+    warnings_auto: List[str] = []
+
+    for item in clases:
+        if not isinstance(item, dict):
+            continue
+        meta = _extract_clase_meta(item)
+        if not meta:
+            warnings_auto.append(
+                f"Clase omitida por metadata incompleta: {item.get('geClaseId')}"
+            )
+            continue
+
+        key_grado = (int(meta["nivel_id"]), int(meta["grado_id"]))
+        options = grupos_por_grado.get(key_grado) or []
+        if not options:
+            warnings_auto.append(
+                f"Clase {meta['clase_id']} sin grupos disponibles para su grado."
+            )
+            continue
+
+        default_group_id = _pick_default_group_id(
+            meta["clase_nombre"],
+            options,
+            meta.get("grupo_id_actual"),
+        )
+        if default_group_id is None:
+            warnings_auto.append(f"Clase {meta['clase_id']} sin grupo sugerido.")
+            continue
+
+        rows_auto.append(
+            {
+                **meta,
+                "options": options,
+                "selected_group_id": int(default_group_id),
+            }
+        )
+
+    return rows_auto, warnings_auto
+
+
+def _resolve_auto_group_selection(
+    row: Dict[str, object],
+    prefer_session_state: bool = True,
+) -> Optional[int]:
+    options = row.get("options") if isinstance(row.get("options"), list) else []
+    option_ids = [int(opt["grupo_id"]) for opt in options if _safe_int(opt.get("grupo_id")) is not None]
+    if not option_ids:
+        return None
+
+    selected_default = _safe_int(row.get("selected_group_id"))
+    auto_group_id = _pick_default_group_id(
+        row.get("clase_nombre"),
+        options,
+        _safe_int(row.get("grupo_id_actual")),
+    )
+    clase_id = _safe_int(row.get("clase_id"))
+    selected_group_id = None
+    if prefer_session_state and clase_id is not None:
+        selected_group_id = _safe_int(
+            st.session_state.get(
+                f"clases_auto_group_select_{int(clase_id)}",
+                row.get("selected_group_id"),
+            )
+        )
+    if selected_group_id is None:
+        selected_group_id = selected_default
+    if selected_group_id is None:
+        selected_group_id = _safe_int(auto_group_id)
+    if selected_group_id is not None and int(selected_group_id) in option_ids:
+        return int(selected_group_id)
+    if auto_group_id is not None and int(auto_group_id) in option_ids:
+        return int(auto_group_id)
+    if selected_default is not None and int(selected_default) in option_ids:
+        return int(selected_default)
+    return int(option_ids[0])
+
+
+def _extract_alumno_ids_from_clase_data(clase_data: Dict[str, object]) -> Set[int]:
+    alumno_ids: Set[int] = set()
+    clase_alumnos = clase_data.get("claseAlumnos") if isinstance(clase_data, dict) else []
+    if not isinstance(clase_alumnos, list):
+        return alumno_ids
+    for entry in clase_alumnos:
+        if not isinstance(entry, dict):
+            continue
+        alumno = entry.get("alumno") if isinstance(entry.get("alumno"), dict) else {}
+        alumno_id = _safe_int(alumno.get("alumnoId"))
+        if alumno_id is None:
+            continue
+        alumno_ids.add(int(alumno_id))
+    return alumno_ids
+
+
+def _sync_participantes_por_grado_seccion(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+    rows_auto: List[Dict[str, object]],
+    niveles_data: List[Dict[str, object]],
+    on_status: Optional[Callable[[str], None]] = None,
+    prefer_session_state: bool = False,
+) -> Tuple[Dict[str, int], List[Dict[str, object]], List[str]]:
+    def _status(message: str) -> None:
+        if callable(on_status):
+            try:
+                on_status(str(message or ""))
+            except Exception:
+                pass
+
+    contexts = _build_contexts_for_nivel_grado(niveles=niveles_data)
+    context_by_key: Dict[Tuple[int, int, int], Dict[str, object]] = {}
+    for ctx in contexts:
+        nivel_id = _safe_int(ctx.get("nivel_id"))
+        grado_id = _safe_int(ctx.get("grado_id"))
+        grupo_id = _safe_int(ctx.get("grupo_id"))
+        if nivel_id is None or grado_id is None or grupo_id is None:
+            continue
+        context_by_key[(int(nivel_id), int(grado_id), int(grupo_id))] = ctx
+
+    activos_by_group: Dict[Tuple[int, int, int], Dict[int, Dict[str, object]]] = {}
+    group_errors: Dict[Tuple[int, int, int], str] = {}
+    detail_rows: List[Dict[str, object]] = []
+    summary = {
+        "clases_total": len(rows_auto),
+        "clases_ok": 0,
+        "clases_skip": 0,
+        "clases_error": 0,
+        "grupos_consultados": 0,
+        "alumnos_objetivo": 0,
+        "alumnos_sin_cambios": 0,
+        "eliminados_ok": 0,
+        "eliminados_error": 0,
+        "agregados_ok": 0,
+        "agregados_error": 0,
+    }
+
+    total_clases = len(rows_auto)
+    for idx, row in enumerate(rows_auto, start=1):
+        clase_id = _safe_int(row.get("clase_id"))
+        nivel_id = _safe_int(row.get("nivel_id"))
+        grado_id = _safe_int(row.get("grado_id"))
+        clase_nombre = str(row.get("clase_nombre") or "").strip()
+        if clase_id is None or nivel_id is None or grado_id is None:
+            summary["clases_error"] += 1
+            detail_rows.append(
+                {
+                    "Clase ID": row.get("clase_id") or "",
+                    "Clase": clase_nombre,
+                    "Nivel": row.get("nivel_nombre") or "",
+                    "Grado": row.get("grado_nombre") or "",
+                    "Seccion": "",
+                    "Activos objetivo": 0,
+                    "Actuales": 0,
+                    "Agregar": 0,
+                    "Eliminar": 0,
+                    "Resultado": "Error",
+                    "Detalle": "Metadata incompleta de clase.",
+                }
+            )
+            continue
+
+        selected_group_id = _resolve_auto_group_selection(
+            row,
+            prefer_session_state=prefer_session_state,
+        )
+        if selected_group_id is None:
+            summary["clases_error"] += 1
+            detail_rows.append(
+                {
+                    "Clase ID": int(clase_id),
+                    "Clase": clase_nombre,
+                    "Nivel": row.get("nivel_nombre") or "",
+                    "Grado": row.get("grado_nombre") or "",
+                    "Seccion": "",
+                    "Activos objetivo": 0,
+                    "Actuales": 0,
+                    "Agregar": 0,
+                    "Eliminar": 0,
+                    "Resultado": "Error",
+                    "Detalle": "No se pudo resolver el grupo destino.",
+                }
+            )
+            continue
+
+        context_key = (int(nivel_id), int(grado_id), int(selected_group_id))
+        ctx = context_by_key.get(context_key)
+        seccion_destino = ""
+        if isinstance(ctx, dict):
+            seccion_destino = _normalize_seccion_key(
+                ctx.get("seccion_norm") or ctx.get("seccion") or ""
+            )
+        if not seccion_destino:
+            for opt in row.get("options", []):
+                if _safe_int(opt.get("grupo_id")) == int(selected_group_id):
+                    seccion_destino = _normalize_seccion_key(
+                        opt.get("grupo_clave") or opt.get("grupo_nombre") or ""
+                    )
+                    break
+
+        _status(
+            "Sincronizando clase {idx}/{total}: {clase_id} | {clase}".format(
+                idx=idx,
+                total=total_clases,
+                clase_id=int(clase_id),
+                clase=clase_nombre or "-",
+            )
+        )
+
+        if ctx is None:
+            summary["clases_error"] += 1
+            detail_rows.append(
+                {
+                    "Clase ID": int(clase_id),
+                    "Clase": clase_nombre,
+                    "Nivel": row.get("nivel_nombre") or "",
+                    "Grado": row.get("grado_nombre") or "",
+                    "Seccion": seccion_destino,
+                    "Activos objetivo": 0,
+                    "Actuales": 0,
+                    "Agregar": 0,
+                    "Eliminar": 0,
+                    "Resultado": "Error",
+                    "Detalle": "No existe contexto de censo para el grupo destino.",
+                }
+            )
+            continue
+
+        if context_key not in activos_by_group and context_key not in group_errors:
+            try:
+                _status(
+                    "Consultando alumnos activos: nivel={nivel} grado={grado} grupo={grupo}".format(
+                        nivel=int(nivel_id),
+                        grado=int(grado_id),
+                        grupo=int(selected_group_id),
+                    )
+                )
+                alumnos_ctx = _fetch_alumnos_censo(
+                    token=token,
+                    colegio_id=int(colegio_id),
+                    nivel_id=int(nivel_id),
+                    grado_id=int(grado_id),
+                    grupo_id=int(selected_group_id),
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                )
+            except Exception as exc:
+                group_errors[context_key] = str(exc)
+            else:
+                activos_tmp: Dict[int, Dict[str, object]] = {}
+                for item in alumnos_ctx:
+                    if not isinstance(item, dict):
+                        continue
+                    flat = _flatten_censo_alumno_for_auto_plan(item=item, fallback=ctx)
+                    if not _to_bool(flat.get("activo")):
+                        continue
+                    alumno_id = _safe_int(flat.get("alumno_id"))
+                    if alumno_id is None:
+                        continue
+                    activos_tmp[int(alumno_id)] = flat
+                activos_by_group[context_key] = activos_tmp
+                summary["grupos_consultados"] += 1
+
+        if context_key in group_errors:
+            summary["clases_error"] += 1
+            detail_rows.append(
+                {
+                    "Clase ID": int(clase_id),
+                    "Clase": clase_nombre,
+                    "Nivel": row.get("nivel_nombre") or "",
+                    "Grado": row.get("grado_nombre") or "",
+                    "Seccion": seccion_destino,
+                    "Activos objetivo": 0,
+                    "Actuales": 0,
+                    "Agregar": 0,
+                    "Eliminar": 0,
+                    "Resultado": "Error",
+                    "Detalle": f"Error al listar alumnos activos: {group_errors[context_key]}",
+                }
+            )
+            continue
+
+        alumnos_objetivo = activos_by_group.get(context_key) or {}
+        alumnos_objetivo_ids = set(alumnos_objetivo.keys())
+        summary["alumnos_objetivo"] += len(alumnos_objetivo_ids)
+
+        try:
+            clase_data = _fetch_alumnos_clase_gestion_escolar(
+                token=token,
+                clase_id=int(clase_id),
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                timeout=int(timeout),
+            )
+        except Exception as exc:
+            summary["clases_error"] += 1
+            detail_rows.append(
+                {
+                    "Clase ID": int(clase_id),
+                    "Clase": clase_nombre,
+                    "Nivel": row.get("nivel_nombre") or "",
+                    "Grado": row.get("grado_nombre") or "",
+                    "Seccion": seccion_destino,
+                    "Activos objetivo": len(alumnos_objetivo_ids),
+                    "Actuales": 0,
+                    "Agregar": 0,
+                    "Eliminar": 0,
+                    "Resultado": "Error",
+                    "Detalle": f"No se pudo listar alumnos actuales: {exc}",
+                }
+            )
+            continue
+
+        alumnos_actuales_ids = _extract_alumno_ids_from_clase_data(clase_data)
+        alumnos_comunes = alumnos_actuales_ids & alumnos_objetivo_ids
+        to_remove = sorted(alumnos_actuales_ids - alumnos_objetivo_ids)
+        to_add = sorted(alumnos_objetivo_ids - alumnos_actuales_ids)
+        summary["alumnos_sin_cambios"] += len(alumnos_comunes)
+
+        remove_errors: List[str] = []
+        add_errors: List[str] = []
+
+        for alumno_id in to_remove:
+            try:
+                _delete_alumno_clase_gestion_escolar(
+                    token=token,
+                    clase_id=int(clase_id),
+                    alumno_id=int(alumno_id),
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                )
+                summary["eliminados_ok"] += 1
+            except Exception as exc:
+                summary["eliminados_error"] += 1
+                remove_errors.append(f"{int(alumno_id)}: {exc}")
+
+        for alumno_id in to_add:
+            ok_assign, msg_assign = _asignar_alumno_a_clase_web(
+                token=token,
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                clase_id=int(clase_id),
+                alumno_id=int(alumno_id),
+                timeout=int(timeout),
+            )
+            if ok_assign:
+                summary["agregados_ok"] += 1
+            else:
+                summary["agregados_error"] += 1
+                add_errors.append(f"{int(alumno_id)}: {msg_assign}")
+
+        if remove_errors or add_errors:
+            summary["clases_error"] += 1
+            resultado = "Parcial" if (to_remove or to_add) else "Error"
+            detalle = []
+            if remove_errors:
+                detalle.append(f"Eliminar error={len(remove_errors)}")
+            if add_errors:
+                detalle.append(f"Agregar error={len(add_errors)}")
+            detalle_txt = " | ".join(detalle)
+        elif not to_remove and not to_add:
+            summary["clases_skip"] += 1
+            resultado = "Sin cambios"
+            detalle_txt = "La clase ya estaba sincronizada."
+        else:
+            summary["clases_ok"] += 1
+            resultado = "OK"
+            detalle_txt = "Sincronizacion aplicada."
+
+        detail_rows.append(
+            {
+                "Clase ID": int(clase_id),
+                "Clase": clase_nombre,
+                "Nivel": row.get("nivel_nombre") or "",
+                "Grado": row.get("grado_nombre") or "",
+                "Seccion": seccion_destino,
+                "Activos objetivo": len(alumnos_objetivo_ids),
+                "Actuales": len(alumnos_actuales_ids),
+                "Agregar": len(to_add),
+                "Eliminar": len(to_remove),
+                "Resultado": resultado,
+                "Detalle": detalle_txt,
+            }
+        )
+
+        row["selected_group_id"] = int(selected_group_id)
+        row["grupo_id_actual"] = int(selected_group_id)
+        if seccion_destino:
+            row["grupo_clave_actual"] = seccion_destino
+
+    group_error_lines = [
+        "nivelId={nivel} gradoId={grado} grupoId={grupo}: {err}".format(
+            nivel=key[0],
+            grado=key[1],
+            grupo=key[2],
+            err=message,
+        )
+        for key, message in sorted(group_errors.items(), key=lambda item: item[0])
+    ]
+    return summary, detail_rows, group_error_lines
 
 
 def _build_grupo_id_by_seccion_from_contexts(
@@ -4201,6 +4628,990 @@ with tab_crud_clases:
                 )
             except Exception as exc:  # pragma: no cover - UI
                 st.error(f"Error: {exc}")
+
+        colegio_id_raw = str(st.session_state.get("shared_colegio_id", "")).strip()
+        ciclo_id = GESTION_ESCOLAR_CICLO_ID_DEFAULT
+        token = _get_shared_token()
+        empresa_id = DEFAULT_EMPRESA_ID
+        timeout = 30
+
+        col_list, col_alumnos, col_delete = st.columns(3, gap="large")
+        with col_list:
+            with st.container(border=True):
+                st.markdown("**Listar clases**")
+                run_listar_clases = st.button("Listar clases", key="clases_listar_btn")
+        with col_alumnos:
+            with st.container(border=True):
+                st.markdown("**Ver alumnos por clase**")
+                clase_id_raw = st.text_input(
+                    "Clase ID (geClaseId)",
+                    key="clases_alumnos_clase_id",
+                    placeholder="20143933",
+                )
+                run_ver_alumnos_clase = st.button(
+                    "Ver alumnos",
+                    key="clases_ver_alumnos_btn",
+                )
+                confirm_vaciar_clase = st.checkbox(
+                    "Confirmo vaciar la clase (eliminar todos los alumnos).",
+                    key="clases_vaciar_confirm",
+                )
+                run_vaciar_clase = st.button(
+                    "Vaciar clase",
+                    key="clases_vaciar_btn",
+                )
+        with col_delete:
+            with st.container(border=True):
+                st.markdown("**Eliminar clases**")
+                st.caption("Accion irreversible.")
+                confirm_delete = st.checkbox(
+                    "Confirmo eliminar todas las clases listadas.",
+                    key="clases_confirm_delete",
+                )
+                run_eliminar_clases = st.button("Eliminar clases", key="clases_eliminar_btn")
+
+        if "clases_auto_group_unlocked" not in st.session_state:
+            st.session_state["clases_auto_group_unlocked"] = False
+
+        @st.dialog("Acceso Admin - Asignación de Participantes", width="small")
+        def _show_auto_group_unlock_dialog() -> None:
+            col_l, col_c, col_r = st.columns([1, 3, 1])
+            with col_c:
+                st.markdown("### Ingresar clave")
+                pwd_unlock = st.text_input(
+                    "Clave admin",
+                    type="password",
+                    key="clases_auto_group_unlock_input",
+                    placeholder="admin",
+                )
+                col_ok, col_cancel = st.columns(2)
+                if col_ok.button("Desbloquear", key="clases_auto_group_unlock_ok"):
+                    if str(pwd_unlock or "") == "admin":
+                        st.session_state["clases_auto_group_unlocked"] = True
+                        st.rerun()
+                    else:
+                        st.error("Clave admin incorrecta.")
+                if col_cancel.button("Cancelar", key="clases_auto_group_unlock_cancel"):
+                    st.rerun()
+
+        run_cargar_asignacion = False
+        run_eliminar_participantes = False
+        run_asignar_participantes = False
+        run_actualizar_participantes_auto = False
+        confirm_eliminar_participantes = False
+        confirm_asignar_participantes = False
+        confirm_actualizar_participantes_auto = False
+        with st.container(border=True):
+            st.markdown("**Asignación de Participantes**")
+            st.caption(
+                "Ejecuta por separado: primero elimina alumnos, luego asigna grupo."
+            )
+
+            if not st.session_state.get("clases_auto_group_unlocked", False):
+                st.markdown(
+                    """
+                    <style>
+                    .auto-group-blur-box{
+                        filter: blur(3px);
+                        opacity: 0.45;
+                        border: 1px dashed #9aa0a6;
+                        border-radius: 12px;
+                        padding: 16px;
+                        margin: 6px 0 14px 0;
+                        background: linear-gradient(135deg,#f8f9fa,#eef2f6);
+                        text-align:center;
+                    }
+                    .auto-group-blur-box small{
+                        display:block;
+                        margin-top:4px;
+                    }
+                    </style>
+                    <div class="auto-group-blur-box">
+                        <strong>Funcion protegida</strong>
+                        <small>Se requiere clave admin para ver y ejecutar.</small>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                col_a, col_b, col_c = st.columns([1, 2, 1])
+                with col_b:
+                    if st.button(
+                        "Desbloquear funcion",
+                        key="clases_auto_group_unlock_open",
+                        use_container_width=True,
+                    ):
+                        _show_auto_group_unlock_dialog()
+            else:
+                col_auto_load, col_auto_del, col_auto_asig, col_auto_lock = st.columns(
+                    [1.1, 1.5, 1.5, 0.8]
+                )
+                run_cargar_asignacion = col_auto_load.button(
+                    "Cargar clases",
+                    key="clases_auto_group_load",
+                    use_container_width=True,
+                )
+                confirm_eliminar_participantes = col_auto_del.checkbox(
+                    "Confirmo eliminar alumnos de las clases.",
+                    key="clases_auto_group_confirm_delete_participants",
+                )
+                run_eliminar_participantes = col_auto_del.button(
+                    "Eliminar participantes",
+                    key="clases_auto_group_delete_participants",
+                    use_container_width=True,
+                )
+                confirm_asignar_participantes = col_auto_asig.checkbox(
+                    "Confirmo asignar grupos a las clases.",
+                    key="clases_auto_group_confirm_assign_participants",
+                )
+                run_asignar_participantes = col_auto_asig.button(
+                    "Asignar participantes",
+                    key="clases_auto_group_assign_participants",
+                    use_container_width=True,
+                )
+                if col_auto_lock.button(
+                    "Bloquear",
+                    key="clases_auto_group_lock_btn",
+                    use_container_width=True,
+                ):
+                    st.session_state["clases_auto_group_unlocked"] = False
+                    st.rerun()
+                st.caption(
+                    "Automatizacion: toma alumnos activos por grado/seccion, elimina sobrantes y agrega faltantes en todas las clases."
+                )
+                confirm_actualizar_participantes_auto = st.checkbox(
+                    "Confirmo actualizar automaticamente los participantes de todas las clases.",
+                    key="clases_auto_group_confirm_sync_auto",
+                )
+                run_actualizar_participantes_auto = st.button(
+                    "Actualizar participantes auto",
+                    key="clases_auto_group_sync_auto_btn",
+                    type="primary",
+                    use_container_width=True,
+                )
+
+        if run_cargar_asignacion:
+            if not token:
+                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                st.stop()
+            try:
+                colegio_id_int = _parse_colegio_id(colegio_id_raw)
+            except ValueError as exc:
+                st.error(f"Error: {exc}")
+                st.stop()
+
+            try:
+                clases = _fetch_clases_gestion_escolar(
+                    token=token,
+                    colegio_id=colegio_id_int,
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                    ordered=True,
+                )
+                niveles_data = _fetch_niveles_grados_grupos_censo(
+                    token=token,
+                    colegio_id=colegio_id_int,
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                )
+            except Exception as exc:  # pragma: no cover - UI
+                st.error(f"Error: {exc}")
+                st.stop()
+            rows_auto, warnings_auto = _build_auto_group_rows_for_participantes(
+                clases=clases,
+                niveles_data=niveles_data,
+            )
+
+            st.session_state["clases_auto_group_rows"] = rows_auto
+            st.session_state["clases_auto_group_warnings"] = warnings_auto
+            st.session_state["clases_auto_group_context"] = {
+                "colegio_id": int(colegio_id_int),
+                "ciclo_id": int(ciclo_id),
+                "empresa_id": int(empresa_id),
+            }
+
+            st.success(
+                "Clases cargadas: {total}. Con opciones de grupo: {ok}. Omitidas: {omitidas}.".format(
+                    total=len(clases),
+                    ok=len(rows_auto),
+                    omitidas=max(len(clases) - len(rows_auto), 0),
+                )
+            )
+
+        if run_actualizar_participantes_auto:
+            if not token:
+                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                st.stop()
+            if not confirm_actualizar_participantes_auto:
+                st.error("Debes confirmar antes de actualizar participantes.")
+                st.stop()
+            try:
+                colegio_id_int = _parse_colegio_id(colegio_id_raw)
+            except ValueError as exc:
+                st.error(f"Error: {exc}")
+                st.stop()
+
+            status_box = st.empty()
+
+            def _on_auto_sync_status(message: str) -> None:
+                msg = str(message or "").strip()
+                if msg:
+                    status_box.info(msg)
+
+            try:
+                with st.spinner("Actualizando participantes automaticamente..."):
+                    clases = _fetch_clases_gestion_escolar(
+                        token=token,
+                        colegio_id=colegio_id_int,
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                        ordered=True,
+                    )
+                    niveles_data = _fetch_niveles_grados_grupos_censo(
+                        token=token,
+                        colegio_id=colegio_id_int,
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                    )
+                    rows_auto, warnings_auto = _build_auto_group_rows_for_participantes(
+                        clases=clases,
+                        niveles_data=niveles_data,
+                    )
+                    st.session_state["clases_auto_group_rows"] = rows_auto
+                    st.session_state["clases_auto_group_warnings"] = warnings_auto
+                    st.session_state["clases_auto_group_context"] = {
+                        "colegio_id": int(colegio_id_int),
+                        "ciclo_id": int(ciclo_id),
+                        "empresa_id": int(empresa_id),
+                    }
+                    summary_auto, detail_rows_auto, group_error_lines = (
+                        _sync_participantes_por_grado_seccion(
+                            token=token,
+                            colegio_id=int(colegio_id_int),
+                            empresa_id=int(empresa_id),
+                            ciclo_id=int(ciclo_id),
+                            timeout=int(timeout),
+                            rows_auto=rows_auto,
+                            niveles_data=niveles_data,
+                            on_status=_on_auto_sync_status,
+                            prefer_session_state=False,
+                        )
+                    )
+            except Exception as exc:  # pragma: no cover - UI
+                status_box.empty()
+                st.error(f"Error: {exc}")
+                st.stop()
+
+            status_box.empty()
+            if not rows_auto:
+                st.warning("No se encontraron clases con grupo/seccion resoluble para sincronizar.")
+            elif summary_auto.get("clases_error", 0) == 0 and not group_error_lines:
+                st.success("Actualizacion automatica completada.")
+            else:
+                st.warning("Actualizacion automatica completada con observaciones.")
+
+            st.caption(
+                "Resumen: "
+                f"Clases={summary_auto.get('clases_total', 0)} | "
+                f"OK={summary_auto.get('clases_ok', 0)} | "
+                f"Sin cambios={summary_auto.get('clases_skip', 0)} | "
+                f"Error={summary_auto.get('clases_error', 0)} | "
+                f"Agregados OK={summary_auto.get('agregados_ok', 0)} | "
+                f"Agregados Error={summary_auto.get('agregados_error', 0)} | "
+                f"Eliminados OK={summary_auto.get('eliminados_ok', 0)} | "
+                f"Eliminados Error={summary_auto.get('eliminados_error', 0)}"
+            )
+            if warnings_auto:
+                st.warning("Hay clases omitidas o sin grupo sugerido en la carga automatica.")
+                st.write("\n".join(f"- {item}" for item in warnings_auto[:20]))
+                restantes = len(warnings_auto) - 20
+                if restantes > 0:
+                    st.caption(f"... y {restantes} advertencias mas.")
+            if group_error_lines:
+                st.warning("Hubo errores al listar alumnos activos de algunas secciones.")
+                st.write("\n".join(f"- {item}" for item in group_error_lines[:20]))
+                restantes = len(group_error_lines) - 20
+                if restantes > 0:
+                    st.caption(f"... y {restantes} errores mas.")
+            if detail_rows_auto:
+                st.markdown("**Detalle actualizacion automatica**")
+                _show_dataframe(detail_rows_auto, use_container_width=True)
+
+        auto_rows = st.session_state.get("clases_auto_group_rows") or []
+        auto_warnings = st.session_state.get("clases_auto_group_warnings") or []
+        if st.session_state.get("clases_auto_group_unlocked", False):
+            if auto_rows:
+                st.markdown("**Asignacion por grado (grilla compacta 7 columnas)**")
+                auto_rows = sorted(
+                    auto_rows,
+                    key=lambda row: (
+                        str(row.get("nivel_nombre") or "").upper(),
+                        str(row.get("grado_nombre") or "").upper(),
+                        int(row.get("nivel_id") or 0),
+                        int(row.get("grado_id") or 0),
+                        (
+                            _extract_group_hint_from_class_name(row.get("clase_nombre"))
+                            or "ZZ"
+                        ),
+                        str(row.get("clase_nombre") or "").upper(),
+                        int(row.get("clase_id") or 0),
+                    ),
+                )
+                grouped_rows: Dict[Tuple[int, int, str, str], List[Dict[str, object]]] = {}
+                for row in auto_rows:
+                    key = (
+                        int(row.get("nivel_id") or 0),
+                        int(row.get("grado_id") or 0),
+                        str(row.get("nivel_nombre") or ""),
+                        str(row.get("grado_nombre") or ""),
+                    )
+                    grouped_rows.setdefault(key, []).append(row)
+
+                for group_key in sorted(
+                    grouped_rows.keys(),
+                    key=lambda item: (
+                        item[2].upper(),
+                        item[3].upper(),
+                        item[0],
+                        item[1],
+                    ),
+                ):
+                    nivel_id, grado_id, nivel_nombre, grado_nombre = group_key
+                    rows_group = grouped_rows[group_key]
+                    titulo_nivel = nivel_nombre or f"Nivel {nivel_id}"
+                    titulo_grado = grado_nombre or f"Grado {grado_id}"
+                    st.caption(
+                        f"{titulo_nivel} | {titulo_grado} | Clases: {len(rows_group)}"
+                    )
+                    rows_group = sorted(
+                        rows_group,
+                        key=lambda row: (
+                            (
+                                _extract_group_hint_from_class_name(
+                                    row.get("clase_nombre")
+                                )
+                                or "ZZ"
+                            ),
+                            str(row.get("clase_nombre") or "").upper(),
+                            int(row.get("clase_id") or 0),
+                        ),
+                    )
+                    cols_grid = st.columns(7, gap="small")
+                    for idx_row, row in enumerate(rows_group):
+                        with cols_grid[idx_row % 7]:
+                            with st.container(border=True):
+                                clase_id = int(row["clase_id"])
+                                options = row.get("options") or []
+                                if not options:
+                                    st.caption(f"`{clase_id}` sin grupos")
+                                    continue
+                                option_ids = [int(opt["grupo_id"]) for opt in options]
+                                labels: Dict[int, str] = {}
+                                for opt in options:
+                                    alumnos_contratados = opt.get("alumnos_contratados")
+                                    count_txt = (
+                                        f" ({int(alumnos_contratados)})"
+                                        if alumnos_contratados is not None
+                                        else ""
+                                    )
+                                    clave = str(opt.get("grupo_clave") or "").strip()
+                                    nombre = str(opt.get("grupo_nombre") or "").strip()
+                                    grupo_txt = clave or nombre or str(opt.get("grupo_id"))
+                                    labels[int(opt["grupo_id"])] = f"{grupo_txt}{count_txt}"
+
+                                selected_default = int(
+                                    row.get("selected_group_id") or option_ids[0]
+                                )
+                                if selected_default not in option_ids:
+                                    selected_default = option_ids[0]
+
+                                clase_nombre = str(row.get("clase_nombre") or "").strip()
+                                label_txt = f"`{clase_id}` {clase_nombre}"
+                                if len(label_txt) > 38:
+                                    label_txt = f"{label_txt[:35].rstrip()}..."
+                                st.caption(label_txt)
+                                key_select = f"clases_auto_group_select_{clase_id}"
+                                selected_val = st.selectbox(
+                                    "Grupo",
+                                    options=option_ids,
+                                    index=option_ids.index(selected_default),
+                                    format_func=lambda gid, lbl=labels: lbl.get(
+                                        int(gid), str(gid)
+                                    ),
+                                    key=key_select,
+                                    label_visibility="collapsed",
+                                )
+                                row["selected_group_id"] = int(selected_val)
+                st.session_state["clases_auto_group_rows"] = auto_rows
+
+            if auto_warnings:
+                st.warning("Hay clases omitidas o sin opciones de grupo.")
+                st.write("\n".join(f"- {item}" for item in auto_warnings[:20]))
+                restantes = len(auto_warnings) - 20
+                if restantes > 0:
+                    st.caption(f"... y {restantes} advertencias mas.")
+
+        if run_eliminar_participantes or run_asignar_participantes:
+            if not token:
+                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                st.stop()
+            if run_eliminar_participantes and not confirm_eliminar_participantes:
+                st.error("Debes confirmar antes de eliminar participantes.")
+                st.stop()
+            if run_asignar_participantes and not confirm_asignar_participantes:
+                st.error("Debes confirmar antes de asignar participantes.")
+                st.stop()
+
+            rows_auto = st.session_state.get("clases_auto_group_rows") or []
+            context_auto = st.session_state.get("clases_auto_group_context") or {}
+            if not rows_auto:
+                st.error("Primero carga las clases.")
+                st.stop()
+
+            try:
+                colegio_id_int = _parse_colegio_id(colegio_id_raw)
+            except ValueError as exc:
+                st.error(f"Error: {exc}")
+                st.stop()
+            if int(context_auto.get("colegio_id", -1)) != int(colegio_id_int):
+                st.error("El colegio global cambio. Vuelve a cargar clases.")
+                st.stop()
+            if int(context_auto.get("ciclo_id", -1)) != int(ciclo_id) or int(
+                context_auto.get("empresa_id", -1)
+            ) != int(empresa_id):
+                st.error("El contexto cambio. Vuelve a cargar clases.")
+                st.stop()
+
+            total = len(rows_auto)
+
+            if run_eliminar_participantes:
+                resultados_delete: List[Dict[str, object]] = []
+                ok_count = 0
+                skip_count = 0
+                err_count = 0
+                progress = st.progress(0)
+                status = st.empty()
+
+                for idx, row in enumerate(rows_auto, start=1):
+                    clase_id = int(row["clase_id"])
+                    try:
+                        status.write(
+                            f"Eliminando {idx}/{total}: clase {clase_id} | listando alumnos actuales"
+                        )
+                        clase_data_actual = _fetch_alumnos_clase_gestion_escolar(
+                            token=token,
+                            clase_id=int(clase_id),
+                            empresa_id=int(empresa_id),
+                            ciclo_id=int(ciclo_id),
+                            timeout=int(timeout),
+                        )
+                    except Exception as exc:  # pragma: no cover - UI
+                        err_count += 1
+                        resultados_delete.append(
+                            {
+                                "Clase ID": clase_id,
+                                "Clase": row.get("clase_nombre", ""),
+                                "Resultado": "Error",
+                                "Detalle": f"No se pudo listar alumnos actuales: {exc}",
+                            }
+                        )
+                        progress.progress(int((idx / total) * 100))
+                        continue
+
+                    alumnos_actuales = clase_data_actual.get("claseAlumnos") or []
+                    if not isinstance(alumnos_actuales, list):
+                        err_count += 1
+                        resultados_delete.append(
+                            {
+                                "Clase ID": clase_id,
+                                "Clase": row.get("clase_nombre", ""),
+                                "Resultado": "Error",
+                                "Detalle": "Respuesta invalida: claseAlumnos no es lista.",
+                            }
+                        )
+                        progress.progress(int((idx / total) * 100))
+                        continue
+
+                    alumnos_ids_actuales: List[int] = []
+                    seen_alumnos = set()
+                    for entry in alumnos_actuales:
+                        if not isinstance(entry, dict):
+                            continue
+                        alumno = entry.get("alumno")
+                        if not isinstance(alumno, dict):
+                            continue
+                        alumno_id_tmp = _safe_int(alumno.get("alumnoId"))
+                        if alumno_id_tmp is None:
+                            continue
+                        if int(alumno_id_tmp) in seen_alumnos:
+                            continue
+                        seen_alumnos.add(int(alumno_id_tmp))
+                        alumnos_ids_actuales.append(int(alumno_id_tmp))
+
+                    if not alumnos_ids_actuales:
+                        skip_count += 1
+                        resultados_delete.append(
+                            {
+                                "Clase ID": clase_id,
+                                "Clase": row.get("clase_nombre", ""),
+                                "Resultado": "Sin cambios",
+                                "Detalle": "No habia alumnos en la clase.",
+                            }
+                        )
+                        progress.progress(int((idx / total) * 100))
+                        continue
+
+                    delete_errors: List[str] = []
+                    deleted_count = 0
+                    total_alumnos_actuales = len(alumnos_ids_actuales)
+                    for del_idx, alumno_id_actual in enumerate(alumnos_ids_actuales, start=1):
+                        status.write(
+                            "Eliminando {idx}/{total}: clase {clase} | eliminando {del_idx}/{tot} "
+                            "alumno {alumno}".format(
+                                idx=idx,
+                                total=total,
+                                clase=clase_id,
+                                del_idx=del_idx,
+                                tot=total_alumnos_actuales,
+                                alumno=alumno_id_actual,
+                            )
+                        )
+                        try:
+                            _delete_alumno_clase_gestion_escolar(
+                                token=token,
+                                clase_id=int(clase_id),
+                                alumno_id=int(alumno_id_actual),
+                                empresa_id=int(empresa_id),
+                                ciclo_id=int(ciclo_id),
+                                timeout=int(timeout),
+                            )
+                            deleted_count += 1
+                        except Exception as exc:  # pragma: no cover - UI
+                            delete_errors.append(f"{alumno_id_actual}: {exc}")
+
+                    if delete_errors:
+                        err_count += 1
+                        resultados_delete.append(
+                            {
+                                "Clase ID": clase_id,
+                                "Clase": row.get("clase_nombre", ""),
+                                "Resultado": "Error",
+                                "Detalle": (
+                                    f"Fallo eliminacion, eliminados {deleted_count}/"
+                                    f"{len(alumnos_ids_actuales)}"
+                                ),
+                            }
+                        )
+                    else:
+                        ok_count += 1
+                        resultados_delete.append(
+                            {
+                                "Clase ID": clase_id,
+                                "Clase": row.get("clase_nombre", ""),
+                                "Resultado": "OK",
+                                "Detalle": f"Eliminados {deleted_count} alumnos.",
+                            }
+                        )
+                    progress.progress(int((idx / total) * 100))
+
+                status.empty()
+                st.success(
+                    f"Eliminacion completada. OK: {ok_count} | Sin cambios: {skip_count} | Errores: {err_count}"
+                )
+                if resultados_delete:
+                    _show_dataframe(resultados_delete, use_container_width=True)
+
+            if run_asignar_participantes:
+                alumnos_cache: Dict[Tuple[int, int, int], int] = {}
+                resultados_assign: List[Dict[str, object]] = []
+                ok_count = 0
+                skip_count = 0
+                err_count = 0
+                progress = st.progress(0)
+                status = st.empty()
+
+                for idx, row in enumerate(rows_auto, start=1):
+                    clase_id = int(row["clase_id"])
+                    clase_nombre = str(row.get("clase_nombre") or "").strip()
+                    nivel_id = int(row["nivel_id"])
+                    grado_id = int(row["grado_id"])
+                    options = row.get("options") or []
+                    key_select = f"clases_auto_group_select_{clase_id}"
+                    auto_group_id = _pick_default_group_id(
+                        row.get("clase_nombre"),
+                        options if isinstance(options, list) else [],
+                        row.get("grupo_id_actual"),
+                    )
+                    selected_group_id = _safe_int(auto_group_id)
+                    if selected_group_id is None:
+                        selected_group_id = _safe_int(
+                            st.session_state.get(
+                                key_select,
+                                row.get("selected_group_id"),
+                            )
+                        )
+
+                    status.write(
+                        f"Asignando {idx}/{total}: clase {clase_id} | {clase_nombre}"
+                    )
+                    if selected_group_id is None:
+                        err_count += 1
+                        resultados_assign.append(
+                            {
+                                "Clase ID": clase_id,
+                                "Clase": row.get("clase_nombre", ""),
+                                "Resultado": "Error",
+                                "Detalle": "Grupo seleccionado invalido.",
+                            }
+                        )
+                        progress.progress(int((idx / total) * 100))
+                        continue
+
+                    alumnos_count: Optional[int] = None
+                    censo_validacion_txt = ""
+                    try:
+                        status.write(
+                            f"Asignando {idx}/{total}: clase {clase_id} | validando alumnos contratados"
+                        )
+                        alumnos_count = _fetch_grupo_alumnos_count(
+                            token=token,
+                            colegio_id=int(colegio_id_int),
+                            nivel_id=int(nivel_id),
+                            grado_id=int(grado_id),
+                            grupo_id=int(selected_group_id),
+                            empresa_id=int(empresa_id),
+                            ciclo_id=int(ciclo_id),
+                            timeout=int(timeout),
+                            cache=alumnos_cache,
+                        )
+                    except Exception as exc:  # pragma: no cover - UI
+                        censo_validacion_txt = (
+                            f" No se pudo validar alumnos contratados en censo: {exc}."
+                        )
+
+                    if alumnos_count is not None and int(alumnos_count) <= 0:
+                        censo_validacion_txt += (
+                            " Censo reporta 0 alumnos contratados para el grupo."
+                        )
+
+                    try:
+                        status.write(
+                            f"Asignando {idx}/{total}: clase {clase_id} | asignando grupo {selected_group_id}"
+                        )
+                        _post_clase_participantes_gestion_escolar(
+                            token=token,
+                            clase_id=int(clase_id),
+                            nivel_id=int(nivel_id),
+                            grado_id=int(grado_id),
+                            grupo_ids=[int(selected_group_id)],
+                            empresa_id=int(empresa_id),
+                            ciclo_id=int(ciclo_id),
+                            timeout=int(timeout),
+                        )
+                        ok_count += 1
+                        detalle_ok = f"Grupo {selected_group_id} asignado."
+                        if censo_validacion_txt:
+                            detalle_ok = f"{detalle_ok}{censo_validacion_txt}"
+                        resultados_assign.append(
+                            {
+                                "Clase ID": clase_id,
+                                "Clase": row.get("clase_nombre", ""),
+                                "Resultado": "OK",
+                                "Detalle": detalle_ok,
+                            }
+                        )
+                        row["grupo_id_actual"] = int(selected_group_id)
+                        for opt in row.get("options", []):
+                            if int(opt.get("grupo_id", -1)) == int(selected_group_id):
+                                row["grupo_clave_actual"] = str(
+                                    opt.get("grupo_clave") or opt.get("grupo_nombre") or ""
+                                )
+                                break
+                    except Exception as exc:  # pragma: no cover - UI
+                        err_count += 1
+                        resultados_assign.append(
+                            {
+                                "Clase ID": clase_id,
+                                "Clase": row.get("clase_nombre", ""),
+                                "Resultado": "Error",
+                                "Detalle": str(exc),
+                            }
+                        )
+                    progress.progress(int((idx / total) * 100))
+
+                status.empty()
+                st.session_state["clases_auto_group_rows"] = rows_auto
+                st.success(
+                    f"Asignacion completada. OK: {ok_count} | Sin cambios: {skip_count} | Errores: {err_count}"
+                )
+                if resultados_assign:
+                    _show_dataframe(resultados_assign, use_container_width=True)
+
+        if run_listar_clases:
+            if not token:
+                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+            else:
+                try:
+                    colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                except ValueError as exc:
+                    st.error(f"Error: {exc}")
+                    st.stop()
+                try:
+                    clases = _fetch_clases_gestion_escolar(
+                        token=token,
+                        colegio_id=colegio_id_int,
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                    )
+                except Exception as exc:  # pragma: no cover - UI
+                    st.error(f"Error: {exc}")
+                else:
+                    if not clases:
+                        st.info("No se encontraron clases.")
+                    else:
+                        tabla = [
+                            {
+                                "ID": item.get("geClaseId"),
+                                "Clase": item.get("geClase")
+                                or item.get("geClaseClave")
+                                or "",
+                            }
+                            for item in clases
+                            if isinstance(item, dict)
+                        ]
+                        st.write(f"Clases encontradas: {len(tabla)}")
+                        _show_dataframe(tabla, use_container_width=True)
+
+        if run_ver_alumnos_clase:
+            if not token:
+                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                st.stop()
+            clase_id_text = str(clase_id_raw or "").strip()
+            if not clase_id_text:
+                st.error("Ingresa un Clase ID.")
+                st.stop()
+            try:
+                clase_id_int = int(clase_id_text)
+            except ValueError:
+                st.error("Clase ID invalido. Debe ser numerico.")
+                st.stop()
+            try:
+                clase_data = _fetch_alumnos_clase_gestion_escolar(
+                    token=token,
+                    clase_id=clase_id_int,
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                )
+            except Exception as exc:  # pragma: no cover - UI
+                st.error(f"Error: {exc}")
+                st.stop()
+
+            clase_nombre = str(clase_data.get("geClase") or clase_data.get("geClaseClave") or "")
+            alumnos_data = clase_data.get("claseAlumnos") or []
+            if not isinstance(alumnos_data, list):
+                st.error("Respuesta invalida: claseAlumnos no es lista.")
+                st.stop()
+
+            alumnos_rows: List[Dict[str, object]] = []
+            for entry in alumnos_data:
+                if not isinstance(entry, dict):
+                    continue
+                alumno = entry.get("alumno")
+                if not isinstance(alumno, dict):
+                    alumno = {}
+                persona = alumno.get("persona")
+                if not isinstance(persona, dict):
+                    persona = {}
+                persona_login = persona.get("personaLogin")
+                if not isinstance(persona_login, dict):
+                    persona_login = {}
+
+                alumnos_rows.append(
+                    {
+                        "Alumno ID": alumno.get("alumnoId", ""),
+                        "Persona ID": persona.get("personaId", ""),
+                        "Nombre": persona.get("nombre", ""),
+                        "Apellido Paterno": persona.get("apellidoPaterno", ""),
+                        "Apellido Materno": persona.get("apellidoMaterno", ""),
+                        "Nombre Completo": persona.get("nombreCompleto", ""),
+                        "Login": persona_login.get("login", ""),
+                        "NUIP": persona.get("idOficial", ""),
+                        "Activo censo": bool(alumno.get("activo", False)),
+                        "Activo clase": bool(entry.get("activo", False)),
+                    }
+                )
+
+            st.success(
+                f"Clase {clase_id_int} {clase_nombre} - Alumnos: {len(alumnos_rows)}"
+            )
+            if alumnos_rows:
+                _show_dataframe(alumnos_rows, use_container_width=True)
+            else:
+                st.info("No hay alumnos en esta clase.")
+
+        if run_vaciar_clase:
+            if not token:
+                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                st.stop()
+            if not confirm_vaciar_clase:
+                st.error("Debes confirmar antes de vaciar la clase.")
+                st.stop()
+
+            clase_id_text = str(clase_id_raw or "").strip()
+            if not clase_id_text:
+                st.error("Ingresa un Clase ID.")
+                st.stop()
+            try:
+                clase_id_int = int(clase_id_text)
+            except ValueError:
+                st.error("Clase ID invalido. Debe ser numerico.")
+                st.stop()
+
+            try:
+                clase_data = _fetch_alumnos_clase_gestion_escolar(
+                    token=token,
+                    clase_id=clase_id_int,
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                )
+            except Exception as exc:  # pragma: no cover - UI
+                st.error(f"Error: {exc}")
+                st.stop()
+
+            clase_nombre = str(clase_data.get("geClase") or clase_data.get("geClaseClave") or "")
+            alumnos_data = clase_data.get("claseAlumnos") or []
+            if not isinstance(alumnos_data, list):
+                st.error("Respuesta invalida: claseAlumnos no es lista.")
+                st.stop()
+            if not alumnos_data:
+                st.info("No hay alumnos para eliminar en esta clase.")
+                st.stop()
+
+            targets: List[Dict[str, object]] = []
+            seen_ids = set()
+            for entry in alumnos_data:
+                if not isinstance(entry, dict):
+                    continue
+                alumno = entry.get("alumno")
+                if not isinstance(alumno, dict):
+                    continue
+                alumno_id_raw = alumno.get("alumnoId")
+                if alumno_id_raw is None:
+                    continue
+                try:
+                    alumno_id = int(alumno_id_raw)
+                except (TypeError, ValueError):
+                    continue
+                if alumno_id in seen_ids:
+                    continue
+                seen_ids.add(alumno_id)
+                persona = alumno.get("persona") if isinstance(alumno.get("persona"), dict) else {}
+                targets.append(
+                    {
+                        "Alumno ID": alumno_id,
+                        "Nombre Completo": str(persona.get("nombreCompleto") or ""),
+                    }
+                )
+
+            if not targets:
+                st.info("No se encontraron alumnoId validos para eliminar.")
+                st.stop()
+
+            errores: List[str] = []
+            eliminados: List[Dict[str, object]] = []
+            total = len(targets)
+            progress = st.progress(0)
+            status = st.empty()
+            for idx, target in enumerate(targets, start=1):
+                alumno_id = int(target["Alumno ID"])
+                status.write(f"Eliminando {idx}/{total}: alumnoId {alumno_id}")
+                try:
+                    _delete_alumno_clase_gestion_escolar(
+                        token=token,
+                        clase_id=clase_id_int,
+                        alumno_id=alumno_id,
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                    )
+                    eliminados.append(target)
+                except Exception as exc:  # pragma: no cover - UI
+                    errores.append(f"{alumno_id}: {exc}")
+                progress.progress(int((idx / total) * 100))
+            status.empty()
+
+            st.success(
+                f"Clase {clase_id_int} {clase_nombre} - Eliminados: {len(eliminados)} de {total}"
+            )
+            if eliminados:
+                _show_dataframe(eliminados, use_container_width=True)
+            if errores:
+                st.error("Errores al eliminar alumnos:")
+                st.write("\n".join(f"- {item}" for item in errores[:30]))
+                restantes = len(errores) - 30
+                if restantes > 0:
+                    st.caption(f"... y {restantes} errores mas.")
+
+        if run_eliminar_clases:
+            if not token:
+                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                st.stop()
+            if not confirm_delete:
+                st.error("Debes confirmar antes de eliminar.")
+                st.stop()
+            try:
+                colegio_id_int = _parse_colegio_id(colegio_id_raw)
+            except ValueError as exc:
+                st.error(f"Error: {exc}")
+                st.stop()
+            try:
+                clases = _fetch_clases_gestion_escolar(
+                    token=token,
+                    colegio_id=colegio_id_int,
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                )
+            except Exception as exc:  # pragma: no cover - UI
+                st.error(f"Error: {exc}")
+                st.stop()
+
+            if not clases:
+                st.info("No se encontraron clases.")
+                st.stop()
+
+            errores: List[str] = []
+            for item in clases:
+                clase_id = item.get("geClaseId") if isinstance(item, dict) else None
+                if clase_id is None:
+                    errores.append("Clase sin geClaseId.")
+                    continue
+                try:
+                    _delete_clase_gestion_escolar(
+                        token=token,
+                        clase_id=int(clase_id),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                    )
+                except Exception as exc:  # pragma: no cover - UI
+                    errores.append(f"{clase_id}: {exc}")
+
+            colegios = _collect_colegios(clases)
+            if colegios:
+                st.write("Colegios eliminados (id, nombre):")
+                _show_dataframe(colegios, use_container_width=True)
+            eliminadas = len(clases) - len(errores)
+            st.success(f"Clases eliminadas: {eliminadas}")
+            if errores:
+                st.error("Errores al eliminar:")
+                st.write("\n".join(f"- {item}" for item in errores))
     
     
 with tab_crud_profesores:
@@ -5440,7 +6851,3 @@ with tab_crud_clases:
                         if len(results_apply) > 80:
                             st.caption(f"... y {len(results_apply) - 80} filas mas.")
     
-
-
-
-

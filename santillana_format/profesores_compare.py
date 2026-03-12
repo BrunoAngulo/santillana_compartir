@@ -17,6 +17,19 @@ PROFESORES_COMPARE_COLUMNS = [
     "E-mail",
     "Login",
 ]
+PROFESORES_CREAR_COLUMNS = [
+    "Nombre",
+    "Apellido Paterno",
+    "Apellido Materno",
+    "Sexo",
+    "DNI",
+    "E-mail",
+    "Login",
+    "Password",
+    "Inicial",
+    "Primaria",
+    "Secundaria",
+]
 
 HEADER_ALIASES = {
     "nombre": "nombre",
@@ -57,7 +70,9 @@ def compare_profesores_bd_excel(
             {
                 **colegio_row,
                 "Profesor Colegio": _format_profesor_label(colegio_row),
-                "Profesor referencia de la BD": _format_profesor_label(ref_row) if ref_row else "",
+                "Profesor referencia de la BD": _format_profesor_label(ref_row)
+                if ref_row
+                else "",
                 "Coincidencia por": criterio,
                 "Usar referencia BD": bool(has_reference),
                 "_tiene_referencia": bool(has_reference),
@@ -83,7 +98,7 @@ def compare_profesores_bd_excel(
 
 def export_profesores_crear_excel(rows: List[Dict[str, object]]) -> bytes:
     output = BytesIO()
-    df = pd.DataFrame(_exportable_rows(rows), columns=PROFESORES_COMPARE_COLUMNS)
+    df = pd.DataFrame(_exportable_rows(rows), columns=PROFESORES_CREAR_COLUMNS)
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="ProfesoresCrear")
         ws = writer.book["ProfesoresCrear"]
@@ -137,10 +152,6 @@ def _normalize_header(value: object) -> str:
 
 def _normalize_text(value: object) -> str:
     text = str(value or "").strip().casefold()
-    text = (
-        text.replace("ñ", "n")
-        .replace("Ñ", "n")
-    )
     text = unicodedata.normalize("NFKD", text)
     text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
     text = re.sub(r"[^a-z0-9]+", "", text)
@@ -269,6 +280,15 @@ def _format_profesor_label(record: Dict[str, str] | None) -> str:
     return nombre or dni
 
 
+def _infer_sexo(nombre: object) -> str:
+    normalized = _normalize_text(nombre)
+    if not normalized:
+        return ""
+    if normalized.endswith("a"):
+        return "F"
+    return "M"
+
+
 def _exportable_rows(rows: List[Dict[str, object]]) -> List[Dict[str, str]]:
     export_rows: List[Dict[str, str]] = []
     for row in rows:
@@ -279,9 +299,14 @@ def _exportable_rows(rows: List[Dict[str, object]]) -> List[Dict[str, str]]:
                 "Nombre": str(row.get("Nombre") or "").strip(),
                 "Apellido Paterno": str(row.get("Apellido Paterno") or "").strip(),
                 "Apellido Materno": str(row.get("Apellido Materno") or "").strip(),
+                "Sexo": _infer_sexo(row.get("Nombre")),
                 "DNI": str(row.get("DNI") or "").strip(),
                 "E-mail": str(row.get("E-mail") or "").strip(),
-                "Login": str(row.get("Login") or "").strip(),
+                "Login": "",
+                "Password": "",
+                "Inicial": "",
+                "Primaria": "",
+                "Secundaria": "",
             }
         )
     return export_rows

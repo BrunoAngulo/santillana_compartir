@@ -56,6 +56,14 @@ PROFESOR_COLUMNS = [
     "Clases",
     "Secciones",
 ]
+PROFESOR_BD_COLUMNS = [
+    "Nombre",
+    "Apellido Paterno",
+    "Apellido Materno",
+    "DNI",
+    "E-mail",
+    "Login",
+]
 
 ERROR_COLUMNS = [
     "tipo",
@@ -71,6 +79,12 @@ def build_profesores_filename(colegio_id: int) -> str:
     if colegio_id:
         return f"profesores_{int(colegio_id)}.xlsx"
     return "profesores.xlsx"
+
+
+def build_profesores_bd_filename(colegio_id: int) -> str:
+    if colegio_id:
+        return f"profesores_bd_{int(colegio_id)}.xlsx"
+    return "profesores_bd.xlsx"
 
 
 def _build_url(context: Dict[str, int], persona_id: Optional[int] = None) -> str:
@@ -369,6 +383,30 @@ def export_profesores_excel(profesores: List[Dict[str, object]]) -> bytes:
     return output.getvalue()
 
 
+def export_profesores_bd_excel(profesores: List[Dict[str, object]]) -> bytes:
+    output = BytesIO()
+    df_profesores = _ensure_columns(pd.DataFrame(profesores), PROFESOR_BD_COLUMNS)
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df_profesores.to_excel(writer, index=False, sheet_name="ProfesoresBD")
+        df_profesores.head(0).to_excel(writer, index=False, sheet_name="Plantilla_Actualizada")
+
+        for sheet_name, df_sheet in (
+            ("ProfesoresBD", df_profesores),
+            ("Plantilla_Actualizada", df_profesores.head(0)),
+        ):
+            ws = writer.book[sheet_name]
+            ws.freeze_panes = "A2"
+            ws.auto_filter.ref = ws.dimensions
+            for idx, col in enumerate(df_sheet.columns, start=1):
+                sample = df_sheet[col].astype(str).head(200).tolist() if not df_sheet.empty else []
+                max_len = max([len(str(col))] + [len(val) for val in sample])
+                ws.column_dimensions[get_column_letter(idx)].width = min(max_len + 2, 60)
+
+    output.seek(0)
+    return output.getvalue()
+
+
 def listar_profesores_data(
     token: str,
     colegio_id: int,
@@ -625,3 +663,79 @@ def listar_profesores(
 
     output_bytes = export_profesores_excel(filas)
     return output_bytes, summary, errores
+
+
+def listar_profesores_bd_data(
+    token: str,
+    colegio_id: int,
+    empresa_id: int = DEFAULT_EMPRESA_ID,
+    ciclo_id: int = DEFAULT_CICLO_ID,
+    timeout: int = 30,
+    on_progress: Optional[Callable[[int, int], None]] = None,
+) -> Tuple[List[Dict[str, object]], Dict[str, int], List[Dict[str, object]]]:
+    errores: List[Dict[str, object]] = []
+    resultados: List[Dict[str, object]] = []
+    seen_persona_ids: Set[int] = set()
+
+    with requests.Session() as session:
+        data, error, status_code, url = _fetch_profesores_by_filters(
+            session=session,
+            token=token,
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            colegio_id=int(colegio_id),
+            timeout=int(timeout),
+        )
+        if error:
+            errores.append(
+                {
+                    "tipo": "profesores_by_filters",
+                    "nivel_id": "",
+                    "persona_id": "",
+                    "url": url,
+                    "status_code": status_code or "",
+                    "error": error,
+                }
+            )
+        else:
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                persona_id = item.get("personaId")
+                try:
+                    persona_id_int = int(persona_id)
+                except (TypeError, ValueError):
+                    persona_id_int = None
+                if persona_id_int is not None:
+                    if persona_id_int in seen_persona_ids:
+                        continue
+                    seen_persona_ids.add(persona_id_int)
+
+                persona_login = item.get("personaLogin") if isinstance(item.get("personaLogin"), dict) else {}
+                resultados.append(
+                    {
+                        "Nombre": str(item.get("nombre") or "").strip(),
+                        "Apellido Paterno": str(item.get("apellidoPaterno") or "").strip(),
+                        "Apellido Materno": str(item.get("apellidoMaterno") or "").strip(),
+                        "DNI": str(item.get("idOficial") or "").strip(),
+                        "E-mail": str(item.get("email") or "").strip(),
+                        "Login": str(persona_login.get("login") or "").strip(),
+                    }
+                )
+        if on_progress:
+            on_progress(1, 1)
+
+    resultados.sort(
+        key=lambda row: (
+            str(row.get("Apellido Paterno") or "").upper(),
+            str(row.get("Apellido Materno") or "").upper(),
+            str(row.get("Nombre") or "").upper(),
+            str(row.get("DNI") or ""),
+        )
+    )
+    summary = {
+        "consultas_total": 1,
+        "consultas_error": len(errores),
+        "profesores_total": len(resultados),
+    }
+    return resultados, summary, errores

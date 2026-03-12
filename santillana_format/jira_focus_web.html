@@ -3571,8 +3571,8 @@
         },
         myself() { return this.req('GET', '/rest/api/3/myself'); },
         searchIssues() {
-          const jql = 'assignee = currentUser() AND statusCategory != Done AND issuetype not in subTaskIssueTypes() ORDER BY updated DESC';
-          return this.req('GET', '/rest/api/3/search/jql', { params: { jql, maxResults: 80, fields: 'summary,status,issuetype,attachment,subtasks' } });
+          const jql = 'assignee = currentUser() AND issuetype not in subTaskIssueTypes() ORDER BY updated DESC';
+          return this.req('GET', '/rest/api/3/search/jql', { params: { jql, maxResults: 200, fields: 'summary,status,issuetype,attachment,subtasks' } });
         },
         searchSubtasks(parentKey) {
           const key = String(parentKey || '').trim();
@@ -4300,6 +4300,7 @@
               <thead>
                 <tr>
                   <th>Ticket</th>
+                  <th>Estado</th>
                   <th>Colegio</th>
                   <th>Agente (Yo)</th>
                   <th>Fecha y Hora Inicio</th>
@@ -4310,6 +4311,7 @@
                 ${items.map((item) => `
                   <tr>
                     <td>${escapeHtml(item.issueKey)}</td>
+                    <td>${escapeHtml(item.issueStatus || 'Sin estado')}</td>
                     <td>${escapeHtml(item.colegio || 'SIN_COLEGIO')}</td>
                     <td>${escapeHtml(item.agent || 'Yo')}</td>
                     <td>${escapeHtml(TimeService.dtLabel(item.startCreated || new Date()))}</td>
@@ -4369,6 +4371,7 @@
               const lastCommentTs = tsOf(dayComments[dayComments.length - 1] && dayComments[dayComments.length - 1].created ? dayComments[dayComments.length - 1].created : 0);
               rows.push({
                 issueKey: issue.key,
+                issueStatus: formatIssueStatus(issue),
                 colegio: String(issue.summary || '').trim(),
                 agent: agentName,
                 startCreated: Number.isFinite(minStartTs) ? new Date(minStartTs) : (Number.isFinite(firstCommentTs) ? new Date(firstCommentTs) : ''),
@@ -4411,11 +4414,13 @@
         const templateCount = countTemplateWorklogs(key);
         const subtaskNames = issue && Array.isArray(issue.subtasks) ? issue.subtasks : [];
         const subtasksLabel = subtaskNames.length ? subtaskNames.join(' | ') : 'Sin subtareas';
+        const issueStatusLabel = formatIssueStatus(issue);
         const lastPlantillaEstudiantes = lastWorklogLabelByOfficialType(key, ESTUDIANTES_TEMPLATE_ACTIVITY);
         const lastPlantillaDocentes = lastWorklogLabelByOfficialType(key, DOCENTES_TEMPLATE_ACTIVITY);
         const phaseControlsHtml = renderPhaseStatusControls(issue);
         el.issueInsight.className = 'issue-insight';
         el.issueInsight.innerHTML = `
+          <span class="issue-chip extra"><b>Estado:</b><span class="value">${escapeHtml(issueStatusLabel || 'Sin estado')}</span></span>
           <span class="issue-chip metric"><b>Comentarios:</b><span class="value">${escapeHtml(String(commentsCount))}</span></span>
           <span class="issue-chip metric"><b>Worklogs:</b><span class="value">${escapeHtml(String(worklogsCount))}</span></span>
           <span class="issue-chip metric"><b>Total:</b><span class="value">${escapeHtml(TimeService.jiraDuration(totalMins))}</span></span>
@@ -5264,6 +5269,10 @@
         return list
           .filter((it) => it && it.key && it.fields && !(it.fields.issuetype && it.fields.issuetype.subtask))
           .map((it) => {
+            const statusObj = it.fields.status && typeof it.fields.status === 'object' ? it.fields.status : {};
+            const statusCategoryObj = statusObj.statusCategory && typeof statusObj.statusCategory === 'object'
+              ? statusObj.statusCategory
+              : {};
             const subtasksRaw = Array.isArray(it.fields.subtasks) ? it.fields.subtasks : [];
             const subtasksDetail = subtasksRaw
               .map((sub) => buildSubtaskRecord(sub))
@@ -5276,11 +5285,29 @@
             return {
               key: it.key,
               summary: String(it.fields.summary || ''),
+              statusName: String(statusObj.name || '').trim(),
+              statusCategoryName: String(statusCategoryObj.name || '').trim(),
               attachments: Array.isArray(it.fields.attachment) ? it.fields.attachment : [],
               subtasks,
               subtasksDetail
             };
           });
+      }
+
+      function humanizeIssueStatusCategory(rawValue) {
+        const value = String(rawValue || '').trim().toLowerCase();
+        if (!value) return '';
+        if (value === 'done') return 'Cerrado';
+        if (value === 'to do') return 'Abierto';
+        if (value === 'in progress') return 'En progreso';
+        return String(rawValue || '').trim();
+      }
+
+      function formatIssueStatus(issue) {
+        const statusName = String(issue && issue.statusName ? issue.statusName : '').trim();
+        const categoryLabel = humanizeIssueStatusCategory(issue && issue.statusCategoryName ? issue.statusCategoryName : '');
+        if (statusName && categoryLabel) return `${statusName} | ${categoryLabel}`;
+        return statusName || categoryLabel || '';
       }
 
       function renderIssueSelect() {
@@ -5295,7 +5322,10 @@
         state.issues.forEach((it) => {
           const opt = document.createElement('option');
           opt.value = it.key;
-          opt.textContent = `${it.key} - ${it.summary}`;
+          const statusLabel = formatIssueStatus(it);
+          opt.textContent = statusLabel
+            ? `${it.key} - ${it.summary} [${statusLabel}]`
+            : `${it.key} - ${it.summary}`;
           el.issueSel.appendChild(opt);
         });
         if (!state.issues.some((it) => it.key === state.selectedIssueKey)) {

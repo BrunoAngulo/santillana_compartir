@@ -29,7 +29,10 @@ from santillana_format.processor import (
 from santillana_format.jira_focus_web import render_jira_focus_web
 from santillana_format.profesores import (
     DEFAULT_CICLO_ID as PROFESORES_CICLO_ID_DEFAULT,
+    build_profesores_bd_filename,
+    export_profesores_bd_excel,
     export_profesores_excel,
+    listar_profesores_bd_data,
     listar_profesores_data,
 )
 from santillana_format.profesores_clases import asignar_profesores_clases
@@ -6416,14 +6419,81 @@ with tab_crud_profesores:
         _render_restricted_blur("CRUD Profesores", "profesores")
     else:
         st.subheader("CRUD Profesores")
-        st.caption("Flujo: genera base, luego simula y aplica asignaciones.")
+        st.caption("Flujo: revisa BD, luego genera base operativa y finalmente asigna.")
         st.caption("Usando el token global configurado arriba.")
         colegio_id_raw = str(st.session_state.get("shared_colegio_id", "")).strip()
         ciclo_id = PROFESORES_CICLO_ID_DEFAULT
         timeout = 30
     
         with st.container(border=True):
-            st.markdown("**1) Generar Excel base de profesores**")
+            st.markdown("**1) Profesores BD para crear/validar**")
+            st.caption(
+                "Consulta profesoresByFilters y genera un Excel con hojas ProfesoresBD y Plantilla_Actualizada."
+            )
+            run_generar_bd = st.button(
+                "Generar ProfesoresBD",
+                type="primary",
+                key="profesores_generar_bd",
+            )
+
+        if run_generar_bd:
+            for state_key in (
+                "profesores_bd_rows",
+                "profesores_bd_excel",
+                "profesores_bd_excel_name",
+            ):
+                st.session_state.pop(state_key, None)
+            token = _get_shared_token()
+            if not token:
+                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                st.stop()
+            try:
+                colegio_id_int = _parse_colegio_id(colegio_id_raw)
+            except ValueError as exc:
+                st.error(f"Error: {exc}")
+                st.stop()
+            try:
+                data_bd, summary_bd, errores_bd = listar_profesores_bd_data(
+                    token=token,
+                    colegio_id=colegio_id_int,
+                    empresa_id=DEFAULT_EMPRESA_ID,
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                )
+            except Exception as exc:  # pragma: no cover - UI
+                st.error(f"Error: {exc}")
+                st.stop()
+
+            if errores_bd:
+                st.error("Errores al obtener profesores por filtros:")
+                _show_dataframe(errores_bd, use_container_width=True)
+            if not data_bd:
+                st.warning("No se encontraron profesores en profesoresByFilters.")
+            else:
+                output_bytes_bd = export_profesores_bd_excel(data_bd)
+                file_name_bd = build_profesores_bd_filename(colegio_id_int)
+                st.session_state["profesores_bd_rows"] = data_bd
+                st.session_state["profesores_bd_excel"] = output_bytes_bd
+                st.session_state["profesores_bd_excel_name"] = file_name_bd
+                st.success(
+                    "ProfesoresBD listo. Profesores: {profesores_total}, Errores: {consultas_error}.".format(
+                        **summary_bd
+                    )
+                )
+
+        if st.session_state.get("profesores_bd_excel"):
+            st.download_button(
+                label="Descargar ProfesoresBD",
+                data=st.session_state["profesores_bd_excel"],
+                file_name=st.session_state["profesores_bd_excel_name"],
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="profesores_bd_excel_download",
+            )
+        if st.session_state.get("profesores_bd_rows"):
+            _show_dataframe(st.session_state["profesores_bd_rows"], use_container_width=True)
+
+        with st.container(border=True):
+            st.markdown("**2) Generar Excel base operativo de profesores**")
             st.caption("Incluye profesores activos e inactivos.")
             run_generar_base = st.button(
                 "Generar Excel base",
@@ -6516,7 +6586,7 @@ with tab_crud_profesores:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
     
-        st.subheader("2) Asignar profesores a clases")
+        st.subheader("3) Asignar profesores a clases")
         st.caption("Sube la hoja con persona_id y CURSO. Secciones y Estado son opcionales.")
         st.markdown("**Procesos**")
         col_proc1, col_proc2 = st.columns(2)

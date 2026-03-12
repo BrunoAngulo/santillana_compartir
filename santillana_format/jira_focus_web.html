@@ -2318,7 +2318,7 @@
           <select class="sel" id="issueSel"></select>
         </div>
         <div class="board-actions">
-          <button class="btn primary" id="myCommentsTodayBtn" type="button" disabled>Tickets comentados hoy</button>
+          <button class="btn primary" id="myCommentsTodayBtn" type="button" disabled>Tickets comentados por fecha</button>
         </div>
         <div id="issueInsight" class="issue-insight empty">Selecciona un ticket para ver contexto rapido.</div>
       </div>
@@ -2530,10 +2530,17 @@
     <div class="modal-card my-comments-modal-card">
       <div class="my-comments-modal-head">
         <div>
-          <h3>Mis comentarios de hoy</h3>
+          <h3>Mis comentarios por fecha</h3>
           <div class="muted" id="myCommentsTodayMeta">Sin datos.</div>
         </div>
         <button class="btn" id="myCommentsTodayCloseBtn" type="button">Cerrar</button>
+      </div>
+      <div class="row" style="margin:10px 0 0 0;align-items:end;gap:8px;">
+        <div style="min-width:220px;">
+          <label for="myCommentsTodayDateInp">Fecha</label>
+          <input id="myCommentsTodayDateInp" class="inp" type="date">
+        </div>
+        <button class="btn primary" id="myCommentsTodayApplyBtn" type="button">Buscar</button>
       </div>
       <div id="myCommentsTodayBody" class="my-comments-modal-list">
         <div class="empty">Sin datos.</div>
@@ -2702,7 +2709,7 @@
         selectedTimelineActivity: '',
         selectedTimelineMinutes: 0,
         selectedWorklogId: '',
-        myCommentsToday: { loading: false, items: [], refreshedAt: null, failedIssues: 0 },
+        myCommentsToday: { loading: false, items: [], refreshedAt: null, failedIssues: 0, selectedDate: '' },
         timelineLinksByIssue: {},
         manualWorklogToCommentByIssue: {},
         chartDesign: DEFAULT_CHART_DESIGN,
@@ -3943,7 +3950,7 @@
           'reportBody', 'timelinePanel', 'chartDesignSel', 'chartDesignHelp', 'activityFocusBox', 'activityQuickSel', 'activityQuickMeta', 'compactBtn', 'floatBox', 'floatIssue', 'floatTimer', 'floatState', 'floatStartBtn', 'floatPauseBtn', 'floatExpandBtn',
           'regInlineBox', 'regInlineMeta', 'regTypeSel', 'regDateInp', 'regMinInp', 'regInlineOkBtn', 'regInlineCancelBtn',
           'editInlineBox', 'editMeta', 'editTypeSel', 'editActInp', 'editDateInp', 'editTimeInp', 'editMinInp', 'editSaveBtn', 'editDeleteBtn', 'editCancelBtn', 'activityList',
-          'myCommentsTodayModal', 'myCommentsTodayMeta', 'myCommentsTodayBody', 'myCommentsTodayCloseBtn'
+          'myCommentsTodayModal', 'myCommentsTodayMeta', 'myCommentsTodayBody', 'myCommentsTodayCloseBtn', 'myCommentsTodayDateInp', 'myCommentsTodayApplyBtn'
         ].forEach((id) => { el[id] = document.getElementById(id); });
       }
 
@@ -4233,10 +4240,20 @@
         el.refreshIssuesBtn.disabled = !state.connected;
         if (el.myCommentsTodayBtn) {
           el.myCommentsTodayBtn.disabled = !state.connected || !!state.myCommentsToday.loading;
-          el.myCommentsTodayBtn.textContent = state.myCommentsToday.loading ? 'Buscando...' : 'Tickets comentados hoy';
+          el.myCommentsTodayBtn.textContent = state.myCommentsToday.loading ? 'Buscando...' : 'Tickets comentados por fecha';
         }
         el.loginView.classList.toggle('hide', state.connected);
         el.mainView.classList.toggle('hide', !state.connected);
+      }
+
+      function selectedMyCommentsInputDate(rawValue) {
+        const direct = String(rawValue || '').trim();
+        if (isValidInputDate(direct)) return direct;
+        const fromState = state.myCommentsToday && isValidInputDate(state.myCommentsToday.selectedDate)
+          ? String(state.myCommentsToday.selectedDate || '').trim()
+          : '';
+        if (fromState) return fromState;
+        return TimeService.toInputDate(new Date());
       }
 
       function openMyCommentsTodayModal() {
@@ -4253,21 +4270,25 @@
 
       function renderMyCommentsTodayModal() {
         if (!el.myCommentsTodayMeta || !el.myCommentsTodayBody) return;
-        const todayLabel = TimeService.ddmmyyyy(new Date());
-        const snapshot = state.myCommentsToday || { loading: false, items: [], refreshedAt: null, failedIssues: 0 };
+        const snapshot = state.myCommentsToday || { loading: false, items: [], refreshedAt: null, failedIssues: 0, selectedDate: '' };
+        const selectedInput = selectedMyCommentsInputDate(snapshot.selectedDate);
+        const selectedLabel = TimeService.ddmmyyyy(new Date(`${selectedInput}T00:00:00`));
         const items = Array.isArray(snapshot.items) ? snapshot.items : [];
+        if (el.myCommentsTodayDateInp && el.myCommentsTodayDateInp.value !== selectedInput) {
+          el.myCommentsTodayDateInp.value = selectedInput;
+        }
 
         if (snapshot.loading) {
-          el.myCommentsTodayMeta.textContent = '';
-          el.myCommentsTodayBody.innerHTML = '<div class="empty">Cargando resumen de hoy...</div>';
+          el.myCommentsTodayMeta.textContent = `Fecha seleccionada: ${selectedLabel}`;
+          el.myCommentsTodayBody.innerHTML = `<div class="empty">Cargando resumen de ${escapeHtml(selectedLabel)}...</div>`;
           return;
         }
 
-        el.myCommentsTodayMeta.textContent = '';
+        el.myCommentsTodayMeta.textContent = `Fecha seleccionada: ${selectedLabel}`;
 
         if (!items.length) {
           const emptyLabel = state.issues.length
-            ? 'No registras comentarios hoy en los tickets cargados.'
+            ? `No registras comentarios en ${selectedLabel} en los tickets cargados.`
             : 'No hay tickets cargados.';
           el.myCommentsTodayBody.innerHTML = `<div class="empty">${escapeHtml(emptyLabel)}</div>`;
           return;
@@ -4301,22 +4322,22 @@
         `;
       }
 
-      async function showMyCommentsTodayModal() {
+      async function showMyCommentsTodayModal(forcedDate = '') {
         if (!state.connected) {
           showMsg('error', 'Conecta tu cuenta Jira primero.');
           return;
         }
+        const targetInput = selectedMyCommentsInputDate(forcedDate);
         openMyCommentsTodayModal();
-        state.myCommentsToday = { loading: true, items: [], refreshedAt: null, failedIssues: 0 };
+        state.myCommentsToday = { loading: true, items: [], refreshedAt: null, failedIssues: 0, selectedDate: targetInput };
         renderTop();
         renderMyCommentsTodayModal();
         if (!state.me || !state.issues.length) {
-          state.myCommentsToday = { loading: false, items: [], refreshedAt: new Date(), failedIssues: 0 };
+          state.myCommentsToday = { loading: false, items: [], refreshedAt: new Date(), failedIssues: 0, selectedDate: targetInput };
           renderTop();
           renderMyCommentsTodayModal();
           return;
         }
-        const todayInput = TimeService.toInputDate(new Date());
         const rows = [];
         let failedIssues = 0;
         const agentName = state.me && state.me.displayName ? String(state.me.displayName || '').trim() : 'Yo';
@@ -4329,7 +4350,7 @@
               ]);
               const dayComments = comments.filter((comment) => {
                 if (!isCommentByCurrentUser(comment)) return;
-                if (!isCommentOnInputDate(comment, todayInput)) return;
+                if (!isCommentOnInputDate(comment, targetInput)) return;
                 return true;
               });
               if (!dayComments.length) return;
@@ -4362,7 +4383,8 @@
             loading: false,
             items: sortDesc(rows, (item) => item.endCreated || ''),
             refreshedAt: new Date(),
-            failedIssues
+            failedIssues,
+            selectedDate: targetInput
           };
           renderTop();
           renderMyCommentsTodayModal();
@@ -7158,7 +7180,7 @@
         state.selectedIssueKey = '';
         state.commentsByIssue = {};
         state.worklogsByIssue = {};
-        state.myCommentsToday = { loading: false, items: [], refreshedAt: null, failedIssues: 0 };
+        state.myCommentsToday = { loading: false, items: [], refreshedAt: null, failedIssues: 0, selectedDate: '' };
         state.timelineLinksByIssue = {};
         state.manualWorklogToCommentByIssue = {};
         state.selectedCommentId = '';
@@ -7401,11 +7423,26 @@
           try {
             await showMyCommentsTodayModal();
           } catch (e) {
-            state.myCommentsToday = { loading: false, items: [], refreshedAt: new Date(), failedIssues: 0 };
+            state.myCommentsToday = { loading: false, items: [], refreshedAt: new Date(), failedIssues: 0, selectedDate: selectedMyCommentsInputDate() };
             renderTop();
             renderMyCommentsTodayModal();
-            applyError(e, 'No se pudieron cargar tus comentarios de hoy.');
+            applyError(e, 'No se pudieron cargar tus comentarios de la fecha seleccionada.');
           }
+        });
+        el.myCommentsTodayApplyBtn.addEventListener('click', async () => {
+          try {
+            await showMyCommentsTodayModal(el.myCommentsTodayDateInp ? el.myCommentsTodayDateInp.value : '');
+          } catch (e) {
+            state.myCommentsToday = { loading: false, items: [], refreshedAt: new Date(), failedIssues: 0, selectedDate: selectedMyCommentsInputDate(el.myCommentsTodayDateInp ? el.myCommentsTodayDateInp.value : '') };
+            renderTop();
+            renderMyCommentsTodayModal();
+            applyError(e, 'No se pudieron cargar tus comentarios de la fecha seleccionada.');
+          }
+        });
+        el.myCommentsTodayDateInp.addEventListener('change', () => {
+          const value = selectedMyCommentsInputDate(el.myCommentsTodayDateInp ? el.myCommentsTodayDateInp.value : '');
+          state.myCommentsToday = Object.assign({}, state.myCommentsToday || {}, { selectedDate: value });
+          renderMyCommentsTodayModal();
         });
         el.myCommentsTodayCloseBtn.addEventListener('click', closeMyCommentsTodayModal);
         el.myCommentsTodayModal.addEventListener('click', async (ev) => {

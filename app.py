@@ -1278,6 +1278,34 @@ def _consume_richmondstudio_confirmed_action(action_key: str) -> bool:
     return True
 
 
+def _build_richmondstudio_users_output_filename(institution_name: object) -> str:
+    raw = str(institution_name or "").strip()
+    cleaned = re.sub(r'[\\/:*?"<>|]+', " ", raw)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if cleaned:
+        return f"alumnos_RS_{cleaned}.xlsx"
+    return "alumnos_RS.xlsx"
+
+
+def _build_richmondstudio_users_export_rows(
+    rows: List[Dict[str, object]]
+) -> List[Dict[str, str]]:
+    export_rows: List[Dict[str, str]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        export_rows.append(
+            {
+                "Last name": str(row.get("Last name") or "").strip(),
+                "First name": str(row.get("First name") or "").strip(),
+                "Class": str(row.get("Class") or "").strip(),
+                "Login": str(row.get("Login") or "").strip(),
+                "Password": str(row.get("Password") or "").strip(),
+            }
+        )
+    return export_rows
+
+
 def _richmondstudio_display_bool(value: object) -> str:
     return "Si" if bool(value) else "No"
 
@@ -4767,12 +4795,12 @@ def render_richmond_studio_view() -> None:
         if not institution_name:
             institution_name = "Institucion no identificada"
 
-        greeting = f"Hola {user_name}," if user_name else "Hola,"
+        greeting = f"Hola {user_name}" if user_name else "Hola"
+        st.markdown(greeting)
         st.markdown("El cambio se aplicara a la institucion")
         st.markdown(f"### {institution_name}")
-        st.caption(f"{greeting} aplicaras los cambios a esta institucion.")
         if action_label:
-            st.caption(f"Accion: {action_label}")
+            st.markdown(f"Accion: {action_label}")
 
         col_apply, col_cancel = st.columns(2, gap="small")
         if col_apply.button(
@@ -5349,82 +5377,97 @@ def render_richmond_studio_view() -> None:
     with tab_rs_usuarios:
         with st.container(border=True):
             st.markdown("**RS | Crear usuarios desde Excel**")
-            st.caption(
-                "Sube un Excel con columnas Last name, First name, Class, Email y Role. "
-                "La clase se resuelve contra /api/groups y cada usuario se crea con una "
-                "peticion individual a /api/users."
-            )
-            template_rs_users_bytes = _export_simple_excel(
-                _richmondstudio_user_import_template_rows(),
-                sheet_name="rs_users_import",
-            )
-            col_rs_users_template, col_rs_users_file = st.columns([1, 2], gap="small")
-            col_rs_users_template.download_button(
-                label="Descargar plantilla",
-                data=template_rs_users_bytes,
-                file_name="plantilla_usuarios_rs.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="rs_users_import_template_download",
-                use_container_width=True,
-            )
-            uploaded_rs_users_excel = col_rs_users_file.file_uploader(
-                "Excel de usuarios RS",
-                type=["xlsx"],
-                key="rs_users_import_excel",
-                help=(
-                    "Columnas esperadas: "
-                    f"{RICHMONDSTUDIO_USER_IMPORT_LAST_NAME}, "
-                    f"{RICHMONDSTUDIO_USER_IMPORT_FIRST_NAME}, "
-                    f"{RICHMONDSTUDIO_USER_IMPORT_CLASS_NAME}, "
-                    f"{RICHMONDSTUDIO_USER_IMPORT_EMAIL}, "
-                    f"{RICHMONDSTUDIO_USER_IMPORT_ROLE}."
-                ),
-            )
-
             uploaded_rs_users_bytes = b""
+            uploaded_rs_users_excel = None
             rs_user_import_rows: List[Dict[str, object]] = []
             rs_user_import_error = ""
+            run_rs_users_create = False
 
-            if uploaded_rs_users_excel is not None:
-                uploaded_rs_users_bytes = uploaded_rs_users_excel.getvalue()
-                try:
-                    rs_user_import_rows = _load_richmondstudio_user_rows_from_excel(
-                        uploaded_rs_users_bytes
-                    )
-                except Exception as exc:
-                    rs_user_import_error = str(exc)
-                    st.error(f"Error en Excel RS: {exc}")
-                else:
-                    st.caption(f"Filas detectadas para crear: {len(rs_user_import_rows)}")
-                    preview_rows = [
-                        {
-                            RICHMONDSTUDIO_USER_IMPORT_LAST_NAME: row.get(
-                                RICHMONDSTUDIO_USER_IMPORT_LAST_NAME
-                            ),
-                            RICHMONDSTUDIO_USER_IMPORT_FIRST_NAME: row.get(
-                                RICHMONDSTUDIO_USER_IMPORT_FIRST_NAME
-                            ),
-                            RICHMONDSTUDIO_USER_IMPORT_CLASS_NAME: row.get(
-                                RICHMONDSTUDIO_USER_IMPORT_CLASS_NAME
-                            ),
-                            RICHMONDSTUDIO_USER_IMPORT_EMAIL: row.get(
-                                RICHMONDSTUDIO_USER_IMPORT_EMAIL
-                            ),
-                            RICHMONDSTUDIO_USER_IMPORT_ROLE: row.get(
-                                RICHMONDSTUDIO_USER_IMPORT_ROLE
-                            ),
-                        }
-                        for row in rs_user_import_rows[:100]
-                    ]
-                    if preview_rows:
-                        _show_dataframe(preview_rows, use_container_width=True)
+            if "rs_users_import_excel_version" not in st.session_state:
+                st.session_state["rs_users_import_excel_version"] = 0
+            if not st.session_state.get("rs_users_create_output_bytes"):
+                st.session_state["rs_users_create_download_only"] = False
 
-            run_rs_users_create = st.button(
-                "Crear usuarios RS",
-                type="primary",
-                key="rs_users_create_btn",
-                use_container_width=True,
-            )
+            rs_users_download_only = bool(
+                st.session_state.get("rs_users_create_download_only")
+            ) and bool(st.session_state.get("rs_users_create_output_bytes"))
+
+            if not rs_users_download_only:
+                st.caption(
+                    "Sube un Excel con columnas Last name, First name, Class, Email y Role. "
+                    "La clase se resuelve contra /api/groups y cada usuario se crea con una "
+                    "peticion individual a /api/users."
+                )
+                template_rs_users_bytes = _export_simple_excel(
+                    _richmondstudio_user_import_template_rows(),
+                    sheet_name="rs_users_import",
+                )
+                col_rs_users_template, col_rs_users_file = st.columns([1, 2], gap="small")
+                col_rs_users_template.download_button(
+                    label="Descargar plantilla",
+                    data=template_rs_users_bytes,
+                    file_name="plantilla_usuarios_rs.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="rs_users_import_template_download",
+                    use_container_width=True,
+                )
+                uploaded_rs_users_excel = col_rs_users_file.file_uploader(
+                    "Excel de usuarios RS",
+                    type=["xlsx"],
+                    key=(
+                        "rs_users_import_excel_"
+                        f"{int(st.session_state.get('rs_users_import_excel_version', 0))}"
+                    ),
+                    help=(
+                        "Columnas esperadas: "
+                        f"{RICHMONDSTUDIO_USER_IMPORT_LAST_NAME}, "
+                        f"{RICHMONDSTUDIO_USER_IMPORT_FIRST_NAME}, "
+                        f"{RICHMONDSTUDIO_USER_IMPORT_CLASS_NAME}, "
+                        f"{RICHMONDSTUDIO_USER_IMPORT_EMAIL}, "
+                        f"{RICHMONDSTUDIO_USER_IMPORT_ROLE}."
+                    ),
+                )
+
+                if uploaded_rs_users_excel is not None:
+                    uploaded_rs_users_bytes = uploaded_rs_users_excel.getvalue()
+                    try:
+                        rs_user_import_rows = _load_richmondstudio_user_rows_from_excel(
+                            uploaded_rs_users_bytes
+                        )
+                    except Exception as exc:
+                        rs_user_import_error = str(exc)
+                        st.error(f"Error en Excel RS: {exc}")
+                    else:
+                        st.caption(f"Filas detectadas para crear: {len(rs_user_import_rows)}")
+                        preview_rows = [
+                            {
+                                RICHMONDSTUDIO_USER_IMPORT_LAST_NAME: row.get(
+                                    RICHMONDSTUDIO_USER_IMPORT_LAST_NAME
+                                ),
+                                RICHMONDSTUDIO_USER_IMPORT_FIRST_NAME: row.get(
+                                    RICHMONDSTUDIO_USER_IMPORT_FIRST_NAME
+                                ),
+                                RICHMONDSTUDIO_USER_IMPORT_CLASS_NAME: row.get(
+                                    RICHMONDSTUDIO_USER_IMPORT_CLASS_NAME
+                                ),
+                                RICHMONDSTUDIO_USER_IMPORT_EMAIL: row.get(
+                                    RICHMONDSTUDIO_USER_IMPORT_EMAIL
+                                ),
+                                RICHMONDSTUDIO_USER_IMPORT_ROLE: row.get(
+                                    RICHMONDSTUDIO_USER_IMPORT_ROLE
+                                ),
+                            }
+                            for row in rs_user_import_rows[:100]
+                        ]
+                        if preview_rows:
+                            _show_dataframe(preview_rows, use_container_width=True)
+
+                run_rs_users_create = st.button(
+                    "Crear usuarios RS",
+                    type="primary",
+                    key="rs_users_create_btn",
+                    use_container_width=True,
+                )
             run_rs_users_create_confirmed = _consume_richmondstudio_confirmed_action(
                 "rs_users_create"
             )
@@ -5470,6 +5513,18 @@ def render_richmond_studio_view() -> None:
                             rs_user_import_rows = []
 
                     if rs_user_import_rows:
+                        institution_name_for_file = ""
+                        try:
+                            current_context_users = _fetch_richmondstudio_current_user_context(
+                                rs_token,
+                                timeout=int(timeout),
+                            )
+                        except Exception:
+                            current_context_users = {}
+                        institution_name_for_file = str(
+                            current_context_users.get("institution_name") or ""
+                        ).strip()
+
                         try:
                             with st.spinner("Consultando clases RS..."):
                                 rs_groups_for_users = _fetch_richmondstudio_groups(
@@ -5598,24 +5653,35 @@ def render_richmond_studio_view() -> None:
                             )
                             st.session_state["rs_users_create_output_bytes"] = (
                                 _export_simple_excel(
-                                    resultados_rs_users,
+                                    _build_richmondstudio_users_export_rows(
+                                        resultados_rs_users
+                                    ),
                                     sheet_name="usuarios_rs",
                                 )
                             )
                             st.session_state["rs_users_create_output_count"] = int(
                                 len(resultados_rs_users)
                             )
+                            st.session_state["rs_users_create_output_filename"] = (
+                                _build_richmondstudio_users_output_filename(
+                                    institution_name_for_file
+                                )
+                            )
 
                             if ok_rs_users and not err_rs_users:
-                                st.success(
-                                    f"Usuarios RS creados correctamente: {ok_rs_users}."
-                                )
+                                st.session_state["rs_users_create_download_only"] = True
+                                st.session_state["rs_users_import_excel_version"] = int(
+                                    st.session_state.get("rs_users_import_excel_version", 0)
+                                ) + 1
+                                st.rerun()
                             elif ok_rs_users and err_rs_users:
+                                st.session_state["rs_users_create_download_only"] = False
                                 st.warning(
                                     "Resultado parcial RS: "
                                     f"OK {ok_rs_users} | Error {err_rs_users}."
                                 )
                             else:
+                                st.session_state["rs_users_create_download_only"] = False
                                 st.error("No se pudo crear ningun usuario RS.")
 
                             if resultados_rs_users:
@@ -5628,7 +5694,11 @@ def render_richmond_studio_view() -> None:
                 st.download_button(
                     label="Descargar resultado usuarios RS",
                     data=st.session_state["rs_users_create_output_bytes"],
-                    file_name="usuarios_rs_creados.xlsx",
+                    file_name=str(
+                        st.session_state.get("rs_users_create_output_filename")
+                        or "alumnos_RS.xlsx"
+                    ).strip()
+                    or "alumnos_RS.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="rs_users_create_output_download",
                     use_container_width=True,

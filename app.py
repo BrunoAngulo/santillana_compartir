@@ -4670,7 +4670,9 @@ with tab_crud_clases:
                 )
                 run_eliminar_clases = st.button("Eliminar clases", key="clases_eliminar_btn")
 
-        if "clases_auto_group_unlocked" not in st.session_state:
+        if _restricted_sections_unlocked():
+            st.session_state["clases_auto_group_unlocked"] = True
+        elif "clases_auto_group_unlocked" not in st.session_state:
             st.session_state["clases_auto_group_unlocked"] = False
 
         @st.dialog("Acceso Admin - Asignación de Participantes", width="small")

@@ -27,6 +27,11 @@ from santillana_format.processor import (
     process_excel,
 )
 from santillana_format.jira_focus_web import render_jira_focus_web
+from santillana_format.profesores_compare import (
+    build_profesores_crear_filename,
+    compare_profesores_bd_excel,
+    export_profesores_crear_excel,
+)
 from santillana_format.profesores import (
     DEFAULT_CICLO_ID as PROFESORES_CICLO_ID_DEFAULT,
     build_profesores_bd_filename,
@@ -6493,7 +6498,168 @@ with tab_crud_profesores:
             _show_dataframe(st.session_state["profesores_bd_rows"], use_container_width=True)
 
         with st.container(border=True):
-            st.markdown("**2) Generar Excel base operativo de profesores**")
+            st.markdown("**2) Comparar ProfesoresBD vs Plantilla_Actualizada**")
+            st.caption(
+                "Sube el Excel de ProfesoresBD para detectar coincidencias por DNI o Nombre completo y decidir que profesores crear."
+            )
+            uploaded_profesores_compare = st.file_uploader(
+                "Excel con ProfesoresBD y Plantilla_Actualizada",
+                type=["xlsx"],
+                key="profesores_compare_excel",
+            )
+            run_compare_profesores = st.button(
+                "Analizar coincidencias",
+                type="primary",
+                key="profesores_compare_run",
+            )
+
+        if run_compare_profesores:
+            for state_key in (
+                "profesores_compare_rows",
+                "profesores_compare_summary",
+                "profesores_compare_source_name",
+                "profesores_compare_editor",
+            ):
+                st.session_state.pop(state_key, None)
+            if not uploaded_profesores_compare:
+                st.error("Sube un Excel con las hojas ProfesoresBD y Plantilla_Actualizada.")
+                st.stop()
+
+            suffix = Path(uploaded_profesores_compare.name).suffix or ".xlsx"
+            tmp_path = None
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                    tmp.write(uploaded_profesores_compare.read())
+                    tmp_path = Path(tmp.name)
+                compare_rows, compare_summary = compare_profesores_bd_excel(
+                    excel_path=tmp_path,
+                )
+            except Exception as exc:  # pragma: no cover - UI
+                st.error(f"Error: {exc}")
+                st.stop()
+            finally:
+                if tmp_path:
+                    try:
+                        tmp_path.unlink()
+                    except OSError:
+                        pass
+
+            st.session_state["profesores_compare_rows"] = compare_rows
+            st.session_state["profesores_compare_summary"] = compare_summary
+            st.session_state["profesores_compare_source_name"] = str(
+                uploaded_profesores_compare.name or "profesores.xlsx"
+            )
+            st.success(
+                "Comparacion lista. BD: {bd_total}, Actualizada: {actualizada_total}, "
+                "Coincidencias: {coincidencias_total}, Sin referencia: {sin_referencia_total}.".format(
+                    **compare_summary
+                )
+            )
+
+        compare_rows_cached = st.session_state.get("profesores_compare_rows") or []
+        compare_summary_cached = st.session_state.get("profesores_compare_summary") or {}
+        compare_source_name_cached = str(
+            st.session_state.get("profesores_compare_source_name") or "profesores.xlsx"
+        )
+        if compare_rows_cached:
+            matched_rows = [
+                row for row in compare_rows_cached if bool(row.get("_tiene_referencia"))
+            ]
+            unmatched_rows = [
+                row for row in compare_rows_cached if not bool(row.get("_tiene_referencia"))
+            ]
+            st.info(
+                "Coincidencias detectadas: {coincidencias_total} | Sin referencia BD: {sin_referencia_total}".format(
+                    **compare_summary_cached
+                )
+            )
+
+            edited_match_rows: List[Dict[str, object]] = []
+            if matched_rows:
+                st.markdown("**Vista previa de coincidencias**")
+                edited_matches_df = st.data_editor(
+                    pd.DataFrame(
+                        [
+                            {
+                                "Profesor Colegio": row.get("Profesor Colegio", ""),
+                                "Profesor referencia de la BD": row.get(
+                                    "Profesor referencia de la BD", ""
+                                ),
+                                "Coincidencia por": row.get("Coincidencia por", ""),
+                                "Usar referencia BD": bool(
+                                    row.get("Usar referencia BD", False)
+                                ),
+                            }
+                            for row in matched_rows
+                        ]
+                    ),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Usar referencia BD": st.column_config.CheckboxColumn(
+                            "Usar referencia BD",
+                            help="Desmarca para incluir este profesor en el Excel de creacion.",
+                            default=True,
+                        ),
+                    },
+                    disabled=[
+                        "Profesor Colegio",
+                        "Profesor referencia de la BD",
+                        "Coincidencia por",
+                    ],
+                    key="profesores_compare_editor",
+                )
+                edited_match_rows = edited_matches_df.to_dict("records")
+            else:
+                st.caption("No se detectaron coincidencias contra la BD.")
+
+            create_rows: List[Dict[str, object]] = [dict(row) for row in unmatched_rows]
+            for index, base_row in enumerate(matched_rows):
+                edited_row = (
+                    edited_match_rows[index]
+                    if index < len(edited_match_rows)
+                    else {"Usar referencia BD": True}
+                )
+                if not bool(edited_row.get("Usar referencia BD", True)):
+                    create_rows.append(dict(base_row))
+
+            create_rows.sort(
+                key=lambda row: (
+                    str(row.get("Apellido Paterno") or "").upper(),
+                    str(row.get("Apellido Materno") or "").upper(),
+                    str(row.get("Nombre") or "").upper(),
+                    str(row.get("DNI") or ""),
+                )
+            )
+
+            st.markdown("**Profesores a crear**")
+            if create_rows:
+                create_preview_rows = [
+                    {
+                        "Nombre": row.get("Nombre", ""),
+                        "Apellido Paterno": row.get("Apellido Paterno", ""),
+                        "Apellido Materno": row.get("Apellido Materno", ""),
+                        "DNI": row.get("DNI", ""),
+                        "E-mail": row.get("E-mail", ""),
+                        "Login": row.get("Login", ""),
+                    }
+                    for row in create_rows
+                ]
+                _show_dataframe(create_preview_rows, use_container_width=True)
+                st.download_button(
+                    label="Descargar profesores a crear",
+                    data=export_profesores_crear_excel(create_rows),
+                    file_name=build_profesores_crear_filename(compare_source_name_cached),
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="profesores_compare_download",
+                )
+            else:
+                st.caption(
+                    "No hay profesores para crear. Si quieres forzar uno, desmarca 'Usar referencia BD'."
+                )
+
+        with st.container(border=True):
+            st.markdown("**3) Generar Excel base operativo de profesores**")
             st.caption("Incluye profesores activos e inactivos.")
             run_generar_base = st.button(
                 "Generar Excel base",
@@ -6586,7 +6752,7 @@ with tab_crud_profesores:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
     
-        st.subheader("3) Asignar profesores a clases")
+        st.subheader("4) Asignar profesores a clases")
         st.caption("Sube la hoja con persona_id y CURSO. Secciones y Estado son opcionales.")
         st.markdown("**Procesos**")
         col_proc1, col_proc2 = st.columns(2)

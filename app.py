@@ -1997,6 +1997,45 @@ def _show_dataframe(data: object, use_container_width: bool = True) -> None:
         df_view.index = range(1, len(df_view) + 1)
     st.dataframe(df_view, use_container_width=use_container_width)
 
+
+def _normalize_censo_activos_export_rows(
+    rows: List[Dict[str, object]]
+) -> List[Dict[str, str]]:
+    normalized: List[Dict[str, str]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        normalized.append(
+            {
+                "Nivel": str(row.get("Nivel") or row.get("nivel") or "").strip(),
+                "Grado": str(row.get("Grado") or row.get("grado") or "").strip(),
+                "Grupo": str(
+                    row.get("Grupo")
+                    or row.get("Seccion")
+                    or row.get("seccion")
+                    or ""
+                ).strip(),
+                "Nombre del alumno": str(
+                    row.get("Nombre del alumno")
+                    or row.get("Nombre completo")
+                    or row.get("nombre_completo")
+                    or ""
+                ).strip(),
+                "Login": str(row.get("Login") or row.get("login") or "").strip(),
+                "Password": str(row.get("Password") or row.get("password") or "").strip(),
+            }
+        )
+    normalized.sort(
+        key=lambda row: (
+            str(row.get("Nivel") or ""),
+            str(row.get("Grado") or ""),
+            str(row.get("Grupo") or ""),
+            str(row.get("Nombre del alumno") or ""),
+        )
+    )
+    return normalized
+
+
 def _parse_colegio_id(raw: object, field_name: str = "Colegio Clave") -> int:
     text = str(raw or "").strip()
     if not text:
@@ -6859,47 +6898,19 @@ with tab_crud_alumnos:
                         login_lookup_by_alumno,
                         login_lookup_by_persona,
                     )
-                    rows_activos.append(
-                        {
-                            "Alumno ID": flat.get("alumno_id") or "",
-                            "Persona ID": flat.get("persona_id") or "",
-                            "Nombre completo": flat.get("nombre_completo") or "",
-                            "DNI": flat.get("id_oficial") or "",
-                            "Nivel": flat.get("nivel") or "",
-                            "Grado": flat.get("grado") or "",
-                            "Seccion": flat.get("seccion_norm") or flat.get("seccion") or "",
-                            "Con pago": "SI" if _to_bool(flat.get("con_pago")) else "NO",
-                        }
-                    )
-                    export_rows_activos.append(
-                        {
-                            "Nivel": flat.get("nivel") or "",
-                            "Grado": flat.get("grado") or "",
-                            "Grupo": flat.get("seccion_norm") or flat.get("seccion") or "",
-                            "Nombre del alumno": flat.get("nombre_completo") or "",
-                            "Login": login_txt,
-                            "Password": "",
-                        }
-                    )
+                    row_activo = {
+                        "Nivel": flat.get("nivel") or "",
+                        "Grado": flat.get("grado") or "",
+                        "Grupo": flat.get("seccion_norm") or flat.get("seccion") or "",
+                        "Nombre del alumno": flat.get("nombre_completo") or "",
+                        "Login": login_txt,
+                        "Password": "",
+                    }
+                    rows_activos.append(dict(row_activo))
+                    export_rows_activos.append(dict(row_activo))
 
-            rows_activos = sorted(
-                rows_activos,
-                key=lambda row: (
-                    str(row.get("Nivel") or ""),
-                    str(row.get("Grado") or ""),
-                    str(row.get("Seccion") or ""),
-                    str(row.get("Nombre completo") or ""),
-                ),
-            )
-            export_rows_activos = sorted(
-                export_rows_activos,
-                key=lambda row: (
-                    str(row.get("Nivel") or ""),
-                    str(row.get("Grado") or ""),
-                    str(row.get("Grupo") or ""),
-                    str(row.get("Nombre del alumno") or ""),
-                ),
-            )
+            rows_activos = _normalize_censo_activos_export_rows(rows_activos)
+            export_rows_activos = _normalize_censo_activos_export_rows(export_rows_activos)
             st.session_state["alumnos_censo_activos_rows"] = rows_activos
             st.session_state["alumnos_censo_activos_export_rows"] = export_rows_activos
             st.session_state["alumnos_censo_activos_errors"] = errors_activos
@@ -6914,14 +6925,17 @@ with tab_crud_alumnos:
         censo_rows_cached = st.session_state.get("alumnos_censo_activos_rows") or []
         censo_export_rows_cached = st.session_state.get("alumnos_censo_activos_export_rows") or []
         censo_errors_cached = st.session_state.get("alumnos_censo_activos_errors") or []
-        if censo_rows_cached:
-            _show_dataframe(censo_rows_cached, use_container_width=True)
+        censo_display_rows = _normalize_censo_activos_export_rows(
+            censo_export_rows_cached or censo_rows_cached
+        )
+        if censo_display_rows:
+            _show_dataframe(censo_display_rows, use_container_width=True)
             censo_colegio_id = _safe_int(st.session_state.get("alumnos_censo_activos_colegio_id"))
             file_suffix = str(censo_colegio_id) if censo_colegio_id is not None else "colegio"
             st.download_button(
                 label="Descargar censo activos",
                 data=_export_simple_excel(
-                    censo_export_rows_cached or censo_rows_cached,
+                    censo_display_rows,
                     sheet_name="activos",
                 ),
                 file_name=f"censo_alumnos_activos_{file_suffix}.xlsx",

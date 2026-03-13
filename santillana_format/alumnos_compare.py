@@ -775,22 +775,12 @@ def _build_comparacion_bd(
         nuevo_nivel = _clean_cell_value(act_row.get("nivel", ""))
         nuevo_grado = _clean_cell_value(act_row.get("grado", ""))
         nuevo_grupo = _clean_cell_value(act_row.get("grupo", ""))
-        bd_nivel = _clean_cell_value(bd_row.get("nivel", ""))
-        bd_grado = _clean_cell_value(bd_row.get("grado", ""))
-        bd_grupo = _clean_cell_value(bd_row.get("grupo", ""))
 
-        nivel_changed = _is_changed(nuevo_nivel, bd_nivel, _normalize_text)
-        grado_changed = _is_changed(nuevo_grado, bd_grado, _normalize_text)
-        grupo_changed = _is_changed(nuevo_grupo, bd_grupo, _normalize_grupo)
-
-        if nivel_changed or grado_changed or grupo_changed:
-            row_out["Nuevo Nivel"] = nuevo_nivel
-            row_out["Nuevo Grado"] = nuevo_grado
-            row_out["Nuevo Grupo"] = nuevo_grupo
-        else:
-            row_out["Nuevo Nivel"] = ""
-            row_out["Nuevo Grado"] = ""
-            row_out["Nuevo Grupo"] = ""
+        # Mantener visibles los valores objetivo de la plantilla actualizada
+        # en la salida de edicion, aunque coincidan con la BD.
+        row_out["Nuevo Nivel"] = nuevo_nivel
+        row_out["Nuevo Grado"] = nuevo_grado
+        row_out["Nuevo Grupo"] = nuevo_grupo
 
         rows.append(row_out)
 

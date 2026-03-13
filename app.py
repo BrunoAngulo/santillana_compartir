@@ -4472,7 +4472,11 @@ def _build_manual_move_grade_catalog(
 
 
 def _manual_move_alumno_option_label(row: Dict[str, object]) -> str:
-    base = _format_alumno_label(row)
+    nombre = str(row.get("nombre_completo") or "").strip()
+    if not nombre:
+        nombre = "SIN NOMBRE"
+    dni = str(row.get("id_oficial") or "").strip() or "-"
+    base = f"{dni}|{nombre}"
     nivel = str(row.get("nivel") or "").strip()
     grado = str(row.get("grado") or "").strip()
     seccion = _normalize_seccion_key(row.get("seccion_norm") or row.get("seccion") or "")
@@ -4484,6 +4488,35 @@ def _manual_move_alumno_option_label(row: Dict[str, object]) -> str:
     if seccion:
         return f"{base} | Seccion ({seccion})"
     return base
+
+
+def _manual_move_alumno_matches_filter(row: Dict[str, object], search_text: object) -> bool:
+    search_norm = _normalize_plain_text(search_text)
+    if not search_norm:
+        return True
+
+    tokens = [token for token in search_norm.split() if token]
+    if not tokens:
+        return True
+
+    dni_txt = _normalize_compare_id(row.get("id_oficial"))
+    nombre_txt = _normalize_compare_text(row.get("nombre_completo"))
+    dni_tokens: List[str] = []
+    nombre_tokens: List[str] = []
+
+    for token in tokens:
+        token_dni = re.sub(r"\W+", "", token)
+        if any(ch.isdigit() for ch in token_dni):
+            if token_dni:
+                dni_tokens.append(token_dni)
+        else:
+            nombre_tokens.append(token)
+
+    if dni_tokens and not all(token in dni_txt for token in dni_tokens):
+        return False
+    if nombre_tokens and not all(token in nombre_txt for token in nombre_tokens):
+        return False
+    return bool(dni_tokens or nombre_tokens)
 
 
 def _fetch_alumnos_catalog_for_manual_move(
@@ -7280,29 +7313,13 @@ with tab_crud_alumnos:
             st.caption("Primero presiona 'Listar alumnos del colegio'.")
         else:
             search_text = st.text_input(
-                "Filtro alumnos (nombre o DNI)",
+                "Filtro alumnos (DNI y luego nombre)",
                 key="alumnos_manual_move_search",
-                placeholder="Ejemplo: CHAVARRI 73847294",
+                placeholder="Ejemplo: 73847294 CHAVARRI",
             ).strip()
-            search_norm = _normalize_plain_text(search_text)
-            tokens = [token for token in search_norm.split() if token]
             filtered_students: List[Dict[str, object]] = []
             for row in loaded_students:
-                seccion_tmp = _normalize_seccion_key(row.get("seccion_norm") or row.get("seccion") or "")
-                haystack = _normalize_plain_text(
-                    " ".join(
-                        part
-                        for part in [
-                            row.get("nombre_completo"),
-                            row.get("id_oficial"),
-                            row.get("nivel"),
-                            row.get("grado"),
-                            seccion_tmp,
-                        ]
-                        if part
-                    )
-                )
-                if not tokens or all(token in haystack for token in tokens):
+                if _manual_move_alumno_matches_filter(row, search_text):
                     filtered_students.append(row)
 
             st.caption(f"Resultados del filtro: {len(filtered_students)} alumno(s).")

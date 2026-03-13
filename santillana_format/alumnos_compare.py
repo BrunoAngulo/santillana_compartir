@@ -467,6 +467,24 @@ def _clean_cell_value(value: object) -> str:
     return text
 
 
+def _pick_row_value(row: pd.Series, aliases: Sequence[str]) -> object:
+    normalized_aliases = {_normalize_header(alias) for alias in aliases if alias}
+    for key in row.index:
+        if _normalize_header(key) not in normalized_aliases:
+            continue
+        value = row.get(key, "")
+        if isinstance(value, pd.Series):
+            for item in value.tolist():
+                cleaned = _clean_cell_value(item)
+                if cleaned:
+                    return cleaned
+            continue
+        cleaned = _clean_cell_value(value)
+        if cleaned:
+            return cleaned
+    return ""
+
+
 def _normalize_grupo(value: object) -> str:
     text = _normalize_text(value)
     if not text:
@@ -772,9 +790,15 @@ def _build_comparacion_bd(
 
         row_out["Activo"] = "Si"
 
-        nuevo_nivel = _clean_cell_value(act_row.get("nivel", ""))
-        nuevo_grado = _clean_cell_value(act_row.get("grado", ""))
-        nuevo_grupo = _clean_cell_value(act_row.get("grupo", ""))
+        nuevo_nivel = _clean_cell_value(
+            _pick_row_value(act_row, ("nivel", "Nivel", "Nuevo Nivel"))
+        )
+        nuevo_grado = _clean_cell_value(
+            _pick_row_value(act_row, ("grado", "Grado", "Nuevo Grado"))
+        )
+        nuevo_grupo = _clean_cell_value(
+            _pick_row_value(act_row, ("grupo", "Grupo", "Nuevo Grupo"))
+        )
 
         # Mantener visibles los valores objetivo de la plantilla actualizada
         # en la salida de edicion, aunque coincidan con la BD.

@@ -818,11 +818,21 @@ def _build_comparacion_bd(
             _pick_row_value(act_row, ("grupo", "Grupo", "Nuevo Grupo"))
         )
 
-        # Mantener visibles los valores objetivo de la plantilla actualizada
-        # en la salida de edicion, aunque coincidan con la BD.
-        row_out["Nuevo Nivel"] = nuevo_nivel
-        row_out["Nuevo Grado"] = nuevo_grado
-        row_out["Nuevo Grupo"] = nuevo_grupo
+        row_out["Nuevo Nivel"] = (
+            nuevo_nivel
+            if _is_changed(nuevo_nivel, row_out.get("Nivel", ""), _normalize_text)
+            else ""
+        )
+        row_out["Nuevo Grado"] = (
+            nuevo_grado
+            if _is_changed(nuevo_grado, row_out.get("Grado", ""), _normalize_text)
+            else ""
+        )
+        row_out["Nuevo Grupo"] = (
+            nuevo_grupo
+            if _is_changed(nuevo_grupo, row_out.get("Grupo", ""), _normalize_grupo)
+            else ""
+        )
 
         rows.append(row_out)
 

@@ -509,6 +509,24 @@ def _build_nuip_index(df: pd.DataFrame) -> Dict[str, List[int]]:
     return index
 
 
+def _resolve_nuip_match(
+    act_row: pd.Series,
+    df_bd: pd.DataFrame,
+    index: Dict[str, List[int]],
+    used_indices: Optional[set] = None,
+) -> Optional[int]:
+    nuip_norm = _normalize_nuip(act_row.get("nuip"))
+    if not nuip_norm:
+        return None
+
+    candidates = _filter_unused_indices(index.get(nuip_norm) or [], used_indices)
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+    return _pick_best_match(act_row, df_bd, candidates)
+
+
 def _build_nombre_ap_pat_index(df: pd.DataFrame) -> Dict[str, List[int]]:
     index: Dict[str, List[int]] = {}
     for idx, row in df.iterrows():
@@ -613,18 +631,18 @@ def _resolve_apellidos_match(
     if len(candidates) == 1:
         return candidates[0]
 
-    # Si hay apellidos repetidos (ej. hermanos), priorizar desempate
-    # por identidad de persona (nombre/fecha/sexo) antes de NUIP.
-    best_by_identity = _pick_best_match(act_row, df_bd, candidates)
-    if best_by_identity is not None:
-        return best_by_identity
-
     nuip_norm = _normalize_nuip(act_row.get("nuip"))
     if nuip_norm:
         for idx in candidates:
             bd_nuip = _normalize_nuip(df_bd.loc[idx].get("nuip"))
             if bd_nuip and bd_nuip == nuip_norm:
                 return idx
+
+    # Si hay apellidos repetidos (ej. hermanos), usar identidad de persona
+    # como desempate solo despues de intentar match por NUIP.
+    best_by_identity = _pick_best_match(act_row, df_bd, candidates)
+    if best_by_identity is not None:
+        return best_by_identity
 
     return None
 
@@ -724,9 +742,16 @@ def _build_comparacion_bd(
         if not df_bd.empty:
             nuip_norm = _normalize_nuip(act_row.get("nuip"))
             # Prioridad solicitada:
-            # 1) Apellido paterno + materno
-            # 2) NUIP
+            # 1) NUIP
+            # 2) Apellido paterno + materno
             # 3) Nombre + apellido paterno
+            if bd_idx is None and nuip_norm:
+                bd_idx = _resolve_nuip_match(
+                    act_row,
+                    df_bd,
+                    nuip_index,
+                    used_indices=bd_matched_indices,
+                )
             if bd_idx is None:
                 bd_idx = _resolve_apellidos_match(
                     act_row,
@@ -734,13 +759,6 @@ def _build_comparacion_bd(
                     apellidos_cache,
                     used_indices=bd_matched_indices,
                 )
-            if bd_idx is None and nuip_norm:
-                nuip_candidates = _filter_unused_indices(
-                    nuip_index.get(nuip_norm) or [],
-                    bd_matched_indices,
-                )
-                bd_idx = _pick_best_match(act_row, df_bd, nuip_candidates)
-
             if bd_idx is None:
                 bd_idx = _resolve_nombre_ap_pat_match(
                     act_row,

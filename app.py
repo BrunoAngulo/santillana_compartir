@@ -8124,40 +8124,30 @@ with tab_crud_alumnos:
 
         if alumnos_crud_view == "mover":
             with st.container(border=True):
-                st.markdown("**4) Mover alumno de grado/seccion (manual)**")
-                st.caption(
-                    "Lista alumnos del colegio, busca uno, define el nuevo grado y seccion. "
-                    "El proceso mueve al alumno, elimina sus clases actuales y asigna las del destino."
+                title_cols = st.columns([10, 1], gap="small")
+                with title_cols[1]:
+                    run_load_students = st.button(
+                        "↻",
+                        key="alumnos_manual_move_load_btn",
+                        help="Actualizar listado de alumnos",
+                        type="tertiary",
+                        use_container_width=False,
+                    )
+            loaded_students = st.session_state.get("alumnos_manual_move_students") or []
+            loaded_niveles = st.session_state.get("alumnos_manual_move_niveles") or []
+            loaded_errors = st.session_state.get("alumnos_manual_move_errors") or []
+            loaded_colegio_id = _safe_int(st.session_state.get("alumnos_manual_move_colegio_id"))
+            current_colegio_id = _safe_int(colegio_id_raw)
+            should_auto_load_students = (
+                current_colegio_id is not None
+                and (
+                    loaded_colegio_id is None
+                    or int(loaded_colegio_id) != int(current_colegio_id)
+                    or not loaded_students
                 )
+            )
 
-            col_load_students, col_clear_students = st.columns([2, 1], gap="small")
-            run_load_students = col_load_students.button(
-                "Listar alumnos del colegio",
-                type="primary",
-                key="alumnos_manual_move_load_btn",
-                use_container_width=True,
-            )
-            run_clear_students = col_clear_students.button(
-                "Limpiar listado",
-                key="alumnos_manual_move_clear_btn",
-                use_container_width=True,
-            )
-    
-            if run_clear_students:
-                for state_key in (
-                    "alumnos_manual_move_students",
-                    "alumnos_manual_move_niveles",
-                    "alumnos_manual_move_errors",
-                    "alumnos_manual_move_colegio_id",
-                    "alumnos_manual_move_rows",
-                ):
-                    st.session_state.pop(state_key, None)
-                for state_key in list(st.session_state.keys()):
-                    if str(state_key).startswith("alumnos_manual_move_dest_"):
-                        st.session_state.pop(state_key, None)
-                st.rerun()
-    
-            if run_load_students:
+            if run_load_students or should_auto_load_students:
                 token = _get_shared_token()
                 if not token:
                     st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
@@ -8199,13 +8189,14 @@ with tab_crud_alumnos:
                             for state_key in list(st.session_state.keys()):
                                 if str(state_key).startswith("alumnos_manual_move_dest_"):
                                     st.session_state.pop(state_key, None)
-                            st.success(
-                                "Listado listo. Alumnos: {students} | Errores de consulta: {errors}".format(
-                                    students=len(students_loaded),
-                                    errors=len(errors_loaded),
+                            if run_load_students:
+                                st.success(
+                                    "Listado actualizado. Alumnos: {students} | Errores de consulta: {errors}".format(
+                                        students=len(students_loaded),
+                                        errors=len(errors_loaded),
+                                    )
                                 )
-                            )
-    
+
             loaded_students = st.session_state.get("alumnos_manual_move_students") or []
             loaded_niveles = st.session_state.get("alumnos_manual_move_niveles") or []
             loaded_errors = st.session_state.get("alumnos_manual_move_errors") or []
@@ -8221,9 +8212,9 @@ with tab_crud_alumnos:
                 st.caption(f"Advertencia: hubo {len(loaded_errors)} errores al listar algunas secciones.")
     
             if loaded_colegio_id is not None and current_colegio_id is not None and int(loaded_colegio_id) != int(current_colegio_id):
-                st.warning("El colegio global cambio. Vuelve a listar alumnos para continuar.")
+                st.warning("No se pudo sincronizar el listado con el colegio actual.")
             elif not loaded_students:
-                st.caption("Primero presiona 'Listar alumnos del colegio'.")
+                st.caption("No hay alumnos disponibles para mostrar.")
             else:
                 search_text = st_keyup(
                     "Buscar alumno (login, nombre, apellido o DNI)",
@@ -8284,9 +8275,66 @@ with tab_crud_alumnos:
                                 str(row.get("nombre") or "").upper(),
                             ),
                         )
-    
+
+                        secciones_by_grado: Dict[int, List[str]] = {}
+                        for (grado_id_tmp, seccion), payload in grupo_payload_by_grado_seccion.items():
+                            grado_id_int = _safe_int(grado_id_tmp)
+                            if grado_id_int is None or not isinstance(payload, dict) or not payload:
+                                continue
+                            secciones_by_grado.setdefault(int(grado_id_int), []).append(str(seccion))
+                        for grado_id_int, secciones in list(secciones_by_grado.items()):
+                            secciones_by_grado[grado_id_int] = sorted(
+                                list(dict.fromkeys(secciones)),
+                                key=lambda value: _grupo_sort_key(str(value), str(value)),
+                            )
+
+                        total_valid_students = len(valid_students)
+                        page_size_options = [25, 50, 100, 200]
+                        page_size_key = "alumnos_manual_move_page_size"
+                        if st.session_state.get(page_size_key) not in page_size_options:
+                            st.session_state[page_size_key] = 50
+                        pagination_cols = st.columns([1.2, 1, 3], gap="small")
+                        with pagination_cols[0]:
+                            page_size = int(
+                                st.selectbox(
+                                    "Alumnos por pagina",
+                                    options=page_size_options,
+                                    key=page_size_key,
+                                )
+                            )
+                        total_pages = max(1, (total_valid_students + page_size - 1) // page_size)
+                        page_key = "alumnos_manual_move_page"
+                        current_page = _safe_int(st.session_state.get(page_key)) or 1
+                        if current_page < 1:
+                            current_page = 1
+                        if current_page > total_pages:
+                            current_page = total_pages
+                        st.session_state[page_key] = current_page
+                        with pagination_cols[1]:
+                            current_page = int(
+                                st.number_input(
+                                    "Pagina",
+                                    min_value=1,
+                                    max_value=int(total_pages),
+                                    value=int(current_page),
+                                    step=1,
+                                    key=f"{page_key}_input",
+                                )
+                            )
+                        st.session_state[page_key] = current_page
+                        page_start = (current_page - 1) * page_size
+                        page_end = min(page_start + page_size, total_valid_students)
+                        visible_students = valid_students[page_start:page_end]
+                        pagination_cols[2].caption(
+                            "Mostrando {start}-{end} de {total} alumno(s).".format(
+                                start=page_start + 1 if total_valid_students else 0,
+                                end=page_end,
+                                total=total_valid_students,
+                            )
+                        )
+
                         current_group_key: Optional[Tuple[str, str, str]] = None
-                        for row in valid_students:
+                        for row in visible_students:
                             alumno_id = _safe_int(row.get("alumno_id"))
                             if alumno_id is None:
                                 continue
@@ -8344,18 +8392,11 @@ with tab_crud_alumnos:
                                 st.session_state[grado_key] = None
                                 selected_grado_id = None
     
-                            secciones_grado = []
-                            if selected_grado_id is not None:
-                                secciones_grado = sorted(
-                                    [
-                                        seccion
-                                        for (grado_id_tmp, seccion), payload in grupo_payload_by_grado_seccion.items()
-                                        if int(grado_id_tmp) == int(selected_grado_id)
-                                        and isinstance(payload, dict)
-                                        and payload
-                                    ],
-                                    key=lambda value: _grupo_sort_key(str(value), str(value)),
-                                )
+                            secciones_grado = (
+                                secciones_by_grado.get(int(selected_grado_id), [])
+                                if selected_grado_id is not None
+                                else []
+                            )
     
                             selected_seccion = _normalize_seccion_key(st.session_state.get(grupo_key) or "")
                             if not selected_seccion or selected_seccion not in secciones_grado:
@@ -8408,18 +8449,11 @@ with tab_crud_alumnos:
                                 )
     
                             selected_grado_id = _safe_int(st.session_state.get(grado_key))
-                            secciones_grado = []
-                            if selected_grado_id is not None:
-                                secciones_grado = sorted(
-                                    [
-                                        seccion
-                                        for (grado_id_tmp, seccion), payload in grupo_payload_by_grado_seccion.items()
-                                        if int(grado_id_tmp) == int(selected_grado_id)
-                                        and isinstance(payload, dict)
-                                        and payload
-                                    ],
-                                    key=lambda value: _grupo_sort_key(str(value), str(value)),
-                                )
+                            secciones_grado = (
+                                secciones_by_grado.get(int(selected_grado_id), [])
+                                if selected_grado_id is not None
+                                else []
+                            )
     
                             with row_cols[3]:
                                 st.selectbox(

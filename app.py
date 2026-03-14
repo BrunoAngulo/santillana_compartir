@@ -4583,6 +4583,12 @@ def _update_manual_move_cached_student(
         break
 
 
+def _clear_manual_move_selection(*keys: str) -> None:
+    for key in keys:
+        if key:
+            st.session_state[key] = None
+
+
 def _manual_move_alumno_option_label(row: Dict[str, object]) -> str:
     nombre = str(row.get("nombre_completo") or "").strip()
     if not nombre:
@@ -7488,8 +7494,8 @@ with tab_crud_alumnos:
                 destination_catalog = _build_manual_move_destination_catalog(loaded_niveles)
                 nivel_ids = destination_catalog.get("nivel_ids") or []
                 nivel_name_by_id = destination_catalog.get("nivel_name_by_id") or {}
-                grado_ids = destination_catalog.get("grado_ids") or []
                 grado_payload_by_id = destination_catalog.get("grado_payload_by_id") or {}
+                grado_ids_by_nivel = destination_catalog.get("grado_ids_by_nivel") or {}
                 seccion_options = destination_catalog.get("seccion_options") or []
                 grupo_payload_by_grado_seccion = (
                     destination_catalog.get("grupo_payload_by_grado_seccion") or {}
@@ -7555,69 +7561,125 @@ with tab_crud_alumnos:
                             header_cols[4].markdown("**Guardar**")
 
                         if nivel_key not in st.session_state:
-                            st.session_state[nivel_key] = ""
+                            st.session_state[nivel_key] = None
                         if grado_key not in st.session_state:
-                            st.session_state[grado_key] = ""
+                            st.session_state[grado_key] = None
                         if grupo_key not in st.session_state:
-                            st.session_state[grupo_key] = ""
+                            st.session_state[grupo_key] = None
 
-                        with st.form(key=f"alumnos_manual_move_form_{alumno_id_int}", border=False):
-                            row_cols = st.columns([4.8, 1.5, 2.5, 1.2, 1.1], gap="small")
-                            row_cols[0].markdown(
-                                f"**{alumno_header}**\n\nActual: {alumno_actual}"
+                        selected_nivel_id = _safe_int(st.session_state.get(nivel_key))
+                        if selected_nivel_id not in nivel_ids:
+                            st.session_state[nivel_key] = None
+                            selected_nivel_id = None
+
+                        grado_options = []
+                        if selected_nivel_id is not None:
+                            grado_options = [
+                                int(value)
+                                for value in (grado_ids_by_nivel.get(int(selected_nivel_id)) or [])
+                            ]
+
+                        selected_grado_id = _safe_int(st.session_state.get(grado_key))
+                        if selected_grado_id not in grado_options:
+                            st.session_state[grado_key] = None
+                            selected_grado_id = None
+
+                        secciones_grado = []
+                        if selected_grado_id is not None:
+                            secciones_grado = sorted(
+                                [
+                                    seccion
+                                    for (grado_id_tmp, seccion), payload in grupo_payload_by_grado_seccion.items()
+                                    if int(grado_id_tmp) == int(selected_grado_id)
+                                    and isinstance(payload, dict)
+                                    and payload
+                                ],
+                                key=lambda value: _grupo_sort_key(str(value), str(value)),
                             )
 
-                            with row_cols[1]:
-                                st.selectbox(
-                                    "Nuevo nivel",
-                                    options=[""] + list(nivel_ids),
-                                    format_func=lambda value: "Selecciona"
-                                    if value == ""
-                                    else str(nivel_name_by_id.get(int(value), value)).strip(),
-                                    key=nivel_key,
-                                    label_visibility="collapsed",
-                                )
+                        selected_seccion = _normalize_seccion_key(st.session_state.get(grupo_key) or "")
+                        if not selected_seccion or selected_seccion not in secciones_grado:
+                            st.session_state[grupo_key] = None
+                            selected_seccion = ""
 
-                            with row_cols[2]:
-                                st.selectbox(
-                                    "Nuevo grado",
-                                    options=[""] + list(grado_ids),
-                                    format_func=lambda value: "Selecciona"
-                                    if value == ""
-                                    else "{nivel} | {grado}".format(
-                                        nivel=str(
-                                            (
-                                                grado_payload_by_id.get(int(value), {}) or {}
-                                            ).get("nivel")
-                                            or ""
-                                        ).strip(),
-                                        grado=str(
-                                            (
-                                                grado_payload_by_id.get(int(value), {}) or {}
-                                            ).get("grado")
-                                            or value
-                                        ).strip(),
-                                    ),
-                                    key=grado_key,
-                                    label_visibility="collapsed",
-                                )
+                        row_cols = st.columns([4.8, 1.5, 2.5, 1.2, 1.1], gap="small")
+                        row_cols[0].markdown(
+                            f"**{alumno_header}**\n\nActual: {alumno_actual}"
+                        )
 
-                            with row_cols[3]:
-                                st.selectbox(
-                                    "Seccion",
-                                    options=[""] + list(seccion_options),
-                                    format_func=lambda value: "Selecciona"
-                                    if value == ""
-                                    else str(value).strip(),
-                                    key=grupo_key,
-                                    label_visibility="collapsed",
-                                )
-
-                            save_clicked = row_cols[4].form_submit_button(
-                                "Guardar",
-                                type="primary",
-                                use_container_width=True,
+                        with row_cols[1]:
+                            st.selectbox(
+                                "Nuevo nivel",
+                                options=nivel_ids,
+                                index=None,
+                                placeholder="Nivel",
+                                format_func=lambda value: str(
+                                    nivel_name_by_id.get(int(value), value)
+                                ).strip(),
+                                key=nivel_key,
+                                on_change=_clear_manual_move_selection,
+                                args=(grado_key, grupo_key),
+                                label_visibility="collapsed",
                             )
+
+                        selected_nivel_id = _safe_int(st.session_state.get(nivel_key))
+                        grado_options = []
+                        if selected_nivel_id is not None:
+                            grado_options = [
+                                int(value)
+                                for value in (grado_ids_by_nivel.get(int(selected_nivel_id)) or [])
+                            ]
+
+                        with row_cols[2]:
+                            st.selectbox(
+                                "Nuevo grado",
+                                options=grado_options,
+                                index=None,
+                                placeholder="Grado",
+                                format_func=lambda value: str(
+                                    (
+                                        grado_payload_by_id.get(int(value), {}) or {}
+                                    ).get("grado")
+                                    or value
+                                ).strip(),
+                                key=grado_key,
+                                on_change=_clear_manual_move_selection,
+                                args=(grupo_key,),
+                                disabled=not grado_options,
+                                label_visibility="collapsed",
+                            )
+
+                        selected_grado_id = _safe_int(st.session_state.get(grado_key))
+                        secciones_grado = []
+                        if selected_grado_id is not None:
+                            secciones_grado = sorted(
+                                [
+                                    seccion
+                                    for (grado_id_tmp, seccion), payload in grupo_payload_by_grado_seccion.items()
+                                    if int(grado_id_tmp) == int(selected_grado_id)
+                                    and isinstance(payload, dict)
+                                    and payload
+                                ],
+                                key=lambda value: _grupo_sort_key(str(value), str(value)),
+                            )
+
+                        with row_cols[3]:
+                            st.selectbox(
+                                "Seccion",
+                                options=secciones_grado,
+                                index=None,
+                                placeholder="Seccion",
+                                key=grupo_key,
+                                disabled=not secciones_grado,
+                                label_visibility="collapsed",
+                            )
+
+                        save_clicked = row_cols[4].button(
+                            "Guardar",
+                            key=f"alumnos_manual_move_save_btn_{alumno_id_int}",
+                            type="primary",
+                            use_container_width=True,
+                        )
 
                         if save_clicked:
                             token = _get_shared_token()
@@ -7724,9 +7786,9 @@ with tab_crud_alumnos:
                                 destino_payload=destino_payload,
                             )
                             st.session_state["alumnos_manual_move_students"] = cached_students
-                            st.session_state[nivel_key] = ""
-                            st.session_state[grado_key] = ""
-                            st.session_state[grupo_key] = ""
+                            st.session_state[nivel_key] = None
+                            st.session_state[grado_key] = None
+                            st.session_state[grupo_key] = None
                             st.session_state["alumnos_manual_move_notice"] = {
                                 "type": "success",
                                 "message": (

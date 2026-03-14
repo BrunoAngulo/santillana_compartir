@@ -6419,6 +6419,148 @@ with tab_crud_clases:
         token = _get_shared_token()
         empresa_id = DEFAULT_EMPRESA_ID
         timeout = 30
+
+        @st.fragment(run_every="2s")
+        def _render_clases_participantes_section() -> None:
+            colegio_id_int: Optional[int] = None
+            colegio_error = ""
+            if str(colegio_id_raw).strip():
+                try:
+                    colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                except ValueError as exc:
+                    colegio_error = str(exc)
+
+            current_job_id = ""
+            if colegio_id_int is not None:
+                current_job_id = (
+                    _get_participantes_sync_job_id_for_scope(
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        colegio_id=int(colegio_id_int),
+                    )
+                    or ""
+                )
+                if current_job_id:
+                    st.session_state["clases_auto_group_job_id"] = current_job_id
+
+            current_job = _get_participantes_sync_job(current_job_id)
+            is_running = _is_participantes_sync_job_active(current_job)
+
+            with st.container(border=True):
+                st.markdown("**Asignacion de Participantes**")
+                st.caption(
+                    "Sincroniza automaticamente alumnos activos por grado y seccion: "
+                    "agrega faltantes y elimina sobrantes en cada clase. El proceso "
+                    "sigue corriendo en segundo plano aunque cambies de ventana."
+                )
+                col_run, col_cancel = st.columns([4, 1], gap="small")
+                with col_run:
+                    run_actualizar_participantes_auto = st.button(
+                        "Actualizar participantes auto",
+                        key="clases_auto_group_sync_auto_btn",
+                        type="primary",
+                        use_container_width=True,
+                        disabled=is_running,
+                    )
+                with col_cancel:
+                    run_cancelar_participantes_auto = st.button(
+                        "Cancelar",
+                        key="clases_auto_group_sync_cancel_btn",
+                        use_container_width=True,
+                        disabled=not is_running,
+                    )
+
+                if run_actualizar_participantes_auto:
+                    if not token:
+                        st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                    elif colegio_error:
+                        st.error(f"Error: {colegio_error}")
+                    elif colegio_id_int is None:
+                        st.error("Ingresa un Colegio Clave (global) valido.")
+                    else:
+                        current_job_id = _start_participantes_sync_job(
+                            token=token,
+                            colegio_id=int(colegio_id_int),
+                            empresa_id=int(empresa_id),
+                            ciclo_id=int(ciclo_id),
+                            timeout=int(timeout),
+                        )
+                        st.session_state["clases_auto_group_job_id"] = current_job_id
+                        current_job = _get_participantes_sync_job(current_job_id)
+                        is_running = _is_participantes_sync_job_active(current_job)
+                        st.success("Proceso iniciado en segundo plano.")
+
+                if run_cancelar_participantes_auto:
+                    if _request_cancel_participantes_sync_job(current_job_id):
+                        current_job = _get_participantes_sync_job(current_job_id)
+                        is_running = _is_participantes_sync_job_active(current_job)
+                        st.warning("Cancelacion solicitada.")
+                    else:
+                        st.info("No hay un proceso activo para cancelar.")
+
+                if colegio_error:
+                    st.caption(f"Colegio actual invalido: {colegio_error}")
+
+                if not isinstance(current_job, dict):
+                    st.caption(
+                        "Usa este bloque para sincronizar en segundo plano los alumnos "
+                        "activos del colegio actual."
+                    )
+                    return
+
+                state = str(current_job.get("state") or "").strip()
+                summary_auto = (
+                    dict(current_job.get("summary"))
+                    if isinstance(current_job.get("summary"), dict)
+                    else {}
+                )
+                warnings_auto = list(current_job.get("warnings") or [])
+                group_error_lines = list(current_job.get("group_error_lines") or [])
+                status_messages = [
+                    str(item).strip()
+                    for item in list(current_job.get("status_messages") or [])
+                    if str(item).strip()
+                ]
+                cancel_requested = bool(current_job.get("cancel_requested"))
+                error_text = str(current_job.get("error") or "").strip()
+
+                if state in {"starting", "running"}:
+                    if cancel_requested:
+                        st.warning(
+                            "Cancelacion solicitada. El proceso terminara al cerrar el "
+                            "bloque actual."
+                        )
+                    else:
+                        st.info("Proceso en ejecucion en segundo plano.")
+                elif state == "done":
+                    if (
+                        summary_auto.get("clases_error", 0) == 0
+                        and not group_error_lines
+                        and not warnings_auto
+                    ):
+                        st.success("Actualizacion automatica completada.")
+                    else:
+                        st.warning("Actualizacion automatica completada con observaciones.")
+                elif state == "cancelled":
+                    st.warning("Proceso cancelado. Se conserva el resumen parcial.")
+                elif state == "error":
+                    st.error(error_text or "No se pudo completar la sincronizacion.")
+
+                if status_messages:
+                    st.info("\n".join(f"- {item}" for item in status_messages[-8:]))
+
+                st.caption(
+                    "Resumen: "
+                    f"Alumnos asignados={summary_auto.get('agregados_ok', 0)} | "
+                    f"Alumnos eliminados={summary_auto.get('eliminados_ok', 0)} | "
+                    f"Clases sin cambios={summary_auto.get('clases_skip', 0)} | "
+                    f"Clases con error={summary_auto.get('clases_error', 0)}"
+                )
+                if warnings_auto:
+                    st.caption(f"Advertencias de mapeo de clases: {len(warnings_auto)}")
+                if group_error_lines:
+                    st.caption(f"Errores al consultar secciones: {len(group_error_lines)}")
+
         clases_nav_col, clases_body_col = st.columns([1.15, 4.85], gap="large")
         with clases_nav_col:
             clases_crud_view = _render_crud_menu(
@@ -6426,7 +6568,8 @@ with tab_crud_clases:
                 [
                     ("crear", "Crear", "Genera clases desde Excel"),
                     ("gestion", "Gestion", "Lista, vacia o elimina clases"),
-                    ("simulador", "Simulador", "Prepara cambios para seccion Y"),
+                    ("otros", "Otros", "Asignacion de participantes"),
+                    ("simulador", "Actualizar users Payments", "Prepara y aplica cambios de users payments"),
                 ],
                 state_key="clases_crud_nav",
             )
@@ -6567,174 +6710,6 @@ with tab_crud_clases:
                             disabled=not selected_class_rows,
                         )
 
-                with st.container(border=True):
-                    st.markdown("**Ver alumnos por clase**")
-                    clase_id_default = ""
-                    if len(selected_class_ids_state) == 1:
-                        clase_id_default = str(next(iter(selected_class_ids_state)))
-                        clase_id_raw = st.text_input(
-                            "Clase ID (geClaseId)",
-                            key="clases_alumnos_clase_id",
-                            value=clase_id_default,
-                            placeholder="20143933",
-                        )
-                        run_ver_alumnos_clase = st.button(
-                            "Ver alumnos",
-                            key="clases_ver_alumnos_btn",
-                        )
-                        confirm_vaciar_clase = st.checkbox(
-                            "Confirmo vaciar la clase (eliminar todos los alumnos).",
-                            key="clases_vaciar_confirm",
-                        )
-                        run_vaciar_clase = st.button(
-                            "Vaciar clase",
-                            key="clases_vaciar_btn",
-                        )
-
-                @st.fragment(run_every="2s")
-                def _render_participantes_auto_sync_section() -> None:
-                    colegio_id_int: Optional[int] = None
-                    colegio_error = ""
-                    if str(colegio_id_raw).strip():
-                        try:
-                            colegio_id_int = _parse_colegio_id(colegio_id_raw)
-                        except ValueError as exc:
-                            colegio_error = str(exc)
-
-                    current_job_id = ""
-                    if colegio_id_int is not None:
-                        current_job_id = (
-                            _get_participantes_sync_job_id_for_scope(
-                                empresa_id=int(empresa_id),
-                                ciclo_id=int(ciclo_id),
-                                colegio_id=int(colegio_id_int),
-                            )
-                            or ""
-                        )
-                        if current_job_id:
-                            st.session_state["clases_auto_group_job_id"] = current_job_id
-
-                    current_job = _get_participantes_sync_job(current_job_id)
-                    is_running = _is_participantes_sync_job_active(current_job)
-
-                    with st.container(border=True):
-                        st.markdown("**Asignacion de Participantes**")
-                        st.caption(
-                            "Sincroniza automaticamente alumnos activos por grado y seccion: "
-                            "agrega faltantes y elimina sobrantes en cada clase. El proceso "
-                            "sigue corriendo en segundo plano aunque cambies de ventana."
-                        )
-                        col_run, col_cancel = st.columns([4, 1], gap="small")
-                        with col_run:
-                            run_actualizar_participantes_auto = st.button(
-                                "Actualizar participantes auto",
-                                key="clases_auto_group_sync_auto_btn",
-                                type="primary",
-                                use_container_width=True,
-                                disabled=is_running,
-                            )
-                        with col_cancel:
-                            run_cancelar_participantes_auto = st.button(
-                                "Cancelar",
-                                key="clases_auto_group_sync_cancel_btn",
-                                use_container_width=True,
-                                disabled=not is_running,
-                            )
-
-                        if run_actualizar_participantes_auto:
-                            if not token:
-                                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-                            elif colegio_error:
-                                st.error(f"Error: {colegio_error}")
-                            elif colegio_id_int is None:
-                                st.error("Ingresa un Colegio Clave (global) valido.")
-                            else:
-                                current_job_id = _start_participantes_sync_job(
-                                    token=token,
-                                    colegio_id=int(colegio_id_int),
-                                    empresa_id=int(empresa_id),
-                                    ciclo_id=int(ciclo_id),
-                                    timeout=int(timeout),
-                                )
-                                st.session_state["clases_auto_group_job_id"] = current_job_id
-                                current_job = _get_participantes_sync_job(current_job_id)
-                                is_running = _is_participantes_sync_job_active(current_job)
-                                st.success("Proceso iniciado en segundo plano.")
-
-                        if run_cancelar_participantes_auto:
-                            if _request_cancel_participantes_sync_job(current_job_id):
-                                current_job = _get_participantes_sync_job(current_job_id)
-                                is_running = _is_participantes_sync_job_active(current_job)
-                                st.warning("Cancelacion solicitada.")
-                            else:
-                                st.info("No hay un proceso activo para cancelar.")
-
-                        if colegio_error:
-                            st.caption(f"Colegio actual invalido: {colegio_error}")
-
-                        if not isinstance(current_job, dict):
-                            st.caption(
-                                "Usa este bloque para sincronizar en segundo plano los alumnos "
-                                "activos del colegio actual."
-                            )
-                            return
-
-                        state = str(current_job.get("state") or "").strip()
-                        summary_auto = (
-                            dict(current_job.get("summary"))
-                            if isinstance(current_job.get("summary"), dict)
-                            else {}
-                        )
-                        warnings_auto = list(current_job.get("warnings") or [])
-                        group_error_lines = list(current_job.get("group_error_lines") or [])
-                        status_messages = [
-                            str(item).strip()
-                            for item in list(current_job.get("status_messages") or [])
-                            if str(item).strip()
-                        ]
-                        cancel_requested = bool(current_job.get("cancel_requested"))
-                        error_text = str(current_job.get("error") or "").strip()
-
-                        if state in {"starting", "running"}:
-                            if cancel_requested:
-                                st.warning(
-                                    "Cancelacion solicitada. El proceso terminara al cerrar el "
-                                    "bloque actual."
-                                )
-                            else:
-                                st.info("Proceso en ejecucion en segundo plano.")
-                        elif state == "done":
-                            if (
-                                summary_auto.get("clases_error", 0) == 0
-                                and not group_error_lines
-                                and not warnings_auto
-                            ):
-                                st.success("Actualizacion automatica completada.")
-                            else:
-                                st.warning("Actualizacion automatica completada con observaciones.")
-                        elif state == "cancelled":
-                            st.warning("Proceso cancelado. Se conserva el resumen parcial.")
-                        elif state == "error":
-                            st.error(error_text or "No se pudo completar la sincronizacion.")
-
-                        if status_messages:
-                            st.info("\n".join(f"- {item}" for item in status_messages[-8:]))
-
-                        st.caption(
-                            "Resumen: "
-                            f"Alumnos asignados={summary_auto.get('agregados_ok', 0)} | "
-                            f"Alumnos eliminados={summary_auto.get('eliminados_ok', 0)} | "
-                            f"Clases sin cambios={summary_auto.get('clases_skip', 0)} | "
-                            f"Clases con error={summary_auto.get('clases_error', 0)}"
-                        )
-                        if warnings_auto:
-                            st.caption(f"Advertencias de mapeo de clases: {len(warnings_auto)}")
-                        if group_error_lines:
-                            st.caption(f"Errores al consultar secciones: {len(group_error_lines)}")
-
-                _render_participantes_auto_sync_section()
-
-
                 if run_listar_clases:
                     if not token:
                         st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
@@ -6788,178 +6763,6 @@ with tab_crud_clases:
                                 st.session_state["clases_gestion_rows"] = tabla
                                 st.session_state["clases_gestion_selected_ids"] = []
                                 st.success(f"Clases encontradas: {len(tabla)}")
-
-                if run_ver_alumnos_clase:
-                    if not token:
-                        st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-                        st.stop()
-                    clase_id_text = str(clase_id_raw or "").strip()
-                    if not clase_id_text:
-                        st.error("Ingresa un Clase ID.")
-                        st.stop()
-                    try:
-                        clase_id_int = int(clase_id_text)
-                    except ValueError:
-                        st.error("Clase ID invalido. Debe ser numerico.")
-                        st.stop()
-                    try:
-                        clase_data = _fetch_alumnos_clase_gestion_escolar(
-                            token=token,
-                            clase_id=clase_id_int,
-                            empresa_id=int(empresa_id),
-                            ciclo_id=int(ciclo_id),
-                            timeout=int(timeout),
-                        )
-                    except Exception as exc:  # pragma: no cover - UI
-                        st.error(f"Error: {exc}")
-                        st.stop()
-
-                    clase_nombre = str(clase_data.get("geClase") or clase_data.get("geClaseClave") or "")
-                    alumnos_data = clase_data.get("claseAlumnos") or []
-                    if not isinstance(alumnos_data, list):
-                        st.error("Respuesta invalida: claseAlumnos no es lista.")
-                        st.stop()
-
-                    alumnos_rows: List[Dict[str, object]] = []
-                    for entry in alumnos_data:
-                        if not isinstance(entry, dict):
-                            continue
-                        alumno = entry.get("alumno")
-                        if not isinstance(alumno, dict):
-                            alumno = {}
-                        persona = alumno.get("persona")
-                        if not isinstance(persona, dict):
-                            persona = {}
-                        persona_login = persona.get("personaLogin")
-                        if not isinstance(persona_login, dict):
-                            persona_login = {}
-
-                        alumnos_rows.append(
-                            {
-                                "Alumno ID": alumno.get("alumnoId", ""),
-                                "Persona ID": persona.get("personaId", ""),
-                                "Nombre": persona.get("nombre", ""),
-                                "Apellido Paterno": persona.get("apellidoPaterno", ""),
-                                "Apellido Materno": persona.get("apellidoMaterno", ""),
-                                "Nombre Completo": persona.get("nombreCompleto", ""),
-                                "Login": persona_login.get("login", ""),
-                                "NUIP": persona.get("idOficial", ""),
-                                "Activo censo": bool(alumno.get("activo", False)),
-                                "Activo clase": bool(entry.get("activo", False)),
-                            }
-                        )
-
-                    st.success(
-                        f"Clase {clase_id_int} {clase_nombre} - Alumnos: {len(alumnos_rows)}"
-                    )
-                    if alumnos_rows:
-                        _show_dataframe(alumnos_rows, use_container_width=True)
-                    else:
-                        st.info("No hay alumnos en esta clase.")
-
-                if run_vaciar_clase:
-                    if not token:
-                        st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-                        st.stop()
-                    if not confirm_vaciar_clase:
-                        st.error("Debes confirmar antes de vaciar la clase.")
-                        st.stop()
-
-                    clase_id_text = str(clase_id_raw or "").strip()
-                    if not clase_id_text:
-                        st.error("Ingresa un Clase ID.")
-                        st.stop()
-                    try:
-                        clase_id_int = int(clase_id_text)
-                    except ValueError:
-                        st.error("Clase ID invalido. Debe ser numerico.")
-                        st.stop()
-
-                    try:
-                        clase_data = _fetch_alumnos_clase_gestion_escolar(
-                            token=token,
-                            clase_id=clase_id_int,
-                            empresa_id=int(empresa_id),
-                            ciclo_id=int(ciclo_id),
-                            timeout=int(timeout),
-                        )
-                    except Exception as exc:  # pragma: no cover - UI
-                        st.error(f"Error: {exc}")
-                        st.stop()
-
-                    clase_nombre = str(clase_data.get("geClase") or clase_data.get("geClaseClave") or "")
-                    alumnos_data = clase_data.get("claseAlumnos") or []
-                    if not isinstance(alumnos_data, list):
-                        st.error("Respuesta invalida: claseAlumnos no es lista.")
-                        st.stop()
-                    if not alumnos_data:
-                        st.info("No hay alumnos para eliminar en esta clase.")
-                        st.stop()
-
-                    targets: List[Dict[str, object]] = []
-                    seen_ids = set()
-                    for entry in alumnos_data:
-                        if not isinstance(entry, dict):
-                            continue
-                        alumno = entry.get("alumno")
-                        if not isinstance(alumno, dict):
-                            continue
-                        alumno_id_raw = alumno.get("alumnoId")
-                        if alumno_id_raw is None:
-                            continue
-                        try:
-                            alumno_id = int(alumno_id_raw)
-                        except (TypeError, ValueError):
-                            continue
-                        if alumno_id in seen_ids:
-                            continue
-                        seen_ids.add(alumno_id)
-                        persona = alumno.get("persona") if isinstance(alumno.get("persona"), dict) else {}
-                        targets.append(
-                            {
-                                "Alumno ID": alumno_id,
-                                "Nombre Completo": str(persona.get("nombreCompleto") or ""),
-                            }
-                        )
-
-                    if not targets:
-                        st.info("No se encontraron alumnoId validos para eliminar.")
-                        st.stop()
-
-                    errores: List[str] = []
-                    eliminados: List[Dict[str, object]] = []
-                    total = len(targets)
-                    progress = st.progress(0)
-                    status = st.empty()
-                    for idx, target in enumerate(targets, start=1):
-                        alumno_id = int(target["Alumno ID"])
-                        status.write(f"Eliminando {idx}/{total}: alumnoId {alumno_id}")
-                        try:
-                            _delete_alumno_clase_gestion_escolar(
-                                token=token,
-                                clase_id=clase_id_int,
-                                alumno_id=alumno_id,
-                                empresa_id=int(empresa_id),
-                                ciclo_id=int(ciclo_id),
-                                timeout=int(timeout),
-                            )
-                            eliminados.append(target)
-                        except Exception as exc:  # pragma: no cover - UI
-                            errores.append(f"{alumno_id}: {exc}")
-                        progress.progress(int((idx / total) * 100))
-                    status.empty()
-
-                    st.success(
-                        f"Clase {clase_id_int} {clase_nombre} - Eliminados: {len(eliminados)} de {total}"
-                    )
-                    if eliminados:
-                        _show_dataframe(eliminados, use_container_width=True)
-                    if errores:
-                        st.error("Errores al eliminar alumnos:")
-                        st.write("\n".join(f"- {item}" for item in errores[:30]))
-                        restantes = len(errores) - 30
-                        if restantes > 0:
-                            st.caption(f"... y {restantes} errores mas.")
 
                 if run_eliminar_clases:
                     if not token:
@@ -7022,16 +6825,17 @@ with tab_crud_clases:
                     if errores:
                         st.error("Errores al eliminar:")
                         st.write("\n".join(f"- {item}" for item in errores))
+            if clases_crud_view == "otros":
+                _render_clases_participantes_section()
             if clases_crud_view == "simulador":
                 with st.container(border=True):
-                    st.markdown("**3) Simulador web: seccion Y en todos los grados**")
+                    st.markdown("**3) Actualizar users Payments**")
                     st.caption(
-                        "Solo usa Colegio Clave global. Toma todos los grados con seccion Y, "
-                        "compara alumnos pagados de Y contra no pagados por apellidos y luego DNI."
+                        "Usa el Colegio Clave global para preparar y aplicar cambios de users payments."
                     )
                     if not _restricted_sections_unlocked():
                         _render_restricted_blur(
-                            "Simulador web: seccion Y en todos los grados",
+                            "Actualizar users Payments",
                             "simulador_web_y",
                         )
                         st.stop()

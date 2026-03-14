@@ -6561,6 +6561,206 @@ with tab_crud_clases:
                 if group_error_lines:
                     st.caption(f"Errores al consultar secciones: {len(group_error_lines)}")
 
+        @st.fragment
+        def _render_clases_gestion_section() -> None:
+            listed_class_rows = st.session_state.get("clases_gestion_rows") or []
+            selected_class_ids_state = {
+                int(item)
+                for item in (st.session_state.get("clases_gestion_selected_ids") or [])
+                if _safe_int(item) is not None
+            }
+
+            col_list, col_selected = st.columns([2.2, 1.4], gap="large")
+            with col_list:
+                with st.container(border=True):
+                    st.markdown("**Listar clases**")
+                    run_listar_clases = st.button("Listar clases", key="clases_listar_btn")
+                    listed_editor_df = pd.DataFrame()
+                    if listed_class_rows:
+                        listed_editor_df = pd.DataFrame(
+                            [
+                                {
+                                    "Seleccionar": int(item.get("ID") or 0) in selected_class_ids_state,
+                                    "ID": item.get("ID"),
+                                    "Clase": item.get("Clase") or "",
+                                    "Nivel": item.get("Nivel") or "",
+                                    "Grado": item.get("Grado") or "",
+                                    "Grupo": item.get("Grupo") or "",
+                                }
+                                for item in listed_class_rows
+                                if isinstance(item, dict)
+                            ]
+                        )
+                    if not listed_editor_df.empty:
+                        edited_clases_df = st.data_editor(
+                            listed_editor_df,
+                            key="clases_gestion_editor",
+                            hide_index=True,
+                            use_container_width=True,
+                            disabled=["ID", "Clase", "Nivel", "Grado", "Grupo"],
+                            column_config={
+                                "Seleccionar": st.column_config.CheckboxColumn("Seleccionar"),
+                                "ID": st.column_config.TextColumn("ID", width="small"),
+                                "Clase": st.column_config.TextColumn("Clase", width="large"),
+                                "Nivel": st.column_config.TextColumn("Nivel"),
+                                "Grado": st.column_config.TextColumn("Grado", width="medium"),
+                                "Grupo": st.column_config.TextColumn("Grupo", width="small"),
+                            },
+                        )
+                        selected_class_ids_state = {
+                            int(row["ID"])
+                            for row in edited_clases_df.to_dict("records")
+                            if bool(row.get("Seleccionar")) and _safe_int(row.get("ID")) is not None
+                        }
+                        st.session_state["clases_gestion_selected_ids"] = sorted(
+                            selected_class_ids_state
+                        )
+                    elif listed_class_rows:
+                        st.info("No hay filas validas para mostrar.")
+                    else:
+                        st.caption("Aun no hay clases listadas.")
+
+            with col_selected:
+                with st.container(border=True):
+                    st.markdown("**Clases seleccionadas**")
+                    selected_class_rows = [
+                        item
+                        for item in listed_class_rows
+                        if isinstance(item, dict)
+                        and _safe_int(item.get("ID")) is not None
+                        and int(item.get("ID")) in selected_class_ids_state
+                    ]
+                    if selected_class_rows:
+                        _show_dataframe(selected_class_rows, use_container_width=True)
+                    else:
+                        st.caption("Selecciona clases en la tabla de la izquierda.")
+                    st.caption("Accion irreversible.")
+                    confirm_delete = st.checkbox(
+                        "Confirmo eliminar las clases seleccionadas.",
+                        key="clases_confirm_delete",
+                    )
+                    run_eliminar_clases = st.button(
+                        "Eliminar clases",
+                        key="clases_eliminar_btn",
+                        disabled=not selected_class_rows,
+                    )
+
+            if run_listar_clases:
+                if not token:
+                    st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                else:
+                    try:
+                        colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                    except ValueError as exc:
+                        st.error(f"Error: {exc}")
+                        st.stop()
+                    try:
+                        clases = _fetch_clases_gestion_escolar(
+                            token=token,
+                            colegio_id=colegio_id_int,
+                            empresa_id=int(empresa_id),
+                            ciclo_id=int(ciclo_id),
+                            timeout=int(timeout),
+                        )
+                    except Exception as exc:  # pragma: no cover - UI
+                        st.error(f"Error: {exc}")
+                    else:
+                        if not clases:
+                            st.info("No se encontraron clases.")
+                        else:
+                            tabla = [
+                                {
+                                    "ID": item.get("geClaseId"),
+                                    "Clase": item.get("geClase") or item.get("geClaseClave") or "",
+                                    "Nivel": (
+                                        ((item.get("colegioNivelCiclo") or {}).get("nivel") or {}).get("nivel")
+                                        if isinstance(item, dict)
+                                        else ""
+                                    )
+                                    or "",
+                                    "Grado": (
+                                        ((item.get("colegioGradoGrupo") or {}).get("grado") or {}).get("grado")
+                                        if isinstance(item, dict)
+                                        else ""
+                                    )
+                                    or "",
+                                    "Grupo": (
+                                        ((item.get("colegioGradoGrupo") or {}).get("grupo") or {}).get("grupoClave")
+                                        or ((item.get("colegioGradoGrupo") or {}).get("grupo") or {}).get("grupo")
+                                        if isinstance(item, dict)
+                                        else ""
+                                    )
+                                    or "",
+                                }
+                                for item in clases
+                                if isinstance(item, dict)
+                            ]
+                            st.session_state["clases_gestion_rows"] = tabla
+                            st.session_state["clases_gestion_selected_ids"] = []
+                            st.success(f"Clases encontradas: {len(tabla)}")
+
+            if run_eliminar_clases:
+                if not token:
+                    st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                    st.stop()
+                if not confirm_delete:
+                    st.error("Debes confirmar antes de eliminar.")
+                    st.stop()
+                selected_class_rows = [
+                    item
+                    for item in (st.session_state.get("clases_gestion_rows") or [])
+                    if isinstance(item, dict)
+                    and _safe_int(item.get("ID")) is not None
+                    and int(item.get("ID")) in {
+                        int(selected_id)
+                        for selected_id in (st.session_state.get("clases_gestion_selected_ids") or [])
+                        if _safe_int(selected_id) is not None
+                    }
+                ]
+                if not selected_class_rows:
+                    st.error("No hay clases seleccionadas.")
+                    st.stop()
+
+                errores: List[str] = []
+                eliminadas_ids: Set[int] = set()
+                for item in selected_class_rows:
+                    clase_id = item.get("ID") if isinstance(item, dict) else None
+                    if clase_id is None:
+                        errores.append("Clase sin ID.")
+                        continue
+                    try:
+                        _delete_clase_gestion_escolar(
+                            token=token,
+                            clase_id=int(clase_id),
+                            empresa_id=int(empresa_id),
+                            ciclo_id=int(ciclo_id),
+                            timeout=int(timeout),
+                        )
+                        eliminadas_ids.add(int(clase_id))
+                    except Exception as exc:  # pragma: no cover - UI
+                        errores.append(f"{clase_id}: {exc}")
+
+                remaining_rows = [
+                    item
+                    for item in (st.session_state.get("clases_gestion_rows") or [])
+                    if not (
+                        isinstance(item, dict)
+                        and _safe_int(item.get("ID")) is not None
+                        and int(item.get("ID")) in eliminadas_ids
+                    )
+                ]
+                st.session_state["clases_gestion_rows"] = remaining_rows
+                st.session_state["clases_gestion_selected_ids"] = [
+                    int(item)
+                    for item in (st.session_state.get("clases_gestion_selected_ids") or [])
+                    if _safe_int(item) is not None and int(item) not in eliminadas_ids
+                ]
+                eliminadas = len(eliminadas_ids)
+                st.success(f"Clases eliminadas: {eliminadas}")
+                if errores:
+                    st.error("Errores al eliminar:")
+                    st.write("\n".join(f"- {item}" for item in errores))
+
         clases_nav_col, clases_body_col = st.columns([1.15, 4.85], gap="large")
         with clases_nav_col:
             clases_crud_view = _render_crud_menu(
@@ -6628,203 +6828,7 @@ with tab_crud_clases:
                         st.error(f"Error: {exc}")
             if clases_crud_view == "gestion":
                 st.markdown("**2) Gestion de clases**")
-                listed_class_rows = st.session_state.get("clases_gestion_rows") or []
-                selected_class_ids_state = {
-                    int(item)
-                    for item in (st.session_state.get("clases_gestion_selected_ids") or [])
-                    if _safe_int(item) is not None
-                }
-
-                col_list, col_selected = st.columns([2.2, 1.4], gap="large")
-                with col_list:
-                    with st.container(border=True):
-                        st.markdown("**Listar clases**")
-                        run_listar_clases = st.button("Listar clases", key="clases_listar_btn")
-                        listed_editor_df = pd.DataFrame()
-                        if listed_class_rows:
-                            listed_editor_df = pd.DataFrame(
-                                [
-                                    {
-                                        "Seleccionar": int(item.get("ID") or 0) in selected_class_ids_state,
-                                        "ID": item.get("ID"),
-                                        "Clase": item.get("Clase") or "",
-                                        "Nivel": item.get("Nivel") or "",
-                                        "Grado": item.get("Grado") or "",
-                                        "Grupo": item.get("Grupo") or "",
-                                    }
-                                    for item in listed_class_rows
-                                    if isinstance(item, dict)
-                                ]
-                            )
-                        if not listed_editor_df.empty:
-                            edited_clases_df = st.data_editor(
-                                listed_editor_df,
-                                key="clases_gestion_editor",
-                                hide_index=True,
-                                use_container_width=True,
-                                disabled=["ID", "Clase", "Nivel", "Grado", "Grupo"],
-                                column_config={
-                                    "Seleccionar": st.column_config.CheckboxColumn("Seleccionar"),
-                                    "ID": st.column_config.TextColumn("ID", width="small"),
-                                    "Clase": st.column_config.TextColumn("Clase", width="large"),
-                                    "Nivel": st.column_config.TextColumn("Nivel"),
-                                    "Grado": st.column_config.TextColumn("Grado", width="medium"),
-                                    "Grupo": st.column_config.TextColumn("Grupo", width="small"),
-                                },
-                            )
-                            selected_class_ids_state = {
-                                int(row["ID"])
-                                for row in edited_clases_df.to_dict("records")
-                                if bool(row.get("Seleccionar")) and _safe_int(row.get("ID")) is not None
-                            }
-                            st.session_state["clases_gestion_selected_ids"] = sorted(
-                                selected_class_ids_state
-                            )
-                        elif listed_class_rows:
-                            st.info("No hay filas validas para mostrar.")
-                        else:
-                            st.caption("Aun no hay clases listadas.")
-
-                with col_selected:
-                    with st.container(border=True):
-                        st.markdown("**Clases seleccionadas**")
-                        selected_class_rows = [
-                            item
-                            for item in listed_class_rows
-                            if isinstance(item, dict)
-                            and _safe_int(item.get("ID")) is not None
-                            and int(item.get("ID")) in selected_class_ids_state
-                        ]
-                        if selected_class_rows:
-                            _show_dataframe(selected_class_rows, use_container_width=True)
-                        else:
-                            st.caption("Selecciona clases en la tabla de la izquierda.")
-                        st.caption("Accion irreversible.")
-                        confirm_delete = st.checkbox(
-                            "Confirmo eliminar las clases seleccionadas.",
-                            key="clases_confirm_delete",
-                        )
-                        run_eliminar_clases = st.button(
-                            "Eliminar clases",
-                            key="clases_eliminar_btn",
-                            disabled=not selected_class_rows,
-                        )
-
-                if run_listar_clases:
-                    if not token:
-                        st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-                    else:
-                        try:
-                            colegio_id_int = _parse_colegio_id(colegio_id_raw)
-                        except ValueError as exc:
-                            st.error(f"Error: {exc}")
-                            st.stop()
-                        try:
-                            clases = _fetch_clases_gestion_escolar(
-                                token=token,
-                                colegio_id=colegio_id_int,
-                                empresa_id=int(empresa_id),
-                                ciclo_id=int(ciclo_id),
-                                timeout=int(timeout),
-                            )
-                        except Exception as exc:  # pragma: no cover - UI
-                            st.error(f"Error: {exc}")
-                        else:
-                            if not clases:
-                                st.info("No se encontraron clases.")
-                            else:
-                                tabla = [
-                                    {
-                                        "ID": item.get("geClaseId"),
-                                        "Clase": item.get("geClase") or item.get("geClaseClave") or "",
-                                        "Nivel": (
-                                            ((item.get("colegioNivelCiclo") or {}).get("nivel") or {}).get("nivel")
-                                            if isinstance(item, dict)
-                                            else ""
-                                        )
-                                        or "",
-                                        "Grado": (
-                                            ((item.get("colegioGradoGrupo") or {}).get("grado") or {}).get("grado")
-                                            if isinstance(item, dict)
-                                            else ""
-                                        )
-                                        or "",
-                                        "Grupo": (
-                                            ((item.get("colegioGradoGrupo") or {}).get("grupo") or {}).get("grupoClave")
-                                            or ((item.get("colegioGradoGrupo") or {}).get("grupo") or {}).get("grupo")
-                                            if isinstance(item, dict)
-                                            else ""
-                                        )
-                                        or "",
-                                    }
-                                    for item in clases
-                                    if isinstance(item, dict)
-                                ]
-                                st.session_state["clases_gestion_rows"] = tabla
-                                st.session_state["clases_gestion_selected_ids"] = []
-                                st.success(f"Clases encontradas: {len(tabla)}")
-
-                if run_eliminar_clases:
-                    if not token:
-                        st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-                        st.stop()
-                    if not confirm_delete:
-                        st.error("Debes confirmar antes de eliminar.")
-                        st.stop()
-                    selected_class_rows = [
-                        item
-                        for item in (st.session_state.get("clases_gestion_rows") or [])
-                        if isinstance(item, dict)
-                        and _safe_int(item.get("ID")) is not None
-                        and int(item.get("ID")) in {
-                            int(selected_id)
-                            for selected_id in (st.session_state.get("clases_gestion_selected_ids") or [])
-                            if _safe_int(selected_id) is not None
-                        }
-                    ]
-                    if not selected_class_rows:
-                        st.error("No hay clases seleccionadas.")
-                        st.stop()
-
-                    errores: List[str] = []
-                    eliminadas_ids: Set[int] = set()
-                    for item in selected_class_rows:
-                        clase_id = item.get("ID") if isinstance(item, dict) else None
-                        if clase_id is None:
-                            errores.append("Clase sin ID.")
-                            continue
-                        try:
-                            _delete_clase_gestion_escolar(
-                                token=token,
-                                clase_id=int(clase_id),
-                                empresa_id=int(empresa_id),
-                                ciclo_id=int(ciclo_id),
-                                timeout=int(timeout),
-                            )
-                            eliminadas_ids.add(int(clase_id))
-                        except Exception as exc:  # pragma: no cover - UI
-                            errores.append(f"{clase_id}: {exc}")
-
-                    remaining_rows = [
-                        item
-                        for item in (st.session_state.get("clases_gestion_rows") or [])
-                        if not (
-                            isinstance(item, dict)
-                            and _safe_int(item.get("ID")) is not None
-                            and int(item.get("ID")) in eliminadas_ids
-                        )
-                    ]
-                    st.session_state["clases_gestion_rows"] = remaining_rows
-                    st.session_state["clases_gestion_selected_ids"] = [
-                        int(item)
-                        for item in (st.session_state.get("clases_gestion_selected_ids") or [])
-                        if _safe_int(item) is not None and int(item) not in eliminadas_ids
-                    ]
-                    eliminadas = len(eliminadas_ids)
-                    st.success(f"Clases eliminadas: {eliminadas}")
-                    if errores:
-                        st.error("Errores al eliminar:")
-                        st.write("\n".join(f"- {item}" for item in errores))
+                _render_clases_gestion_section()
             if clases_crud_view == "otros":
                 _render_clases_participantes_section()
             if clases_crud_view == "simulador":

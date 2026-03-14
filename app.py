@@ -4898,6 +4898,22 @@ def _manual_move_alumno_matches_filter(row: Dict[str, object], search_text: obje
     return all(any(token in value for value in searchable_values) for token in tokens)
 
 
+def _find_existing_alumno_by_identificador(
+    rows: List[Dict[str, object]],
+    identificador: object,
+) -> Optional[Dict[str, object]]:
+    identificador_norm = re.sub(r"\D", "", str(identificador or ""))
+    if not identificador_norm:
+        return None
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        row_id = re.sub(r"\D", "", str(row.get("id_oficial") or ""))
+        if row_id and row_id == identificador_norm:
+            return row
+    return None
+
+
 def _fetch_alumnos_catalog_for_manual_move(
     token: str,
     colegio_id: int,
@@ -8322,13 +8338,17 @@ with tab_crud_alumnos:
             cred_col_1.text_input(
                 "Login",
                 key="alumnos_create_login",
-                help="Minimo 6 caracteres. Solo letras, numeros y @ . - _",
+            )
+            cred_col_1.caption(
+                "Minimo 6 caracteres. Solo letras, numeros y @ . - _"
             )
             cred_col_2.text_input(
                 "Password",
                 type="password",
                 key="alumnos_create_password",
-                help="Minimo 6 caracteres. Solo letras y numeros.",
+            )
+            cred_col_2.caption(
+                "Minimo 6 caracteres. Solo letras y numeros."
             )
 
             create_submit = st.button(
@@ -8406,6 +8426,46 @@ with tab_crud_alumnos:
                     st.stop()
 
                 with st.spinner("Creando alumno..."):
+                    existing_students = []
+                    if (
+                        loaded_colegio_id is not None
+                        and int(loaded_colegio_id) == int(colegio_id_int)
+                    ):
+                        existing_students = st.session_state.get("alumnos_manual_move_students") or []
+                    if not existing_students:
+                        try:
+                            existing_catalog = _fetch_alumnos_catalog_for_manual_move(
+                                token=token,
+                                colegio_id=int(colegio_id_int),
+                                empresa_id=int(empresa_id),
+                                ciclo_id=int(ciclo_id),
+                                timeout=int(timeout),
+                            )
+                        except Exception:
+                            existing_students = []
+                        else:
+                            existing_students = existing_catalog.get("students") or []
+
+                    existing_row = _find_existing_alumno_by_identificador(
+                        existing_students,
+                        dni_txt,
+                    )
+                    if isinstance(existing_row, dict):
+                        existing_nivel = str(existing_row.get("nivel") or "").strip()
+                        existing_grado = str(existing_row.get("grado") or "").strip()
+                        existing_seccion = _normalize_seccion_key(
+                            existing_row.get("seccion_norm") or existing_row.get("seccion") or ""
+                        )
+                        st.error(
+                            "El alumno ya existe en {nivel} | {grado} ({seccion}). "
+                            "No se puede crear duplicado; usa mover alumno.".format(
+                                nivel=existing_nivel or "-",
+                                grado=existing_grado or "-",
+                                seccion=existing_seccion or "-",
+                            )
+                        )
+                        st.stop()
+
                     id_ok, id_msg = _validar_identificador_alumno_web(
                         token=token,
                         colegio_id=int(colegio_id_int),
@@ -8417,6 +8477,20 @@ with tab_crud_alumnos:
                     )
                     if not id_ok:
                         st.error(f"Identificador invalido: {id_msg}")
+                        st.stop()
+
+                    login_ok, login_msg = _validar_login_alumno_web(
+                        token=token,
+                        empresa_id=int(empresa_id),
+                        login=login_txt,
+                        timeout=int(timeout),
+                    )
+                    if not login_ok:
+                        st.error(
+                            "El login no es valido. No se creo el alumno: {msg}".format(
+                                msg=login_msg or "sin detalle"
+                            )
+                        )
                         st.stop()
 
                     created_ok, created_data, created_msg = _crear_alumno_web(
@@ -8439,23 +8513,6 @@ with tab_crud_alumnos:
                     if not created_ok:
                         st.error(f"No se pudo crear el alumno: {created_msg}")
                         st.stop()
-
-                    login_ok, login_msg = _validar_login_alumno_web(
-                        token=token,
-                        empresa_id=int(empresa_id),
-                        login=login_txt,
-                        timeout=int(timeout),
-                    )
-                    if not login_ok:
-                        st.session_state["alumnos_create_notice"] = {
-                            "type": "warning",
-                            "message": (
-                                "Alumno creado, pero el login no es valido: {msg}".format(
-                                    msg=login_msg or "sin detalle"
-                                )
-                            ),
-                        }
-                        st.rerun()
 
                     alumno_id_created = _safe_int(created_data.get("alumnoId"))
                     if alumno_id_created is None:

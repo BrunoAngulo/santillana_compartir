@@ -6575,42 +6575,43 @@ with tab_crud_clases:
                 with st.container(border=True):
                     st.markdown("**Listar clases**")
                     run_listar_clases = st.button("Listar clases", key="clases_listar_btn")
-                    listed_editor_df = pd.DataFrame()
-                    if listed_class_rows:
-                        listed_editor_df = pd.DataFrame(
-                            [
-                                {
-                                    "Seleccionar": int(item.get("ID") or 0) in selected_class_ids_state,
-                                    "ID": item.get("ID"),
-                                    "Clase": item.get("Clase") or "",
-                                    "Nivel": item.get("Nivel") or "",
-                                    "Grado": item.get("Grado") or "",
-                                    "Grupo": item.get("Grupo") or "",
-                                }
-                                for item in listed_class_rows
-                                if isinstance(item, dict)
-                            ]
-                        )
-                    if not listed_editor_df.empty:
-                        edited_clases_df = st.data_editor(
-                            listed_editor_df,
-                            key="clases_gestion_editor",
-                            hide_index=True,
-                            use_container_width=True,
-                            disabled=["ID", "Clase", "Nivel", "Grado", "Grupo"],
-                            column_config={
-                                "Seleccionar": st.column_config.CheckboxColumn("Seleccionar"),
-                                "ID": st.column_config.TextColumn("ID", width="small"),
-                                "Clase": st.column_config.TextColumn("Clase", width="large"),
-                                "Nivel": st.column_config.TextColumn("Nivel"),
-                                "Grado": st.column_config.TextColumn("Grado", width="medium"),
-                                "Grupo": st.column_config.TextColumn("Grupo", width="small"),
-                            },
+                    valid_class_rows = [
+                        {
+                            "ID": item.get("ID"),
+                            "Clase": item.get("Clase") or "",
+                            "Nivel": item.get("Nivel") or "",
+                            "Grado": item.get("Grado") or "",
+                            "Grupo": item.get("Grupo") or "",
+                        }
+                        for item in listed_class_rows
+                        if isinstance(item, dict) and _safe_int(item.get("ID")) is not None
+                    ]
+                    if valid_class_rows:
+                        _show_dataframe(valid_class_rows, use_container_width=True)
+
+                        option_labels_by_id = {
+                            int(item["ID"]): (
+                                f"{item['Clase'] or 'Clase sin nombre'} | "
+                                f"ID {item['ID']} | "
+                                f"{item['Nivel'] or '-'} / {item['Grado'] or '-'} / {item['Grupo'] or '-'}"
+                            )
+                            for item in valid_class_rows
+                        }
+                        selected_default_labels = [
+                            option_labels_by_id[class_id]
+                            for class_id in selected_class_ids_state
+                            if class_id in option_labels_by_id
+                        ]
+                        selected_labels = st.multiselect(
+                            "Seleccionar clases",
+                            options=list(option_labels_by_id.values()),
+                            default=selected_default_labels,
+                            placeholder="Elige una o varias clases para duplicarlas abajo.",
                         )
                         selected_class_ids_state = {
-                            int(row["ID"])
-                            for row in edited_clases_df.to_dict("records")
-                            if bool(row.get("Seleccionar")) and _safe_int(row.get("ID")) is not None
+                            class_id
+                            for class_id, label in option_labels_by_id.items()
+                            if label in selected_labels
                         }
                         st.session_state["clases_gestion_selected_ids"] = sorted(
                             selected_class_ids_state
@@ -6632,8 +6633,43 @@ with tab_crud_clases:
                     ]
                     if selected_class_rows:
                         _show_dataframe(selected_class_rows, use_container_width=True)
+                        remove_options_by_id = {
+                            int(item["ID"]): (
+                                f"{item.get('Clase') or 'Clase sin nombre'} | "
+                                f"ID {item.get('ID')} | "
+                                f"{item.get('Nivel') or '-'} / {item.get('Grado') or '-'} / {item.get('Grupo') or '-'}"
+                            )
+                            for item in selected_class_rows
+                            if _safe_int(item.get("ID")) is not None
+                        }
+                        remove_labels = st.multiselect(
+                            "Quitar de la seleccion",
+                            options=list(remove_options_by_id.values()),
+                            default=[],
+                            placeholder="Elige clases para quitarlas de este bloque.",
+                        )
+                        run_quitar_seleccion = st.button(
+                            "Quitar seleccionadas",
+                            key="clases_quitar_seleccion_btn",
+                            disabled=not remove_labels,
+                        )
                     else:
+                        run_quitar_seleccion = False
                         st.caption("Selecciona clases en la tabla de la izquierda.")
+
+                    if run_quitar_seleccion:
+                        remove_ids = {
+                            class_id
+                            for class_id, label in remove_options_by_id.items()
+                            if label in remove_labels
+                        }
+                        st.session_state["clases_gestion_selected_ids"] = sorted(
+                            class_id
+                            for class_id in selected_class_ids_state
+                            if class_id not in remove_ids
+                        )
+                        st.rerun()
+
                     st.caption("Accion irreversible.")
                     confirm_delete = st.checkbox(
                         "Confirmo eliminar las clases seleccionadas.",

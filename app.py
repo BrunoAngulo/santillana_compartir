@@ -4474,6 +4474,87 @@ def _build_manual_move_grade_catalog(
     return catalog
 
 
+def _build_manual_move_destination_catalog(
+    niveles_data: List[Dict[str, object]],
+) -> Dict[str, object]:
+    grade_catalog = _build_manual_move_grade_catalog(niveles_data)
+    nivel_name_by_id: Dict[int, str] = {}
+    grado_ids_by_nivel: Dict[int, List[int]] = {}
+    grado_name_by_key: Dict[Tuple[int, int], str] = {}
+    grupo_ids_by_grade: Dict[Tuple[int, int], List[int]] = {}
+    grupo_payload_by_key: Dict[Tuple[int, int, int], Dict[str, object]] = {}
+
+    for grade in grade_catalog:
+        nivel_id = _safe_int(grade.get("nivel_id"))
+        grado_id = _safe_int(grade.get("grado_id"))
+        if nivel_id is None or grado_id is None:
+            continue
+        nivel_key = int(nivel_id)
+        grado_key = int(grado_id)
+        nivel_name_by_id[nivel_key] = str(grade.get("nivel") or "").strip()
+        grado_ids_by_nivel.setdefault(nivel_key, []).append(grado_key)
+        grado_name_by_key[(nivel_key, grado_key)] = str(grade.get("grado") or "").strip()
+        grupos = grade.get("grupos") if isinstance(grade.get("grupos"), list) else []
+        grupo_ids_by_grade[(nivel_key, grado_key)] = []
+        for group in grupos:
+            if not isinstance(group, dict):
+                continue
+            grupo_id = _safe_int(group.get("grupo_id"))
+            if grupo_id is None:
+                continue
+            grupo_key = int(grupo_id)
+            grupo_ids_by_grade[(nivel_key, grado_key)].append(grupo_key)
+            grupo_payload_by_key[(nivel_key, grado_key, grupo_key)] = {
+                "grupo_id": grupo_key,
+                "seccion": str(group.get("seccion") or "").strip(),
+                "grupo": str(group.get("grupo") or "").strip(),
+                "nivel_id": nivel_key,
+                "grado_id": grado_key,
+                "nivel": str(grade.get("nivel") or "").strip(),
+                "grado": str(grade.get("grado") or "").strip(),
+            }
+
+    return {
+        "nivel_ids": sorted(nivel_name_by_id.keys()),
+        "nivel_name_by_id": nivel_name_by_id,
+        "grado_ids_by_nivel": grado_ids_by_nivel,
+        "grado_name_by_key": grado_name_by_key,
+        "grupo_ids_by_grade": grupo_ids_by_grade,
+        "grupo_payload_by_key": grupo_payload_by_key,
+    }
+
+
+def _manual_move_group_label(payload: Dict[str, object]) -> str:
+    seccion = _normalize_seccion_key(payload.get("seccion") or "")
+    if seccion:
+        return seccion
+    grupo = str(payload.get("grupo") or "").strip()
+    if grupo:
+        return grupo
+    grupo_id = _safe_int(payload.get("grupo_id"))
+    if grupo_id is None:
+        return "-"
+    return str(int(grupo_id))
+
+
+def _update_manual_move_cached_student(
+    students: List[Dict[str, object]],
+    alumno_id: int,
+    destino_payload: Dict[str, object],
+) -> None:
+    for current in students:
+        if _safe_int(current.get("alumno_id")) != int(alumno_id):
+            continue
+        current["nivel_id"] = _safe_int(destino_payload.get("nivel_id"))
+        current["grado_id"] = _safe_int(destino_payload.get("grado_id"))
+        current["grupo_id"] = _safe_int(destino_payload.get("grupo_id"))
+        current["nivel"] = str(destino_payload.get("nivel") or "").strip()
+        current["grado"] = str(destino_payload.get("grado") or "").strip()
+        current["seccion"] = str(destino_payload.get("seccion") or "").strip()
+        current["seccion_norm"] = _normalize_seccion_key(destino_payload.get("seccion") or "")
+        break
+
+
 def _manual_move_alumno_option_label(row: Dict[str, object]) -> str:
     nombre = str(row.get("nombre_completo") or "").strip()
     if not nombre:
@@ -7347,215 +7428,308 @@ with tab_crud_alumnos:
                     filtered_students.append(row)
 
             st.caption(f"Resultados del filtro: {len(filtered_students)} alumno(s).")
+            manual_move_notice = st.session_state.pop("alumnos_manual_move_notice", None)
+            if isinstance(manual_move_notice, dict):
+                notice_type = str(manual_move_notice.get("type") or "").strip().lower()
+                notice_message = str(manual_move_notice.get("message") or "").strip()
+                if notice_message:
+                    if notice_type == "success":
+                        st.success(notice_message)
+                    elif notice_type == "warning":
+                        st.warning(notice_message)
+                    else:
+                        st.info(notice_message)
             if not filtered_students:
                 st.info("No hay alumnos con ese filtro.")
             else:
-                student_options: List[str] = []
-                student_by_option: Dict[str, Dict[str, object]] = {}
-                for row in filtered_students:
-                    alumno_id = _safe_int(row.get("alumno_id"))
-                    if alumno_id is None:
-                        continue
-                    option = f"{int(alumno_id)} | {_manual_move_alumno_option_label(row)}"
-                    student_options.append(option)
-                    student_by_option[option] = row
+                valid_students = [
+                    row for row in filtered_students if _safe_int(row.get("alumno_id")) is not None
+                ]
+                destination_catalog = _build_manual_move_destination_catalog(loaded_niveles)
+                nivel_ids = destination_catalog.get("nivel_ids") or []
+                nivel_name_by_id = destination_catalog.get("nivel_name_by_id") or {}
+                grado_ids_by_nivel = destination_catalog.get("grado_ids_by_nivel") or {}
+                grado_name_by_key = destination_catalog.get("grado_name_by_key") or {}
+                grupo_ids_by_grade = destination_catalog.get("grupo_ids_by_grade") or {}
+                grupo_payload_by_key = destination_catalog.get("grupo_payload_by_key") or {}
 
-                grade_catalog = _build_manual_move_grade_catalog(loaded_niveles)
-                destino_options: List[str] = []
-                destino_payload_by_option: Dict[str, Dict[str, object]] = {}
-                for grade in grade_catalog:
-                    grupos = grade.get("grupos") if isinstance(grade.get("grupos"), list) else []
-                    for group in grupos:
-                        seccion = _normalize_seccion_key(group.get("seccion") or "")
-                        if not seccion:
-                            seccion = str(group.get("seccion") or "").strip()
-                        option = "{nivel} | {grado} ({seccion})".format(
-                            nivel=str(grade.get("nivel") or "").strip(),
-                            grado=str(grade.get("grado") or "").strip(),
-                            seccion=seccion or "-",
-                        )
-                        if option in destino_payload_by_option:
-                            continue
-                        destino_options.append(option)
-                        destino_payload_by_option[option] = {
-                            "nivel_id": _safe_int(grade.get("nivel_id")),
-                            "grado_id": _safe_int(grade.get("grado_id")),
-                            "grupo_id": _safe_int(group.get("grupo_id")),
-                            "seccion": seccion,
-                            "nivel": str(grade.get("nivel") or "").strip(),
-                            "grado": str(grade.get("grado") or "").strip(),
-                        }
-
-                if not student_options:
+                if not valid_students:
                     st.warning("No hay alumnos validos para mover.")
-                elif not destino_options:
+                elif not nivel_ids:
                     st.warning("No hay grados/secciones disponibles para destino.")
                 else:
-                    default_row = {
-                        "Aplicar": True,
-                        "Alumno": student_options[0],
-                        "Nuevo grado y seccion": destino_options[0],
-                    }
-                    current_rows = st.session_state.get("alumnos_manual_move_rows")
-                    if not isinstance(current_rows, list) or not current_rows:
-                        current_rows = [dict(default_row)]
+                    header_cols = st.columns([4.8, 1.5, 2.3, 1.3, 1.2], gap="small")
+                    header_cols[0].markdown("**Alumno**")
+                    header_cols[1].markdown("**Nuevo nivel**")
+                    header_cols[2].markdown("**Nuevo grado**")
+                    header_cols[3].markdown("**Seccion**")
+                    header_cols[4].markdown("**Guardar**")
 
-                    col_add_row, col_reset_rows = st.columns([1, 1], gap="small")
-                    if col_add_row.button(
-                        "Agregar fila",
-                        key="alumnos_manual_move_add_row_btn",
-                        use_container_width=True,
-                    ):
-                        current_rows.append(dict(default_row))
-                    if col_reset_rows.button(
-                        "Limpiar filas",
-                        key="alumnos_manual_move_reset_rows_btn",
-                        use_container_width=True,
-                    ):
-                        current_rows = [dict(default_row)]
+                    for row in valid_students:
+                        alumno_id = _safe_int(row.get("alumno_id"))
+                        if alumno_id is None:
+                            continue
+                        alumno_id_int = int(alumno_id)
 
-                    editor_df = pd.DataFrame(current_rows)
-                    edited_df = st.data_editor(
-                        editor_df,
-                        key="alumnos_manual_move_editor",
-                        hide_index=True,
-                        use_container_width=True,
-                        column_config={
-                            "Aplicar": st.column_config.CheckboxColumn("Aplicar"),
-                            "Alumno": st.column_config.SelectboxColumn(
-                                "Alumno",
-                                options=student_options,
-                                required=True,
-                                width="large",
-                            ),
-                            "Nuevo grado y seccion": st.column_config.SelectboxColumn(
-                                "Nuevo grado y seccion",
-                                options=destino_options,
-                                required=True,
-                                width="large",
-                            ),
-                        },
-                    )
-                    if isinstance(edited_df, pd.DataFrame):
-                        st.session_state["alumnos_manual_move_rows"] = edited_df.to_dict("records")
+                        nivel_key = f"alumnos_manual_move_dest_nivel_{alumno_id_int}"
+                        grado_key = f"alumnos_manual_move_dest_grado_{alumno_id_int}"
+                        grupo_key = f"alumnos_manual_move_dest_grupo_{alumno_id_int}"
 
-                    confirm_batch_move = st.checkbox(
-                        "Confirmo mover los alumnos seleccionados y reasignar clases",
-                        key="alumnos_manual_move_batch_confirm",
-                    )
-                    run_batch_move = st.button(
-                        "Aplicar cambios por filas",
-                        key="alumnos_manual_move_batch_apply_btn",
-                        type="primary",
-                        use_container_width=True,
-                        disabled=not confirm_batch_move,
-                    )
+                        current_nivel_id = _safe_int(row.get("nivel_id"))
+                        current_grado_id = _safe_int(row.get("grado_id"))
+                        current_grupo_id = _safe_int(row.get("grupo_id"))
 
-                    if run_batch_move:
-                        token = _get_shared_token()
-                        if not token:
-                            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-                        else:
+                        selected_nivel_id = _safe_int(st.session_state.get(nivel_key))
+                        if selected_nivel_id not in nivel_ids:
+                            if current_nivel_id in nivel_ids:
+                                selected_nivel_id = int(current_nivel_id)
+                            else:
+                                selected_nivel_id = int(nivel_ids[0])
+                            st.session_state[nivel_key] = selected_nivel_id
+
+                        grado_options = [
+                            int(value)
+                            for value in (grado_ids_by_nivel.get(int(selected_nivel_id)) or [])
+                        ]
+                        if not grado_options:
+                            continue
+
+                        selected_grado_id = _safe_int(st.session_state.get(grado_key))
+                        if selected_grado_id not in grado_options:
+                            if current_nivel_id == selected_nivel_id and current_grado_id in grado_options:
+                                selected_grado_id = int(current_grado_id)
+                            else:
+                                selected_grado_id = int(grado_options[0])
+                            st.session_state[grado_key] = selected_grado_id
+
+                        grupo_options = [
+                            int(value)
+                            for value in (
+                                grupo_ids_by_grade.get((int(selected_nivel_id), int(selected_grado_id)))
+                                or []
+                            )
+                        ]
+                        if not grupo_options:
+                            continue
+
+                        selected_grupo_id = _safe_int(st.session_state.get(grupo_key))
+                        if selected_grupo_id not in grupo_options:
+                            if (
+                                current_nivel_id == selected_nivel_id
+                                and current_grado_id == selected_grado_id
+                                and current_grupo_id in grupo_options
+                            ):
+                                selected_grupo_id = int(current_grupo_id)
+                            else:
+                                selected_grupo_id = int(grupo_options[0])
+                            st.session_state[grupo_key] = selected_grupo_id
+
+                        row_cols = st.columns([4.8, 1.5, 2.3, 1.3, 1.2], gap="small")
+
+                        alumno_seccion = _normalize_seccion_key(
+                            row.get("seccion_norm") or row.get("seccion") or ""
+                        )
+                        alumno_actual = (
+                            f"{str(row.get('nivel') or '').strip()} | "
+                            f"{str(row.get('grado') or '').strip()} ({alumno_seccion or '-'})"
+                        )
+                        alumno_header = _manual_move_alumno_option_label(row)
+                        row_cols[0].markdown(
+                            f"**{alumno_header}**\n\nActual: {alumno_actual}"
+                        )
+
+                        with row_cols[1]:
+                            st.selectbox(
+                                "Nuevo nivel",
+                                options=nivel_ids,
+                                index=nivel_ids.index(int(selected_nivel_id)),
+                                format_func=lambda value: str(
+                                    nivel_name_by_id.get(int(value), value)
+                                ).strip(),
+                                key=nivel_key,
+                                label_visibility="collapsed",
+                            )
+
+                        selected_nivel_id = int(_safe_int(st.session_state.get(nivel_key)) or selected_nivel_id)
+                        grado_options = [
+                            int(value)
+                            for value in (grado_ids_by_nivel.get(int(selected_nivel_id)) or [])
+                        ]
+                        if not grado_options:
+                            row_cols[2].caption("Sin grados")
+                            row_cols[3].caption("Sin secciones")
+                            row_cols[4].button(
+                                "Guardar",
+                                key=f"alumnos_manual_move_save_btn_{alumno_id_int}",
+                                use_container_width=True,
+                                disabled=True,
+                            )
+                            continue
+
+                        selected_grado_id = _safe_int(st.session_state.get(grado_key))
+                        if selected_grado_id not in grado_options:
+                            selected_grado_id = int(grado_options[0])
+                            st.session_state[grado_key] = selected_grado_id
+
+                        with row_cols[2]:
+                            st.selectbox(
+                                "Nuevo grado",
+                                options=grado_options,
+                                index=grado_options.index(int(selected_grado_id)),
+                                format_func=lambda value: str(
+                                    grado_name_by_key.get(
+                                        (int(_safe_int(st.session_state.get(nivel_key)) or 0), int(value)),
+                                        value,
+                                    )
+                                ).strip(),
+                                key=grado_key,
+                                label_visibility="collapsed",
+                            )
+
+                        selected_nivel_id = int(_safe_int(st.session_state.get(nivel_key)) or selected_nivel_id)
+                        selected_grado_id = int(_safe_int(st.session_state.get(grado_key)) or selected_grado_id)
+                        grupo_options = [
+                            int(value)
+                            for value in (
+                                grupo_ids_by_grade.get((int(selected_nivel_id), int(selected_grado_id)))
+                                or []
+                            )
+                        ]
+                        if not grupo_options:
+                            row_cols[3].caption("Sin secciones")
+                            row_cols[4].button(
+                                "Guardar",
+                                key=f"alumnos_manual_move_save_btn_{alumno_id_int}",
+                                use_container_width=True,
+                                disabled=True,
+                            )
+                            continue
+
+                        selected_grupo_id = _safe_int(st.session_state.get(grupo_key))
+                        if selected_grupo_id not in grupo_options:
+                            selected_grupo_id = int(grupo_options[0])
+                            st.session_state[grupo_key] = selected_grupo_id
+
+                        with row_cols[3]:
+                            st.selectbox(
+                                "Seccion",
+                                options=grupo_options,
+                                index=grupo_options.index(int(selected_grupo_id)),
+                                format_func=lambda value: _manual_move_group_label(
+                                    grupo_payload_by_key.get(
+                                        (
+                                            int(_safe_int(st.session_state.get(nivel_key)) or 0),
+                                            int(_safe_int(st.session_state.get(grado_key)) or 0),
+                                            int(value),
+                                        ),
+                                        {},
+                                    )
+                                ),
+                                key=grupo_key,
+                                label_visibility="collapsed",
+                            )
+
+                        save_clicked = row_cols[4].button(
+                            "Guardar",
+                            key=f"alumnos_manual_move_save_btn_{alumno_id_int}",
+                            type="primary",
+                            use_container_width=True,
+                        )
+
+                        if save_clicked:
+                            token = _get_shared_token()
+                            if not token:
+                                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                                st.stop()
                             try:
                                 colegio_id_int = _parse_colegio_id(colegio_id_raw)
                             except ValueError as exc:
                                 st.error(f"Error: {exc}")
-                            else:
-                                if loaded_colegio_id is not None and int(loaded_colegio_id) != int(colegio_id_int):
-                                    st.error("El colegio global cambio. Vuelve a listar alumnos.")
-                                else:
-                                    rows_to_apply = st.session_state.get("alumnos_manual_move_rows") or []
-                                    selected_rows = [
-                                        row for row in rows_to_apply if _to_bool(row.get("Aplicar"))
-                                    ]
-                                    if not selected_rows:
-                                        st.warning("Marca al menos una fila para aplicar cambios.")
-                                    else:
-                                        move_ok_total = 0
-                                        move_error_total = 0
-                                        detail_lines: List[str] = []
-                                        cached_students = st.session_state.get("alumnos_manual_move_students") or []
+                                st.stop()
+                            if (
+                                loaded_colegio_id is not None
+                                and int(loaded_colegio_id) != int(colegio_id_int)
+                            ):
+                                st.error("El colegio global cambio. Vuelve a listar alumnos.")
+                                st.stop()
 
-                                        with st.spinner("Aplicando cambios por filas..."):
-                                            for idx, row in enumerate(selected_rows, start=1):
-                                                alumno_option = str(row.get("Alumno") or "").strip()
-                                                destino_option = str(row.get("Nuevo grado y seccion") or "").strip()
-                                                alumno_row = student_by_option.get(alumno_option)
-                                                destino_payload = destino_payload_by_option.get(destino_option)
-                                                if not isinstance(alumno_row, dict) or not isinstance(destino_payload, dict):
-                                                    move_error_total += 1
-                                                    detail_lines.append(
-                                                        f"Fila {idx}: seleccion invalida de alumno o destino."
-                                                    )
-                                                    continue
-                                                try:
-                                                    result = _apply_single_alumno_move_and_reassign(
-                                                        token=token,
-                                                        colegio_id=int(colegio_id_int),
-                                                        empresa_id=int(empresa_id),
-                                                        ciclo_id=int(ciclo_id),
-                                                        timeout=int(timeout),
-                                                        alumno_row=alumno_row,
-                                                        nuevo_nivel_id=int(destino_payload.get("nivel_id") or 0),
-                                                        nuevo_grado_id=int(destino_payload.get("grado_id") or 0),
-                                                        nuevo_grupo_id=int(destino_payload.get("grupo_id") or 0),
-                                                        nueva_seccion=str(destino_payload.get("seccion") or ""),
-                                                    )
-                                                except Exception as exc:  # pragma: no cover - UI
-                                                    move_error_total += 1
-                                                    detail_lines.append(f"Fila {idx}: Error aplicando cambio: {exc}")
-                                                    continue
+                            selected_nivel_id = _safe_int(st.session_state.get(nivel_key))
+                            selected_grado_id = _safe_int(st.session_state.get(grado_key))
+                            selected_grupo_id = _safe_int(st.session_state.get(grupo_key))
+                            if (
+                                selected_nivel_id is None
+                                or selected_grado_id is None
+                                or selected_grupo_id is None
+                            ):
+                                st.error("Seleccion invalida de nivel, grado o seccion.")
+                                st.stop()
 
-                                                move_ok = _to_bool(result.get("move_ok"))
-                                                move_msg = str(result.get("move_msg") or "")
-                                                if not move_ok:
-                                                    move_error_total += 1
-                                                    detail_lines.append(
-                                                        f"Fila {idx}: No se pudo mover ({move_msg or 'sin detalle'})."
-                                                    )
-                                                    continue
+                            destino_payload = grupo_payload_by_key.get(
+                                (
+                                    int(selected_nivel_id),
+                                    int(selected_grado_id),
+                                    int(selected_grupo_id),
+                                )
+                            )
+                            if not isinstance(destino_payload, dict):
+                                st.error("No se pudo resolver el destino seleccionado.")
+                                st.stop()
 
-                                                move_ok_total += 1
-                                                detail_lines.append(
-                                                    "Fila {idx}: OK | Mover={move} | Eliminar OK={rok}, ERROR={rerr} | "
-                                                    "Asignar OK={aok}, ERROR={aerr}".format(
-                                                        idx=idx,
-                                                        move=move_msg or "OK",
-                                                        rok=int(result.get("removed_ok") or 0),
-                                                        rerr=int(result.get("removed_error") or 0),
-                                                        aok=int(result.get("assigned_ok") or 0),
-                                                        aerr=int(result.get("assigned_error") or 0),
-                                                    )
-                                                )
+                            try:
+                                with st.spinner(f"Moviendo alumno {alumno_id_int}..."):
+                                    result = _apply_single_alumno_move_and_reassign(
+                                        token=token,
+                                        colegio_id=int(colegio_id_int),
+                                        empresa_id=int(empresa_id),
+                                        ciclo_id=int(ciclo_id),
+                                        timeout=int(timeout),
+                                        alumno_row=row,
+                                        nuevo_nivel_id=int(destino_payload.get("nivel_id") or 0),
+                                        nuevo_grado_id=int(destino_payload.get("grado_id") or 0),
+                                        nuevo_grupo_id=int(destino_payload.get("grupo_id") or 0),
+                                        nueva_seccion=str(destino_payload.get("seccion") or ""),
+                                    )
+                            except Exception as exc:  # pragma: no cover - UI
+                                st.session_state["alumnos_manual_move_notice"] = {
+                                    "type": "warning",
+                                    "message": f"No se pudo mover el alumno {alumno_id_int}: {exc}",
+                                }
+                                st.rerun()
 
-                                                alumno_id = _safe_int(alumno_row.get("alumno_id"))
-                                                if alumno_id is None:
-                                                    continue
-                                                for current in cached_students:
-                                                    if _safe_int(current.get("alumno_id")) != int(alumno_id):
-                                                        continue
-                                                    current["nivel_id"] = _safe_int(destino_payload.get("nivel_id"))
-                                                    current["grado_id"] = _safe_int(destino_payload.get("grado_id"))
-                                                    current["grupo_id"] = _safe_int(destino_payload.get("grupo_id"))
-                                                    current["nivel"] = str(destino_payload.get("nivel") or "").strip()
-                                                    current["grado"] = str(destino_payload.get("grado") or "").strip()
-                                                    current["seccion"] = str(destino_payload.get("seccion") or "").strip()
-                                                    current["seccion_norm"] = str(destino_payload.get("seccion") or "").strip()
-                                                    break
+                            if not _to_bool(result.get("move_ok")):
+                                st.session_state["alumnos_manual_move_notice"] = {
+                                    "type": "warning",
+                                    "message": (
+                                        f"No se pudo mover el alumno {alumno_id_int}: "
+                                        f"{str(result.get('move_msg') or 'sin detalle')}"
+                                    ),
+                                }
+                                st.rerun()
 
-                                        st.session_state["alumnos_manual_move_students"] = cached_students
-                                        if move_error_total == 0:
-                                            st.success(
-                                                f"Cambios aplicados correctamente en {move_ok_total} fila(s)."
-                                            )
-                                        else:
-                                            st.warning(
-                                                "Proceso completado con observaciones. "
-                                                f"OK={move_ok_total}, ERROR={move_error_total}."
-                                            )
-                                        if detail_lines:
-                                            st.markdown("**Detalle por fila**")
-                                            st.markdown("\n".join(f"- {line}" for line in detail_lines[:120]))
+                            cached_students = st.session_state.get("alumnos_manual_move_students") or []
+                            _update_manual_move_cached_student(
+                                students=cached_students,
+                                alumno_id=alumno_id_int,
+                                destino_payload=destino_payload,
+                            )
+                            st.session_state["alumnos_manual_move_students"] = cached_students
+                            st.session_state[nivel_key] = int(destino_payload.get("nivel_id") or 0)
+                            st.session_state[grado_key] = int(destino_payload.get("grado_id") or 0)
+                            st.session_state[grupo_key] = int(destino_payload.get("grupo_id") or 0)
+                            st.session_state["alumnos_manual_move_notice"] = {
+                                "type": "success",
+                                "message": (
+                                    "Alumno actualizado: {alumno} -> {nivel} | {grado} ({seccion})".format(
+                                        alumno=alumno_header,
+                                        nivel=str(destino_payload.get("nivel") or "").strip(),
+                                        grado=str(destino_payload.get("grado") or "").strip(),
+                                        seccion=str(destino_payload.get("seccion") or "").strip() or "-",
+                                    )
+                                ),
+                            }
+                            st.rerun()
+
+                        st.divider()
 
 with tab_crud_clases:
     if not _restricted_sections_unlocked():

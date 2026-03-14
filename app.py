@@ -320,9 +320,7 @@ def _inject_professional_theme() -> None:
 
 def _clean_token_value(token: object) -> str:
     text = str(token or "").strip()
-    if text.lower().startswith("bearer "):
-        text = text[7:].strip()
-    return text
+    return re.sub(r"^bearer\s+", "", text, flags=re.IGNORECASE).strip()
 
 
 def _sync_shared_token_from_input() -> None:
@@ -570,10 +568,10 @@ if menu_option != "Richmond Studio":
         token_col_input, token_col_save, token_col_clear = st.columns([4.1, 1, 1], gap="small")
         with token_col_input:
             st.text_input(
-                "Token (sin Bearer)",
+                "Token",
                 key="shared_pegasus_token_input",
                 on_change=_sync_shared_token_from_input,
-                help="Se usa en todas las funciones y queda guardado en la sesion actual.",
+                help="Acepta token solo o con prefijo Bearer. Se guarda limpio en la sesion actual.",
             )
         with token_col_save:
             if st.button("Guardar", key="shared_token_save_btn", use_container_width=True):
@@ -2837,6 +2835,9 @@ def _flatten_censo_alumno_for_auto_plan(
     fallback: Dict[str, object],
 ) -> Dict[str, object]:
     persona = item.get("persona") if isinstance(item.get("persona"), dict) else {}
+    persona_login = (
+        persona.get("personaLogin") if isinstance(persona.get("personaLogin"), dict) else {}
+    )
     nivel = item.get("nivel") if isinstance(item.get("nivel"), dict) else {}
     grado = item.get("grado") if isinstance(item.get("grado"), dict) else {}
     grupo = item.get("grupo") if isinstance(item.get("grupo"), dict) else {}
@@ -2850,6 +2851,8 @@ def _flatten_censo_alumno_for_auto_plan(
         "apellido_materno": str(persona.get("apellidoMaterno") or "").strip(),
         "nombre_completo": str(persona.get("nombreCompleto") or "").strip(),
         "id_oficial": str(persona.get("idOficial") or "").strip(),
+        "login": str(persona_login.get("login") or item.get("login") or "").strip(),
+        "password": str(item.get("password") or "").strip(),
         "nivel_id": _safe_int(nivel.get("nivelId")) or _safe_int(fallback.get("nivel_id")),
         "grado_id": _safe_int(grado.get("gradoId")) or _safe_int(fallback.get("grado_id")),
         "grupo_id": _safe_int(grupo.get("grupoId")) or _safe_int(fallback.get("grupo_id")),
@@ -4476,7 +4479,10 @@ def _manual_move_alumno_option_label(row: Dict[str, object]) -> str:
     if not nombre:
         nombre = "SIN NOMBRE"
     dni = str(row.get("id_oficial") or "").strip() or "-"
+    login = str(row.get("login") or "").strip()
     base = f"{dni}|{nombre}"
+    if login:
+        base = f"{base} | {login}"
     nivel = str(row.get("nivel") or "").strip()
     grado = str(row.get("grado") or "").strip()
     seccion = _normalize_seccion_key(row.get("seccion_norm") or row.get("seccion") or "")
@@ -4491,32 +4497,28 @@ def _manual_move_alumno_option_label(row: Dict[str, object]) -> str:
 
 
 def _manual_move_alumno_matches_filter(row: Dict[str, object], search_text: object) -> bool:
-    search_norm = _normalize_plain_text(search_text)
+    search_norm = _normalize_compare_text(search_text)
     if not search_norm:
         return True
 
-    tokens = [token for token in search_norm.split() if token]
+    tokens = [_normalize_compare_id(token) for token in search_norm.split() if token]
     if not tokens:
         return True
 
-    dni_txt = _normalize_compare_id(row.get("id_oficial"))
-    nombre_txt = _normalize_compare_text(row.get("nombre_completo"))
-    dni_tokens: List[str] = []
-    nombre_tokens: List[str] = []
-
-    for token in tokens:
-        token_dni = re.sub(r"\W+", "", token)
-        if any(ch.isdigit() for ch in token_dni):
-            if token_dni:
-                dni_tokens.append(token_dni)
-        else:
-            nombre_tokens.append(token)
-
-    if dni_tokens and not all(token in dni_txt for token in dni_tokens):
+    searchable_values = [
+        _normalize_compare_id(row.get("id_oficial")),
+        _normalize_compare_id(row.get("login")),
+        _normalize_compare_text(row.get("login")),
+        _normalize_compare_text(row.get("nombre_completo")),
+        _normalize_compare_text(row.get("nombre")),
+        _normalize_compare_text(row.get("apellido_paterno")),
+        _normalize_compare_text(row.get("apellido_materno")),
+    ]
+    searchable_values = [value for value in searchable_values if value]
+    if not searchable_values:
         return False
-    if nombre_tokens and not all(token in nombre_txt for token in nombre_tokens):
-        return False
-    return bool(dni_tokens or nombre_tokens)
+
+    return all(any(token in value for value in searchable_values) for token in tokens)
 
 
 def _fetch_alumnos_catalog_for_manual_move(
@@ -4542,6 +4544,18 @@ def _fetch_alumnos_catalog_for_manual_move(
         ciclo_id=int(ciclo_id),
         timeout=int(timeout),
     )
+    _status("Consultando login de alumnos...")
+    try:
+        login_lookup_by_alumno, login_lookup_by_persona = _fetch_login_password_lookup_censo(
+            token=token,
+            colegio_id=int(colegio_id),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+        )
+    except Exception:
+        login_lookup_by_alumno = {}
+        login_lookup_by_persona = {}
     contexts = _build_contexts_for_nivel_grado(niveles=niveles)
     if not contexts:
         raise RuntimeError("No hay niveles/grados/secciones configurados para este colegio.")
@@ -4583,7 +4597,17 @@ def _fetch_alumnos_catalog_for_manual_move(
         for item in alumnos_ctx:
             if not isinstance(item, dict):
                 continue
-            alumnos_raw.append(_flatten_censo_alumno_for_auto_plan(item=item, fallback=ctx))
+            flat = _flatten_censo_alumno_for_auto_plan(item=item, fallback=ctx)
+            login_txt, password_txt = _resolve_alumno_login_password(
+                item,
+                login_lookup_by_alumno,
+                login_lookup_by_persona,
+            )
+            if login_txt and not str(flat.get("login") or "").strip():
+                flat["login"] = login_txt
+            if password_txt and not str(flat.get("password") or "").strip():
+                flat["password"] = password_txt
+            alumnos_raw.append(flat)
 
     by_key: Dict[str, Dict[str, object]] = {}
     for row in alumnos_raw:
@@ -7313,9 +7337,9 @@ with tab_crud_alumnos:
             st.caption("Primero presiona 'Listar alumnos del colegio'.")
         else:
             search_text = st.text_input(
-                "Filtro alumnos (DNI y luego nombre)",
+                "Buscar alumno (login, nombre, apellido o DNI)",
                 key="alumnos_manual_move_search",
-                placeholder="Ejemplo: 73847294 CHAVARRI",
+                placeholder="Ejemplo: lnjmf90942147, CHERO o 91092564",
             ).strip()
             filtered_students: List[Dict[str, object]] = []
             for row in loaded_students:

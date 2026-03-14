@@ -171,6 +171,18 @@ ERROR_COLUMNS = [
 ]
 
 
+def _clean_token_value(token: object) -> str:
+    text = str(token or "").strip()
+    return re.sub(r"^bearer\s+", "", text, flags=re.IGNORECASE).strip()
+
+
+def _build_json_headers(token: str) -> Dict[str, str]:
+    return {
+        "Authorization": f"Bearer {_clean_token_value(token)}",
+        "Accept": "application/json",
+    }
+
+
 def build_alumnos_filename(colegio_ids: Sequence[int]) -> str:
     if not colegio_ids:
         return "alumnos.xlsx"
@@ -245,10 +257,7 @@ def _fetch_alumnos(
     timeout: int = 30,
 ) -> Tuple[List[Dict[str, object]], Optional[str], Optional[int], str]:
     url, params = _build_url(context)
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
-    }
+    headers = _build_json_headers(token)
     try:
         response = session.get(url, headers=headers, params=params, timeout=timeout)
     except requests.RequestException as exc:
@@ -348,7 +357,7 @@ def descargar_plantilla_edicion_masiva(
         ciclo_id=ciclo_id,
         colegio_id=colegio_id,
     )
-    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    headers = _build_json_headers(token)
     try:
         response = requests.get(url, headers=headers, params={"descargar": 0}, timeout=timeout)
     except requests.RequestException as exc:

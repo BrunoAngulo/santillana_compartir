@@ -4608,16 +4608,6 @@ def _manual_move_alumno_option_label(row: Dict[str, object]) -> str:
     base = f"{dni}|{nombre}"
     if login:
         base = f"{base} | {login}"
-    nivel = str(row.get("nivel") or "").strip()
-    grado = str(row.get("grado") or "").strip()
-    seccion = _normalize_seccion_key(row.get("seccion_norm") or row.get("seccion") or "")
-    grado_txt = " | ".join(part for part in [nivel, grado] if part)
-    if grado_txt and seccion:
-        return f"{base} | {grado_txt} ({seccion})"
-    if grado_txt:
-        return f"{base} | {grado_txt}"
-    if seccion:
-        return f"{base} | Seccion ({seccion})"
     return base
 
 
@@ -7549,10 +7539,6 @@ with tab_crud_alumnos:
                         alumno_seccion = _normalize_seccion_key(
                             row.get("seccion_norm") or row.get("seccion") or ""
                         )
-                        alumno_actual = (
-                            f"{str(row.get('nivel') or '').strip()} | "
-                            f"{str(row.get('grado') or '').strip()} ({alumno_seccion or '-'})"
-                        )
                         alumno_header = _manual_move_alumno_option_label(row)
                         group_key = (
                             str(row.get("nivel") or "").strip(),
@@ -7618,9 +7604,7 @@ with tab_crud_alumnos:
                             selected_seccion = ""
 
                         row_cols = st.columns([4.8, 1.5, 2.5, 1.2, 1.1], gap="small")
-                        row_cols[0].markdown(
-                            f"**{alumno_header}**\n\nActual: {alumno_actual}"
-                        )
+                        row_cols[0].markdown(f"**{alumno_header}**")
 
                         with row_cols[1]:
                             st.selectbox(

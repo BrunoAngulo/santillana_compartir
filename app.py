@@ -7450,6 +7450,9 @@ with tab_crud_alumnos:
             state_key="alumnos_crud_nav",
         )
     with alumnos_body_col:
+        loaded_niveles = st.session_state.get("alumnos_manual_move_niveles") or []
+        loaded_colegio_id = _safe_int(st.session_state.get("alumnos_manual_move_colegio_id"))
+        current_colegio_id = _safe_int(colegio_id_raw)
         if alumnos_crud_view == "plantilla":
             with st.container(border=True):
                 st.markdown("**1) Plantilla de alumnos registrados**")

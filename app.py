@@ -6573,7 +6573,7 @@ with tab_crud_clases:
             col_list, col_selected = st.columns([2.2, 1.4], gap="large")
             with col_list:
                 with st.container(border=True):
-                    st.markdown("**Listar clases**")
+                    st.markdown("**Clases disponibles**")
                     run_listar_clases = st.button("Listar clases", key="clases_listar_btn")
                     valid_class_rows = [
                         {
@@ -6589,29 +6589,27 @@ with tab_crud_clases:
                     if valid_class_rows:
                         _show_dataframe(valid_class_rows, use_container_width=True)
 
-                        option_labels_by_id = {
-                            int(item["ID"]): (
-                                f"{item['Clase'] or 'Clase sin nombre'} | "
-                                f"ID {item['ID']} | "
-                                f"{item['Nivel'] or '-'} / {item['Grado'] or '-'} / {item['Grupo'] or '-'}"
-                            )
+                        class_name_by_id = {
+                            int(item["ID"]): item["Clase"] or "Clase sin nombre"
                             for item in valid_class_rows
                         }
-                        selected_default_labels = [
-                            option_labels_by_id[class_id]
-                            for class_id in selected_class_ids_state
-                            if class_id in option_labels_by_id
-                        ]
-                        selected_labels = st.multiselect(
-                            "Seleccionar clases",
-                            options=list(option_labels_by_id.values()),
-                            default=selected_default_labels,
-                            placeholder="Elige una o varias clases para duplicarlas abajo.",
+                        selected_ids = st.multiselect(
+                            "Clases a eliminar",
+                            options=list(class_name_by_id.keys()),
+                            default=[
+                                class_id
+                                for class_id in selected_class_ids_state
+                                if class_id in class_name_by_id
+                            ],
+                            format_func=lambda class_id: class_name_by_id.get(
+                                int(class_id), str(class_id)
+                            ),
+                            placeholder="Selecciona una o varias clases.",
                         )
                         selected_class_ids_state = {
-                            class_id
-                            for class_id, label in option_labels_by_id.items()
-                            if label in selected_labels
+                            int(class_id)
+                            for class_id in selected_ids
+                            if _safe_int(class_id) is not None
                         }
                         st.session_state["clases_gestion_selected_ids"] = sorted(
                             selected_class_ids_state
@@ -6623,7 +6621,7 @@ with tab_crud_clases:
 
             with col_selected:
                 with st.container(border=True):
-                    st.markdown("**Clases seleccionadas**")
+                    st.markdown("**Clases a eliminar**")
                     selected_class_rows = [
                         item
                         for item in listed_class_rows
@@ -6633,44 +6631,8 @@ with tab_crud_clases:
                     ]
                     if selected_class_rows:
                         _show_dataframe(selected_class_rows, use_container_width=True)
-                        remove_options_by_id = {
-                            int(item["ID"]): (
-                                f"{item.get('Clase') or 'Clase sin nombre'} | "
-                                f"ID {item.get('ID')} | "
-                                f"{item.get('Nivel') or '-'} / {item.get('Grado') or '-'} / {item.get('Grupo') or '-'}"
-                            )
-                            for item in selected_class_rows
-                            if _safe_int(item.get("ID")) is not None
-                        }
-                        remove_labels = st.multiselect(
-                            "Quitar de la seleccion",
-                            options=list(remove_options_by_id.values()),
-                            default=[],
-                            placeholder="Elige clases para quitarlas de este bloque.",
-                        )
-                        run_quitar_seleccion = st.button(
-                            "Quitar seleccionadas",
-                            key="clases_quitar_seleccion_btn",
-                            disabled=not remove_labels,
-                        )
                     else:
-                        run_quitar_seleccion = False
                         st.caption("Selecciona clases en la tabla de la izquierda.")
-
-                    if run_quitar_seleccion:
-                        remove_ids = {
-                            class_id
-                            for class_id, label in remove_options_by_id.items()
-                            if label in remove_labels
-                        }
-                        st.session_state["clases_gestion_selected_ids"] = sorted(
-                            class_id
-                            for class_id in selected_class_ids_state
-                            if class_id not in remove_ids
-                        )
-                        st.rerun()
-
-                    st.caption("Accion irreversible.")
                     confirm_delete = st.checkbox(
                         "Confirmo eliminar las clases seleccionadas.",
                         key="clases_confirm_delete",

@@ -7542,7 +7542,6 @@ with tab_crud_alumnos:
                             st.selectbox(
                                 "Nuevo nivel",
                                 options=nivel_ids,
-                                index=nivel_ids.index(int(selected_nivel_id)),
                                 format_func=lambda value: str(
                                     nivel_name_by_id.get(int(value), value)
                                 ).strip(),
@@ -7575,7 +7574,6 @@ with tab_crud_alumnos:
                             st.selectbox(
                                 "Nuevo grado",
                                 options=grado_options,
-                                index=grado_options.index(int(selected_grado_id)),
                                 format_func=lambda value: str(
                                     grado_name_by_key.get(
                                         (int(_safe_int(st.session_state.get(nivel_key)) or 0), int(value)),
@@ -7614,7 +7612,6 @@ with tab_crud_alumnos:
                             st.selectbox(
                                 "Seccion",
                                 options=grupo_options,
-                                index=grupo_options.index(int(selected_grupo_id)),
                                 format_func=lambda value: _manual_move_group_label(
                                     grupo_payload_by_key.get(
                                         (

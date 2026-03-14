@@ -4589,6 +4589,16 @@ def _clear_manual_move_selection(*keys: str) -> None:
             st.session_state[key] = None
 
 
+def _queue_manual_move_reset(*keys: str) -> None:
+    pending = st.session_state.get("alumnos_manual_move_pending_reset_keys")
+    if not isinstance(pending, list):
+        pending = []
+    for key in keys:
+        if key and key not in pending:
+            pending.append(key)
+    st.session_state["alumnos_manual_move_pending_reset_keys"] = pending
+
+
 def _manual_move_alumno_option_label(row: Dict[str, object]) -> str:
     nombre = str(row.get("nombre_completo") or "").strip()
     if not nombre:
@@ -7452,6 +7462,11 @@ with tab_crud_alumnos:
         loaded_errors = st.session_state.get("alumnos_manual_move_errors") or []
         loaded_colegio_id = _safe_int(st.session_state.get("alumnos_manual_move_colegio_id"))
         current_colegio_id = _safe_int(colegio_id_raw)
+        pending_reset_keys = st.session_state.pop("alumnos_manual_move_pending_reset_keys", [])
+        if isinstance(pending_reset_keys, list):
+            for state_key in pending_reset_keys:
+                if state_key:
+                    st.session_state.pop(str(state_key), None)
 
         if loaded_errors:
             st.caption(f"Advertencia: hubo {len(loaded_errors)} errores al listar algunas secciones.")
@@ -7786,9 +7801,7 @@ with tab_crud_alumnos:
                                 destino_payload=destino_payload,
                             )
                             st.session_state["alumnos_manual_move_students"] = cached_students
-                            st.session_state[nivel_key] = None
-                            st.session_state[grado_key] = None
-                            st.session_state[grupo_key] = None
+                            _queue_manual_move_reset(nivel_key, grado_key, grupo_key)
                             st.session_state["alumnos_manual_move_notice"] = {
                                 "type": "success",
                                 "message": (

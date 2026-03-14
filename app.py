@@ -4194,6 +4194,7 @@ def _mover_alumno_web(
         "nuevoNivelId": int(nuevo_nivel_id),
         "nuevoGradoId": int(nuevo_grado_id),
         "nuevoGrupoId": int(nuevo_grupo_id),
+        "observaciones": " ",
     }
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=int(timeout))
@@ -4479,10 +4480,14 @@ def _build_manual_move_destination_catalog(
 ) -> Dict[str, object]:
     grade_catalog = _build_manual_move_grade_catalog(niveles_data)
     nivel_name_by_id: Dict[int, str] = {}
+    grado_ids: List[int] = []
+    grado_payload_by_id: Dict[int, Dict[str, object]] = {}
     grado_ids_by_nivel: Dict[int, List[int]] = {}
     grado_name_by_key: Dict[Tuple[int, int], str] = {}
     grupo_ids_by_grade: Dict[Tuple[int, int], List[int]] = {}
     grupo_payload_by_key: Dict[Tuple[int, int, int], Dict[str, object]] = {}
+    grupo_payload_by_grado_seccion: Dict[Tuple[int, str], Dict[str, object]] = {}
+    seccion_options: List[str] = []
 
     for grade in grade_catalog:
         nivel_id = _safe_int(grade.get("nivel_id"))
@@ -4492,6 +4497,14 @@ def _build_manual_move_destination_catalog(
         nivel_key = int(nivel_id)
         grado_key = int(grado_id)
         nivel_name_by_id[nivel_key] = str(grade.get("nivel") or "").strip()
+        if grado_key not in grado_ids:
+            grado_ids.append(grado_key)
+        grado_payload_by_id[grado_key] = {
+            "nivel_id": nivel_key,
+            "nivel": str(grade.get("nivel") or "").strip(),
+            "grado_id": grado_key,
+            "grado": str(grade.get("grado") or "").strip(),
+        }
         grado_ids_by_nivel.setdefault(nivel_key, []).append(grado_key)
         grado_name_by_key[(nivel_key, grado_key)] = str(grade.get("grado") or "").strip()
         grupos = grade.get("grupos") if isinstance(grade.get("grupos"), list) else []
@@ -4513,14 +4526,28 @@ def _build_manual_move_destination_catalog(
                 "nivel": str(grade.get("nivel") or "").strip(),
                 "grado": str(grade.get("grado") or "").strip(),
             }
+            seccion_key = _normalize_seccion_key(group.get("seccion") or group.get("grupo") or "")
+            if seccion_key:
+                grupo_payload_by_grado_seccion[(grado_key, seccion_key)] = grupo_payload_by_key[
+                    (nivel_key, grado_key, grupo_key)
+                ]
+                if seccion_key not in seccion_options:
+                    seccion_options.append(seccion_key)
 
     return {
         "nivel_ids": sorted(nivel_name_by_id.keys()),
+        "grado_ids": sorted(grado_ids),
+        "grado_payload_by_id": grado_payload_by_id,
         "nivel_name_by_id": nivel_name_by_id,
         "grado_ids_by_nivel": grado_ids_by_nivel,
         "grado_name_by_key": grado_name_by_key,
         "grupo_ids_by_grade": grupo_ids_by_grade,
         "grupo_payload_by_key": grupo_payload_by_key,
+        "grupo_payload_by_grado_seccion": grupo_payload_by_grado_seccion,
+        "seccion_options": sorted(
+            seccion_options,
+            key=lambda value: _grupo_sort_key(str(value), str(value)),
+        ),
     }
 
 
@@ -4712,6 +4739,10 @@ def _fetch_alumnos_catalog_for_manual_move(
         key=lambda row: (
             int(_safe_int(row.get("nivel_id")) or 0),
             int(_safe_int(row.get("grado_id")) or 0),
+            _grupo_sort_key(
+                str(row.get("seccion_norm") or ""),
+                str(row.get("seccion") or ""),
+            ),
             str(row.get("apellido_paterno") or "").upper(),
             str(row.get("apellido_materno") or "").upper(),
             str(row.get("nombre") or "").upper(),
@@ -7355,6 +7386,9 @@ with tab_crud_alumnos:
                 "alumnos_manual_move_rows",
             ):
                 st.session_state.pop(state_key, None)
+            for state_key in list(st.session_state.keys()):
+                if str(state_key).startswith("alumnos_manual_move_dest_"):
+                    st.session_state.pop(state_key, None)
             st.rerun()
 
         if run_load_students:
@@ -7396,6 +7430,9 @@ with tab_crud_alumnos:
                         st.session_state["alumnos_manual_move_niveles"] = niveles_loaded
                         st.session_state["alumnos_manual_move_errors"] = errors_loaded
                         st.session_state["alumnos_manual_move_colegio_id"] = int(colegio_id_int)
+                        for state_key in list(st.session_state.keys()):
+                            if str(state_key).startswith("alumnos_manual_move_dest_"):
+                                st.session_state.pop(state_key, None)
                         st.success(
                             "Listado listo. Alumnos: {students} | Errores de consulta: {errors}".format(
                                 students=len(students_loaded),
@@ -7448,23 +7485,34 @@ with tab_crud_alumnos:
                 destination_catalog = _build_manual_move_destination_catalog(loaded_niveles)
                 nivel_ids = destination_catalog.get("nivel_ids") or []
                 nivel_name_by_id = destination_catalog.get("nivel_name_by_id") or {}
-                grado_ids_by_nivel = destination_catalog.get("grado_ids_by_nivel") or {}
-                grado_name_by_key = destination_catalog.get("grado_name_by_key") or {}
-                grupo_ids_by_grade = destination_catalog.get("grupo_ids_by_grade") or {}
-                grupo_payload_by_key = destination_catalog.get("grupo_payload_by_key") or {}
+                grado_ids = destination_catalog.get("grado_ids") or []
+                grado_payload_by_id = destination_catalog.get("grado_payload_by_id") or {}
+                seccion_options = destination_catalog.get("seccion_options") or []
+                grupo_payload_by_grado_seccion = (
+                    destination_catalog.get("grupo_payload_by_grado_seccion") or {}
+                )
 
                 if not valid_students:
                     st.warning("No hay alumnos validos para mover.")
                 elif not nivel_ids:
                     st.warning("No hay grados/secciones disponibles para destino.")
                 else:
-                    header_cols = st.columns([4.8, 1.5, 2.3, 1.3, 1.2], gap="small")
-                    header_cols[0].markdown("**Alumno**")
-                    header_cols[1].markdown("**Nuevo nivel**")
-                    header_cols[2].markdown("**Nuevo grado**")
-                    header_cols[3].markdown("**Seccion**")
-                    header_cols[4].markdown("**Guardar**")
+                    valid_students = sorted(
+                        valid_students,
+                        key=lambda row: (
+                            int(_safe_int(row.get("nivel_id")) or 0),
+                            int(_safe_int(row.get("grado_id")) or 0),
+                            _grupo_sort_key(
+                                str(row.get("seccion_norm") or ""),
+                                str(row.get("seccion") or ""),
+                            ),
+                            str(row.get("apellido_paterno") or "").upper(),
+                            str(row.get("apellido_materno") or "").upper(),
+                            str(row.get("nombre") or "").upper(),
+                        ),
+                    )
 
+                    current_group_key: Optional[Tuple[str, str, str]] = None
                     for row in valid_students:
                         alumno_id = _safe_int(row.get("alumno_id"))
                         if alumno_id is None:
@@ -7473,59 +7521,7 @@ with tab_crud_alumnos:
 
                         nivel_key = f"alumnos_manual_move_dest_nivel_{alumno_id_int}"
                         grado_key = f"alumnos_manual_move_dest_grado_{alumno_id_int}"
-                        grupo_key = f"alumnos_manual_move_dest_grupo_{alumno_id_int}"
-
-                        current_nivel_id = _safe_int(row.get("nivel_id"))
-                        current_grado_id = _safe_int(row.get("grado_id"))
-                        current_grupo_id = _safe_int(row.get("grupo_id"))
-
-                        selected_nivel_id = _safe_int(st.session_state.get(nivel_key))
-                        if selected_nivel_id not in nivel_ids:
-                            if current_nivel_id in nivel_ids:
-                                selected_nivel_id = int(current_nivel_id)
-                            else:
-                                selected_nivel_id = int(nivel_ids[0])
-                            st.session_state[nivel_key] = selected_nivel_id
-
-                        grado_options = [
-                            int(value)
-                            for value in (grado_ids_by_nivel.get(int(selected_nivel_id)) or [])
-                        ]
-                        if not grado_options:
-                            continue
-
-                        selected_grado_id = _safe_int(st.session_state.get(grado_key))
-                        if selected_grado_id not in grado_options:
-                            if current_nivel_id == selected_nivel_id and current_grado_id in grado_options:
-                                selected_grado_id = int(current_grado_id)
-                            else:
-                                selected_grado_id = int(grado_options[0])
-                            st.session_state[grado_key] = selected_grado_id
-
-                        grupo_options = [
-                            int(value)
-                            for value in (
-                                grupo_ids_by_grade.get((int(selected_nivel_id), int(selected_grado_id)))
-                                or []
-                            )
-                        ]
-                        if not grupo_options:
-                            continue
-
-                        selected_grupo_id = _safe_int(st.session_state.get(grupo_key))
-                        if selected_grupo_id not in grupo_options:
-                            if (
-                                current_nivel_id == selected_nivel_id
-                                and current_grado_id == selected_grado_id
-                                and current_grupo_id in grupo_options
-                            ):
-                                selected_grupo_id = int(current_grupo_id)
-                            else:
-                                selected_grupo_id = int(grupo_options[0])
-                            st.session_state[grupo_key] = selected_grupo_id
-
-                        row_cols = st.columns([4.8, 1.5, 2.3, 1.3, 1.2], gap="small")
-
+                        grupo_key = f"alumnos_manual_move_dest_seccion_{alumno_id_int}"
                         alumno_seccion = _normalize_seccion_key(
                             row.get("seccion_norm") or row.get("seccion") or ""
                         )
@@ -7534,104 +7530,91 @@ with tab_crud_alumnos:
                             f"{str(row.get('grado') or '').strip()} ({alumno_seccion or '-'})"
                         )
                         alumno_header = _manual_move_alumno_option_label(row)
-                        row_cols[0].markdown(
-                            f"**{alumno_header}**\n\nActual: {alumno_actual}"
+                        group_key = (
+                            str(row.get("nivel") or "").strip(),
+                            str(row.get("grado") or "").strip(),
+                            alumno_seccion or "-",
                         )
+                        if group_key != current_group_key:
+                            current_group_key = group_key
+                            st.markdown(
+                                "### {nivel} | {grado} | Seccion {seccion}".format(
+                                    nivel=group_key[0] or "-",
+                                    grado=group_key[1] or "-",
+                                    seccion=group_key[2] or "-",
+                                )
+                            )
+                            header_cols = st.columns([4.8, 1.5, 2.5, 1.2, 1.1], gap="small")
+                            header_cols[0].markdown("**Alumno**")
+                            header_cols[1].markdown("**Nuevo nivel**")
+                            header_cols[2].markdown("**Nuevo grado**")
+                            header_cols[3].markdown("**Seccion**")
+                            header_cols[4].markdown("**Guardar**")
 
-                        with row_cols[1]:
-                            st.selectbox(
-                                "Nuevo nivel",
-                                options=nivel_ids,
-                                format_func=lambda value: str(
-                                    nivel_name_by_id.get(int(value), value)
-                                ).strip(),
-                                key=nivel_key,
-                                label_visibility="collapsed",
+                        if nivel_key not in st.session_state:
+                            st.session_state[nivel_key] = ""
+                        if grado_key not in st.session_state:
+                            st.session_state[grado_key] = ""
+                        if grupo_key not in st.session_state:
+                            st.session_state[grupo_key] = ""
+
+                        with st.form(key=f"alumnos_manual_move_form_{alumno_id_int}", border=False):
+                            row_cols = st.columns([4.8, 1.5, 2.5, 1.2, 1.1], gap="small")
+                            row_cols[0].markdown(
+                                f"**{alumno_header}**\n\nActual: {alumno_actual}"
                             )
 
-                        selected_nivel_id = int(_safe_int(st.session_state.get(nivel_key)) or selected_nivel_id)
-                        grado_options = [
-                            int(value)
-                            for value in (grado_ids_by_nivel.get(int(selected_nivel_id)) or [])
-                        ]
-                        if not grado_options:
-                            row_cols[2].caption("Sin grados")
-                            row_cols[3].caption("Sin secciones")
-                            row_cols[4].button(
+                            with row_cols[1]:
+                                st.selectbox(
+                                    "Nuevo nivel",
+                                    options=[""] + list(nivel_ids),
+                                    format_func=lambda value: "Selecciona"
+                                    if value == ""
+                                    else str(nivel_name_by_id.get(int(value), value)).strip(),
+                                    key=nivel_key,
+                                    label_visibility="collapsed",
+                                )
+
+                            with row_cols[2]:
+                                st.selectbox(
+                                    "Nuevo grado",
+                                    options=[""] + list(grado_ids),
+                                    format_func=lambda value: "Selecciona"
+                                    if value == ""
+                                    else "{nivel} | {grado}".format(
+                                        nivel=str(
+                                            (
+                                                grado_payload_by_id.get(int(value), {}) or {}
+                                            ).get("nivel")
+                                            or ""
+                                        ).strip(),
+                                        grado=str(
+                                            (
+                                                grado_payload_by_id.get(int(value), {}) or {}
+                                            ).get("grado")
+                                            or value
+                                        ).strip(),
+                                    ),
+                                    key=grado_key,
+                                    label_visibility="collapsed",
+                                )
+
+                            with row_cols[3]:
+                                st.selectbox(
+                                    "Seccion",
+                                    options=[""] + list(seccion_options),
+                                    format_func=lambda value: "Selecciona"
+                                    if value == ""
+                                    else str(value).strip(),
+                                    key=grupo_key,
+                                    label_visibility="collapsed",
+                                )
+
+                            save_clicked = row_cols[4].form_submit_button(
                                 "Guardar",
-                                key=f"alumnos_manual_move_save_btn_{alumno_id_int}",
+                                type="primary",
                                 use_container_width=True,
-                                disabled=True,
                             )
-                            continue
-
-                        selected_grado_id = _safe_int(st.session_state.get(grado_key))
-                        if selected_grado_id not in grado_options:
-                            selected_grado_id = int(grado_options[0])
-                            st.session_state[grado_key] = selected_grado_id
-
-                        with row_cols[2]:
-                            st.selectbox(
-                                "Nuevo grado",
-                                options=grado_options,
-                                format_func=lambda value: str(
-                                    grado_name_by_key.get(
-                                        (int(_safe_int(st.session_state.get(nivel_key)) or 0), int(value)),
-                                        value,
-                                    )
-                                ).strip(),
-                                key=grado_key,
-                                label_visibility="collapsed",
-                            )
-
-                        selected_nivel_id = int(_safe_int(st.session_state.get(nivel_key)) or selected_nivel_id)
-                        selected_grado_id = int(_safe_int(st.session_state.get(grado_key)) or selected_grado_id)
-                        grupo_options = [
-                            int(value)
-                            for value in (
-                                grupo_ids_by_grade.get((int(selected_nivel_id), int(selected_grado_id)))
-                                or []
-                            )
-                        ]
-                        if not grupo_options:
-                            row_cols[3].caption("Sin secciones")
-                            row_cols[4].button(
-                                "Guardar",
-                                key=f"alumnos_manual_move_save_btn_{alumno_id_int}",
-                                use_container_width=True,
-                                disabled=True,
-                            )
-                            continue
-
-                        selected_grupo_id = _safe_int(st.session_state.get(grupo_key))
-                        if selected_grupo_id not in grupo_options:
-                            selected_grupo_id = int(grupo_options[0])
-                            st.session_state[grupo_key] = selected_grupo_id
-
-                        with row_cols[3]:
-                            st.selectbox(
-                                "Seccion",
-                                options=grupo_options,
-                                format_func=lambda value: _manual_move_group_label(
-                                    grupo_payload_by_key.get(
-                                        (
-                                            int(_safe_int(st.session_state.get(nivel_key)) or 0),
-                                            int(_safe_int(st.session_state.get(grado_key)) or 0),
-                                            int(value),
-                                        ),
-                                        {},
-                                    )
-                                ),
-                                key=grupo_key,
-                                label_visibility="collapsed",
-                            )
-
-                        save_clicked = row_cols[4].button(
-                            "Guardar",
-                            key=f"alumnos_manual_move_save_btn_{alumno_id_int}",
-                            type="primary",
-                            use_container_width=True,
-                        )
 
                         if save_clicked:
                             token = _get_shared_token()
@@ -7652,25 +7635,53 @@ with tab_crud_alumnos:
 
                             selected_nivel_id = _safe_int(st.session_state.get(nivel_key))
                             selected_grado_id = _safe_int(st.session_state.get(grado_key))
-                            selected_grupo_id = _safe_int(st.session_state.get(grupo_key))
+                            selected_seccion = _normalize_seccion_key(
+                                st.session_state.get(grupo_key) or ""
+                            )
                             if (
                                 selected_nivel_id is None
                                 or selected_grado_id is None
-                                or selected_grupo_id is None
+                                or not selected_seccion
                             ):
-                                st.error("Seleccion invalida de nivel, grado o seccion.")
-                                st.stop()
+                                st.session_state["alumnos_manual_move_notice"] = {
+                                    "type": "warning",
+                                    "message": (
+                                        f"Completa nivel, grado y seccion antes de guardar "
+                                        f"el alumno {alumno_id_int}."
+                                    ),
+                                }
+                                st.rerun()
 
-                            destino_payload = grupo_payload_by_key.get(
-                                (
-                                    int(selected_nivel_id),
-                                    int(selected_grado_id),
-                                    int(selected_grupo_id),
-                                )
+                            grado_payload = grado_payload_by_id.get(int(selected_grado_id), {})
+                            grado_nivel_id = _safe_int(grado_payload.get("nivel_id"))
+                            if grado_nivel_id is None:
+                                st.session_state["alumnos_manual_move_notice"] = {
+                                    "type": "warning",
+                                    "message": f"No se pudo resolver el grado del alumno {alumno_id_int}.",
+                                }
+                                st.rerun()
+                            if int(grado_nivel_id) != int(selected_nivel_id):
+                                st.session_state["alumnos_manual_move_notice"] = {
+                                    "type": "warning",
+                                    "message": (
+                                        f"El nivel seleccionado no corresponde al grado elegido "
+                                        f"para el alumno {alumno_id_int}."
+                                    ),
+                                }
+                                st.rerun()
+
+                            destino_payload = grupo_payload_by_grado_seccion.get(
+                                (int(selected_grado_id), selected_seccion)
                             )
                             if not isinstance(destino_payload, dict):
-                                st.error("No se pudo resolver el destino seleccionado.")
-                                st.stop()
+                                st.session_state["alumnos_manual_move_notice"] = {
+                                    "type": "warning",
+                                    "message": (
+                                        f"La seccion {selected_seccion} no esta disponible para el grado "
+                                        f"seleccionado del alumno {alumno_id_int}."
+                                    ),
+                                }
+                                st.rerun()
 
                             try:
                                 with st.spinner(f"Moviendo alumno {alumno_id_int}..."):
@@ -7710,9 +7721,9 @@ with tab_crud_alumnos:
                                 destino_payload=destino_payload,
                             )
                             st.session_state["alumnos_manual_move_students"] = cached_students
-                            st.session_state[nivel_key] = int(destino_payload.get("nivel_id") or 0)
-                            st.session_state[grado_key] = int(destino_payload.get("grado_id") or 0)
-                            st.session_state[grupo_key] = int(destino_payload.get("grupo_id") or 0)
+                            st.session_state[nivel_key] = ""
+                            st.session_state[grado_key] = ""
+                            st.session_state[grupo_key] = ""
                             st.session_state["alumnos_manual_move_notice"] = {
                                 "type": "success",
                                 "message": (

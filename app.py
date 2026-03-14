@@ -20,7 +20,12 @@ from santillana_format.alumnos import (
     DEFAULT_EMPRESA_ID,
     descargar_plantilla_edicion_masiva,
 )
-from santillana_format.alumnos_compare import comparar_plantillas
+from santillana_format.alumnos_compare import (
+    COMPARE_MODE_AMBOS,
+    COMPARE_MODE_APELLIDOS,
+    COMPARE_MODE_DNI,
+    comparar_plantillas,
+)
 from santillana_format.processor import (
     CODE_COLUMN_NAME,
     OUTPUT_FILENAME,
@@ -77,9 +82,22 @@ CENSO_ALUMNO_MOVER_URL = (
     "/ciclos/{ciclo_id}/colegios/{colegio_id}/niveles/{nivel_id}"
     "/grados/{grado_id}/grupos/{grupo_id}/alumnos/{alumno_id}/mover"
 )
+CENSO_ALUMNO_UPDATE_LOGIN_URL = (
+    "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
+    "/ciclos/{ciclo_id}/colegios/{colegio_id}/niveles/{nivel_id}"
+    "/grados/{grado_id}/grupos/{grupo_id}/alumnos/{alumno_id}/updateLogin"
+)
 CENSO_PLANTILLA_EDICION_URL = (
     "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
     "/ciclos/{ciclo_id}/colegios/{colegio_id}/descargarPlantillaEdicionMasiva"
+)
+DASHBOARD_VALIDAR_IDENTIFICADOR_URL = (
+    "https://www.uno-internacional.com/pegasus-api/dashboard/empresas/{empresa_id}"
+    "/validarIdentificador"
+)
+DASHBOARD_VALIDAR_LOGIN_URL = (
+    "https://www.uno-internacional.com/pegasus-api/dashboard/empresas/{empresa_id}"
+    "/validarLogin"
 )
 GESTION_ESCOLAR_CICLO_ID_DEFAULT = 207
 AUTO_MOVE_SECCION_ORIGEN = "Y"
@@ -4218,6 +4236,225 @@ def _mover_alumno_web(
     return True, ""
 
 
+def _alumno_birthdate_to_api(value: object) -> str:
+    if isinstance(value, datetime):
+        raw_date = value.date()
+    elif isinstance(value, date):
+        raw_date = value
+    else:
+        text = str(value or "").strip()
+        if not text:
+            raise ValueError("Fecha de nacimiento obligatoria.")
+        try:
+            raw_date = date.fromisoformat(text)
+        except ValueError as exc:
+            raise ValueError("Fecha de nacimiento invalida.") from exc
+    return f"{raw_date.isoformat()}T00:00:00.000Z"
+
+
+def _validacion_dashboard_ok(payload: object) -> Tuple[bool, str]:
+    if not isinstance(payload, dict):
+        return False, "Respuesta invalida"
+    if not payload.get("success", False):
+        return False, str(payload.get("message") or "Respuesta invalida").strip()
+    data = payload.get("data") or {}
+    if isinstance(data, dict):
+        status = _safe_int(data.get("status"))
+        mensajes = data.get("mensajes")
+        if isinstance(mensajes, list):
+            mensaje = " | ".join(str(item).strip() for item in mensajes if str(item).strip())
+        else:
+            mensaje = str(payload.get("message") or "").strip()
+        if status is not None and int(status) != 0:
+            return False, mensaje or "Validacion rechazada."
+        return True, mensaje or str(payload.get("message") or "success").strip()
+    return True, str(payload.get("message") or "success").strip()
+
+
+def _validar_identificador_alumno_web(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    nivel_id: int,
+    identificador: str,
+    timeout: int,
+    persona_id: int = 0,
+) -> Tuple[bool, str]:
+    url = DASHBOARD_VALIDAR_IDENTIFICADOR_URL.format(empresa_id=int(empresa_id))
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    payload = {
+        "colegioId": int(colegio_id),
+        "cicloEscolarId": int(ciclo_id),
+        "nivelId": str(int(nivel_id)),
+        "personaId": int(persona_id),
+        "identificador": str(identificador or "").strip(),
+    }
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=int(timeout))
+    except requests.RequestException as exc:
+        return False, f"Error de red: {exc}"
+
+    status_code = response.status_code
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+
+    if not response.ok:
+        message = str(body.get("message") or "").strip() if isinstance(body, dict) else ""
+        return False, message or f"HTTP {status_code}"
+    return _validacion_dashboard_ok(body)
+
+
+def _crear_alumno_web(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    nivel_id: int,
+    grado_id: int,
+    grupo_id: int,
+    nombre: str,
+    apellido_paterno: str,
+    apellido_materno: str,
+    sexo: str,
+    fecha_nacimiento: object,
+    id_oficial: str,
+    extranjero: bool,
+    timeout: int,
+) -> Tuple[bool, Dict[str, object], str]:
+    url = CENSO_ALUMNOS_URL.format(
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        colegio_id=int(colegio_id),
+    )
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    params = {
+        "nivelId": int(nivel_id),
+        "gradoId": int(grado_id),
+        "grupoId": int(grupo_id),
+    }
+    payload = {
+        "nombre": str(nombre or "").strip(),
+        "apellidoPaterno": str(apellido_paterno or "").strip(),
+        "apellidoMaterno": str(apellido_materno or "").strip(),
+        "sexo": str(sexo or "").strip(),
+        "fechaNacimiento": _alumno_birthdate_to_api(fecha_nacimiento),
+        "idOficial": str(id_oficial or "").strip(),
+        "extranjero": bool(extranjero),
+    }
+    try:
+        response = requests.post(
+            url,
+            headers=headers,
+            params=params,
+            json=payload,
+            timeout=int(timeout),
+        )
+    except requests.RequestException as exc:
+        return False, {}, f"Error de red: {exc}"
+
+    status_code = response.status_code
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+
+    if not response.ok:
+        message = str(body.get("message") or "").strip() if isinstance(body, dict) else ""
+        return False, {}, message or f"HTTP {status_code}"
+    if isinstance(body, dict) and body.get("success", True) is False:
+        message = str(body.get("message") or "Respuesta invalida").strip()
+        return False, {}, message
+    data = body.get("data") if isinstance(body, dict) else {}
+    if not isinstance(data, dict):
+        return False, {}, "Respuesta invalida"
+    return True, data, ""
+
+
+def _validar_login_alumno_web(
+    token: str,
+    empresa_id: int,
+    login: str,
+    timeout: int,
+    persona_id: int = 0,
+    grado_id: int = 0,
+) -> Tuple[bool, str]:
+    url = DASHBOARD_VALIDAR_LOGIN_URL.format(empresa_id=int(empresa_id))
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    payload = {
+        "login": str(login or "").strip(),
+        "personaId": int(persona_id),
+        "gradoId": int(grado_id),
+    }
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=int(timeout))
+    except requests.RequestException as exc:
+        return False, f"Error de red: {exc}"
+
+    status_code = response.status_code
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+
+    if not response.ok:
+        message = str(body.get("message") or "").strip() if isinstance(body, dict) else ""
+        return False, message or f"HTTP {status_code}"
+    return _validacion_dashboard_ok(body)
+
+
+def _update_login_alumno_web(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    nivel_id: int,
+    grado_id: int,
+    grupo_id: int,
+    alumno_id: int,
+    login: str,
+    password: str,
+    timeout: int,
+) -> Tuple[bool, Dict[str, object], str]:
+    url = CENSO_ALUMNO_UPDATE_LOGIN_URL.format(
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        colegio_id=int(colegio_id),
+        nivel_id=int(nivel_id),
+        grado_id=int(grado_id),
+        grupo_id=int(grupo_id),
+        alumno_id=int(alumno_id),
+    )
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    payload = {
+        "login": str(login or "").strip(),
+        "password": str(password or ""),
+    }
+    try:
+        response = requests.put(url, headers=headers, json=payload, timeout=int(timeout))
+    except requests.RequestException as exc:
+        return False, {}, f"Error de red: {exc}"
+
+    status_code = response.status_code
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+
+    if not response.ok:
+        message = str(body.get("message") or "").strip() if isinstance(body, dict) else ""
+        return False, {}, message or f"HTTP {status_code}"
+    if isinstance(body, dict) and body.get("success", True) is False:
+        message = str(body.get("message") or "Respuesta invalida").strip()
+        return False, {}, message
+    data = body.get("data") if isinstance(body, dict) else {}
+    if not isinstance(data, dict):
+        return False, {}, "Respuesta invalida"
+    return True, data, ""
+
+
 def _asignar_alumno_a_clase_web(
     token: str,
     empresa_id: int,
@@ -4605,7 +4842,9 @@ def _manual_move_alumno_option_label(row: Dict[str, object]) -> str:
         nombre = "SIN NOMBRE"
     dni = str(row.get("id_oficial") or "").strip() or "-"
     login = str(row.get("login") or "").strip()
-    base = f"{dni}|{nombre}"
+    base = nombre
+    if dni:
+        base = f"{base} | {dni}"
     if login:
         base = f"{base} | {login}"
     return base
@@ -7182,6 +7421,17 @@ with tab_crud_alumnos:
                 type=["xlsx"],
                 key="alumnos_compare_excel",
             )
+            compare_mode_options = {
+                "Por DNI": COMPARE_MODE_DNI,
+                "Por apellido paterno + materno": COMPARE_MODE_APELLIDOS,
+                "Por ambos": COMPARE_MODE_AMBOS,
+            }
+            compare_mode_label = st.selectbox(
+                "Criterio de comparacion",
+                options=list(compare_mode_options.keys()),
+                index=0,
+                key="alumnos_compare_mode",
+            )
             if st.button("Generar resultado", type="primary", key="alumnos_compare"):
                 if not uploaded_compare:
                     st.error("Sube un Excel .xlsx con Plantilla_BD y Plantilla_Actualizada.")
@@ -7192,7 +7442,10 @@ with tab_crud_alumnos:
                     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                         tmp.write(uploaded_compare.read())
                         tmp_path = Path(tmp.name)
-                    output_bytes, summary = comparar_plantillas(excel_path=tmp_path)
+                    output_bytes, summary = comparar_plantillas(
+                        excel_path=tmp_path,
+                        compare_mode=compare_mode_options.get(compare_mode_label, COMPARE_MODE_DNI),
+                    )
                 except Exception as exc:  # pragma: no cover - UI
                     st.error(f"Error: {exc}")
                     st.stop()
@@ -7205,7 +7458,7 @@ with tab_crud_alumnos:
     
                 st.success(
                     "Listo. Base: {base_total}, Actualizada: {actualizados_total}, "
-                    "Match NUIP: {nuip_match}, Nuevos: {nuevos_total}, "
+                    "Match: {match_total}, Nuevos: {nuevos_total}, "
                     "Inactivados: {inactivados_total}.".format(**summary)
                 )
                 download_name = f"alumnos_resultados_{Path(uploaded_compare.name).stem}.xlsx"
@@ -7800,6 +8053,459 @@ with tab_crud_alumnos:
                             st.rerun()
 
                         st.divider()
+
+    with st.container(border=True):
+        st.markdown("**5) Crear alumno**")
+        st.caption(
+            "Valida DNI, crea el alumno en el grado/seccion elegidos y luego actualiza login/password."
+        )
+
+        col_create_load, col_create_clear = st.columns([2, 1], gap="small")
+        run_create_load = col_create_load.button(
+            "Cargar niveles para crear",
+            type="primary",
+            key="alumnos_create_load_btn",
+            use_container_width=True,
+        )
+        run_create_clear = col_create_clear.button(
+            "Limpiar formulario",
+            key="alumnos_create_clear_btn",
+            use_container_width=True,
+        )
+
+        if run_create_clear:
+            for state_key in (
+                "alumnos_create_niveles",
+                "alumnos_create_colegio_id",
+                "alumnos_create_notice",
+            ):
+                st.session_state.pop(state_key, None)
+            for state_key in list(st.session_state.keys()):
+                if str(state_key).startswith("alumnos_create_"):
+                    st.session_state.pop(state_key, None)
+            st.rerun()
+
+        if run_create_load:
+            token = _get_shared_token()
+            if not token:
+                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                st.stop()
+            try:
+                colegio_id_int = _parse_colegio_id(colegio_id_raw)
+            except ValueError as exc:
+                st.error(f"Error: {exc}")
+                st.stop()
+
+            try:
+                with st.spinner("Cargando niveles, grados y secciones..."):
+                    niveles_create = _fetch_niveles_grados_grupos_censo(
+                        token=token,
+                        colegio_id=int(colegio_id_int),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                    )
+            except Exception as exc:  # pragma: no cover - UI
+                st.error(f"Error cargando opciones: {exc}")
+                st.stop()
+
+            st.session_state["alumnos_create_niveles"] = niveles_create
+            st.session_state["alumnos_create_colegio_id"] = int(colegio_id_int)
+            st.success("Opciones cargadas para crear alumno.")
+
+        create_notice = st.session_state.pop("alumnos_create_notice", None)
+        if isinstance(create_notice, dict):
+            create_notice_type = str(create_notice.get("type") or "").strip().lower()
+            create_notice_message = str(create_notice.get("message") or "").strip()
+            if create_notice_message:
+                if create_notice_type == "success":
+                    st.success(create_notice_message)
+                elif create_notice_type == "warning":
+                    st.warning(create_notice_message)
+                else:
+                    st.info(create_notice_message)
+
+        create_niveles = st.session_state.get("alumnos_create_niveles")
+        create_colegio_id = _safe_int(st.session_state.get("alumnos_create_colegio_id"))
+        if (
+            not create_niveles
+            and loaded_niveles
+            and loaded_colegio_id is not None
+            and current_colegio_id is not None
+            and int(loaded_colegio_id) == int(current_colegio_id)
+        ):
+            create_niveles = loaded_niveles
+            create_colegio_id = int(loaded_colegio_id)
+
+        if (
+            create_colegio_id is not None
+            and current_colegio_id is not None
+            and int(create_colegio_id) != int(current_colegio_id)
+        ):
+            st.warning("El colegio global cambio. Vuelve a cargar las opciones para crear.")
+        elif not create_niveles:
+            st.caption("Primero presiona 'Cargar niveles para crear'.")
+        else:
+            create_catalog = _build_manual_move_destination_catalog(create_niveles)
+            create_nivel_ids = create_catalog.get("nivel_ids") or []
+            create_nivel_name_by_id = create_catalog.get("nivel_name_by_id") or {}
+            create_grado_ids_by_nivel = create_catalog.get("grado_ids_by_nivel") or {}
+            create_grado_payload_by_id = create_catalog.get("grado_payload_by_id") or {}
+            create_group_by_grade_section = create_catalog.get("grupo_payload_by_grado_seccion") or {}
+
+            create_nivel_key = "alumnos_create_nivel_id"
+            create_grado_key = "alumnos_create_grado_id"
+            create_grupo_key = "alumnos_create_seccion"
+            if create_nivel_key not in st.session_state:
+                st.session_state[create_nivel_key] = None
+            if create_grado_key not in st.session_state:
+                st.session_state[create_grado_key] = None
+            if create_grupo_key not in st.session_state:
+                st.session_state[create_grupo_key] = None
+
+            create_selected_nivel = _safe_int(st.session_state.get(create_nivel_key))
+            if create_selected_nivel not in create_nivel_ids:
+                st.session_state[create_nivel_key] = None
+                create_selected_nivel = None
+
+            create_grado_options = []
+            if create_selected_nivel is not None:
+                create_grado_options = [
+                    int(value)
+                    for value in (create_grado_ids_by_nivel.get(int(create_selected_nivel)) or [])
+                ]
+
+            create_selected_grado = _safe_int(st.session_state.get(create_grado_key))
+            if create_selected_grado not in create_grado_options:
+                st.session_state[create_grado_key] = None
+                create_selected_grado = None
+
+            create_seccion_options: List[str] = []
+            if create_selected_grado is not None:
+                create_seccion_options = sorted(
+                    [
+                        seccion
+                        for (grado_id_tmp, seccion), payload in create_group_by_grade_section.items()
+                        if int(grado_id_tmp) == int(create_selected_grado)
+                        and isinstance(payload, dict)
+                        and payload
+                    ],
+                    key=lambda value: _grupo_sort_key(str(value), str(value)),
+                )
+
+            create_selected_seccion = _normalize_seccion_key(
+                st.session_state.get(create_grupo_key) or ""
+            )
+            if (
+                create_selected_seccion
+                and create_selected_seccion not in create_seccion_options
+            ):
+                st.session_state[create_grupo_key] = None
+
+            dest_col_1, dest_col_2, dest_col_3 = st.columns(3, gap="small")
+            with dest_col_1:
+                st.selectbox(
+                    "Nivel destino",
+                    options=create_nivel_ids,
+                    index=None,
+                    placeholder="Nivel",
+                    format_func=lambda value: str(
+                        create_nivel_name_by_id.get(int(value), value)
+                    ).strip(),
+                    key=create_nivel_key,
+                    on_change=_clear_manual_move_selection,
+                    args=(create_grado_key, create_grupo_key),
+                )
+            selected_nivel_form = _safe_int(st.session_state.get(create_nivel_key))
+            grado_options_form = []
+            if selected_nivel_form is not None:
+                grado_options_form = [
+                    int(value)
+                    for value in (create_grado_ids_by_nivel.get(int(selected_nivel_form)) or [])
+                ]
+            with dest_col_2:
+                st.selectbox(
+                    "Grado destino",
+                    options=grado_options_form,
+                    index=None,
+                    placeholder="Grado",
+                    format_func=lambda value: str(
+                        (create_grado_payload_by_id.get(int(value), {}) or {}).get("grado")
+                        or value
+                    ).strip(),
+                    key=create_grado_key,
+                    on_change=_clear_manual_move_selection,
+                    args=(create_grupo_key,),
+                    disabled=not grado_options_form,
+                )
+            selected_grado_form = _safe_int(st.session_state.get(create_grado_key))
+            seccion_options_form: List[str] = []
+            if selected_grado_form is not None:
+                seccion_options_form = sorted(
+                    [
+                        seccion
+                        for (grado_id_tmp, seccion), payload in create_group_by_grade_section.items()
+                        if int(grado_id_tmp) == int(selected_grado_form)
+                        and isinstance(payload, dict)
+                        and payload
+                    ],
+                    key=lambda value: _grupo_sort_key(str(value), str(value)),
+                )
+            with dest_col_3:
+                st.selectbox(
+                    "Seccion destino",
+                    options=seccion_options_form,
+                    index=None,
+                    placeholder="Seccion",
+                    key=create_grupo_key,
+                    disabled=not seccion_options_form,
+                )
+
+            name_col_1, name_col_2, name_col_3 = st.columns(3, gap="small")
+            name_col_1.text_input("Nombre", key="alumnos_create_nombre")
+            name_col_2.text_input(
+                "Apellido paterno",
+                key="alumnos_create_apellido_paterno",
+            )
+            name_col_3.text_input(
+                "Apellido materno",
+                key="alumnos_create_apellido_materno",
+            )
+
+            data_col_1, data_col_2, data_col_3, data_col_4 = st.columns(4, gap="small")
+            data_col_1.text_input(
+                "DNI / identificador",
+                key="alumnos_create_dni",
+            )
+            data_col_2.selectbox(
+                "Sexo",
+                options=["M", "F"],
+                index=None,
+                placeholder="Sexo",
+                key="alumnos_create_sexo",
+            )
+            data_col_3.text_input(
+                "Fecha nacimiento",
+                key="alumnos_create_fecha",
+                placeholder="2016-03-16",
+            )
+            data_col_4.checkbox(
+                "Extranjero",
+                key="alumnos_create_extranjero",
+            )
+
+            cred_col_1, cred_col_2 = st.columns(2, gap="small")
+            cred_col_1.text_input("Login", key="alumnos_create_login")
+            cred_col_2.text_input(
+                "Password",
+                type="password",
+                key="alumnos_create_password",
+            )
+
+            create_submit = st.button(
+                "Crear alumno",
+                type="primary",
+                use_container_width=True,
+                key="alumnos_create_submit_btn",
+            )
+
+            if create_submit:
+                token = _get_shared_token()
+                if not token:
+                    st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                    st.stop()
+                try:
+                    colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                except ValueError as exc:
+                    st.error(f"Error: {exc}")
+                    st.stop()
+
+                selected_nivel_id = _safe_int(st.session_state.get(create_nivel_key))
+                selected_grado_id = _safe_int(st.session_state.get(create_grado_key))
+                selected_seccion = _normalize_seccion_key(
+                    st.session_state.get(create_grupo_key) or ""
+                )
+                if (
+                    selected_nivel_id is None
+                    or selected_grado_id is None
+                    or not selected_seccion
+                ):
+                    st.error("Completa nivel, grado y seccion destino.")
+                    st.stop()
+
+                destino_payload = create_group_by_grade_section.get(
+                    (int(selected_grado_id), selected_seccion)
+                )
+                if not isinstance(destino_payload, dict):
+                    st.error("No se pudo resolver la seccion destino.")
+                    st.stop()
+
+                grado_payload = create_grado_payload_by_id.get(int(selected_grado_id), {})
+                grado_nivel_id = _safe_int(grado_payload.get("nivel_id"))
+                if grado_nivel_id is None or int(grado_nivel_id) != int(selected_nivel_id):
+                    st.error("El grado no corresponde al nivel seleccionado.")
+                    st.stop()
+
+                nombre_txt = str(st.session_state.get("alumnos_create_nombre") or "").strip()
+                ap_pat_txt = str(st.session_state.get("alumnos_create_apellido_paterno") or "").strip()
+                ap_mat_txt = str(st.session_state.get("alumnos_create_apellido_materno") or "").strip()
+                dni_txt = re.sub(r"\D", "", str(st.session_state.get("alumnos_create_dni") or ""))
+                sexo_txt = str(st.session_state.get("alumnos_create_sexo") or "").strip().upper()
+                fecha_txt = str(st.session_state.get("alumnos_create_fecha") or "").strip()
+                login_txt = str(st.session_state.get("alumnos_create_login") or "").strip()
+                password_txt = str(st.session_state.get("alumnos_create_password") or "")
+                extranjero_flag = bool(st.session_state.get("alumnos_create_extranjero", False))
+
+                if not all([nombre_txt, ap_pat_txt, ap_mat_txt, dni_txt, sexo_txt, fecha_txt, login_txt, password_txt]):
+                    st.error("Completa todos los campos obligatorios.")
+                    st.stop()
+
+                try:
+                    _alumno_birthdate_to_api(fecha_txt)
+                except ValueError as exc:
+                    st.error(str(exc))
+                    st.stop()
+
+                with st.spinner("Creando alumno..."):
+                    id_ok, id_msg = _validar_identificador_alumno_web(
+                        token=token,
+                        colegio_id=int(colegio_id_int),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        nivel_id=int(selected_nivel_id),
+                        identificador=dni_txt,
+                        timeout=int(timeout),
+                    )
+                    if not id_ok:
+                        st.error(f"Identificador invalido: {id_msg}")
+                        st.stop()
+
+                    created_ok, created_data, created_msg = _crear_alumno_web(
+                        token=token,
+                        colegio_id=int(colegio_id_int),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        nivel_id=int(selected_nivel_id),
+                        grado_id=int(selected_grado_id),
+                        grupo_id=int(destino_payload.get("grupo_id") or 0),
+                        nombre=nombre_txt,
+                        apellido_paterno=ap_pat_txt,
+                        apellido_materno=ap_mat_txt,
+                        sexo=sexo_txt,
+                        fecha_nacimiento=fecha_txt,
+                        id_oficial=dni_txt,
+                        extranjero=extranjero_flag,
+                        timeout=int(timeout),
+                    )
+                    if not created_ok:
+                        st.error(f"No se pudo crear el alumno: {created_msg}")
+                        st.stop()
+
+                    login_ok, login_msg = _validar_login_alumno_web(
+                        token=token,
+                        empresa_id=int(empresa_id),
+                        login=login_txt,
+                        timeout=int(timeout),
+                    )
+                    if not login_ok:
+                        st.session_state["alumnos_create_notice"] = {
+                            "type": "warning",
+                            "message": (
+                                "Alumno creado, pero el login no es valido: {msg}".format(
+                                    msg=login_msg or "sin detalle"
+                                )
+                            ),
+                        }
+                        st.rerun()
+
+                    alumno_id_created = _safe_int(created_data.get("alumnoId"))
+                    if alumno_id_created is None:
+                        st.error("El alta no devolvio alumnoId valido.")
+                        st.stop()
+
+                    update_ok, update_data, update_msg = _update_login_alumno_web(
+                        token=token,
+                        colegio_id=int(colegio_id_int),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        nivel_id=int(selected_nivel_id),
+                        grado_id=int(selected_grado_id),
+                        grupo_id=int(destino_payload.get("grupo_id") or 0),
+                        alumno_id=int(alumno_id_created),
+                        login=login_txt,
+                        password=password_txt,
+                        timeout=int(timeout),
+                    )
+                    if not update_ok:
+                        st.session_state["alumnos_create_notice"] = {
+                            "type": "warning",
+                            "message": (
+                                "Alumno creado, pero no se pudo actualizar login/password: {msg}".format(
+                                    msg=update_msg or "sin detalle"
+                                )
+                            ),
+                        }
+                        st.rerun()
+
+                created_row = _flatten_censo_alumno_for_auto_plan(
+                    item=update_data or created_data,
+                    fallback={
+                        "nivel_id": int(selected_nivel_id),
+                        "nivel": str(destino_payload.get("nivel") or "").strip(),
+                        "grado_id": int(selected_grado_id),
+                        "grado": str(destino_payload.get("grado") or "").strip(),
+                        "grupo_id": int(destino_payload.get("grupo_id") or 0),
+                        "seccion": str(destino_payload.get("seccion") or "").strip(),
+                    },
+                )
+                created_row["login"] = str(login_txt).strip()
+                created_row["password"] = str(password_txt)
+                if (
+                    loaded_colegio_id is not None
+                    and int(loaded_colegio_id) == int(colegio_id_int)
+                ):
+                    cached_students = st.session_state.get("alumnos_manual_move_students") or []
+                    cached_students.append(created_row)
+                    cached_students.sort(
+                        key=lambda row: (
+                            int(_safe_int(row.get("nivel_id")) or 0),
+                            int(_safe_int(row.get("grado_id")) or 0),
+                            _grupo_sort_key(
+                                str(row.get("seccion_norm") or ""),
+                                str(row.get("seccion") or ""),
+                            ),
+                            str(row.get("apellido_paterno") or "").upper(),
+                            str(row.get("apellido_materno") or "").upper(),
+                            str(row.get("nombre") or "").upper(),
+                        ),
+                    )
+                    st.session_state["alumnos_manual_move_students"] = cached_students
+
+                _queue_manual_move_reset(
+                    create_nivel_key,
+                    create_grado_key,
+                    create_grupo_key,
+                    "alumnos_create_nombre",
+                    "alumnos_create_apellido_paterno",
+                    "alumnos_create_apellido_materno",
+                    "alumnos_create_dni",
+                    "alumnos_create_sexo",
+                    "alumnos_create_fecha",
+                    "alumnos_create_extranjero",
+                    "alumnos_create_login",
+                    "alumnos_create_password",
+                )
+                st.session_state["alumnos_create_notice"] = {
+                    "type": "success",
+                    "message": (
+                        "Alumno creado: {nombre} | {dni} | {login}".format(
+                            nombre=str(created_row.get("nombre_completo") or nombre_txt).strip(),
+                            dni=dni_txt,
+                            login=login_txt,
+                        )
+                    ),
+                }
+                st.rerun()
 
 with tab_crud_clases:
     if not _restricted_sections_unlocked():

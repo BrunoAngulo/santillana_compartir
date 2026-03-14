@@ -9,6 +9,9 @@ from openpyxl.utils import get_column_letter
 
 DEFAULT_SHEET_BD = "Plantilla_BD"
 DEFAULT_SHEET_ACTUALIZADA = "Plantilla_Actualizada"
+COMPARE_MODE_DNI = "dni"
+COMPARE_MODE_APELLIDOS = "apellidos"
+COMPARE_MODE_AMBOS = "ambos"
 ALUMNOS_CREAR_COLUMNS = [
     "Nivel",
     "Grado",
@@ -112,6 +115,7 @@ def comparar_plantillas(
     excel_path: Path,
     sheet_bd: str = DEFAULT_SHEET_BD,
     sheet_actualizada: str = DEFAULT_SHEET_ACTUALIZADA,
+    compare_mode: str = COMPARE_MODE_DNI,
 ) -> Tuple[bytes, Dict[str, int]]:
     df_bd = _read_sheet(excel_path, sheet_bd)
     df_act = _read_sheet(excel_path, sheet_actualizada)
@@ -119,8 +123,8 @@ def comparar_plantillas(
     df_bd = _canonicalize_columns(df_bd)
     df_act = _canonicalize_columns(df_act)
 
-    summary = _build_nuip_summary(df_bd, df_act)
-    comparacion, nuevos = _build_comparacion_bd(df_bd, df_act)
+    summary = _build_compare_summary(df_bd, df_act, compare_mode=compare_mode)
+    comparacion, nuevos = _build_comparacion_bd(df_bd, df_act, compare_mode=compare_mode)
 
     output = Path(excel_path).name
     output_bytes = _export_comparacion(comparacion, nuevos)
@@ -131,6 +135,7 @@ def comparar_plantillas(
             "archivo_base": output,
             "nuevos_total": len(nuevos),
             "inactivados_total": _count_inactivos(comparacion),
+            "compare_mode": compare_mode,
         }
     )
     return output_bytes, summary
@@ -647,7 +652,59 @@ def _resolve_apellidos_match(
     return None
 
 
-def _build_nuip_summary(df_bd: pd.DataFrame, df_act: pd.DataFrame) -> Dict[str, int]:
+def _resolve_match_by_mode(
+    act_row: pd.Series,
+    df_bd: pd.DataFrame,
+    nuip_index: Dict[str, List[int]],
+    apellidos_cache: Sequence[Tuple[int, str, str]],
+    used_indices: Optional[set],
+    compare_mode: str,
+) -> Optional[int]:
+    if compare_mode == COMPARE_MODE_DNI:
+        return _resolve_nuip_match(
+            act_row,
+            df_bd,
+            nuip_index,
+            used_indices=used_indices,
+        )
+    if compare_mode == COMPARE_MODE_APELLIDOS:
+        return _resolve_apellidos_match(
+            act_row,
+            df_bd,
+            apellidos_cache,
+            used_indices=used_indices,
+        )
+    if compare_mode == COMPARE_MODE_AMBOS:
+        bd_idx = _resolve_nuip_match(
+            act_row,
+            df_bd,
+            nuip_index,
+            used_indices=used_indices,
+        )
+        if bd_idx is None:
+            return None
+        ap_pat = _normalize_text(act_row.get("apellido_paterno"))
+        ap_mat = _normalize_text(act_row.get("apellido_materno"))
+        bd_row = df_bd.loc[bd_idx]
+        bd_ap_pat = _normalize_text(bd_row.get("apellido_paterno"))
+        bd_ap_mat = _normalize_text(bd_row.get("apellido_materno"))
+        if not (ap_pat and ap_mat and bd_ap_pat and bd_ap_mat):
+            return None
+        score_pat = _char_match_ratio(ap_pat, bd_ap_pat)
+        score_mat = _char_match_ratio(ap_mat, bd_ap_mat)
+        if not _apellido_match_ok(ap_pat, bd_ap_pat, score_pat):
+            return None
+        if not _apellido_match_ok(ap_mat, bd_ap_mat, score_mat):
+            return None
+        return int(bd_idx)
+    raise ValueError(f"Modo de comparacion invalido: {compare_mode}")
+
+
+def _build_compare_summary(
+    df_bd: pd.DataFrame,
+    df_act: pd.DataFrame,
+    compare_mode: str,
+) -> Dict[str, int]:
     bd_nuips = set()
     for _idx, row in df_bd.iterrows():
         nuip = _normalize_nuip(row.get("nuip"))
@@ -660,11 +717,29 @@ def _build_nuip_summary(df_bd: pd.DataFrame, df_act: pd.DataFrame) -> Dict[str, 
         if nuip:
             act_nuips.add(nuip)
 
-    matched = bd_nuips.intersection(act_nuips)
+    matched_total = 0
+    if not df_bd.empty and not df_act.empty:
+        nuip_index = _build_nuip_index(df_bd)
+        apellidos_cache = _build_apellidos_cache(df_bd)
+        used_indices = set()
+        for _idx, act_row in df_act.iterrows():
+            bd_idx = _resolve_match_by_mode(
+                act_row,
+                df_bd,
+                nuip_index,
+                apellidos_cache,
+                used_indices=used_indices,
+                compare_mode=compare_mode,
+            )
+            if bd_idx is None:
+                continue
+            used_indices.add(int(bd_idx))
+            matched_total += 1
+
     return {
         "nuip_bd_total": len(bd_nuips),
         "nuip_actualizada_total": len(act_nuips),
-        "nuip_match": len(matched),
+        "match_total": int(matched_total),
         "nuip_sin_bd": len(act_nuips - bd_nuips),
         "nuip_sin_actualizada": len(bd_nuips - act_nuips),
     }
@@ -718,7 +793,9 @@ def _pick_best_match(
 
 
 def _build_comparacion_bd(
-    df_bd: pd.DataFrame, df_act: pd.DataFrame
+    df_bd: pd.DataFrame,
+    df_act: pd.DataFrame,
+    compare_mode: str = COMPARE_MODE_DNI,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     if df_bd.empty and df_act.empty:
         return (
@@ -727,9 +804,6 @@ def _build_comparacion_bd(
         )
 
     nuip_index = _build_nuip_index(df_bd) if not df_bd.empty else {}
-    nombre_ap_pat_index = (
-        _build_nombre_ap_pat_index(df_bd) if not df_bd.empty else {}
-    )
     apellidos_cache = _build_apellidos_cache(df_bd) if not df_bd.empty else []
     rows: List[Dict[str, object]] = []
     nuevos_rows: List[pd.Series] = []
@@ -741,54 +815,41 @@ def _build_comparacion_bd(
         nuip_norm = ""
         if not df_bd.empty:
             nuip_norm = _normalize_nuip(act_row.get("nuip"))
-            # Prioridad solicitada:
-            # 1) NUIP
-            # 2) Apellido paterno + materno
-            # 3) Nombre + apellido paterno
-            if bd_idx is None and nuip_norm:
-                bd_idx = _resolve_nuip_match(
-                    act_row,
-                    df_bd,
-                    nuip_index,
-                    used_indices=bd_matched_indices,
-                )
-            if bd_idx is None:
-                bd_idx = _resolve_apellidos_match(
-                    act_row,
-                    df_bd,
-                    apellidos_cache,
-                    used_indices=bd_matched_indices,
-                )
-            if bd_idx is None:
-                bd_idx = _resolve_nombre_ap_pat_match(
-                    act_row,
-                    df_bd,
-                    nombre_ap_pat_index,
-                    used_indices=bd_matched_indices,
-                )
+            bd_idx = _resolve_match_by_mode(
+                act_row,
+                df_bd,
+                nuip_index,
+                apellidos_cache,
+                used_indices=bd_matched_indices,
+                compare_mode=compare_mode,
+            )
         if bd_idx is None:
-            # Si hay candidatos fuertes (NUIP o Nombre+Ap. Paterno) pero ambiguos,
-            # no inactivar esos BD por seguridad.
             protected_candidates: List[int] = []
-            if nuip_norm:
+            if compare_mode in {COMPARE_MODE_DNI, COMPARE_MODE_AMBOS} and nuip_norm:
                 protected_candidates.extend(
                     _filter_unused_indices(
                         nuip_index.get(nuip_norm) or [],
                         bd_matched_indices,
                     )
                 )
-            nombre_norm = _normalize_text(act_row.get("nombre"))
-            ap_pat_norm = _normalize_text(act_row.get("apellido_paterno"))
-            if nombre_norm and ap_pat_norm:
-                key = f"{nombre_norm}|{ap_pat_norm}"
-                protected_candidates.extend(
-                    _filter_unused_indices(
-                        nombre_ap_pat_index.get(key) or [],
-                        bd_matched_indices,
-                    )
-                )
+            if compare_mode in {COMPARE_MODE_APELLIDOS, COMPARE_MODE_AMBOS}:
+                ap_pat_norm = _normalize_text(act_row.get("apellido_paterno"))
+                ap_mat_norm = _normalize_text(act_row.get("apellido_materno"))
+                if ap_pat_norm and ap_mat_norm:
+                    for idx, bd_ap_pat, bd_ap_mat in apellidos_cache:
+                        score_pat = _char_match_ratio(ap_pat_norm, bd_ap_pat)
+                        score_mat = _char_match_ratio(ap_mat_norm, bd_ap_mat)
+                        if not _apellido_match_ok(ap_pat_norm, bd_ap_pat, score_pat):
+                            continue
+                        if not _apellido_match_ok(ap_mat_norm, bd_ap_mat, score_mat):
+                            continue
+                        if int(idx) in bd_matched_indices:
+                            continue
+                        protected_candidates.append(int(idx))
             if protected_candidates:
-                bd_protected_indices.update(protected_candidates)
+                bd_protected_indices.update(
+                    int(idx) for idx in protected_candidates if idx is not None
+                )
             nuevos_rows.append(act_row)
             continue
         bd_matched_indices.add(int(bd_idx))

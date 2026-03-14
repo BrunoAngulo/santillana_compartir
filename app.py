@@ -8284,10 +8284,11 @@ with tab_crud_alumnos:
                 placeholder="Sexo",
                 key="alumnos_create_sexo",
             )
-            data_col_3.text_input(
+            data_col_3.date_input(
                 "Fecha nacimiento",
+                value=date.today(),
+                format="DD/MM/YYYY",
                 key="alumnos_create_fecha",
-                placeholder="2016-03-16",
             )
             data_col_4.checkbox(
                 "Extranjero",

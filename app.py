@@ -68,6 +68,11 @@ CENSO_ALUMNOS_URL = (
     "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
     "/ciclos/{ciclo_id}/colegios/{colegio_id}/alumnos"
 )
+CENSO_ALUMNOS_CREATE_URL = (
+    "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
+    "/ciclos/{ciclo_id}/colegios/{colegio_id}/niveles/{nivel_id}"
+    "/grados/{grado_id}/grupos/{grupo_id}/alumnos"
+)
 CENSO_NIVELES_GRADOS_GRUPOS_URL = (
     "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
     "/ciclos/{ciclo_id}/colegios/{colegio_id}/alumnos/nivelesGradosGrupos"
@@ -4345,17 +4350,15 @@ def _crear_alumno_web(
     extranjero: bool,
     timeout: int,
 ) -> Tuple[bool, Dict[str, object], str]:
-    url = CENSO_ALUMNOS_URL.format(
+    url = CENSO_ALUMNOS_CREATE_URL.format(
         empresa_id=int(empresa_id),
         ciclo_id=int(ciclo_id),
         colegio_id=int(colegio_id),
+        nivel_id=int(nivel_id),
+        grado_id=int(grado_id),
+        grupo_id=int(grupo_id),
     )
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-    params = {
-        "nivelId": int(nivel_id),
-        "gradoId": int(grado_id),
-        "grupoId": int(grupo_id),
-    }
     payload = {
         "nombre": str(nombre or "").strip(),
         "apellidoPaterno": str(apellido_paterno or "").strip(),
@@ -4369,7 +4372,6 @@ def _crear_alumno_web(
         response = requests.post(
             url,
             headers=headers,
-            params=params,
             json=payload,
             timeout=int(timeout),
         )

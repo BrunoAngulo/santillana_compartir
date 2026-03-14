@@ -13,6 +13,7 @@ from uuid import uuid4
 import pandas as pd
 import requests
 import streamlit as st
+from st_keyup import st_keyup
 
 from santillana_format.alumnos import (
     DEFAULT_CICLO_ID as ALUMNOS_CICLO_ID_DEFAULT,
@@ -7454,10 +7455,12 @@ with tab_crud_alumnos:
         elif not loaded_students:
             st.caption("Primero presiona 'Listar alumnos del colegio'.")
         else:
-            search_text = st.text_input(
+            search_text = st_keyup(
                 "Buscar alumno (login, nombre, apellido o DNI)",
+                value=str(st.session_state.get("alumnos_manual_move_search", "") or ""),
                 key="alumnos_manual_move_search",
                 placeholder="Ejemplo: lnjmf90942147, CHERO o 91092564",
+                debounce=150,
             ).strip()
             filtered_students: List[Dict[str, object]] = []
             for row in loaded_students:

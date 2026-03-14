@@ -3,3 +3,4 @@ openpyxl
 requests
 streamlit>=1.52.0
 altair>=5.5.0,<6
+streamlit-keyup>=0.3.0

@@ -4271,6 +4271,27 @@ def _validacion_dashboard_ok(payload: object) -> Tuple[bool, str]:
     return True, str(payload.get("message") or "success").strip()
 
 
+def _validar_login_reglas(login: str) -> Optional[str]:
+    login_txt = str(login or "").strip()
+    if len(login_txt) < 6:
+        return "El login debe tener minimo 6 caracteres."
+    if not re.fullmatch(r"[A-Za-z0-9@._-]+", login_txt):
+        return (
+            "El login solo puede tener letras, numeros y estos caracteres: "
+            "@ . - _"
+        )
+    return None
+
+
+def _validar_password_reglas(password: str) -> Optional[str]:
+    password_txt = str(password or "")
+    if len(password_txt) < 6:
+        return "La password debe tener minimo 6 caracteres."
+    if not re.fullmatch(r"[A-Za-z0-9]+", password_txt):
+        return "La password solo puede tener letras y numeros."
+    return None
+
+
 def _validar_identificador_alumno_web(
     token: str,
     colegio_id: int,
@@ -8296,11 +8317,16 @@ with tab_crud_alumnos:
             )
 
             cred_col_1, cred_col_2 = st.columns(2, gap="small")
-            cred_col_1.text_input("Login", key="alumnos_create_login")
+            cred_col_1.text_input(
+                "Login",
+                key="alumnos_create_login",
+                help="Minimo 6 caracteres. Solo letras, numeros y @ . - _",
+            )
             cred_col_2.text_input(
                 "Password",
                 type="password",
                 key="alumnos_create_password",
+                help="Minimo 6 caracteres. Solo letras y numeros.",
             )
 
             create_submit = st.button(
@@ -8359,6 +8385,16 @@ with tab_crud_alumnos:
 
                 if not all([nombre_txt, ap_pat_txt, ap_mat_txt, dni_txt, sexo_txt, fecha_txt, login_txt, password_txt]):
                     st.error("Completa todos los campos obligatorios.")
+                    st.stop()
+
+                login_error = _validar_login_reglas(login_txt)
+                if login_error:
+                    st.error(login_error)
+                    st.stop()
+
+                password_error = _validar_password_reglas(password_txt)
+                if password_error:
+                    st.error(password_error)
                     st.stop()
 
                 try:

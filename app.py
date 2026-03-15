@@ -2054,6 +2054,25 @@ def _format_censo_compare_reference(row: Dict[str, object]) -> str:
     return " | ".join(part for part in parts if part)
 
 
+def _censo_compare_location_matches(
+    uploaded_row: Dict[str, str],
+    colegio_row: Dict[str, object],
+) -> bool:
+    expected_nivel = _normalize_compare_text(uploaded_row.get("nivel"))
+    expected_grado = _normalize_compare_text(uploaded_row.get("grado"))
+    expected_seccion = _normalize_seccion_key(uploaded_row.get("grupo"))
+    current_nivel = _normalize_compare_text(colegio_row.get("nivel"))
+    current_grado = _normalize_compare_text(colegio_row.get("grado"))
+    current_seccion = _normalize_seccion_key(
+        colegio_row.get("seccion_norm") or colegio_row.get("seccion") or ""
+    )
+    return (
+        expected_nivel == current_nivel
+        and expected_grado == current_grado
+        and expected_seccion == current_seccion
+    )
+
+
 def _build_censo_compare_matches(
     uploaded_rows: List[Dict[str, str]],
     colegio_rows: List[Dict[str, object]],
@@ -2071,6 +2090,7 @@ def _build_censo_compare_matches(
 
     result_rows: List[Dict[str, object]] = []
     total_reconocidos = 0
+    total_ubicacion_ok = 0
     for row in uploaded_rows:
         dni_key = _normalize_compare_id(row.get("nuip"))
         ap_pat_key = _normalize_compare_text(row.get("apellido_paterno"))
@@ -2089,20 +2109,52 @@ def _build_censo_compare_matches(
             _format_censo_compare_reference(item) for item in combined_matches
         )
         reconocido = bool(combined_reference)
+        matched_row = combined_matches[0] if combined_matches else {}
+        ubicacion_ok = bool(reconocido) and _censo_compare_location_matches(
+            row, matched_row
+        )
         total_reconocidos += int(reconocido)
+        total_ubicacion_ok += int(ubicacion_ok)
+        nombre_completo = " ".join(
+            part
+            for part in (
+                str(row.get("nombre") or "").strip(),
+                str(row.get("apellido_paterno") or "").strip(),
+                str(row.get("apellido_materno") or "").strip(),
+            )
+            if part
+        ).strip()
+        dni_excel = str(row.get("nuip") or "").strip()
+        dni_bd = str(matched_row.get("id_oficial") or "").strip()
+        dni_coincide = bool(dni_excel and dni_bd and _normalize_compare_id(dni_excel) == _normalize_compare_id(dni_bd))
         result_rows.append(
             {
-                "Nivel": row.get("nivel", ""),
-                "Grado": row.get("grado", ""),
-                "Grupo": row.get("grupo", ""),
+                "Nombre completo": nombre_completo,
                 "Nombre": row.get("nombre", ""),
                 "Apellido Paterno": row.get("apellido_paterno", ""),
                 "Apellido Materno": row.get("apellido_materno", ""),
                 "Sexo": row.get("sexo", ""),
                 "Fecha de Nacimiento": row.get("fecha_nacimiento", ""),
-                "NUIP": row.get("nuip", ""),
+                "DNI Excel": dni_excel,
+                "Usuario BD": str(matched_row.get("login") or "").strip(),
+                "DNI BD": dni_bd,
                 "Coincidencia": combined_reference,
                 "Reconocido": reconocido,
+                "DNI coincide": dni_coincide,
+                "Ubicacion correcta": ubicacion_ok,
+                "Activo BD": _to_bool(matched_row.get("activo")),
+                "Nivel esperado": row.get("nivel", ""),
+                "Grado esperado": row.get("grado", ""),
+                "Seccion esperada": row.get("grupo", ""),
+                "Nivel actual": str(matched_row.get("nivel") or "").strip(),
+                "Grado actual": str(matched_row.get("grado") or "").strip(),
+                "Seccion actual": str(
+                    matched_row.get("seccion_norm") or matched_row.get("seccion") or ""
+                ).strip(),
+                "AlumnoId BD": _safe_int(matched_row.get("alumno_id")),
+                "NivelId actual": _safe_int(matched_row.get("nivel_id")),
+                "GradoId actual": _safe_int(matched_row.get("grado_id")),
+                "GrupoId actual": _safe_int(matched_row.get("grupo_id")),
             }
         )
 
@@ -2111,14 +2163,27 @@ def _build_censo_compare_matches(
         "colegio_total": len(colegio_rows),
         "reconocidos_total": total_reconocidos,
         "no_reconocidos_total": max(len(uploaded_rows) - total_reconocidos, 0),
+        "ubicacion_ok_total": total_ubicacion_ok,
+        "por_mover_total": max(total_reconocidos - total_ubicacion_ok, 0),
     }
 
 
-def _style_censo_compare_matches(df: pd.DataFrame):
-    def _highlight(value: object) -> str:
-        return "background-color: #d1fae5" if str(value or "").strip() else ""
+def _style_censo_compare_preview(df: pd.DataFrame):
+    def _row_styles(row: pd.Series) -> List[str]:
+        styles = [""] * len(row)
+        if _to_bool(row.get("DNI coincide")):
+            for column_name in ("DNI Excel", "DNI BD"):
+                try:
+                    idx = list(row.index).index(column_name)
+                except ValueError:
+                    continue
+                styles[idx] = "background-color: #d1fae5"
+        return styles
 
-    return df.style.map(_highlight, subset=["Coincidencia"])
+    visible_df = df.copy()
+    return visible_df.style.apply(_row_styles, axis=1).hide(
+        axis="columns", subset=["DNI coincide"]
+    )
 
 
 def _build_censo_compare_export_rows(rows: List[Dict[str, object]]) -> List[Dict[str, str]]:
@@ -2126,20 +2191,83 @@ def _build_censo_compare_export_rows(rows: List[Dict[str, object]]) -> List[Dict
     for row in rows:
         export_rows.append(
             {
-                "Nivel": str(row.get("Nivel") or "").strip(),
-                "Grado": str(row.get("Grado") or "").strip(),
-                "Grupo": str(row.get("Grupo") or "").strip(),
+                "Nivel": str(row.get("Nivel") or row.get("Nivel esperado") or "").strip(),
+                "Grado": str(row.get("Grado") or row.get("Grado esperado") or "").strip(),
+                "Grupo": str(row.get("Grupo") or row.get("Seccion esperada") or "").strip(),
                 "Nombre": str(row.get("Nombre") or "").strip(),
                 "Apellido Paterno": str(row.get("Apellido Paterno") or "").strip(),
                 "Apellido Materno": str(row.get("Apellido Materno") or "").strip(),
                 "Sexo": str(row.get("Sexo") or "").strip(),
                 "Fecha de Nacimiento": str(row.get("Fecha de Nacimiento") or "").strip(),
-                "NUIP": str(row.get("NUIP") or "").strip(),
+                "NUIP": str(row.get("NUIP") or row.get("DNI Excel") or "").strip(),
                 "Login": "",
                 "Password": "",
             }
         )
     return export_rows
+
+
+def _build_censo_compare_move_plan(
+    compare_rows: List[Dict[str, object]],
+    niveles_data: List[Dict[str, object]],
+) -> Tuple[List[Dict[str, object]], Dict[str, int]]:
+    destination_catalog = _build_manual_move_destination_catalog(niveles_data)
+    destino_lookup: Dict[Tuple[str, str, str], Dict[str, object]] = {}
+    for payload in (destination_catalog.get("grupo_payload_by_key") or {}).values():
+        if not isinstance(payload, dict):
+            continue
+        destino_key = (
+            _normalize_compare_text(payload.get("nivel")),
+            _normalize_compare_text(payload.get("grado")),
+            _normalize_seccion_key(payload.get("seccion") or ""),
+        )
+        if all(destino_key):
+            destino_lookup[destino_key] = payload
+
+    move_rows: List[Dict[str, object]] = []
+    ready_total = 0
+    unresolved_total = 0
+    for row in compare_rows:
+        if not bool(row.get("Reconocido")) or bool(row.get("Ubicacion correcta")):
+            continue
+        destino_key = (
+            _normalize_compare_text(row.get("Nivel esperado")),
+            _normalize_compare_text(row.get("Grado esperado")),
+            _normalize_seccion_key(row.get("Seccion esperada") or ""),
+        )
+        destino_payload = destino_lookup.get(destino_key) or {}
+        ready = bool(destino_payload)
+        ready_total += int(ready)
+        unresolved_total += int(not ready)
+        move_rows.append(
+            {
+                "Nombre completo": str(row.get("Nombre completo") or "").strip(),
+                "Usuario BD": str(row.get("Usuario BD") or "").strip(),
+                "DNI BD": str(row.get("DNI BD") or "").strip(),
+                "Nivel actual": str(row.get("Nivel actual") or "").strip(),
+                "Grado actual": str(row.get("Grado actual") or "").strip(),
+                "Seccion actual": str(row.get("Seccion actual") or "").strip(),
+                "Nivel esperado": str(row.get("Nivel esperado") or "").strip(),
+                "Grado esperado": str(row.get("Grado esperado") or "").strip(),
+                "Seccion esperada": str(row.get("Seccion esperada") or "").strip(),
+                "Estado": "Listo para mover" if ready else "Destino no encontrado",
+                "Activo BD": _to_bool(row.get("Activo BD")),
+                "AlumnoId BD": _safe_int(row.get("AlumnoId BD")),
+                "NivelId actual": _safe_int(row.get("NivelId actual")),
+                "GradoId actual": _safe_int(row.get("GradoId actual")),
+                "GrupoId actual": _safe_int(row.get("GrupoId actual")),
+                "Nuevo NivelId": _safe_int(destino_payload.get("nivel_id")),
+                "Nuevo GradoId": _safe_int(destino_payload.get("grado_id")),
+                "Nuevo GrupoId": _safe_int(destino_payload.get("grupo_id")),
+                "Nueva Seccion": str(destino_payload.get("seccion") or "").strip(),
+            }
+        )
+
+    return move_rows, {
+        "move_total": len(move_rows),
+        "move_ready_total": ready_total,
+        "move_unresolved_total": unresolved_total,
+    }
 
 
 def _parse_colegio_id(raw: object, field_name: str = "Colegio Clave") -> int:
@@ -2842,7 +2970,8 @@ def _build_alumno_export_key(
 
 def _normalize_compare_text(value: object) -> str:
     text = _normalize_plain_text(value)
-    text = re.sub(r"\s+", " ", text)
+    # Treat hyphens, accents, and punctuation variants as equivalent during compare.
+    text = re.sub(r"[^A-Z0-9]+", " ", text)
     return text.strip()
 
 
@@ -8071,6 +8200,10 @@ with tab_crud_alumnos:
                         "alumnos_censo_compare_summary",
                         "alumnos_censo_compare_errors",
                         "alumnos_censo_compare_source_name",
+                        "alumnos_censo_compare_niveles",
+                        "alumnos_censo_compare_move_rows",
+                        "alumnos_censo_compare_move_summary",
+                        "alumnos_censo_compare_colegio_id",
                     ):
                         st.session_state.pop(state_key, None)
                     st.rerun()
@@ -8081,6 +8214,10 @@ with tab_crud_alumnos:
                         "alumnos_censo_compare_summary",
                         "alumnos_censo_compare_errors",
                         "alumnos_censo_compare_source_name",
+                        "alumnos_censo_compare_niveles",
+                        "alumnos_censo_compare_move_rows",
+                        "alumnos_censo_compare_move_summary",
+                        "alumnos_censo_compare_colegio_id",
                     ):
                         st.session_state.pop(state_key, None)
                     if not uploaded_censo_compare:
@@ -8114,13 +8251,17 @@ with tab_crud_alumnos:
                             f"Excel cargado: {len(uploaded_rows)} alumnos esperados."
                         )
                         status.write("Consultando alumnos del colegio en Pegasus...")
-                        colegio_rows, colegio_errors = _collect_colegio_alumnos_censo_rows(
+                        colegio_catalog = _fetch_alumnos_catalog_for_manual_move(
                             token=token,
                             colegio_id=int(colegio_id_int),
                             empresa_id=int(empresa_id),
                             ciclo_id=int(ciclo_id),
                             timeout=int(timeout),
+                            on_status=status.write,
                         )
+                        colegio_rows = colegio_catalog.get("students") or []
+                        colegio_errors = colegio_catalog.get("errors") or []
+                        niveles_compare = colegio_catalog.get("niveles") or []
                         status.write(
                             f"Consulta completada: {len(colegio_rows)} alumnos encontrados en el colegio."
                         )
@@ -8128,6 +8269,11 @@ with tab_crud_alumnos:
                         compare_rows, compare_summary = _build_censo_compare_matches(
                             uploaded_rows=uploaded_rows,
                             colegio_rows=colegio_rows,
+                        )
+                        status.write("Validando nivel, grado y seccion esperados...")
+                        move_rows, move_summary = _build_censo_compare_move_plan(
+                            compare_rows=compare_rows,
+                            niveles_data=niveles_compare,
                         )
                         status.update(label="Analisis de censo completado", state="complete")
 
@@ -8137,9 +8283,14 @@ with tab_crud_alumnos:
                     st.session_state["alumnos_censo_compare_source_name"] = str(
                         uploaded_censo_compare.name or "censo.xlsx"
                     )
+                    st.session_state["alumnos_censo_compare_niveles"] = niveles_compare
+                    st.session_state["alumnos_censo_compare_move_rows"] = move_rows
+                    st.session_state["alumnos_censo_compare_move_summary"] = move_summary
+                    st.session_state["alumnos_censo_compare_colegio_id"] = int(colegio_id_int)
                     st.success(
                         "Analisis listo. Subidos: {subidos_total} | Colegio: {colegio_total} | "
-                        "Reconocidos: {reconocidos_total} | No reconocidos: {no_reconocidos_total}".format(
+                        "Reconocidos: {reconocidos_total} | No reconocidos: {no_reconocidos_total} | "
+                        "Por mover: {por_mover_total}".format(
                             **compare_summary
                         )
                     )
@@ -8147,6 +8298,12 @@ with tab_crud_alumnos:
             censo_compare_rows_cached = st.session_state.get("alumnos_censo_compare_rows") or []
             censo_compare_summary_cached = st.session_state.get("alumnos_censo_compare_summary") or {}
             censo_compare_errors_cached = st.session_state.get("alumnos_censo_compare_errors") or []
+            censo_compare_niveles_cached = st.session_state.get("alumnos_censo_compare_niveles") or []
+            censo_compare_move_rows_cached = st.session_state.get("alumnos_censo_compare_move_rows") or []
+            censo_compare_move_summary_cached = st.session_state.get("alumnos_censo_compare_move_summary") or {}
+            censo_compare_colegio_id_cached = _safe_int(
+                st.session_state.get("alumnos_censo_compare_colegio_id")
+            )
             censo_compare_source_name_cached = str(
                 st.session_state.get("alumnos_censo_compare_source_name") or "censo.xlsx"
             )
@@ -8159,7 +8316,8 @@ with tab_crud_alumnos:
                 ]
 
                 st.info(
-                    "Reconocidos: {reconocidos_total} | No reconocidos: {no_reconocidos_total}".format(
+                    "Reconocidos: {reconocidos_total} | No reconocidos: {no_reconocidos_total} | "
+                    "Ubicacion correcta: {ubicacion_ok_total} | Por mover: {por_mover_total}".format(
                         **censo_compare_summary_cached
                     )
                 )
@@ -8168,15 +8326,192 @@ with tab_crud_alumnos:
                 if reconocidos_rows:
                     preview_df = pd.DataFrame(reconocidos_rows)[
                         [
-                            "Nombre",
-                            "Apellido Paterno",
-                            "Apellido Materno",
-                            "NUIP",
+                            "Nombre completo",
+                            "DNI Excel",
+                            "Usuario BD",
+                            "DNI BD",
+                            "DNI coincide",
                         ]
                     ]
-                    st.dataframe(preview_df, use_container_width=True)
+                    st.dataframe(
+                        _style_censo_compare_preview(preview_df),
+                        use_container_width=True,
+                    )
                 else:
                     st.caption("No se encontraron alumnos reconocidos por DNI y apellidos juntos.")
+
+                st.markdown("**Usuarios BD a mover de nivel, grado y seccion**")
+                st.caption(
+                    "Aqui ves los alumnos reconocidos que deben cambiarse al nivel, grado o seccion del Excel."
+                )
+                if censo_compare_move_rows_cached:
+                    st.info(
+                        "Pendientes: {move_total} | Listos: {move_ready_total} | Sin destino resuelto: {move_unresolved_total}".format(
+                            **censo_compare_move_summary_cached
+                        )
+                    )
+                    move_preview_df = pd.DataFrame(censo_compare_move_rows_cached)[
+                        [
+                            "Usuario BD",
+                            "Nombre completo",
+                            "DNI BD",
+                            "Nivel actual",
+                            "Grado actual",
+                            "Seccion actual",
+                            "Nivel esperado",
+                            "Grado esperado",
+                            "Seccion esperada",
+                            "Estado",
+                        ]
+                    ]
+                    st.dataframe(move_preview_df, use_container_width=True)
+
+                    if st.button(
+                        "Mover alumnos masivo",
+                        type="primary",
+                        key="alumnos_censo_compare_mass_move_btn",
+                        use_container_width=True,
+                        disabled=int(censo_compare_move_summary_cached.get("move_ready_total") or 0)
+                        <= 0,
+                    ):
+                        token = _get_shared_token()
+                        if not token:
+                            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                            st.stop()
+                        try:
+                            colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                        except ValueError as exc:
+                            st.error(f"Error: {exc}")
+                            st.stop()
+                        if (
+                            censo_compare_colegio_id_cached is not None
+                            and int(censo_compare_colegio_id_cached) != int(colegio_id_int)
+                        ):
+                            st.error("El colegio global cambio. Vuelve a ejecutar el analisis de censo.")
+                            st.stop()
+
+                        move_rows_ready = [
+                            row
+                            for row in censo_compare_move_rows_cached
+                            if str(row.get("Estado") or "").strip() == "Listo para mover"
+                        ]
+                        if not move_rows_ready:
+                            st.warning("No hay alumnos listos para mover.")
+                            st.stop()
+
+                        compare_rows_by_key: Dict[Tuple[str, str], Dict[str, object]] = {}
+                        for row in censo_compare_rows_cached:
+                            compare_key = (
+                                str(_safe_int(row.get("AlumnoId BD")) or "").strip(),
+                                str(row.get("DNI BD") or row.get("DNI Excel") or "").strip(),
+                            )
+                            compare_rows_by_key[compare_key] = dict(row)
+
+                        total_move = len(move_rows_ready)
+                        executed_ok = 0
+                        executed_error = 0
+                        with st.status("Ejecutando movimiento masivo...", expanded=True) as status:
+                            for idx_move, move_row in enumerate(move_rows_ready, start=1):
+                                alumno_label = str(
+                                    move_row.get("Usuario BD")
+                                    or move_row.get("Nombre completo")
+                                    or move_row.get("DNI BD")
+                                    or f"fila {idx_move}"
+                                ).strip()
+                                status.write(f"[{idx_move}/{total_move}] Preparando {alumno_label}...")
+                                alumno_row = {
+                                    "alumno_id": _safe_int(move_row.get("AlumnoId BD")),
+                                    "nivel_id": _safe_int(move_row.get("NivelId actual")),
+                                    "grado_id": _safe_int(move_row.get("GradoId actual")),
+                                    "grupo_id": _safe_int(move_row.get("GrupoId actual")),
+                                    "seccion_norm": str(move_row.get("Seccion actual") or "").strip(),
+                                    "seccion": str(move_row.get("Seccion actual") or "").strip(),
+                                    "activo": bool(move_row.get("Activo BD")),
+                                }
+
+                                def _on_status_mass(message: str, alumno=alumno_label) -> None:
+                                    msg = str(message or "").strip()
+                                    if msg:
+                                        status.write(f"{alumno}: {msg}")
+
+                                try:
+                                    result = _apply_single_alumno_move_and_reassign(
+                                        token=token,
+                                        colegio_id=int(colegio_id_int),
+                                        empresa_id=int(empresa_id),
+                                        ciclo_id=int(ciclo_id),
+                                        timeout=int(timeout),
+                                        alumno_row=alumno_row,
+                                        nuevo_nivel_id=int(move_row.get("Nuevo NivelId") or 0),
+                                        nuevo_grado_id=int(move_row.get("Nuevo GradoId") or 0),
+                                        nuevo_grupo_id=int(move_row.get("Nuevo GrupoId") or 0),
+                                        nueva_seccion=str(move_row.get("Nueva Seccion") or ""),
+                                        on_status=_on_status_mass,
+                                    )
+                                except Exception as exc:
+                                    executed_error += 1
+                                    status.write(f"{alumno_label}: error {exc}")
+                                    continue
+
+                                if _to_bool(result.get("move_ok")):
+                                    executed_ok += 1
+                                    status.write(f"{alumno_label}: movimiento completado.")
+                                    compare_key = (
+                                        str(_safe_int(move_row.get("AlumnoId BD")) or "").strip(),
+                                        str(move_row.get("DNI BD") or "").strip(),
+                                    )
+                                    current_row = compare_rows_by_key.get(compare_key)
+                                    if isinstance(current_row, dict):
+                                        current_row["Nivel actual"] = str(move_row.get("Nivel esperado") or "")
+                                        current_row["Grado actual"] = str(move_row.get("Grado esperado") or "")
+                                        current_row["Seccion actual"] = str(move_row.get("Seccion esperada") or "")
+                                        current_row["NivelId actual"] = _safe_int(move_row.get("Nuevo NivelId"))
+                                        current_row["GradoId actual"] = _safe_int(move_row.get("Nuevo GradoId"))
+                                        current_row["GrupoId actual"] = _safe_int(move_row.get("Nuevo GrupoId"))
+                                        current_row["Ubicacion correcta"] = True
+                                else:
+                                    executed_error += 1
+                                    status.write(
+                                        f"{alumno_label}: no se pudo mover ({str(result.get('move_msg') or 'sin detalle')})."
+                                    )
+
+                            updated_compare_rows = list(compare_rows_by_key.values())
+                            updated_move_rows, updated_move_summary = _build_censo_compare_move_plan(
+                                compare_rows=updated_compare_rows,
+                                niveles_data=censo_compare_niveles_cached,
+                            )
+                            updated_summary = dict(censo_compare_summary_cached)
+                            updated_summary["ubicacion_ok_total"] = int(
+                                sum(
+                                    1
+                                    for row in updated_compare_rows
+                                    if bool(row.get("Reconocido")) and bool(row.get("Ubicacion correcta"))
+                                )
+                            )
+                            updated_summary["por_mover_total"] = int(
+                                sum(
+                                    1
+                                    for row in updated_compare_rows
+                                    if bool(row.get("Reconocido")) and not bool(row.get("Ubicacion correcta"))
+                                )
+                            )
+                            st.session_state["alumnos_censo_compare_rows"] = updated_compare_rows
+                            st.session_state["alumnos_censo_compare_summary"] = updated_summary
+                            st.session_state["alumnos_censo_compare_move_rows"] = updated_move_rows
+                            st.session_state["alumnos_censo_compare_move_summary"] = updated_move_summary
+                            if executed_error:
+                                status.update(
+                                    label=f"Movimiento masivo completado con errores ({executed_ok} OK / {executed_error} error)",
+                                    state="error",
+                                )
+                            else:
+                                status.update(
+                                    label=f"Movimiento masivo completado ({executed_ok} OK)",
+                                    state="complete",
+                                )
+                        st.rerun()
+                else:
+                    st.caption("No hay usuarios BD pendientes de mover.")
 
                 st.markdown("**Alumnos no reconocidos**")
                 export_rows = _build_censo_compare_export_rows(no_reconocidos_rows)

@@ -69,6 +69,10 @@ CENSO_ALUMNOS_URL = (
     "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
     "/ciclos/{ciclo_id}/colegios/{colegio_id}/alumnos"
 )
+CENSO_ALUMNOS_BY_FILTERS_URL = (
+    "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
+    "/ciclos/{ciclo_id}/colegios/{colegio_id}/alumnosByFilters"
+)
 CENSO_ALUMNOS_CREATE_URL = (
     "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
     "/ciclos/{ciclo_id}/colegios/{colegio_id}/niveles/{nivel_id}"
@@ -2512,6 +2516,44 @@ def _fetch_alumnos_censo(
     raise RuntimeError("Campo data no es lista")
 
 
+def _fetch_alumnos_censo_by_filters(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+) -> List[Dict[str, object]]:
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    url = CENSO_ALUMNOS_BY_FILTERS_URL.format(
+        empresa_id=empresa_id,
+        ciclo_id=ciclo_id,
+        colegio_id=colegio_id,
+    )
+    try:
+        response = requests.get(url, headers=headers, timeout=timeout)
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Error de red: {exc}") from exc
+
+    status_code = response.status_code
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError(f"Respuesta no JSON (status {status_code})") from exc
+
+    if not response.ok:
+        message = payload.get("message") if isinstance(payload, dict) else ""
+        raise RuntimeError(message or f"HTTP {status_code}")
+
+    if not isinstance(payload, dict) or not payload.get("success", False):
+        message = payload.get("message") if isinstance(payload, dict) else "Respuesta invalida"
+        raise RuntimeError(message or "Respuesta invalida")
+
+    data = payload.get("data") or []
+    if not isinstance(data, list):
+        raise RuntimeError("Campo data no es lista")
+    return data
+
+
 def _fetch_login_password_lookup_censo(
     token: str, colegio_id: int, empresa_id: int, ciclo_id: int, timeout: int
 ) -> Tuple[Dict[str, Dict[str, str]], Dict[str, Dict[str, str]]]:
@@ -3131,7 +3173,12 @@ def _flatten_censo_alumno_for_auto_plan(
     nivel = item.get("nivel") if isinstance(item.get("nivel"), dict) else {}
     grado = item.get("grado") if isinstance(item.get("grado"), dict) else {}
     grupo = item.get("grupo") if isinstance(item.get("grupo"), dict) else {}
-    seccion = str(grupo.get("grupoClave") or fallback.get("seccion") or "").strip()
+    seccion = str(
+        grupo.get("grupoClave")
+        or grupo.get("grupo")
+        or fallback.get("seccion")
+        or ""
+    ).strip()
     seccion_norm = _normalize_seccion_key(seccion)
     return {
         "alumno_id": _safe_int(item.get("alumnoId")),
@@ -5203,6 +5250,45 @@ def _find_existing_alumno_by_identificador(
     return None
 
 
+def _dedupe_and_sort_censo_students(
+    rows: List[Dict[str, object]],
+) -> List[Dict[str, object]]:
+    by_key: Dict[str, Dict[str, object]] = {}
+    for row in rows:
+        alumno_id = _safe_int(row.get("alumno_id"))
+        persona_id = _safe_int(row.get("persona_id"))
+        grupo_id = _safe_int(row.get("grupo_id"))
+        if alumno_id is not None:
+            key = f"alumno:{int(alumno_id)}"
+        elif persona_id is not None and grupo_id is not None:
+            key = f"persona_grupo:{int(persona_id)}:{int(grupo_id)}"
+        elif persona_id is not None:
+            key = f"persona:{int(persona_id)}"
+        else:
+            key = (
+                f"anon:{_normalize_plain_text(row.get('nombre_completo'))}:"
+                f"{_normalize_plain_text(row.get('id_oficial'))}"
+            )
+        if key in by_key:
+            continue
+        by_key[key] = row
+
+    return sorted(
+        by_key.values(),
+        key=lambda row: (
+            int(_safe_int(row.get("nivel_id")) or 0),
+            int(_safe_int(row.get("grado_id")) or 0),
+            _grupo_sort_key(
+                str(row.get("seccion_norm") or ""),
+                str(row.get("seccion") or ""),
+            ),
+            str(row.get("apellido_paterno") or "").upper(),
+            str(row.get("apellido_materno") or "").upper(),
+            str(row.get("nombre") or "").upper(),
+        ),
+    )
+
+
 def _fetch_alumnos_catalog_for_manual_move(
     token: str,
     colegio_id: int,
@@ -5238,48 +5324,24 @@ def _fetch_alumnos_catalog_for_manual_move(
     except Exception:
         login_lookup_by_alumno = {}
         login_lookup_by_persona = {}
-    contexts = _build_contexts_for_nivel_grado(niveles=niveles)
-    if not contexts:
+    if not _build_contexts_for_nivel_grado(niveles=niveles):
         raise RuntimeError("No hay niveles/grados/secciones configurados para este colegio.")
 
     alumnos_raw: List[Dict[str, object]] = []
     errors: List[str] = []
-    total_contexts = len(contexts)
-    for idx_ctx, ctx in enumerate(contexts, start=1):
-        _status(
-            "Listando alumnos {idx}/{total} | nivelId={nivel} gradoId={grado} grupoId={grupo}".format(
-                idx=idx_ctx,
-                total=total_contexts,
-                nivel=ctx.get("nivel_id"),
-                grado=ctx.get("grado_id"),
-                grupo=ctx.get("grupo_id"),
-            )
+    _status("Consultando alumnos del colegio con alumnosByFilters...")
+    try:
+        alumnos_ctx = _fetch_alumnos_censo_by_filters(
+            token=token,
+            colegio_id=int(colegio_id),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
         )
-        try:
-            alumnos_ctx = _fetch_alumnos_censo(
-                token=token,
-                colegio_id=int(colegio_id),
-                nivel_id=int(ctx["nivel_id"]),
-                grado_id=int(ctx["grado_id"]),
-                grupo_id=int(ctx["grupo_id"]),
-                empresa_id=int(empresa_id),
-                ciclo_id=int(ciclo_id),
-                timeout=int(timeout),
-            )
-        except Exception as exc:
-            errors.append(
-                "nivelId={nivel} gradoId={grado} grupoId={grupo}: {err}".format(
-                    nivel=ctx.get("nivel_id"),
-                    grado=ctx.get("grado_id"),
-                    grupo=ctx.get("grupo_id"),
-                    err=exc,
-                )
-            )
-            continue
         for item in alumnos_ctx:
             if not isinstance(item, dict):
                 continue
-            flat = _flatten_censo_alumno_for_auto_plan(item=item, fallback=ctx)
+            flat = _flatten_censo_alumno_for_auto_plan(item=item, fallback={})
             login_txt, password_txt = _resolve_alumno_login_password(
                 item,
                 login_lookup_by_alumno,
@@ -5290,38 +5352,58 @@ def _fetch_alumnos_catalog_for_manual_move(
             if password_txt and not str(flat.get("password") or "").strip():
                 flat["password"] = password_txt
             alumnos_raw.append(flat)
+    except Exception as exc:
+        errors.append(f"alumnosByFilters: {exc}")
+        _status("alumnosByFilters fallo. Reintentando por nivel, grado y seccion...")
+        contexts = _build_contexts_for_nivel_grado(niveles=niveles)
+        total_contexts = len(contexts)
+        for idx_ctx, ctx in enumerate(contexts, start=1):
+            _status(
+                "Listando alumnos {idx}/{total} | nivelId={nivel} gradoId={grado} grupoId={grupo}".format(
+                    idx=idx_ctx,
+                    total=total_contexts,
+                    nivel=ctx.get("nivel_id"),
+                    grado=ctx.get("grado_id"),
+                    grupo=ctx.get("grupo_id"),
+                )
+            )
+            try:
+                alumnos_ctx = _fetch_alumnos_censo(
+                    token=token,
+                    colegio_id=int(colegio_id),
+                    nivel_id=int(ctx["nivel_id"]),
+                    grado_id=int(ctx["grado_id"]),
+                    grupo_id=int(ctx["grupo_id"]),
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                )
+            except Exception as inner_exc:
+                errors.append(
+                    "nivelId={nivel} gradoId={grado} grupoId={grupo}: {err}".format(
+                        nivel=ctx.get("nivel_id"),
+                        grado=ctx.get("grado_id"),
+                        grupo=ctx.get("grupo_id"),
+                        err=inner_exc,
+                    )
+                )
+                continue
+            for item in alumnos_ctx:
+                if not isinstance(item, dict):
+                    continue
+                flat = _flatten_censo_alumno_for_auto_plan(item=item, fallback=ctx)
+                login_txt, password_txt = _resolve_alumno_login_password(
+                    item,
+                    login_lookup_by_alumno,
+                    login_lookup_by_persona,
+                )
+                if login_txt and not str(flat.get("login") or "").strip():
+                    flat["login"] = login_txt
+                if password_txt and not str(flat.get("password") or "").strip():
+                    flat["password"] = password_txt
+                alumnos_raw.append(flat)
 
-    by_key: Dict[str, Dict[str, object]] = {}
-    for row in alumnos_raw:
-        alumno_id = _safe_int(row.get("alumno_id"))
-        persona_id = _safe_int(row.get("persona_id"))
-        grupo_id = _safe_int(row.get("grupo_id"))
-        if alumno_id is not None:
-            key = f"alumno:{int(alumno_id)}"
-        elif persona_id is not None and grupo_id is not None:
-            key = f"persona_grupo:{int(persona_id)}:{int(grupo_id)}"
-        elif persona_id is not None:
-            key = f"persona:{int(persona_id)}"
-        else:
-            key = f"anon:{_normalize_plain_text(row.get('nombre_completo'))}:{_normalize_plain_text(row.get('id_oficial'))}"
-        if key in by_key:
-            continue
-        by_key[key] = row
-
-    students = sorted(
-        by_key.values(),
-        key=lambda row: (
-            int(_safe_int(row.get("nivel_id")) or 0),
-            int(_safe_int(row.get("grado_id")) or 0),
-            _grupo_sort_key(
-                str(row.get("seccion_norm") or ""),
-                str(row.get("seccion") or ""),
-            ),
-            str(row.get("apellido_paterno") or "").upper(),
-            str(row.get("apellido_materno") or "").upper(),
-            str(row.get("nombre") or "").upper(),
-        ),
-    )
+    students = _dedupe_and_sort_censo_students(alumnos_raw)
     _status(f"Listado completo. Alumnos unicos: {len(students)}.")
     return {
         "niveles": niveles,

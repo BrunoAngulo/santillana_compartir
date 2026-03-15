@@ -324,7 +324,6 @@ st.components.v1.html(
     f"""
     <script>
       (function () {{
-        const queryKey = {JIRA_LOGIN_QUERY_PARAM!r};
         let syncTimer = null;
 
         function getTargetWindow() {{
@@ -347,10 +346,13 @@ st.components.v1.html(
 
         function readStoredLogin() {{
           let loginValue = '';
+          const targetWindow = getTargetWindow();
           try {{
-            loginValue = (window.localStorage.getItem('jira_focus_user_login') || '').trim().toLowerCase();
+            loginValue = (
+              targetWindow.localStorage.getItem('jira_focus_user_login') || ''
+            ).trim().toLowerCase();
             if (!loginValue) {{
-              const rawProfile = window.localStorage.getItem('jira_focus_user_profile') || '';
+              const rawProfile = targetWindow.localStorage.getItem('jira_focus_user_profile') || '';
               if (rawProfile) {{
                 const parsedProfile = JSON.parse(rawProfile);
                 if (parsedProfile && typeof parsedProfile === 'object') {{
@@ -361,20 +363,20 @@ st.components.v1.html(
               }}
             }}
             if (!loginValue) {{
-              loginValue = (window.localStorage.getItem('emailAddress') || '').trim().toLowerCase();
+              loginValue = (targetWindow.localStorage.getItem('emailAddress') || '').trim().toLowerCase();
             }}
             if (!loginValue) {{
               const prefix = 'jira_focus_user_login';
-              const total = Number(window.localStorage.length || 0);
+              const total = Number(targetWindow.localStorage.length || 0);
               for (let i = 0; i < total; i += 1) {{
-                const keyName = String(window.localStorage.key(i) || '');
+                const keyName = String(targetWindow.localStorage.key(i) || '');
                 if (!keyName.toLowerCase().startsWith(prefix)) continue;
                 if (keyName.length <= prefix.length) continue;
                 const suffixLogin = keyName.slice(prefix.length).trim().toLowerCase();
                 if (!suffixLogin || !suffixLogin.includes('@')) continue;
                 loginValue = suffixLogin;
                 try {{
-                  window.localStorage.removeItem(keyName);
+                  targetWindow.localStorage.removeItem(keyName);
                 }} catch (_innerErr) {{
                   // No-op when localStorage key cannot be removed.
                 }}
@@ -382,7 +384,7 @@ st.components.v1.html(
               }}
             }}
             if (loginValue) {{
-              window.localStorage.setItem('jira_focus_user_login', loginValue);
+              targetWindow.localStorage.setItem('jira_focus_user_login', loginValue);
             }}
           }} catch (_err) {{
             loginValue = '';
@@ -392,6 +394,7 @@ st.components.v1.html(
 
         function syncLoginValue() {{
           let desiredLogin = '';
+          const targetWindow = getTargetWindow();
           try {{
             desiredLogin = readStoredLogin();
           }} catch (_err) {{
@@ -400,23 +403,14 @@ st.components.v1.html(
           try {{
             const loginMaxAge = desiredLogin ? '31536000' : '0';
             const loginValue = desiredLogin ? encodeURIComponent(desiredLogin) : '';
-            document.cookie = {f"{JIRA_LOGIN_COOKIE_NAME}="!r} + loginValue + '; path=/; max-age=' + loginMaxAge + '; SameSite=Lax';
+            targetWindow.document.cookie =
+              {f"{JIRA_LOGIN_COOKIE_NAME}="!r}
+              + loginValue
+              + '; path=/; max-age='
+              + loginMaxAge
+              + '; SameSite=Lax';
           }} catch (_err) {{
             // No-op when cookies are not available.
-          }}
-          try {{
-            const targetWindow = getTargetWindow();
-            const targetUrl = new URL(targetWindow.location.href);
-            const currentLogin = (targetUrl.searchParams.get({JIRA_LOGIN_QUERY_PARAM!r}) || '').trim().toLowerCase();
-            if (currentLogin === desiredLogin) return;
-            if (desiredLogin) {{
-              targetUrl.searchParams.set(queryKey, desiredLogin);
-            }} else {{
-              targetUrl.searchParams.delete(queryKey);
-            }}
-            targetWindow.location.replace(targetUrl.toString());
-          }} catch (_err) {{
-            // No-op when parent location is not accessible.
           }}
         }}
 
@@ -425,6 +419,7 @@ st.components.v1.html(
           targetWindow.addEventListener('message', function (event) {{
             const data = event && event.data ? event.data : null;
             if (!data || data.type !== 'jira-focus-admin-access') return;
+            const targetWindow = getTargetWindow();
             try {{
               const loginValue = data.login
                 ? String(data.login || '').trim().toLowerCase()
@@ -434,14 +429,17 @@ st.components.v1.html(
                     : ''
                 );
               if (loginValue) {{
-                window.localStorage.setItem('jira_focus_user_login', loginValue);
+                targetWindow.localStorage.setItem('jira_focus_user_login', loginValue);
               }} else {{
-                window.localStorage.removeItem('jira_focus_user_login');
+                targetWindow.localStorage.removeItem('jira_focus_user_login');
               }}
               if (data.userProfile && typeof data.userProfile === 'object') {{
-                window.localStorage.setItem('jira_focus_user_profile', JSON.stringify(data.userProfile));
+                targetWindow.localStorage.setItem(
+                  'jira_focus_user_profile',
+                  JSON.stringify(data.userProfile)
+                );
               }} else {{
-                window.localStorage.removeItem('jira_focus_user_profile');
+                targetWindow.localStorage.removeItem('jira_focus_user_profile');
               }}
             }} catch (_err) {{
               // No-op when localStorage is not available.

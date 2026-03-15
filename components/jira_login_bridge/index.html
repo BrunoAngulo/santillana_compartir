@@ -3,12 +3,14 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <script src="https://unpkg.com/streamlit-component-lib@1.4.0/dist/index.js"></script>
   </head>
   <body>
     <script>
       (function () {
-        const Streamlit = window.Streamlit;
+        const COMPONENT_READY = "streamlit:componentReady";
+        const SET_COMPONENT_VALUE = "streamlit:setComponentValue";
+        const SET_FRAME_HEIGHT = "streamlit:setFrameHeight";
+        const RENDER_EVENT = "streamlit:render";
 
         function getTargetWindow() {
           try {
@@ -64,14 +66,39 @@
           return loginValue;
         }
 
-        function onRender() {
-          Streamlit.setComponentValue(readStoredLogin());
-          Streamlit.setFrameHeight(0);
+        function sendMessage(type, payload) {
+          window.parent.postMessage(
+            Object.assign({ isStreamlitMessage: true, type: type }, payload || {}),
+            "*"
+          );
         }
 
-        Streamlit.events.addEventListener(Streamlit.RENDER_EVENT, onRender);
-        Streamlit.setComponentReady();
-        Streamlit.setFrameHeight(0);
+        function setComponentReady() {
+          sendMessage(COMPONENT_READY, { apiVersion: 1 });
+        }
+
+        function setFrameHeight(height) {
+          sendMessage(SET_FRAME_HEIGHT, { height: Number(height || 0) });
+        }
+
+        function setComponentValue(value) {
+          sendMessage(SET_COMPONENT_VALUE, {
+            value: value,
+            dataType: "json",
+          });
+        }
+
+        function onRenderMessage(event) {
+          if (!event || !event.data || event.data.type !== RENDER_EVENT) {
+            return;
+          }
+          setComponentValue(readStoredLogin());
+          setFrameHeight(0);
+        }
+
+        window.addEventListener("message", onRenderMessage);
+        setComponentReady();
+        setFrameHeight(0);
       })();
     </script>
   </body>

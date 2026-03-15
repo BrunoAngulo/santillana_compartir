@@ -4164,34 +4164,8 @@
         } catch (_err) {
           // No-op when parent messaging is not available.
         }
-        try {
-          const targetWindow = getTargetWindow();
-          const targetUrl = new URL(targetWindow.location.href);
-          const current = targetUrl.searchParams.get(JIRA_ADMIN_QUERY_PARAM) || '0';
-          const currentUser = targetUrl.searchParams.get(JIRA_USER_QUERY_PARAM) || '';
-          const currentLogin = String(targetUrl.searchParams.get(JIRA_LOGIN_QUERY_PARAM) || '').trim().toLowerCase();
-          const desiredUser = normalizedDisplayName;
-          const desiredLogin = normalizedLogin;
-          if (current === desired && currentUser === desiredUser && currentLogin === desiredLogin) return;
-          if (desiredUser) {
-            targetUrl.searchParams.set(JIRA_USER_QUERY_PARAM, desiredUser);
-          } else {
-            targetUrl.searchParams.delete(JIRA_USER_QUERY_PARAM);
-          }
-          if (desiredLogin) {
-            targetUrl.searchParams.set(JIRA_LOGIN_QUERY_PARAM, desiredLogin);
-          } else {
-            targetUrl.searchParams.delete(JIRA_LOGIN_QUERY_PARAM);
-          }
-          if (desired === '1') {
-            targetUrl.searchParams.set(JIRA_ADMIN_QUERY_PARAM, '1');
-          } else {
-            targetUrl.searchParams.delete(JIRA_ADMIN_QUERY_PARAM);
-          }
-          targetWindow.location.replace(targetUrl.toString());
-        } catch (_err) {
-          // No-op when parent location is not accessible.
-        }
+        // Do not attempt parent/top navigation from the sandboxed iframe.
+        // Local storage, cookies, and postMessage are sufficient for sync.
       }
 
       function syncAdminAccessFlag() {

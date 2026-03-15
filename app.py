@@ -4,6 +4,7 @@ import tempfile
 import threading
 import unicodedata
 from datetime import date, datetime
+from html import escape
 from io import BytesIO
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set, Tuple
@@ -2147,23 +2148,6 @@ def _build_censo_compare_matches(
         dni_bd = str(matched_row.get("id_oficial") or "").strip()
         apellido_paterno_bd = str(matched_row.get("apellido_paterno") or "").strip()
         apellido_materno_bd = str(matched_row.get("apellido_materno") or "").strip()
-        dni_coincide = bool(
-            dni_excel
-            and dni_bd
-            and _normalize_compare_id(dni_excel) == _normalize_compare_id(dni_bd)
-        )
-        apellido_paterno_coincide = bool(
-            row.get("apellido_paterno")
-            and apellido_paterno_bd
-            and _normalize_compare_apellido(row.get("apellido_paterno"))
-            == _normalize_compare_apellido(apellido_paterno_bd)
-        )
-        apellido_materno_coincide = bool(
-            row.get("apellido_materno")
-            and apellido_materno_bd
-            and _normalize_compare_apellido(row.get("apellido_materno"))
-            == _normalize_compare_apellido(apellido_materno_bd)
-        )
         result_rows.append(
             {
                 "Nombre completo": nombre_completo,
@@ -2173,15 +2157,13 @@ def _build_censo_compare_matches(
                 "Sexo": row.get("sexo", ""),
                 "Fecha de Nacimiento": row.get("fecha_nacimiento", ""),
                 "DNI Excel": dni_excel,
+                "Nombre BD": str(matched_row.get("nombre") or "").strip(),
                 "Alumno BD": _censo_compare_display_name(matched_row),
                 "DNI BD": dni_bd,
                 "Apellido Paterno BD": apellido_paterno_bd,
                 "Apellido Materno BD": apellido_materno_bd,
                 "Coincidencia": combined_reference,
                 "Reconocido": reconocido,
-                "DNI coincide": dni_coincide,
-                "Apellido Paterno coincide": apellido_paterno_coincide,
-                "Apellido Materno coincide": apellido_materno_coincide,
                 "Ubicacion correcta": ubicacion_ok,
                 "Activo BD": _to_bool(matched_row.get("activo")),
                 "Nivel esperado": row.get("nivel", ""),
@@ -2208,42 +2190,102 @@ def _build_censo_compare_matches(
         "por_mover_total": max(total_reconocidos - total_ubicacion_ok, 0),
     }
 
+def _render_censo_compare_name_html(
+    nombres: object,
+    apellido_paterno: object,
+    apellido_materno: object,
+) -> str:
+    nombres_txt = str(nombres or "").strip()
+    ap_pat_txt = str(apellido_paterno or "").strip()
+    ap_mat_txt = str(apellido_materno or "").strip()
 
-def _style_censo_compare_preview(df: pd.DataFrame):
-    def _row_styles(row: pd.Series) -> List[str]:
-        styles = [""] * len(row)
-        if _to_bool(row.get("DNI coincide")):
-            for column_name in ("DNI Excel", "DNI BD"):
-                try:
-                    idx = list(row.index).index(column_name)
-                except ValueError:
-                    continue
-                styles[idx] = "background-color: #d1fae5"
-        if _to_bool(row.get("Apellido Paterno coincide")):
-            for column_name in ("Apellido Paterno", "Apellido Paterno BD"):
-                try:
-                    idx = list(row.index).index(column_name)
-                except ValueError:
-                    continue
-                styles[idx] = "background-color: #fef3c7"
-        if _to_bool(row.get("Apellido Materno coincide")):
-            for column_name in ("Apellido Materno", "Apellido Materno BD"):
-                try:
-                    idx = list(row.index).index(column_name)
-                except ValueError:
-                    continue
-                styles[idx] = "background-color: #dbeafe"
-        return styles
+    parts: List[str] = []
+    if nombres_txt:
+        parts.append(f"<span>{escape(nombres_txt)}</span>")
+    if ap_pat_txt:
+        parts.append(f'<span class="censo-compare-surname">{escape(ap_pat_txt)}</span>')
+    if ap_mat_txt:
+        parts.append(f'<span class="censo-compare-surname">{escape(ap_mat_txt)}</span>')
+    if not parts:
+        return "-"
+    return " ".join(parts)
 
-    visible_df = df.copy()
-    return visible_df.style.apply(_row_styles, axis=1).hide(
-        axis="columns",
-        subset=[
-            "DNI coincide",
-            "Apellido Paterno coincide",
-            "Apellido Materno coincide",
-        ],
-    )
+
+def _render_censo_compare_preview(rows: List[Dict[str, object]]) -> None:
+    bd_dni_counts: Dict[str, int] = {}
+    excel_dni_counts: Dict[str, int] = {}
+    for row in rows:
+        dni_bd_key = _normalize_compare_id(row.get("DNI BD"))
+        dni_excel_key = _normalize_compare_id(row.get("DNI Excel"))
+        if dni_bd_key:
+            bd_dni_counts[dni_bd_key] = int(bd_dni_counts.get(dni_bd_key, 0)) + 1
+        if dni_excel_key:
+            excel_dni_counts[dni_excel_key] = int(excel_dni_counts.get(dni_excel_key, 0)) + 1
+
+    html_rows: List[str] = []
+    for row in rows:
+        dni_bd = str(row.get("DNI BD") or "").strip()
+        dni_excel = str(row.get("DNI Excel") or "").strip()
+        dni_bd_key = _normalize_compare_id(dni_bd)
+        dni_excel_key = _normalize_compare_id(dni_excel)
+        dni_bd_class = "censo-compare-dni-duplicate" if bd_dni_counts.get(dni_bd_key, 0) > 1 else ""
+        dni_excel_class = (
+            "censo-compare-dni-duplicate" if excel_dni_counts.get(dni_excel_key, 0) > 1 else ""
+        )
+        html_rows.append(
+            "<tr>"
+            f"<td>{_render_censo_compare_name_html(row.get('Nombre BD'), row.get('Apellido Paterno BD'), row.get('Apellido Materno BD'))}</td>"
+            f"<td class=\"{dni_bd_class}\">{escape(dni_bd) or '-'}</td>"
+            f"<td>{_render_censo_compare_name_html(row.get('Nombre'), row.get('Apellido Paterno'), row.get('Apellido Materno'))}</td>"
+            f"<td class=\"{dni_excel_class}\">{escape(dni_excel) or '-'}</td>"
+            "</tr>"
+        )
+
+    table_html = """
+<style>
+.censo-compare-table-wrap { overflow-x: auto; }
+.censo-compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.95rem;
+}
+.censo-compare-table th,
+.censo-compare-table td {
+  border: 1px solid rgba(49, 51, 63, 0.2);
+  padding: 0.5rem 0.65rem;
+  vertical-align: top;
+}
+.censo-compare-table th {
+  background: rgba(240, 242, 246, 0.85);
+  font-weight: 600;
+  text-align: left;
+}
+.censo-compare-surname {
+  background: #fef3c7;
+  border-radius: 0.3rem;
+  padding: 0.05rem 0.18rem;
+}
+.censo-compare-dni-duplicate {
+  background: #dbeafe;
+}
+</style>
+<div class="censo-compare-table-wrap">
+  <table class="censo-compare-table">
+    <thead>
+      <tr>
+        <th>Nombre completo DB</th>
+        <th>DNI BD</th>
+        <th>Nombre completo Excel</th>
+        <th>DNI Excel</th>
+      </tr>
+    </thead>
+    <tbody>
+      {rows_html}
+    </tbody>
+  </table>
+</div>
+""".format(rows_html="".join(html_rows))
+    st.markdown(table_html, unsafe_allow_html=True)
 
 
 def _build_censo_compare_export_rows(rows: List[Dict[str, object]]) -> List[Dict[str, str]]:
@@ -8472,26 +8514,7 @@ with tab_crud_alumnos:
 
                 st.markdown("**Vista previa de coincidencias**")
                 if reconocidos_rows:
-                    preview_df = pd.DataFrame(reconocidos_rows)[
-                        [
-                            "Alumno BD",
-                            "DNI BD",
-                            "Nombre completo",
-                            "DNI Excel",
-                            "DNI coincide",
-                            "Apellido Paterno coincide",
-                            "Apellido Materno coincide",
-                        ]
-                    ].rename(
-                        columns={
-                            "Alumno BD": "Nombre completo DB",
-                            "Nombre completo": "Nombre completo Excel",
-                        }
-                    )
-                    st.dataframe(
-                        _style_censo_compare_preview(preview_df),
-                        use_container_width=True,
-                    )
+                    _render_censo_compare_preview(reconocidos_rows)
                 else:
                     st.caption("No se encontraron alumnos reconocidos por DNI y apellidos juntos.")
 

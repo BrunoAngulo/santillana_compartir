@@ -2241,6 +2241,7 @@ def _render_censo_compare_preview(rows: List[Dict[str, object]]) -> None:
             "</tr>"
         )
 
+    rows_html = "".join(html_rows)
     table_html = """
 <style>
 .censo-compare-table-wrap { overflow-x: auto; }
@@ -2280,11 +2281,11 @@ def _render_censo_compare_preview(rows: List[Dict[str, object]]) -> None:
       </tr>
     </thead>
     <tbody>
-      {rows_html}
+      __ROWS_HTML__
     </tbody>
   </table>
 </div>
-""".format(rows_html="".join(html_rows))
+""".replace("__ROWS_HTML__", rows_html)
     st.markdown(table_html, unsafe_allow_html=True)
 
 

@@ -1903,8 +1903,31 @@ def _normalize_censo_compare_header(value: object) -> str:
     return text.strip()
 
 
+def _resolve_censo_compare_sheet_name(
+    available: List[str],
+    desired: str = "Plantilla_Actualizada",
+) -> str:
+    if desired in available:
+        return desired
+    desired_lower = str(desired).lower()
+    for sheet_name in available:
+        if str(sheet_name).lower() == desired_lower:
+            return str(sheet_name)
+    desired_norm = _normalize_censo_compare_header(desired)
+    for sheet_name in available:
+        if _normalize_censo_compare_header(sheet_name) == desired_norm:
+            return str(sheet_name)
+    available_list = ", ".join(available) if available else "(sin hojas)"
+    raise ValueError(
+        "No se encontro la hoja 'Plantilla_Actualizada'. "
+        f"Hojas disponibles: {available_list}."
+    )
+
+
 def _read_censo_compare_excel(uploaded_file) -> List[Dict[str, str]]:
-    raw_df = pd.read_excel(uploaded_file, dtype=str).fillna("")
+    with pd.ExcelFile(uploaded_file, engine="openpyxl") as excel:
+        sheet_name = _resolve_censo_compare_sheet_name(excel.sheet_names)
+        raw_df = pd.read_excel(excel, sheet_name=sheet_name, dtype=str).fillna("")
     alias_map = {
         "NIVEL": "nivel",
         "GRADO": "grado",

@@ -325,22 +325,34 @@ st.components.v1.html(
     <script>
       (function () {{
         let syncTimer = null;
+        const debugPrefix = '[jira-unlock]';
+
+        function debugLog(...args) {{
+          try {{
+            console.log(debugPrefix, ...args);
+          }} catch (_err) {{
+            // No-op
+          }}
+        }}
 
         function getTargetWindow() {{
           try {{
             if (window.parent && window.parent !== window) {{
+              debugLog('using parent window');
               return window.parent;
             }}
           }} catch (_err) {{
-            // No-op
+            debugLog('parent window unavailable', String(_err || ''));
           }}
           try {{
             if (window.top && window.top !== window) {{
+              debugLog('using top window');
               return window.top;
             }}
           }} catch (_err) {{
-            // No-op
+            debugLog('top window unavailable', String(_err || ''));
           }}
+          debugLog('using current window');
           return window;
         }}
 
@@ -351,44 +363,54 @@ st.components.v1.html(
             loginValue = (
               targetWindow.localStorage.getItem('jira_focus_user_login') || ''
             ).trim().toLowerCase();
+            debugLog('localStorage jira_focus_user_login =', loginValue || '(empty)');
             if (!loginValue) {{
               const rawProfile = targetWindow.localStorage.getItem('jira_focus_user_profile') || '';
+              debugLog('localStorage jira_focus_user_profile =', rawProfile || '(empty)');
               if (rawProfile) {{
                 const parsedProfile = JSON.parse(rawProfile);
                 if (parsedProfile && typeof parsedProfile === 'object') {{
                   loginValue = String(
                     parsedProfile.login || parsedProfile.emailAddress || ''
                   ).trim().toLowerCase();
+                  debugLog('derived login from jira_focus_user_profile =', loginValue || '(empty)');
                 }}
               }}
             }}
             if (!loginValue) {{
               loginValue = (targetWindow.localStorage.getItem('emailAddress') || '').trim().toLowerCase();
+              debugLog('fallback localStorage emailAddress =', loginValue || '(empty)');
             }}
             if (!loginValue) {{
               const prefix = 'jira_focus_user_login';
               const total = Number(targetWindow.localStorage.length || 0);
+              debugLog('searching localStorage keys by prefix, total keys =', total);
               for (let i = 0; i < total; i += 1) {{
                 const keyName = String(targetWindow.localStorage.key(i) || '');
                 if (!keyName.toLowerCase().startsWith(prefix)) continue;
                 if (keyName.length <= prefix.length) continue;
                 const suffixLogin = keyName.slice(prefix.length).trim().toLowerCase();
                 if (!suffixLogin || !suffixLogin.includes('@')) continue;
+                debugLog('found login in key suffix =', keyName, '->', suffixLogin);
                 loginValue = suffixLogin;
                 try {{
                   targetWindow.localStorage.removeItem(keyName);
+                  debugLog('removed legacy key =', keyName);
                 }} catch (_innerErr) {{
-                  // No-op when localStorage key cannot be removed.
+                  debugLog('could not remove legacy key =', keyName, String(_innerErr || ''));
                 }}
                 break;
               }}
             }}
             if (loginValue) {{
               targetWindow.localStorage.setItem('jira_focus_user_login', loginValue);
+              debugLog('normalized jira_focus_user_login saved =', loginValue);
             }}
           }} catch (_err) {{
+            debugLog('readStoredLogin failed', String(_err || ''));
             loginValue = '';
           }}
+          debugLog('readStoredLogin result =', loginValue || '(empty)');
           return loginValue;
         }}
 
@@ -400,6 +422,7 @@ st.components.v1.html(
           }} catch (_err) {{
             desiredLogin = '';
           }}
+          debugLog('syncLoginValue desiredLogin =', desiredLogin || '(empty)');
           try {{
             const loginMaxAge = desiredLogin ? '31536000' : '0';
             const loginValue = desiredLogin ? encodeURIComponent(desiredLogin) : '';
@@ -409,8 +432,9 @@ st.components.v1.html(
               + '; path=/; max-age='
               + loginMaxAge
               + '; SameSite=Lax';
+            debugLog('cookie synced', {f"{JIRA_LOGIN_COOKIE_NAME}="!r} + loginValue);
           }} catch (_err) {{
-            // No-op when cookies are not available.
+            debugLog('cookie sync failed', String(_err || ''));
           }}
         }}
 
@@ -419,6 +443,7 @@ st.components.v1.html(
           targetWindow.addEventListener('message', function (event) {{
             const data = event && event.data ? event.data : null;
             if (!data || data.type !== 'jira-focus-admin-access') return;
+            debugLog('message received', data);
             const targetWindow = getTargetWindow();
             try {{
               const loginValue = data.login
@@ -428,31 +453,37 @@ st.components.v1.html(
                     ? String(data.userProfile.emailAddress || '').trim().toLowerCase()
                     : ''
                 );
+              debugLog('message loginValue =', loginValue || '(empty)');
               if (loginValue) {{
                 targetWindow.localStorage.setItem('jira_focus_user_login', loginValue);
+                debugLog('message saved jira_focus_user_login');
               }} else {{
                 targetWindow.localStorage.removeItem('jira_focus_user_login');
+                debugLog('message removed jira_focus_user_login');
               }}
               if (data.userProfile && typeof data.userProfile === 'object') {{
                 targetWindow.localStorage.setItem(
                   'jira_focus_user_profile',
                   JSON.stringify(data.userProfile)
                 );
+                debugLog('message saved jira_focus_user_profile');
               }} else {{
                 targetWindow.localStorage.removeItem('jira_focus_user_profile');
+                debugLog('message removed jira_focus_user_profile');
               }}
             }} catch (_err) {{
-              // No-op when localStorage is not available.
+              debugLog('message sync failed', String(_err || ''));
             }}
             syncLoginValue();
           }});
         }} catch (_err) {{
-          // No-op when parent messaging is not accessible.
+          debugLog('message listener setup failed', String(_err || ''));
         }}
 
         syncLoginValue();
         if (!syncTimer) {{
           syncTimer = window.setInterval(syncLoginValue, 1000);
+          debugLog('sync timer started');
         }}
       }})();
     </script>

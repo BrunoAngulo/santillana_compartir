@@ -232,22 +232,14 @@ def _has_unlock_login() -> bool:
 
 
 def _sync_jira_user_identity() -> None:
-    jira_user_value = st.query_params.get(JIRA_USER_QUERY_PARAM, "")
-    if isinstance(jira_user_value, list):
-        jira_user_value = jira_user_value[0] if jira_user_value else ""
     jira_login_value = st.query_params.get(JIRA_LOGIN_QUERY_PARAM, "")
     if isinstance(jira_login_value, list):
         jira_login_value = jira_login_value[0] if jira_login_value else ""
     try:
-        if not jira_user_value:
-            jira_user_value = st.context.cookies.get(JIRA_USER_COOKIE_NAME, "") or ""
         if not jira_login_value:
             jira_login_value = st.context.cookies.get(JIRA_LOGIN_COOKIE_NAME, "") or ""
     except Exception:
         pass
-    jira_user_text = unquote(str(jira_user_value or "").strip())
-    if jira_user_text:
-        st.session_state["jira_focus_user_display_name"] = jira_user_text
     jira_login_text = _normalize_login(unquote(str(jira_login_value or "").strip()))
     if jira_login_text:
         st.session_state["jira_focus_user_login"] = jira_login_text
@@ -256,41 +248,14 @@ def _sync_jira_user_identity() -> None:
 def _restricted_sections_unlocked() -> bool:
     if not RESTRICTED_SECTIONS_ENABLED:
         return True
-    jira_admin_flag = st.query_params.get(JIRA_ADMIN_QUERY_PARAM, "")
-    if isinstance(jira_admin_flag, list):
-        jira_admin_flag = jira_admin_flag[0] if jira_admin_flag else ""
-    jira_user_flag = st.query_params.get(JIRA_USER_QUERY_PARAM, "")
-    if isinstance(jira_user_flag, list):
-        jira_user_flag = jira_user_flag[0] if jira_user_flag else ""
-    jira_admin_cookie = ""
-    jira_user_cookie = ""
-    try:
-        jira_admin_cookie = str(st.context.cookies.get(JIRA_ADMIN_COOKIE_NAME, "") or "").strip()
-        jira_user_cookie = str(st.context.cookies.get(JIRA_USER_COOKIE_NAME, "") or "").strip()
-    except Exception:
-        jira_admin_cookie = ""
-        jira_user_cookie = ""
-
-    admin_name_norm = _normalize_display_name(JIRA_ADMIN_DISPLAY_NAME)
-    jira_user_flag_norm = _normalize_display_name(unquote(str(jira_user_flag or "").strip()))
-    jira_user_cookie_norm = _normalize_display_name(unquote(jira_user_cookie))
-    session_jira_user_norm = _normalize_display_name(
-        st.session_state.get("jira_focus_user_display_name", "")
-    )
-
-    return (
-        bool(st.session_state.get("restricted_sections_unlocked", False))
-        or str(jira_admin_flag or "").strip() == "1"
-        or jira_admin_cookie == "1"
-        or jira_user_flag_norm == admin_name_norm
-        or jira_user_cookie_norm == admin_name_norm
-        or session_jira_user_norm == admin_name_norm
-        or _has_unlock_login()
-    )
+    return bool(st.session_state.get("restricted_sections_unlocked", False)) or _has_unlock_login()
 
 
 @st.dialog("Acceso restringido", width="small")
 def _show_restricted_unlock_dialog() -> None:
+    if _has_unlock_login():
+        st.session_state["restricted_sections_unlocked"] = True
+        st.rerun()
     st.markdown("### Ingresar contrasena")
     pwd_unlock = st.text_input(
         "Contrasena",
@@ -359,8 +324,7 @@ st.components.v1.html(
     f"""
     <script>
       (function () {{
-        const storageKey = 'jira_focus_admin_access';
-        const queryKey = {JIRA_ADMIN_QUERY_PARAM!r};
+        const queryKey = {JIRA_LOGIN_QUERY_PARAM!r};
         let syncTimer = null;
 
         function getTargetWindow() {{
@@ -426,28 +390,12 @@ st.components.v1.html(
           return loginValue;
         }}
 
-        function applyDesired(desired) {{
-          let desiredUser = '';
+        function syncLoginValue() {{
           let desiredLogin = '';
           try {{
-            desiredUser = window.localStorage.getItem('jira_focus_user_display_name') || '';
             desiredLogin = readStoredLogin();
           }} catch (_err) {{
-            desiredUser = '';
             desiredLogin = '';
-          }}
-          try {{
-            const maxAge = desired === '1' ? '31536000' : '0';
-            document.cookie = {f"{JIRA_ADMIN_COOKIE_NAME}="!r} + desired + '; path=/; max-age=' + maxAge + '; SameSite=Lax';
-          }} catch (_err) {{
-            // No-op when cookies are not available.
-          }}
-          try {{
-            const userMaxAge = desiredUser ? '31536000' : '0';
-            const userValue = desiredUser ? encodeURIComponent(desiredUser) : '';
-            document.cookie = {f"{JIRA_USER_COOKIE_NAME}="!r} + userValue + '; path=/; max-age=' + userMaxAge + '; SameSite=Lax';
-          }} catch (_err) {{
-            // No-op when cookies are not available.
           }}
           try {{
             const loginMaxAge = desiredLogin ? '31536000' : '0';
@@ -459,39 +407,17 @@ st.components.v1.html(
           try {{
             const targetWindow = getTargetWindow();
             const targetUrl = new URL(targetWindow.location.href);
-            const current = targetUrl.searchParams.get(queryKey) || '0';
-            const currentUser = targetUrl.searchParams.get({JIRA_USER_QUERY_PARAM!r}) || '';
             const currentLogin = (targetUrl.searchParams.get({JIRA_LOGIN_QUERY_PARAM!r}) || '').trim().toLowerCase();
-            if (current === desired && currentUser === desiredUser && currentLogin === desiredLogin) return;
-            if (desired === '1') {{
-              targetUrl.searchParams.set(queryKey, '1');
+            if (currentLogin === desiredLogin) return;
+            if (desiredLogin) {{
+              targetUrl.searchParams.set(queryKey, desiredLogin);
             }} else {{
               targetUrl.searchParams.delete(queryKey);
-            }}
-            if (desiredUser) {{
-              targetUrl.searchParams.set({JIRA_USER_QUERY_PARAM!r}, desiredUser);
-            }} else {{
-              targetUrl.searchParams.delete({JIRA_USER_QUERY_PARAM!r});
-            }}
-            if (desiredLogin) {{
-              targetUrl.searchParams.set({JIRA_LOGIN_QUERY_PARAM!r}, desiredLogin);
-            }} else {{
-              targetUrl.searchParams.delete({JIRA_LOGIN_QUERY_PARAM!r});
             }}
             targetWindow.location.replace(targetUrl.toString());
           }} catch (_err) {{
             // No-op when parent location is not accessible.
           }}
-        }}
-
-        function syncAdminFlag() {{
-          let desired = '0';
-          try {{
-            desired = (window.localStorage.getItem(storageKey) || '') === '1' ? '1' : '0';
-          }} catch (_err) {{
-            desired = '0';
-          }}
-          applyDesired(desired);
         }}
 
         try {{
@@ -500,11 +426,6 @@ st.components.v1.html(
             const data = event && event.data ? event.data : null;
             if (!data || data.type !== 'jira-focus-admin-access') return;
             try {{
-              if (data.displayName) {{
-                window.localStorage.setItem('jira_focus_user_display_name', String(data.displayName || '').trim());
-              }} else {{
-                window.localStorage.removeItem('jira_focus_user_display_name');
-              }}
               const loginValue = data.login
                 ? String(data.login || '').trim().toLowerCase()
                 : (
@@ -525,15 +446,15 @@ st.components.v1.html(
             }} catch (_err) {{
               // No-op when localStorage is not available.
             }}
-            applyDesired(data.enabled ? '1' : '0');
+            syncLoginValue();
           }});
         }} catch (_err) {{
           // No-op when parent messaging is not accessible.
         }}
 
-        syncAdminFlag();
+        syncLoginValue();
         if (!syncTimer) {{
-          syncTimer = window.setInterval(syncAdminFlag, 1000);
+          syncTimer = window.setInterval(syncLoginValue, 1000);
         }}
       }})();
     </script>

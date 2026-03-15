@@ -8392,19 +8392,20 @@ with tab_crud_alumnos:
                 if reconocidos_rows:
                     preview_df = pd.DataFrame(reconocidos_rows)[
                         [
-                            "Nombre completo",
-                            "Apellido Paterno",
-                            "Apellido Paterno BD",
-                            "Apellido Materno",
-                            "Apellido Materno BD",
-                            "DNI Excel",
                             "Alumno BD",
                             "DNI BD",
+                            "Nombre completo",
+                            "DNI Excel",
                             "DNI coincide",
                             "Apellido Paterno coincide",
                             "Apellido Materno coincide",
                         ]
-                    ]
+                    ].rename(
+                        columns={
+                            "Alumno BD": "Nombre completo DB",
+                            "Nombre completo": "Nombre completo Excel",
+                        }
+                    )
                     st.dataframe(
                         _style_censo_compare_preview(preview_df),
                         use_container_width=True,

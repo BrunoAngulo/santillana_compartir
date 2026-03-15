@@ -2066,6 +2066,244 @@ def _normalize_censo_activos_export_rows(
     return normalized
 
 
+def _normalize_censo_compare_header(value: object) -> str:
+    text = _normalize_plain_text(value)
+    text = re.sub(r"[^A-Z0-9]+", " ", text)
+    return text.strip()
+
+
+def _read_censo_compare_excel(uploaded_file) -> List[Dict[str, str]]:
+    raw_df = pd.read_excel(uploaded_file, dtype=str).fillna("")
+    alias_map = {
+        "NIVEL": "nivel",
+        "GRADO": "grado",
+        "GRUPO": "grupo",
+        "NOMBRE": "nombre",
+        "APELLIDO PATERNO": "apellido_paterno",
+        "APELLIDO MATERNO": "apellido_materno",
+        "SEXO": "sexo",
+        "FECHA DE NACIMIENTO": "fecha_nacimiento",
+        "FECHA NACIMIENTO": "fecha_nacimiento",
+        "NUIP": "nuip",
+        "DNI": "nuip",
+        "LOGIN": "login",
+        "PASSWORD": "password",
+    }
+    renamed_columns: Dict[str, str] = {}
+    used_columns: Set[str] = set()
+    for column in raw_df.columns:
+        canonical = alias_map.get(_normalize_censo_compare_header(column))
+        if canonical and canonical not in used_columns:
+            renamed_columns[str(column)] = canonical
+            used_columns.add(canonical)
+    df = raw_df.rename(columns=renamed_columns)
+
+    rows: List[Dict[str, str]] = []
+    for _, row in df.iterrows():
+        normalized_row = {
+            "nivel": str(row.get("nivel") or "").strip(),
+            "grado": str(row.get("grado") or "").strip(),
+            "grupo": str(row.get("grupo") or "").strip(),
+            "nombre": str(row.get("nombre") or "").strip(),
+            "apellido_paterno": str(row.get("apellido_paterno") or "").strip(),
+            "apellido_materno": str(row.get("apellido_materno") or "").strip(),
+            "sexo": str(row.get("sexo") or "").strip(),
+            "fecha_nacimiento": str(row.get("fecha_nacimiento") or "").strip(),
+            "nuip": str(row.get("nuip") or "").strip(),
+            "login": str(row.get("login") or "").strip(),
+            "password": str(row.get("password") or "").strip(),
+        }
+        if any(str(value).strip() for value in normalized_row.values()):
+            rows.append(normalized_row)
+    return rows
+
+
+def _collect_colegio_alumnos_censo_rows(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+) -> Tuple[List[Dict[str, object]], List[str]]:
+    niveles = _fetch_niveles_grados_grupos_censo(
+        token=token,
+        colegio_id=int(colegio_id),
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        timeout=int(timeout),
+    )
+    contexts = _build_contexts_for_nivel_grado(niveles=niveles)
+    alumnos_all_raw: List[Dict[str, object]] = []
+    errors: List[str] = []
+    for ctx in contexts:
+        try:
+            alumnos_ctx = _fetch_alumnos_censo(
+                token=token,
+                colegio_id=int(colegio_id),
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                nivel_id=int(ctx.get("nivel_id") or 0),
+                grado_id=int(ctx.get("grado_id") or 0),
+                grupo_id=int(ctx.get("grupo_id") or 0),
+                timeout=int(timeout),
+            )
+        except Exception as exc:  # pragma: no cover - UI
+            errors.append(
+                "Error en {nivel} | {grado} ({seccion}): {err}".format(
+                    nivel=str(ctx.get("nivel") or ""),
+                    grado=str(ctx.get("grado") or ""),
+                    seccion=str(ctx.get("seccion") or ""),
+                    err=str(exc),
+                )
+            )
+            continue
+        for item in alumnos_ctx:
+            if isinstance(item, dict):
+                alumnos_all_raw.append(_flatten_censo_alumno_for_auto_plan(item=item, fallback=ctx))
+
+    alumnos_by_key: Dict[str, Dict[str, object]] = {}
+    for row in alumnos_all_raw:
+        alumno_id = _safe_int(row.get("alumno_id"))
+        persona_id = _safe_int(row.get("persona_id"))
+        grupo_id = _safe_int(row.get("grupo_id"))
+        if alumno_id is not None:
+            dedupe_key = f"alumno:{int(alumno_id)}"
+        elif persona_id is not None and grupo_id is not None:
+            dedupe_key = f"persona_grupo:{int(persona_id)}:{int(grupo_id)}"
+        elif persona_id is not None:
+            dedupe_key = f"persona:{int(persona_id)}"
+        else:
+            dedupe_key = (
+                f"firma:{_normalize_compare_text(row.get('nombre'))}|"
+                f"{_normalize_compare_text(row.get('apellido_paterno'))}|"
+                f"{_normalize_compare_text(row.get('apellido_materno'))}|"
+                f"{_normalize_compare_id(row.get('id_oficial'))}"
+            )
+        if dedupe_key not in alumnos_by_key:
+            alumnos_by_key[dedupe_key] = row
+
+    alumnos_all = sorted(
+        alumnos_by_key.values(),
+        key=lambda row: (
+            str(row.get("apellido_paterno") or "").upper(),
+            str(row.get("apellido_materno") or "").upper(),
+            str(row.get("nombre") or "").upper(),
+            str(row.get("nivel") or "").upper(),
+            str(row.get("grado") or "").upper(),
+            str(row.get("seccion_norm") or row.get("seccion") or "").upper(),
+        ),
+    )
+    return alumnos_all, errors
+
+
+def _format_censo_compare_reference(row: Dict[str, object]) -> str:
+    nombre = str(row.get("nombre_completo") or "").strip()
+    if not nombre:
+        nombre = " ".join(
+            part
+            for part in (
+                str(row.get("nombre") or "").strip(),
+                str(row.get("apellido_paterno") or "").strip(),
+                str(row.get("apellido_materno") or "").strip(),
+            )
+            if part
+        ).strip()
+    ubicacion = " | ".join(
+        part
+        for part in (
+            str(row.get("nivel") or "").strip(),
+            str(row.get("grado") or "").strip(),
+            str(row.get("seccion_norm") or row.get("seccion") or "").strip(),
+        )
+        if part
+    )
+    dni = str(row.get("id_oficial") or "").strip()
+    estado = "Activo" if _to_bool(row.get("activo")) else "Inactivo"
+    parts = [nombre]
+    if ubicacion:
+        parts.append(ubicacion)
+    if dni:
+        parts.append(f"DNI {dni}")
+    parts.append(estado)
+    return " | ".join(part for part in parts if part)
+
+
+def _build_censo_compare_matches(
+    uploaded_rows: List[Dict[str, str]],
+    colegio_rows: List[Dict[str, object]],
+) -> Tuple[List[Dict[str, object]], Dict[str, int]]:
+    colegio_by_dni: Dict[str, List[Dict[str, object]]] = {}
+    colegio_by_apellidos: Dict[Tuple[str, str], List[Dict[str, object]]] = {}
+    for row in colegio_rows:
+        dni_key = _normalize_compare_id(row.get("id_oficial"))
+        if dni_key:
+            colegio_by_dni.setdefault(dni_key, []).append(row)
+        ap_pat_key = _normalize_compare_text(row.get("apellido_paterno"))
+        ap_mat_key = _normalize_compare_text(row.get("apellido_materno"))
+        if ap_pat_key and ap_mat_key:
+            colegio_by_apellidos.setdefault((ap_pat_key, ap_mat_key), []).append(row)
+
+    result_rows: List[Dict[str, object]] = []
+    total_dni = 0
+    total_apellidos = 0
+    total_con_referencia = 0
+    for row in uploaded_rows:
+        dni_key = _normalize_compare_id(row.get("nuip"))
+        apellidos_key = (
+            _normalize_compare_text(row.get("apellido_paterno")),
+            _normalize_compare_text(row.get("apellido_materno")),
+        )
+        dni_matches = colegio_by_dni.get(dni_key, []) if dni_key else []
+        apellido_matches = (
+            colegio_by_apellidos.get(apellidos_key, [])
+            if apellidos_key[0] and apellidos_key[1]
+            else []
+        )
+        dni_reference = " ; ".join(_format_censo_compare_reference(item) for item in dni_matches)
+        apellido_reference = " ; ".join(
+            _format_censo_compare_reference(item) for item in apellido_matches
+        )
+        has_reference = bool(dni_reference or apellido_reference)
+        total_dni += int(bool(dni_reference))
+        total_apellidos += int(bool(apellido_reference))
+        total_con_referencia += int(has_reference)
+        result_rows.append(
+            {
+                "Nivel": row.get("nivel", ""),
+                "Grado": row.get("grado", ""),
+                "Grupo": row.get("grupo", ""),
+                "Nombre": row.get("nombre", ""),
+                "Apellido Paterno": row.get("apellido_paterno", ""),
+                "Apellido Materno": row.get("apellido_materno", ""),
+                "Sexo": row.get("sexo", ""),
+                "Fecha de Nacimiento": row.get("fecha_nacimiento", ""),
+                "NUIP": row.get("nuip", ""),
+                "Coincidencia por DNI": dni_reference,
+                "Coincidencia por apellidos": apellido_reference,
+                "Usar referencia": has_reference,
+            }
+        )
+
+    return result_rows, {
+        "subidos_total": len(uploaded_rows),
+        "colegio_total": len(colegio_rows),
+        "coincidencia_dni_total": total_dni,
+        "coincidencia_apellidos_total": total_apellidos,
+        "con_referencia_total": total_con_referencia,
+        "sin_referencia_total": max(len(uploaded_rows) - total_con_referencia, 0),
+    }
+
+
+def _style_censo_compare_matches(df: pd.DataFrame):
+    def _highlight(value: object) -> str:
+        return "background-color: #d1fae5" if str(value or "").strip() else ""
+
+    return df.style.map(
+        _highlight,
+        subset=["Coincidencia por DNI", "Coincidencia por apellidos"],
+    )
+
+
 def _parse_colegio_id(raw: object, field_name: str = "Colegio Clave") -> int:
     text = str(raw or "").strip()
     if not text:
@@ -7225,8 +7463,7 @@ with tab_crud_profesores:
             profesores_crud_view = _render_crud_menu(
                 "Funciones de profesores",
                 [
-                    ("bd", "BD", "Consulta y exporta ProfesoresBD"),
-                    ("comparar", "Comparar", "Cruza BD vs plantilla"),
+                    ("bd", "BD", "Consulta, exporta y compara ProfesoresBD"),
                     ("base", "Base", "Genera Excel operativo"),
                     ("asignar", "Asignar", "Aplica cambios a clases"),
                 ],
@@ -7235,7 +7472,7 @@ with tab_crud_profesores:
         with profesores_body_col:
             if profesores_crud_view == "bd":
                 with st.container(border=True):
-                    st.markdown("**1) Profesores BD para crear/validar**")
+                    st.markdown("**BD**")
                     st.caption(
                         "Consulta profesoresByFilters y genera un Excel con hojas ProfesoresBD y Plantilla_Actualizada."
                     )
@@ -7300,9 +7537,9 @@ with tab_crud_profesores:
                     )
                 if st.session_state.get("profesores_bd_rows"):
                     _show_dataframe(st.session_state["profesores_bd_rows"], use_container_width=True)
-            if profesores_crud_view == "comparar":
+
                 with st.container(border=True):
-                    st.markdown("**2) Comparar ProfesoresBD vs Plantilla_Actualizada**")
+                    st.markdown("**Comparar**")
                     st.caption(
                         "Sube el Excel de ProfesoresBD para detectar coincidencias por DNI o Nombre completo y decidir que profesores crear."
                     )
@@ -7967,6 +8204,179 @@ with tab_crud_alumnos:
                 if pending > 0:
                     st.caption(f"... y {pending} errores mas.")
 
+            with st.container(border=True):
+                st.markdown("**Validar censo de registro/activacion**")
+                st.caption(
+                    "Sube el Excel de alumnos esperados este ano. Se consultan todos los alumnos del colegio y se comparan por DNI y apellidos."
+                )
+                uploaded_censo_compare = st.file_uploader(
+                    "Excel de alumnos para censo",
+                    type=["xlsx"],
+                    key="alumnos_censo_compare_excel",
+                )
+                col_compare_run, col_compare_clear = st.columns([2, 1], gap="small")
+                run_censo_compare = col_compare_run.button(
+                    "Analizar censo",
+                    type="primary",
+                    key="alumnos_censo_compare_run_btn",
+                    use_container_width=True,
+                )
+                clear_censo_compare = col_compare_clear.button(
+                    "Limpiar",
+                    key="alumnos_censo_compare_clear_btn",
+                    use_container_width=True,
+                )
+
+                if clear_censo_compare:
+                    for state_key in (
+                        "alumnos_censo_compare_rows",
+                        "alumnos_censo_compare_summary",
+                        "alumnos_censo_compare_errors",
+                        "alumnos_censo_compare_source_name",
+                    ):
+                        st.session_state.pop(state_key, None)
+                    st.rerun()
+
+                if run_censo_compare:
+                    for state_key in (
+                        "alumnos_censo_compare_rows",
+                        "alumnos_censo_compare_summary",
+                        "alumnos_censo_compare_errors",
+                        "alumnos_censo_compare_source_name",
+                    ):
+                        st.session_state.pop(state_key, None)
+                    if not uploaded_censo_compare:
+                        st.error("Sube un Excel con los alumnos esperados para el censo.")
+                        st.stop()
+                    token = _get_shared_token()
+                    if not token:
+                        st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                        st.stop()
+                    try:
+                        colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                    except ValueError as exc:
+                        st.error(f"Error: {exc}")
+                        st.stop()
+
+                    try:
+                        uploaded_rows = _read_censo_compare_excel(uploaded_censo_compare)
+                    except Exception as exc:  # pragma: no cover - UI
+                        st.error(f"No se pudo leer el Excel: {exc}")
+                        st.stop()
+
+                    if not uploaded_rows:
+                        st.error("El Excel no contiene filas validas para comparar.")
+                        st.stop()
+
+                    colegio_rows, colegio_errors = _collect_colegio_alumnos_censo_rows(
+                        token=token,
+                        colegio_id=int(colegio_id_int),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                    )
+                    compare_rows, compare_summary = _build_censo_compare_matches(
+                        uploaded_rows=uploaded_rows,
+                        colegio_rows=colegio_rows,
+                    )
+                    st.session_state["alumnos_censo_compare_rows"] = compare_rows
+                    st.session_state["alumnos_censo_compare_summary"] = compare_summary
+                    st.session_state["alumnos_censo_compare_errors"] = colegio_errors
+                    st.session_state["alumnos_censo_compare_source_name"] = str(
+                        uploaded_censo_compare.name or "censo.xlsx"
+                    )
+                    st.success(
+                        "Analisis listo. Subidos: {subidos_total} | Colegio: {colegio_total} | "
+                        "Con referencia: {con_referencia_total} | Sin referencia: {sin_referencia_total}".format(
+                            **compare_summary
+                        )
+                    )
+
+            censo_compare_rows_cached = st.session_state.get("alumnos_censo_compare_rows") or []
+            censo_compare_summary_cached = st.session_state.get("alumnos_censo_compare_summary") or {}
+            censo_compare_errors_cached = st.session_state.get("alumnos_censo_compare_errors") or []
+            censo_compare_source_name_cached = str(
+                st.session_state.get("alumnos_censo_compare_source_name") or "censo.xlsx"
+            )
+            if censo_compare_rows_cached:
+                preview_df = pd.DataFrame(censo_compare_rows_cached).drop(
+                    columns=["Usar referencia"],
+                    errors="ignore",
+                )
+                st.markdown("**Vista previa de coincidencias**")
+                st.dataframe(
+                    _style_censo_compare_matches(preview_df),
+                    use_container_width=True,
+                )
+                st.info(
+                    "Coincidencia DNI: {coincidencia_dni_total} | Coincidencia apellidos: {coincidencia_apellidos_total} | "
+                    "Sin referencia: {sin_referencia_total}".format(
+                        **censo_compare_summary_cached
+                    )
+                )
+
+                edited_censo_compare_df = st.data_editor(
+                    pd.DataFrame(censo_compare_rows_cached),
+                    hide_index=True,
+                    use_container_width=True,
+                    key="alumnos_censo_compare_editor",
+                    column_config={
+                        "Usar referencia": st.column_config.CheckboxColumn(
+                            "Usar referencia",
+                            help="Desmarca si igual quieres registrar este alumno como nuevo o reactivarlo manualmente.",
+                        ),
+                    },
+                    disabled=[
+                        "Nivel",
+                        "Grado",
+                        "Grupo",
+                        "Nombre",
+                        "Apellido Paterno",
+                        "Apellido Materno",
+                        "Sexo",
+                        "Fecha de Nacimiento",
+                        "NUIP",
+                        "Coincidencia por DNI",
+                        "Coincidencia por apellidos",
+                    ],
+                )
+                edited_censo_compare_rows = edited_censo_compare_df.to_dict("records")
+                registrar_rows = [
+                    {
+                        "Nivel": row.get("Nivel", ""),
+                        "Grado": row.get("Grado", ""),
+                        "Grupo": row.get("Grupo", ""),
+                        "Nombre": row.get("Nombre", ""),
+                        "Apellido Paterno": row.get("Apellido Paterno", ""),
+                        "Apellido Materno": row.get("Apellido Materno", ""),
+                        "Sexo": row.get("Sexo", ""),
+                        "Fecha de Nacimiento": row.get("Fecha de Nacimiento", ""),
+                        "NUIP": row.get("NUIP", ""),
+                    }
+                    for row in edited_censo_compare_rows
+                    if not bool(row.get("Usar referencia", False))
+                ]
+                st.markdown("**Alumnos a registrar o activar**")
+                if registrar_rows:
+                    _show_dataframe(registrar_rows, use_container_width=True)
+                    export_name = Path(censo_compare_source_name_cached).stem
+                    st.download_button(
+                        label="Descargar alumnos a registrar",
+                        data=_export_simple_excel(registrar_rows, sheet_name="registrar"),
+                        file_name=f"{export_name}_alumnos_registrar.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="alumnos_censo_compare_download",
+                    )
+                else:
+                    st.caption("Todos los alumnos subidos tienen una referencia activa/inactiva en el colegio.")
+
+            if censo_compare_errors_cached:
+                st.warning("Hubo errores al consultar algunas secciones del colegio para esta comparacion.")
+                st.write("\n".join(f"- {item}" for item in censo_compare_errors_cached[:20]))
+                pending = len(censo_compare_errors_cached) - 20
+                if pending > 0:
+                    st.caption(f"... y {pending} errores mas.")
+
         if alumnos_crud_view == "comparar":
             with st.container(border=True):
                 st.markdown("**2) Comparar Plantilla_BD vs Plantilla_Actualizada**")
@@ -8191,48 +8601,24 @@ with tab_crud_alumnos:
                             )
 
                         total_valid_students = len(valid_students)
-                        page_size_options = [25, 50, 100, 200]
-                        page_size_key = "alumnos_manual_move_page_size"
-                        if st.session_state.get(page_size_key) not in page_size_options:
-                            st.session_state[page_size_key] = 50
-                        pagination_cols = st.columns([1.2, 1, 3], gap="small")
-                        with pagination_cols[0]:
-                            page_size = int(
-                                st.selectbox(
-                                    "Alumnos por pagina",
-                                    options=page_size_options,
-                                    key=page_size_key,
-                                )
-                            )
-                        total_pages = max(1, (total_valid_students + page_size - 1) // page_size)
-                        page_key = "alumnos_manual_move_page"
-                        current_page = _safe_int(st.session_state.get(page_key)) or 1
-                        if current_page < 1:
-                            current_page = 1
-                        if current_page > total_pages:
-                            current_page = total_pages
-                        st.session_state[page_key] = current_page
-                        with pagination_cols[1]:
-                            current_page = int(
-                                st.number_input(
-                                    "Pagina",
-                                    min_value=1,
-                                    max_value=int(total_pages),
-                                    value=int(current_page),
-                                    step=1,
-                                    key=f"{page_key}_input",
-                                )
-                            )
-                        st.session_state[page_key] = current_page
-                        page_start = (current_page - 1) * page_size
-                        page_end = min(page_start + page_size, total_valid_students)
-                        visible_students = valid_students[page_start:page_end]
-                        pagination_cols[2].caption(
-                            "Mostrando {start}-{end} de {total} alumno(s).".format(
-                                start=page_start + 1 if total_valid_students else 0,
-                                end=page_end,
-                                total=total_valid_students,
-                            )
+                        visible_students = valid_students
+                        st.caption(f"Mostrando {total_valid_students} alumno(s).")
+                        st.markdown(
+                            """
+                            <style>
+                            div[data-testid="stSelectbox"] div[data-baseweb="select"] > div {
+                                min-height: 2.1rem;
+                                padding-top: 0;
+                                padding-bottom: 0;
+                            }
+                            div[data-testid="stButton"] > button {
+                                min-height: 2.1rem;
+                                padding-top: 0.2rem;
+                                padding-bottom: 0.2rem;
+                            }
+                            </style>
+                            """,
+                            unsafe_allow_html=True,
                         )
 
                         current_group_key: Optional[Tuple[str, str, str]] = None
@@ -8256,14 +8642,14 @@ with tab_crud_alumnos:
                             )
                             if group_key != current_group_key:
                                 current_group_key = group_key
-                                st.markdown(
-                                    "### {nivel} | {grado} | Seccion {seccion}".format(
+                                st.caption(
+                                    "{nivel} | {grado} | Seccion {seccion}".format(
                                         nivel=group_key[0] or "-",
                                         grado=group_key[1] or "-",
                                         seccion=group_key[2] or "-",
                                     )
                                 )
-                                header_cols = st.columns([4.8, 1.5, 2.5, 1.2, 1.1], gap="small")
+                                header_cols = st.columns([4.2, 1.4, 2.2, 1.0, 1.0], gap="small")
                                 header_cols[0].markdown("**Alumno**")
                                 header_cols[1].markdown("**Nuevo nivel**")
                                 header_cols[2].markdown("**Nuevo grado**")
@@ -8305,8 +8691,8 @@ with tab_crud_alumnos:
                                 st.session_state[grupo_key] = None
                                 selected_seccion = ""
     
-                            row_cols = st.columns([4.8, 1.5, 2.5, 1.2, 1.1], gap="small")
-                            row_cols[0].markdown(f"**{alumno_header}**")
+                            row_cols = st.columns([4.2, 1.4, 2.2, 1.0, 1.0], gap="small")
+                            row_cols[0].caption(alumno_header)
     
                             with row_cols[1]:
                                 st.selectbox(
@@ -8965,63 +9351,63 @@ with tab_crud_alumnos:
                             }
                             st.rerun()
 
-                created_row = _flatten_censo_alumno_for_auto_plan(
-                    item=update_data or created_data,
-                    fallback={
-                        "nivel_id": int(selected_nivel_id),
-                        "nivel": str(destino_payload.get("nivel") or "").strip(),
-                        "grado_id": int(selected_grado_id),
-                        "grado": str(destino_payload.get("grado") or "").strip(),
-                        "grupo_id": int(destino_payload.get("grupo_id") or 0),
-                        "seccion": str(destino_payload.get("seccion") or "").strip(),
-                    },
-                )
-                created_row["login"] = str(login_txt).strip()
-                created_row["password"] = str(password_txt)
-                if (
-                    loaded_colegio_id is not None
-                    and int(loaded_colegio_id) == int(colegio_id_int)
-                ):
-                    cached_students = st.session_state.get("alumnos_manual_move_students") or []
-                    cached_students.append(created_row)
-                    cached_students.sort(
-                        key=lambda row: (
-                            int(_safe_int(row.get("nivel_id")) or 0),
-                            int(_safe_int(row.get("grado_id")) or 0),
-                            _grupo_sort_key(
-                                str(row.get("seccion_norm") or ""),
-                                str(row.get("seccion") or ""),
-                            ),
-                            str(row.get("apellido_paterno") or "").upper(),
-                            str(row.get("apellido_materno") or "").upper(),
-                            str(row.get("nombre") or "").upper(),
-                        ),
+                    created_row = _flatten_censo_alumno_for_auto_plan(
+                        item=update_data or created_data,
+                        fallback={
+                            "nivel_id": int(selected_nivel_id),
+                            "nivel": str(destino_payload.get("nivel") or "").strip(),
+                            "grado_id": int(selected_grado_id),
+                            "grado": str(destino_payload.get("grado") or "").strip(),
+                            "grupo_id": int(destino_payload.get("grupo_id") or 0),
+                            "seccion": str(destino_payload.get("seccion") or "").strip(),
+                        },
                     )
-                    st.session_state["alumnos_manual_move_students"] = cached_students
-
-                _queue_manual_move_reset(
-                    create_nivel_key,
-                    create_grado_key,
-                    create_grupo_key,
-                    "alumnos_create_nombre",
-                    "alumnos_create_apellido_paterno",
-                    "alumnos_create_apellido_materno",
-                    "alumnos_create_dni",
-                    "alumnos_create_sexo",
-                    "alumnos_create_fecha",
-                    "alumnos_create_extranjero",
-                    "alumnos_create_login",
-                    "alumnos_create_password",
-                )
-                st.session_state["alumnos_create_notice"] = {
-                    "type": "success",
-                    "message": (
-                        "Alumno creado: {nombre} | {dni} | {login}".format(
-                            nombre=str(created_row.get("nombre_completo") or nombre_txt).strip(),
-                            dni=dni_txt,
-                            login=login_txt,
+                    created_row["login"] = str(login_txt).strip()
+                    created_row["password"] = str(password_txt)
+                    if (
+                        loaded_colegio_id is not None
+                        and int(loaded_colegio_id) == int(colegio_id_int)
+                    ):
+                        cached_students = st.session_state.get("alumnos_manual_move_students") or []
+                        cached_students.append(created_row)
+                        cached_students.sort(
+                            key=lambda row: (
+                                int(_safe_int(row.get("nivel_id")) or 0),
+                                int(_safe_int(row.get("grado_id")) or 0),
+                                _grupo_sort_key(
+                                    str(row.get("seccion_norm") or ""),
+                                    str(row.get("seccion") or ""),
+                                ),
+                                str(row.get("apellido_paterno") or "").upper(),
+                                str(row.get("apellido_materno") or "").upper(),
+                                str(row.get("nombre") or "").upper(),
+                            ),
                         )
-                    ),
-                }
-                st.rerun()
+                        st.session_state["alumnos_manual_move_students"] = cached_students
+
+                    _queue_manual_move_reset(
+                        create_nivel_key,
+                        create_grado_key,
+                        create_grupo_key,
+                        "alumnos_create_nombre",
+                        "alumnos_create_apellido_paterno",
+                        "alumnos_create_apellido_materno",
+                        "alumnos_create_dni",
+                        "alumnos_create_sexo",
+                        "alumnos_create_fecha",
+                        "alumnos_create_extranjero",
+                        "alumnos_create_login",
+                        "alumnos_create_password",
+                    )
+                    st.session_state["alumnos_create_notice"] = {
+                        "type": "success",
+                        "message": (
+                            "Alumno creado: {nombre} | {dni} | {login}".format(
+                                nombre=str(created_row.get("nombre_completo") or nombre_txt).strip(),
+                                dni=dni_txt,
+                                login=login_txt,
+                            )
+                        ),
+                    }
+                    st.rerun()
 

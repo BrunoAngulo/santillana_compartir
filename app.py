@@ -120,6 +120,7 @@ JIRA_USER_COOKIE_NAME = "jira_focus_user_display_name"
 JIRA_LOGIN_QUERY_PARAM = "jira_login"
 JIRA_LOGIN_COOKIE_NAME = "jira_focus_user_login"
 JIRA_UNLOCK_LOGIN = "bangulo@santillana.com"
+JIRA_LOGIN_BRIDGE_PENDING = "__pending__"
 JIRA_LOGIN_BRIDGE_COMPONENT = components.declare_component(
     "jira_login_bridge",
     path=str(Path(__file__).resolve().parent / "components" / "jira_login_bridge"),
@@ -218,10 +219,12 @@ def _read_browser_jira_login() -> str:
     try:
         browser_value = JIRA_LOGIN_BRIDGE_COMPONENT(
             key="jira_login_bridge_component",
-            default="",
+            default=JIRA_LOGIN_BRIDGE_PENDING,
         )
     except Exception:
         return ""
+    if str(browser_value or "") == JIRA_LOGIN_BRIDGE_PENDING:
+        return JIRA_LOGIN_BRIDGE_PENDING
     return _normalize_login(browser_value)
 
 
@@ -248,26 +251,41 @@ def _has_unlock_login() -> bool:
 
 
 def _sync_jira_user_identity() -> None:
-    browser_login_text = _read_browser_jira_login()
-    session_login_text = _normalize_login(st.session_state.get("jira_focus_user_login", ""))
-    if browser_login_text:
-        st.session_state["jira_focus_user_login"] = browser_login_text
-        if browser_login_text != session_login_text:
-            st.rerun()
-
     jira_login_value = st.query_params.get(JIRA_LOGIN_QUERY_PARAM, "")
     if isinstance(jira_login_value, list):
         jira_login_value = jira_login_value[0] if jira_login_value else ""
     try:
-        if not jira_login_value and not browser_login_text:
+        if not jira_login_value:
             jira_login_value = st.context.cookies.get(JIRA_LOGIN_COOKIE_NAME, "") or ""
     except Exception:
         pass
-    jira_login_text = browser_login_text or _normalize_login(
-        unquote(str(jira_login_value or "").strip())
-    )
+    jira_login_text = _normalize_login(unquote(str(jira_login_value or "").strip()))
     if jira_login_text:
         st.session_state["jira_focus_user_login"] = jira_login_text
+
+
+def _clear_restricted_unlock_browser_check() -> None:
+    st.session_state.pop("restricted_unlock_browser_check_target", None)
+
+
+def _handle_restricted_unlock_browser_check(key_suffix: str) -> bool:
+    active_target = st.session_state.get("restricted_unlock_browser_check_target")
+    if active_target != key_suffix:
+        return False
+
+    browser_login = _read_browser_jira_login()
+    if browser_login == JIRA_LOGIN_BRIDGE_PENDING:
+        st.info("Validando acceso...")
+        return True
+
+    _clear_restricted_unlock_browser_check()
+    if _normalize_login(browser_login) == _normalize_login(JIRA_UNLOCK_LOGIN):
+        st.session_state["jira_focus_user_login"] = _normalize_login(browser_login)
+        st.session_state["restricted_sections_unlocked"] = True
+        st.rerun()
+
+    _show_restricted_unlock_dialog()
+    return True
 
 
 def _restricted_sections_unlocked() -> bool:
@@ -302,6 +320,8 @@ def _show_restricted_unlock_dialog() -> None:
 def _render_restricted_blur(section_name: str, key_suffix: str) -> None:
     st.warning("Funcion bloqueada. Acceso restringido por contrasena.")
     st.caption(f"{section_name} requiere desbloqueo.")
+    if _handle_restricted_unlock_browser_check(key_suffix):
+        return
     col_l, col_c, col_r = st.columns([1, 2, 1])
     with col_c:
         if st.button(
@@ -312,7 +332,8 @@ def _render_restricted_blur(section_name: str, key_suffix: str) -> None:
             if _has_unlock_login():
                 st.session_state["restricted_sections_unlocked"] = True
                 st.rerun()
-            _show_restricted_unlock_dialog()
+            st.session_state["restricted_unlock_browser_check_target"] = key_suffix
+            st.rerun()
 
 
 _sync_jira_user_identity()

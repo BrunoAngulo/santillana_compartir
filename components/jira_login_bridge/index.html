@@ -9,35 +9,22 @@
     <script>
       (function () {
         const Streamlit = window.Streamlit;
-        const debugPrefix = "[jira-unlock]";
-        let lastValue = null;
-
-        function debugLog() {
-          try {
-            console.log.apply(console, [debugPrefix].concat(Array.from(arguments)));
-          } catch (_err) {
-            // No-op
-          }
-        }
 
         function getTargetWindow() {
           try {
             if (window.parent && window.parent !== window) {
-              debugLog("bridge using parent window");
               return window.parent;
             }
           } catch (_err) {
-            debugLog("bridge parent window unavailable", String(_err || ""));
+            // No-op
           }
           try {
             if (window.top && window.top !== window) {
-              debugLog("bridge using top window");
               return window.top;
             }
           } catch (_err) {
-            debugLog("bridge top window unavailable", String(_err || ""));
+            // No-op
           }
-          debugLog("bridge using current window");
           return window;
         }
 
@@ -50,10 +37,8 @@
             )
               .trim()
               .toLowerCase();
-            debugLog("bridge localStorage jira_focus_user_login =", loginValue || "(empty)");
             if (!loginValue) {
               const rawProfile = targetWindow.localStorage.getItem("jira_focus_user_profile") || "";
-              debugLog("bridge localStorage jira_focus_user_profile =", rawProfile || "(empty)");
               if (rawProfile) {
                 const parsedProfile = JSON.parse(rawProfile);
                 if (parsedProfile && typeof parsedProfile === "object") {
@@ -62,7 +47,6 @@
                   )
                     .trim()
                     .toLowerCase();
-                  debugLog("bridge derived login from profile =", loginValue || "(empty)");
                 }
               }
             }
@@ -70,59 +54,24 @@
               loginValue = String(targetWindow.localStorage.getItem("emailAddress") || "")
                 .trim()
                 .toLowerCase();
-              debugLog("bridge fallback emailAddress =", loginValue || "(empty)");
             }
             if (loginValue) {
               targetWindow.localStorage.setItem("jira_focus_user_login", loginValue);
             }
           } catch (_err) {
-            debugLog("bridge readStoredLogin failed", String(_err || ""));
             loginValue = "";
           }
-          debugLog("bridge readStoredLogin result =", loginValue || "(empty)");
           return loginValue;
         }
 
-        function pushValue(force) {
-          const loginValue = readStoredLogin();
-          if (!force && loginValue === lastValue) {
-            return;
-          }
-          lastValue = loginValue;
-          debugLog("bridge setComponentValue =", loginValue || "(empty)");
-          Streamlit.setComponentValue(loginValue);
+        function onRender() {
+          Streamlit.setComponentValue(readStoredLogin());
           Streamlit.setFrameHeight(0);
-        }
-
-        function onRender(event) {
-          debugLog("bridge render event", event && event.detail ? event.detail.args : {});
-          pushValue(true);
         }
 
         Streamlit.events.addEventListener(Streamlit.RENDER_EVENT, onRender);
         Streamlit.setComponentReady();
         Streamlit.setFrameHeight(0);
-
-        window.addEventListener("load", function () {
-          pushValue(true);
-          window.setTimeout(function () {
-            pushValue(true);
-          }, 250);
-          window.setTimeout(function () {
-            pushValue(true);
-          }, 1000);
-        });
-
-        try {
-          getTargetWindow().addEventListener("storage", function () {
-            debugLog("bridge storage event received");
-            pushValue(true);
-          });
-        } catch (_err) {
-          debugLog("bridge storage listener setup failed", String(_err || ""));
-        }
-
-        pushValue(true);
       })();
     </script>
   </body>

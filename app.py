@@ -2058,41 +2058,38 @@ def _build_censo_compare_matches(
     uploaded_rows: List[Dict[str, str]],
     colegio_rows: List[Dict[str, object]],
 ) -> Tuple[List[Dict[str, object]], Dict[str, int]]:
-    colegio_by_dni: Dict[str, List[Dict[str, object]]] = {}
-    colegio_by_apellidos: Dict[Tuple[str, str], List[Dict[str, object]]] = {}
+    colegio_by_dni_apellidos: Dict[Tuple[str, str, str], List[Dict[str, object]]] = {}
     for row in colegio_rows:
         dni_key = _normalize_compare_id(row.get("id_oficial"))
         if dni_key:
-            colegio_by_dni.setdefault(dni_key, []).append(row)
-        ap_pat_key = _normalize_compare_text(row.get("apellido_paterno"))
-        ap_mat_key = _normalize_compare_text(row.get("apellido_materno"))
-        if ap_pat_key and ap_mat_key:
-            colegio_by_apellidos.setdefault((ap_pat_key, ap_mat_key), []).append(row)
+            ap_pat_key = _normalize_compare_text(row.get("apellido_paterno"))
+            ap_mat_key = _normalize_compare_text(row.get("apellido_materno"))
+            if ap_pat_key and ap_mat_key:
+                colegio_by_dni_apellidos.setdefault(
+                    (dni_key, ap_pat_key, ap_mat_key), []
+                ).append(row)
 
     result_rows: List[Dict[str, object]] = []
-    total_dni = 0
-    total_apellidos = 0
-    total_con_referencia = 0
+    total_reconocidos = 0
     for row in uploaded_rows:
         dni_key = _normalize_compare_id(row.get("nuip"))
-        apellidos_key = (
-            _normalize_compare_text(row.get("apellido_paterno")),
-            _normalize_compare_text(row.get("apellido_materno")),
+        ap_pat_key = _normalize_compare_text(row.get("apellido_paterno"))
+        ap_mat_key = _normalize_compare_text(row.get("apellido_materno"))
+        combined_key = (
+            dni_key,
+            ap_pat_key,
+            ap_mat_key,
         )
-        dni_matches = colegio_by_dni.get(dni_key, []) if dni_key else []
-        apellido_matches = (
-            colegio_by_apellidos.get(apellidos_key, [])
-            if apellidos_key[0] and apellidos_key[1]
+        combined_matches = (
+            colegio_by_dni_apellidos.get(combined_key, [])
+            if dni_key and ap_pat_key and ap_mat_key
             else []
         )
-        dni_reference = " ; ".join(_format_censo_compare_reference(item) for item in dni_matches)
-        apellido_reference = " ; ".join(
-            _format_censo_compare_reference(item) for item in apellido_matches
+        combined_reference = " ; ".join(
+            _format_censo_compare_reference(item) for item in combined_matches
         )
-        has_reference = bool(dni_reference or apellido_reference)
-        total_dni += int(bool(dni_reference))
-        total_apellidos += int(bool(apellido_reference))
-        total_con_referencia += int(has_reference)
+        reconocido = bool(combined_reference)
+        total_reconocidos += int(reconocido)
         result_rows.append(
             {
                 "Nivel": row.get("nivel", ""),
@@ -2104,19 +2101,16 @@ def _build_censo_compare_matches(
                 "Sexo": row.get("sexo", ""),
                 "Fecha de Nacimiento": row.get("fecha_nacimiento", ""),
                 "NUIP": row.get("nuip", ""),
-                "Coincidencia por DNI": dni_reference,
-                "Coincidencia por apellidos": apellido_reference,
-                "Usar referencia": has_reference,
+                "Coincidencia": combined_reference,
+                "Reconocido": reconocido,
             }
         )
 
     return result_rows, {
         "subidos_total": len(uploaded_rows),
         "colegio_total": len(colegio_rows),
-        "coincidencia_dni_total": total_dni,
-        "coincidencia_apellidos_total": total_apellidos,
-        "con_referencia_total": total_con_referencia,
-        "sin_referencia_total": max(len(uploaded_rows) - total_con_referencia, 0),
+        "reconocidos_total": total_reconocidos,
+        "no_reconocidos_total": max(len(uploaded_rows) - total_reconocidos, 0),
     }
 
 
@@ -2124,10 +2118,28 @@ def _style_censo_compare_matches(df: pd.DataFrame):
     def _highlight(value: object) -> str:
         return "background-color: #d1fae5" if str(value or "").strip() else ""
 
-    return df.style.map(
-        _highlight,
-        subset=["Coincidencia por DNI", "Coincidencia por apellidos"],
-    )
+    return df.style.map(_highlight, subset=["Coincidencia"])
+
+
+def _build_censo_compare_export_rows(rows: List[Dict[str, object]]) -> List[Dict[str, str]]:
+    export_rows: List[Dict[str, str]] = []
+    for row in rows:
+        export_rows.append(
+            {
+                "Nivel": str(row.get("Nivel") or "").strip(),
+                "Grado": str(row.get("Grado") or "").strip(),
+                "Grupo": str(row.get("Grupo") or "").strip(),
+                "Nombre": str(row.get("Nombre") or "").strip(),
+                "Apellido Paterno": str(row.get("Apellido Paterno") or "").strip(),
+                "Apellido Materno": str(row.get("Apellido Materno") or "").strip(),
+                "Sexo": str(row.get("Sexo") or "").strip(),
+                "Fecha de Nacimiento": str(row.get("Fecha de Nacimiento") or "").strip(),
+                "NUIP": str(row.get("NUIP") or "").strip(),
+                "Login": "",
+                "Password": "",
+            }
+        )
+    return export_rows
 
 
 def _parse_colegio_id(raw: object, field_name: str = "Colegio Clave") -> int:
@@ -8084,27 +8096,41 @@ with tab_crud_alumnos:
                         st.error(f"Error: {exc}")
                         st.stop()
 
-                    try:
-                        uploaded_rows = _read_censo_compare_excel(uploaded_censo_compare)
-                    except Exception as exc:  # pragma: no cover - UI
-                        st.error(f"No se pudo leer el Excel: {exc}")
-                        st.stop()
+                    with st.status("Analizando censo...", expanded=True) as status:
+                        status.write("Leyendo Excel de alumnos esperados...")
+                        try:
+                            uploaded_rows = _read_censo_compare_excel(uploaded_censo_compare)
+                        except Exception as exc:  # pragma: no cover - UI
+                            status.update(label="Error al leer el Excel", state="error")
+                            st.error(f"No se pudo leer el Excel: {exc}")
+                            st.stop()
 
-                    if not uploaded_rows:
-                        st.error("El Excel no contiene filas validas para comparar.")
-                        st.stop()
+                        if not uploaded_rows:
+                            status.update(label="Excel sin filas validas", state="error")
+                            st.error("El Excel no contiene filas validas para comparar.")
+                            st.stop()
 
-                    colegio_rows, colegio_errors = _collect_colegio_alumnos_censo_rows(
-                        token=token,
-                        colegio_id=int(colegio_id_int),
-                        empresa_id=int(empresa_id),
-                        ciclo_id=int(ciclo_id),
-                        timeout=int(timeout),
-                    )
-                    compare_rows, compare_summary = _build_censo_compare_matches(
-                        uploaded_rows=uploaded_rows,
-                        colegio_rows=colegio_rows,
-                    )
+                        status.write(
+                            f"Excel cargado: {len(uploaded_rows)} alumnos esperados."
+                        )
+                        status.write("Consultando alumnos del colegio en Pegasus...")
+                        colegio_rows, colegio_errors = _collect_colegio_alumnos_censo_rows(
+                            token=token,
+                            colegio_id=int(colegio_id_int),
+                            empresa_id=int(empresa_id),
+                            ciclo_id=int(ciclo_id),
+                            timeout=int(timeout),
+                        )
+                        status.write(
+                            f"Consulta completada: {len(colegio_rows)} alumnos encontrados en el colegio."
+                        )
+                        status.write("Comparando por DNI y apellidos...")
+                        compare_rows, compare_summary = _build_censo_compare_matches(
+                            uploaded_rows=uploaded_rows,
+                            colegio_rows=colegio_rows,
+                        )
+                        status.update(label="Analisis de censo completado", state="complete")
+
                     st.session_state["alumnos_censo_compare_rows"] = compare_rows
                     st.session_state["alumnos_censo_compare_summary"] = compare_summary
                     st.session_state["alumnos_censo_compare_errors"] = colegio_errors
@@ -8113,7 +8139,7 @@ with tab_crud_alumnos:
                     )
                     st.success(
                         "Analisis listo. Subidos: {subidos_total} | Colegio: {colegio_total} | "
-                        "Con referencia: {con_referencia_total} | Sin referencia: {sin_referencia_total}".format(
+                        "Reconocidos: {reconocidos_total} | No reconocidos: {no_reconocidos_total}".format(
                             **compare_summary
                         )
                     )
@@ -8125,76 +8151,47 @@ with tab_crud_alumnos:
                 st.session_state.get("alumnos_censo_compare_source_name") or "censo.xlsx"
             )
             if censo_compare_rows_cached:
-                preview_df = pd.DataFrame(censo_compare_rows_cached).drop(
-                    columns=["Usar referencia"],
-                    errors="ignore",
-                )
-                st.markdown("**Vista previa de coincidencias**")
-                st.dataframe(
-                    _style_censo_compare_matches(preview_df),
-                    use_container_width=True,
-                )
+                reconocidos_rows = [
+                    row for row in censo_compare_rows_cached if bool(row.get("Reconocido", False))
+                ]
+                no_reconocidos_rows = [
+                    row for row in censo_compare_rows_cached if not bool(row.get("Reconocido", False))
+                ]
+
                 st.info(
-                    "Coincidencia DNI: {coincidencia_dni_total} | Coincidencia apellidos: {coincidencia_apellidos_total} | "
-                    "Sin referencia: {sin_referencia_total}".format(
+                    "Reconocidos: {reconocidos_total} | No reconocidos: {no_reconocidos_total}".format(
                         **censo_compare_summary_cached
                     )
                 )
 
-                edited_censo_compare_df = st.data_editor(
-                    pd.DataFrame(censo_compare_rows_cached),
-                    hide_index=True,
-                    use_container_width=True,
-                    key="alumnos_censo_compare_editor",
-                    column_config={
-                        "Usar referencia": st.column_config.CheckboxColumn(
-                            "Usar referencia",
-                            help="Desmarca si igual quieres registrar este alumno como nuevo o reactivarlo manualmente.",
-                        ),
-                    },
-                    disabled=[
-                        "Nivel",
-                        "Grado",
-                        "Grupo",
-                        "Nombre",
-                        "Apellido Paterno",
-                        "Apellido Materno",
-                        "Sexo",
-                        "Fecha de Nacimiento",
-                        "NUIP",
-                        "Coincidencia por DNI",
-                        "Coincidencia por apellidos",
-                    ],
-                )
-                edited_censo_compare_rows = edited_censo_compare_df.to_dict("records")
-                registrar_rows = [
-                    {
-                        "Nivel": row.get("Nivel", ""),
-                        "Grado": row.get("Grado", ""),
-                        "Grupo": row.get("Grupo", ""),
-                        "Nombre": row.get("Nombre", ""),
-                        "Apellido Paterno": row.get("Apellido Paterno", ""),
-                        "Apellido Materno": row.get("Apellido Materno", ""),
-                        "Sexo": row.get("Sexo", ""),
-                        "Fecha de Nacimiento": row.get("Fecha de Nacimiento", ""),
-                        "NUIP": row.get("NUIP", ""),
-                    }
-                    for row in edited_censo_compare_rows
-                    if not bool(row.get("Usar referencia", False))
-                ]
-                st.markdown("**Alumnos a registrar o activar**")
-                if registrar_rows:
-                    _show_dataframe(registrar_rows, use_container_width=True)
+                st.markdown("**Vista previa de coincidencias**")
+                if reconocidos_rows:
+                    preview_df = pd.DataFrame(reconocidos_rows)[
+                        [
+                            "Nombre",
+                            "Apellido Paterno",
+                            "Apellido Materno",
+                            "NUIP",
+                        ]
+                    ]
+                    st.dataframe(preview_df, use_container_width=True)
+                else:
+                    st.caption("No se encontraron alumnos reconocidos por DNI y apellidos juntos.")
+
+                st.markdown("**Alumnos no reconocidos**")
+                export_rows = _build_censo_compare_export_rows(no_reconocidos_rows)
+                if export_rows:
+                    _show_dataframe(export_rows, use_container_width=True)
                     export_name = Path(censo_compare_source_name_cached).stem
                     st.download_button(
-                        label="Descargar alumnos a registrar",
-                        data=_export_simple_excel(registrar_rows, sheet_name="registrar"),
+                        label="Descargar alumnos no reconocidos",
+                        data=_export_simple_excel(export_rows, sheet_name="registrar"),
                         file_name=f"{export_name}_alumnos_registrar.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         key="alumnos_censo_compare_download",
                     )
                 else:
-                    st.caption("Todos los alumnos subidos tienen una referencia activa/inactiva en el colegio.")
+                    st.caption("Todos los alumnos subidos fueron reconocidos por DNI y apellidos juntos.")
 
             if censo_compare_errors_cached:
                 st.warning("Hubo errores al consultar algunas secciones del colegio para esta comparacion.")

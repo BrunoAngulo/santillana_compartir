@@ -13,6 +13,7 @@ from uuid import uuid4
 import pandas as pd
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 from st_keyup import st_keyup
 
 from santillana_format.alumnos import (
@@ -119,6 +120,10 @@ JIRA_USER_COOKIE_NAME = "jira_focus_user_display_name"
 JIRA_LOGIN_QUERY_PARAM = "jira_login"
 JIRA_LOGIN_COOKIE_NAME = "jira_focus_user_login"
 JIRA_UNLOCK_LOGIN = "bangulo@santillana.com"
+JIRA_LOGIN_BRIDGE_COMPONENT = components.declare_component(
+    "jira_login_bridge",
+    path=str(Path(__file__).resolve().parent / "components" / "jira_login_bridge"),
+)
 RICHMONDSTUDIO_TEST_LEVEL_OPTIONS: List[Tuple[str, str]] = [
     ("lower primary", "lower_primary"),
     ("upper primary", "upper_primary"),
@@ -209,6 +214,17 @@ def _normalize_login(value: object) -> str:
     return str(value or "").strip().lower()
 
 
+def _read_browser_jira_login() -> str:
+    try:
+        browser_value = JIRA_LOGIN_BRIDGE_COMPONENT(
+            key="jira_login_bridge_component",
+            default="",
+        )
+    except Exception:
+        return ""
+    return _normalize_login(browser_value)
+
+
 def _get_jira_login_candidates() -> Set[str]:
     login_values: Set[str] = set()
     jira_login_query = st.query_params.get(JIRA_LOGIN_QUERY_PARAM, "")
@@ -232,15 +248,24 @@ def _has_unlock_login() -> bool:
 
 
 def _sync_jira_user_identity() -> None:
+    browser_login_text = _read_browser_jira_login()
+    session_login_text = _normalize_login(st.session_state.get("jira_focus_user_login", ""))
+    if browser_login_text:
+        st.session_state["jira_focus_user_login"] = browser_login_text
+        if browser_login_text != session_login_text:
+            st.rerun()
+
     jira_login_value = st.query_params.get(JIRA_LOGIN_QUERY_PARAM, "")
     if isinstance(jira_login_value, list):
         jira_login_value = jira_login_value[0] if jira_login_value else ""
     try:
-        if not jira_login_value:
+        if not jira_login_value and not browser_login_text:
             jira_login_value = st.context.cookies.get(JIRA_LOGIN_COOKIE_NAME, "") or ""
     except Exception:
         pass
-    jira_login_text = _normalize_login(unquote(str(jira_login_value or "").strip()))
+    jira_login_text = browser_login_text or _normalize_login(
+        unquote(str(jira_login_value or "").strip())
+    )
     if jira_login_text:
         st.session_state["jira_focus_user_login"] = jira_login_text
 
@@ -320,176 +345,6 @@ def _sync_shared_token_from_input() -> None:
 
 st.set_page_config(page_title="Generador de Plantilla", layout="wide")
 _inject_professional_theme()
-st.components.v1.html(
-    f"""
-    <script>
-      (function () {{
-        let syncTimer = null;
-        const debugPrefix = '[jira-unlock]';
-
-        function debugLog(...args) {{
-          try {{
-            console.log(debugPrefix, ...args);
-          }} catch (_err) {{
-            // No-op
-          }}
-        }}
-
-        function getTargetWindow() {{
-          try {{
-            if (window.parent && window.parent !== window) {{
-              debugLog('using parent window');
-              return window.parent;
-            }}
-          }} catch (_err) {{
-            debugLog('parent window unavailable', String(_err || ''));
-          }}
-          try {{
-            if (window.top && window.top !== window) {{
-              debugLog('using top window');
-              return window.top;
-            }}
-          }} catch (_err) {{
-            debugLog('top window unavailable', String(_err || ''));
-          }}
-          debugLog('using current window');
-          return window;
-        }}
-
-        function readStoredLogin() {{
-          let loginValue = '';
-          const targetWindow = getTargetWindow();
-          try {{
-            loginValue = (
-              targetWindow.localStorage.getItem('jira_focus_user_login') || ''
-            ).trim().toLowerCase();
-            debugLog('localStorage jira_focus_user_login =', loginValue || '(empty)');
-            if (!loginValue) {{
-              const rawProfile = targetWindow.localStorage.getItem('jira_focus_user_profile') || '';
-              debugLog('localStorage jira_focus_user_profile =', rawProfile || '(empty)');
-              if (rawProfile) {{
-                const parsedProfile = JSON.parse(rawProfile);
-                if (parsedProfile && typeof parsedProfile === 'object') {{
-                  loginValue = String(
-                    parsedProfile.login || parsedProfile.emailAddress || ''
-                  ).trim().toLowerCase();
-                  debugLog('derived login from jira_focus_user_profile =', loginValue || '(empty)');
-                }}
-              }}
-            }}
-            if (!loginValue) {{
-              loginValue = (targetWindow.localStorage.getItem('emailAddress') || '').trim().toLowerCase();
-              debugLog('fallback localStorage emailAddress =', loginValue || '(empty)');
-            }}
-            if (!loginValue) {{
-              const prefix = 'jira_focus_user_login';
-              const total = Number(targetWindow.localStorage.length || 0);
-              debugLog('searching localStorage keys by prefix, total keys =', total);
-              for (let i = 0; i < total; i += 1) {{
-                const keyName = String(targetWindow.localStorage.key(i) || '');
-                if (!keyName.toLowerCase().startsWith(prefix)) continue;
-                if (keyName.length <= prefix.length) continue;
-                const suffixLogin = keyName.slice(prefix.length).trim().toLowerCase();
-                if (!suffixLogin || !suffixLogin.includes('@')) continue;
-                debugLog('found login in key suffix =', keyName, '->', suffixLogin);
-                loginValue = suffixLogin;
-                try {{
-                  targetWindow.localStorage.removeItem(keyName);
-                  debugLog('removed legacy key =', keyName);
-                }} catch (_innerErr) {{
-                  debugLog('could not remove legacy key =', keyName, String(_innerErr || ''));
-                }}
-                break;
-              }}
-            }}
-            if (loginValue) {{
-              targetWindow.localStorage.setItem('jira_focus_user_login', loginValue);
-              debugLog('normalized jira_focus_user_login saved =', loginValue);
-            }}
-          }} catch (_err) {{
-            debugLog('readStoredLogin failed', String(_err || ''));
-            loginValue = '';
-          }}
-          debugLog('readStoredLogin result =', loginValue || '(empty)');
-          return loginValue;
-        }}
-
-        function syncLoginValue() {{
-          let desiredLogin = '';
-          const targetWindow = getTargetWindow();
-          try {{
-            desiredLogin = readStoredLogin();
-          }} catch (_err) {{
-            desiredLogin = '';
-          }}
-          debugLog('syncLoginValue desiredLogin =', desiredLogin || '(empty)');
-          try {{
-            const loginMaxAge = desiredLogin ? '31536000' : '0';
-            const loginValue = desiredLogin ? encodeURIComponent(desiredLogin) : '';
-            targetWindow.document.cookie =
-              {f"{JIRA_LOGIN_COOKIE_NAME}="!r}
-              + loginValue
-              + '; path=/; max-age='
-              + loginMaxAge
-              + '; SameSite=Lax';
-            debugLog('cookie synced', {f"{JIRA_LOGIN_COOKIE_NAME}="!r} + loginValue);
-          }} catch (_err) {{
-            debugLog('cookie sync failed', String(_err || ''));
-          }}
-        }}
-
-        try {{
-          const targetWindow = getTargetWindow();
-          targetWindow.addEventListener('message', function (event) {{
-            const data = event && event.data ? event.data : null;
-            if (!data || data.type !== 'jira-focus-admin-access') return;
-            debugLog('message received', data);
-            const targetWindow = getTargetWindow();
-            try {{
-              const loginValue = data.login
-                ? String(data.login || '').trim().toLowerCase()
-                : (
-                  data.userProfile && data.userProfile.emailAddress
-                    ? String(data.userProfile.emailAddress || '').trim().toLowerCase()
-                    : ''
-                );
-              debugLog('message loginValue =', loginValue || '(empty)');
-              if (loginValue) {{
-                targetWindow.localStorage.setItem('jira_focus_user_login', loginValue);
-                debugLog('message saved jira_focus_user_login');
-              }} else {{
-                targetWindow.localStorage.removeItem('jira_focus_user_login');
-                debugLog('message removed jira_focus_user_login');
-              }}
-              if (data.userProfile && typeof data.userProfile === 'object') {{
-                targetWindow.localStorage.setItem(
-                  'jira_focus_user_profile',
-                  JSON.stringify(data.userProfile)
-                );
-                debugLog('message saved jira_focus_user_profile');
-              }} else {{
-                targetWindow.localStorage.removeItem('jira_focus_user_profile');
-                debugLog('message removed jira_focus_user_profile');
-              }}
-            }} catch (_err) {{
-              debugLog('message sync failed', String(_err || ''));
-            }}
-            syncLoginValue();
-          }});
-        }} catch (_err) {{
-          debugLog('message listener setup failed', String(_err || ''));
-        }}
-
-        syncLoginValue();
-        if (!syncTimer) {{
-          syncTimer = window.setInterval(syncLoginValue, 1000);
-          debugLog('sync timer started');
-        }}
-      }})();
-    </script>
-    """,
-    height=0,
-)
 st.markdown("**Menu principal**")
 menu_option = st.radio(
     "Menu",

@@ -85,6 +85,9 @@ HEADER_ALIASES = {
     "nivel": "nivel",
     "grado": "grado",
     "grupo": "grupo",
+    "seccion": "grupo",
+    "seccion grupo": "grupo",
+    "gruposeccion": "grupo",
     "nui": "nui",
     "id alumno": "id_alumno",
     "idalumno": "id_alumno",
@@ -384,11 +387,12 @@ def _match_field(
 ) -> Optional[bool]:
     if not indices:
         return None
-    current = _normalize_text(value)
+    normalizer = _normalize_grupo if column == "grupo" else _normalize_text
+    current = normalizer(value)
     if not current:
         return None
     for idx in indices:
-        bd_value = _normalize_text(df_bd.loc[idx].get(column))
+        bd_value = normalizer(df_bd.loc[idx].get(column))
         if bd_value and bd_value == current:
             return True
     return False
@@ -494,13 +498,16 @@ def _normalize_grupo(value: object) -> str:
     text = _normalize_text(value)
     if not text:
         return ""
-    text = re.sub(r"^grupo", "", text)
-    match = re.search(r"[a-z]", text)
-    if match:
-        return match.group(0)
+    text = re.sub(r"^(grupo|seccion)+", "", text)
+    tail_match = re.search(r"([a-z]+|\d+)$", text)
+    if tail_match:
+        return tail_match.group(1)
     digits = re.findall(r"\d+", text)
     if digits:
-        return digits[0]
+        return digits[-1]
+    letters = re.findall(r"[a-z]", text)
+    if letters:
+        return letters[-1]
     return text
 
 
@@ -876,7 +883,10 @@ def _build_comparacion_bd(
             _pick_row_value(act_row, ("grado", "Grado", "Nuevo Grado"))
         )
         nuevo_grupo = _clean_cell_value(
-            _pick_row_value(act_row, ("grupo", "Grupo", "Nuevo Grupo"))
+            _pick_row_value(
+                act_row,
+                ("grupo", "Grupo", "Seccion", "Sección", "Nuevo Grupo", "Nueva Seccion", "Nueva Sección"),
+            )
         )
 
         row_out["Nuevo Nivel"] = (

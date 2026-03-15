@@ -2054,6 +2054,21 @@ def _format_censo_compare_reference(row: Dict[str, object]) -> str:
     return " | ".join(part for part in parts if part)
 
 
+def _censo_compare_display_name(row: Dict[str, object]) -> str:
+    nombre = str(row.get("nombre_completo") or "").strip()
+    if nombre:
+        return nombre
+    return " ".join(
+        part
+        for part in (
+            str(row.get("nombre") or "").strip(),
+            str(row.get("apellido_paterno") or "").strip(),
+            str(row.get("apellido_materno") or "").strip(),
+        )
+        if part
+    ).strip()
+
+
 def _censo_compare_location_matches(
     uploaded_row: Dict[str, str],
     colegio_row: Dict[str, object],
@@ -2081,8 +2096,8 @@ def _build_censo_compare_matches(
     for row in colegio_rows:
         dni_key = _normalize_compare_id(row.get("id_oficial"))
         if dni_key:
-            ap_pat_key = _normalize_compare_text(row.get("apellido_paterno"))
-            ap_mat_key = _normalize_compare_text(row.get("apellido_materno"))
+            ap_pat_key = _normalize_compare_apellido(row.get("apellido_paterno"))
+            ap_mat_key = _normalize_compare_apellido(row.get("apellido_materno"))
             if ap_pat_key and ap_mat_key:
                 colegio_by_dni_apellidos.setdefault(
                     (dni_key, ap_pat_key, ap_mat_key), []
@@ -2093,8 +2108,8 @@ def _build_censo_compare_matches(
     total_ubicacion_ok = 0
     for row in uploaded_rows:
         dni_key = _normalize_compare_id(row.get("nuip"))
-        ap_pat_key = _normalize_compare_text(row.get("apellido_paterno"))
-        ap_mat_key = _normalize_compare_text(row.get("apellido_materno"))
+        ap_pat_key = _normalize_compare_apellido(row.get("apellido_paterno"))
+        ap_mat_key = _normalize_compare_apellido(row.get("apellido_materno"))
         combined_key = (
             dni_key,
             ap_pat_key,
@@ -2126,7 +2141,25 @@ def _build_censo_compare_matches(
         ).strip()
         dni_excel = str(row.get("nuip") or "").strip()
         dni_bd = str(matched_row.get("id_oficial") or "").strip()
-        dni_coincide = bool(dni_excel and dni_bd and _normalize_compare_id(dni_excel) == _normalize_compare_id(dni_bd))
+        apellido_paterno_bd = str(matched_row.get("apellido_paterno") or "").strip()
+        apellido_materno_bd = str(matched_row.get("apellido_materno") or "").strip()
+        dni_coincide = bool(
+            dni_excel
+            and dni_bd
+            and _normalize_compare_id(dni_excel) == _normalize_compare_id(dni_bd)
+        )
+        apellido_paterno_coincide = bool(
+            row.get("apellido_paterno")
+            and apellido_paterno_bd
+            and _normalize_compare_apellido(row.get("apellido_paterno"))
+            == _normalize_compare_apellido(apellido_paterno_bd)
+        )
+        apellido_materno_coincide = bool(
+            row.get("apellido_materno")
+            and apellido_materno_bd
+            and _normalize_compare_apellido(row.get("apellido_materno"))
+            == _normalize_compare_apellido(apellido_materno_bd)
+        )
         result_rows.append(
             {
                 "Nombre completo": nombre_completo,
@@ -2136,11 +2169,15 @@ def _build_censo_compare_matches(
                 "Sexo": row.get("sexo", ""),
                 "Fecha de Nacimiento": row.get("fecha_nacimiento", ""),
                 "DNI Excel": dni_excel,
-                "Usuario BD": str(matched_row.get("login") or "").strip(),
+                "Alumno BD": _censo_compare_display_name(matched_row),
                 "DNI BD": dni_bd,
+                "Apellido Paterno BD": apellido_paterno_bd,
+                "Apellido Materno BD": apellido_materno_bd,
                 "Coincidencia": combined_reference,
                 "Reconocido": reconocido,
                 "DNI coincide": dni_coincide,
+                "Apellido Paterno coincide": apellido_paterno_coincide,
+                "Apellido Materno coincide": apellido_materno_coincide,
                 "Ubicacion correcta": ubicacion_ok,
                 "Activo BD": _to_bool(matched_row.get("activo")),
                 "Nivel esperado": row.get("nivel", ""),
@@ -2178,11 +2215,30 @@ def _style_censo_compare_preview(df: pd.DataFrame):
                 except ValueError:
                     continue
                 styles[idx] = "background-color: #d1fae5"
+        if _to_bool(row.get("Apellido Paterno coincide")):
+            for column_name in ("Apellido Paterno", "Apellido Paterno BD"):
+                try:
+                    idx = list(row.index).index(column_name)
+                except ValueError:
+                    continue
+                styles[idx] = "background-color: #fef3c7"
+        if _to_bool(row.get("Apellido Materno coincide")):
+            for column_name in ("Apellido Materno", "Apellido Materno BD"):
+                try:
+                    idx = list(row.index).index(column_name)
+                except ValueError:
+                    continue
+                styles[idx] = "background-color: #dbeafe"
         return styles
 
     visible_df = df.copy()
     return visible_df.style.apply(_row_styles, axis=1).hide(
-        axis="columns", subset=["DNI coincide"]
+        axis="columns",
+        subset=[
+            "DNI coincide",
+            "Apellido Paterno coincide",
+            "Apellido Materno coincide",
+        ],
     )
 
 
@@ -2242,7 +2298,7 @@ def _build_censo_compare_move_plan(
         move_rows.append(
             {
                 "Nombre completo": str(row.get("Nombre completo") or "").strip(),
-                "Usuario BD": str(row.get("Usuario BD") or "").strip(),
+                "Alumno BD": str(row.get("Alumno BD") or "").strip(),
                 "DNI BD": str(row.get("DNI BD") or "").strip(),
                 "Nivel actual": str(row.get("Nivel actual") or "").strip(),
                 "Grado actual": str(row.get("Grado actual") or "").strip(),
@@ -2973,6 +3029,11 @@ def _normalize_compare_text(value: object) -> str:
     # Treat hyphens, accents, and punctuation variants as equivalent during compare.
     text = re.sub(r"[^A-Z0-9]+", " ", text)
     return text.strip()
+
+
+def _normalize_compare_apellido(value: object) -> str:
+    # For surnames, compare "RIZOPATRON", "RIZO PATRON", and "RIZO-PATRON" as equal.
+    return re.sub(r"[^A-Z0-9]+", "", _normalize_plain_text(value))
 
 
 def _normalize_compare_id(value: object) -> str:
@@ -8234,7 +8295,12 @@ with tab_crud_alumnos:
                         st.stop()
 
                     with st.status("Analizando censo...", expanded=True) as status:
-                        status.write("Leyendo Excel de alumnos esperados...")
+                        progress_placeholder = st.empty()
+
+                        def _set_censo_status(message: object) -> None:
+                            progress_placeholder.info(str(message or "").strip())
+
+                        _set_censo_status("Leyendo Excel de alumnos esperados...")
                         try:
                             uploaded_rows = _read_censo_compare_excel(uploaded_censo_compare)
                         except Exception as exc:  # pragma: no cover - UI
@@ -8247,30 +8313,30 @@ with tab_crud_alumnos:
                             st.error("El Excel no contiene filas validas para comparar.")
                             st.stop()
 
-                        status.write(
+                        _set_censo_status(
                             f"Excel cargado: {len(uploaded_rows)} alumnos esperados."
                         )
-                        status.write("Consultando alumnos del colegio en Pegasus...")
+                        _set_censo_status("Consultando alumnos del colegio en Pegasus...")
                         colegio_catalog = _fetch_alumnos_catalog_for_manual_move(
                             token=token,
                             colegio_id=int(colegio_id_int),
                             empresa_id=int(empresa_id),
                             ciclo_id=int(ciclo_id),
                             timeout=int(timeout),
-                            on_status=status.write,
+                            on_status=_set_censo_status,
                         )
                         colegio_rows = colegio_catalog.get("students") or []
                         colegio_errors = colegio_catalog.get("errors") or []
                         niveles_compare = colegio_catalog.get("niveles") or []
-                        status.write(
+                        _set_censo_status(
                             f"Consulta completada: {len(colegio_rows)} alumnos encontrados en el colegio."
                         )
-                        status.write("Comparando por DNI y apellidos...")
+                        _set_censo_status("Comparando por DNI y apellidos...")
                         compare_rows, compare_summary = _build_censo_compare_matches(
                             uploaded_rows=uploaded_rows,
                             colegio_rows=colegio_rows,
                         )
-                        status.write("Validando nivel, grado y seccion esperados...")
+                        _set_censo_status("Validando nivel, grado y seccion esperados...")
                         move_rows, move_summary = _build_censo_compare_move_plan(
                             compare_rows=compare_rows,
                             niveles_data=niveles_compare,
@@ -8327,10 +8393,16 @@ with tab_crud_alumnos:
                     preview_df = pd.DataFrame(reconocidos_rows)[
                         [
                             "Nombre completo",
+                            "Apellido Paterno",
+                            "Apellido Paterno BD",
+                            "Apellido Materno",
+                            "Apellido Materno BD",
                             "DNI Excel",
-                            "Usuario BD",
+                            "Alumno BD",
                             "DNI BD",
                             "DNI coincide",
+                            "Apellido Paterno coincide",
+                            "Apellido Materno coincide",
                         ]
                     ]
                     st.dataframe(
@@ -8352,7 +8424,7 @@ with tab_crud_alumnos:
                     )
                     move_preview_df = pd.DataFrame(censo_compare_move_rows_cached)[
                         [
-                            "Usuario BD",
+                            "Alumno BD",
                             "Nombre completo",
                             "DNI BD",
                             "Nivel actual",
@@ -8413,7 +8485,7 @@ with tab_crud_alumnos:
                         with st.status("Ejecutando movimiento masivo...", expanded=True) as status:
                             for idx_move, move_row in enumerate(move_rows_ready, start=1):
                                 alumno_label = str(
-                                    move_row.get("Usuario BD")
+                                    move_row.get("Alumno BD")
                                     or move_row.get("Nombre completo")
                                     or move_row.get("DNI BD")
                                     or f"fila {idx_move}"

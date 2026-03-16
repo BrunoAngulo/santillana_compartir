@@ -1011,21 +1011,23 @@ def _build_comparacion_bd(
             )
         )
 
-        row_out["Nuevo Nivel"] = (
-            nuevo_nivel
-            if _is_changed(nuevo_nivel, row_out.get("Nivel", ""), _normalize_text)
-            else ""
-        )
-        row_out["Nuevo Grado"] = (
-            nuevo_grado
-            if _is_changed(nuevo_grado, row_out.get("Grado", ""), _normalize_text)
-            else ""
-        )
-        row_out["Nuevo Grupo"] = (
-            nuevo_grupo
-            if _is_changed(nuevo_grupo, row_out.get("Grupo", ""), _normalize_grupo)
-            else ""
-        )
+        nivel_actual = _clean_cell_value(row_out.get("Nivel", ""))
+        grado_actual = _clean_cell_value(row_out.get("Grado", ""))
+        grupo_actual = _clean_cell_value(row_out.get("Grupo", ""))
+
+        nivel_changed = _is_changed(nuevo_nivel, nivel_actual, _normalize_text)
+        grado_changed = _is_changed(nuevo_grado, grado_actual, _normalize_text)
+        grupo_changed = _is_changed(nuevo_grupo, grupo_actual, _normalize_grupo)
+        ubicacion_changed = nivel_changed or grado_changed or grupo_changed
+
+        if ubicacion_changed:
+            row_out["Nuevo Nivel"] = nuevo_nivel or nivel_actual
+            row_out["Nuevo Grado"] = nuevo_grado or grado_actual
+            row_out["Nuevo Grupo"] = nuevo_grupo or grupo_actual
+        else:
+            row_out["Nuevo Nivel"] = ""
+            row_out["Nuevo Grado"] = ""
+            row_out["Nuevo Grupo"] = ""
 
         rows.append(row_out)
 

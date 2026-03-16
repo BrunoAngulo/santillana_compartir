@@ -265,6 +265,52 @@ def _first_initial(value: object) -> str:
     return text[0]
 
 
+def _normalize_tokens(value: object) -> List[str]:
+    if value is None:
+        return []
+    text = str(value or "").strip().lower()
+    if not text:
+        return []
+    text = unicodedata.normalize("NFD", text)
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return []
+    return [token for token in text.split(" ") if token]
+
+
+def _is_name_subset_match(tokens_a: Sequence[str], tokens_b: Sequence[str]) -> bool:
+    if not tokens_a or not tokens_b:
+        return False
+    if tokens_a[0] != tokens_b[0]:
+        return False
+    set_a = set(tokens_a)
+    set_b = set(tokens_b)
+    return set_a.issubset(set_b) or set_b.issubset(set_a)
+
+
+def _score_name_match(value_a: object, value_b: object) -> int:
+    tokens_a = _normalize_tokens(value_a)
+    tokens_b = _normalize_tokens(value_b)
+    if not tokens_a or not tokens_b:
+        return 0
+
+    compact_a = "".join(tokens_a)
+    compact_b = "".join(tokens_b)
+    if compact_a == compact_b:
+        return 4
+    if _is_name_subset_match(tokens_a, tokens_b):
+        return 3
+    if tokens_a[0] == tokens_b[0]:
+        return 1
+
+    overlap = len(set(tokens_a) & set(tokens_b))
+    if overlap > 0:
+        return 1
+    return 0
+
+
 def _comment_for_match(match_type: Optional[str]) -> str:
     if match_type == MATCH_TIPO_N1:
         return "Nivel 1: NUIP"
@@ -406,8 +452,8 @@ def _export_comparacion(comparacion: pd.DataFrame, nuevos: pd.DataFrame) -> byte
 
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        _write_sheet(writer, "Plantilla alta de alumnos", nuevos)
         _write_sheet(writer, "Plantilla edición masiva", comparacion)
+        _write_sheet(writer, "Plantilla alta de alumnos", nuevos)
     output.seek(0)
     return output.getvalue()
 
@@ -714,8 +760,6 @@ def _resolve_apellidos_match(
     )
     if not candidates:
         return None
-    if len(candidates) == 1:
-        return candidates[0]
 
     nuip_candidates = _filter_candidates_by_nuip(act_row, df_bd, candidates)
     if len(nuip_candidates) == 1:
@@ -738,6 +782,7 @@ def _resolve_apellidos_then_nuip_match(
     act_row: pd.Series,
     df_bd: pd.DataFrame,
     nuip_index: Dict[str, List[int]],
+    nombre_ap_pat_index: Dict[str, List[int]],
     identidad_index: Dict[str, List[int]],
     apellidos_cache: Sequence[Tuple[int, str, str]],
     used_indices: Optional[set] = None,
@@ -746,6 +791,15 @@ def _resolve_apellidos_then_nuip_match(
         act_row,
         df_bd,
         identidad_index,
+        used_indices=used_indices,
+    )
+    if bd_idx is not None:
+        return bd_idx
+
+    bd_idx = _resolve_nombre_ap_pat_match(
+        act_row,
+        df_bd,
+        nombre_ap_pat_index,
         used_indices=used_indices,
     )
     if bd_idx is not None:
@@ -769,9 +823,6 @@ def _resolve_apellidos_then_nuip_match(
         if best_by_identity is not None:
             return best_by_identity
 
-        if len(candidates) == 1 and not _normalize_nuip(act_row.get("nuip")):
-            return candidates[0]
-
     return _resolve_nuip_match(
         act_row,
         df_bd,
@@ -784,6 +835,7 @@ def _resolve_match_by_mode(
     act_row: pd.Series,
     df_bd: pd.DataFrame,
     nuip_index: Dict[str, List[int]],
+    nombre_ap_pat_index: Dict[str, List[int]],
     identidad_index: Dict[str, List[int]],
     apellidos_cache: Sequence[Tuple[int, str, str]],
     used_indices: Optional[set],
@@ -804,11 +856,20 @@ def _resolve_match_by_mode(
             identidad_index,
             used_indices=used_indices,
         )
+        
     if compare_mode == COMPARE_MODE_APELLIDOS:
         bd_idx = _resolve_identidad_match(
             act_row,
             df_bd,
             identidad_index,
+            used_indices=used_indices,
+        )
+        if bd_idx is not None:
+            return bd_idx
+        bd_idx = _resolve_nombre_ap_pat_match(
+            act_row,
+            df_bd,
+            nombre_ap_pat_index,
             used_indices=used_indices,
         )
         if bd_idx is not None:
@@ -824,6 +885,7 @@ def _resolve_match_by_mode(
             act_row,
             df_bd,
             nuip_index,
+            nombre_ap_pat_index,
             identidad_index,
             apellidos_cache,
             used_indices=used_indices,
@@ -851,6 +913,7 @@ def _build_compare_summary(
     matched_total = 0
     if not df_bd.empty and not df_act.empty:
         nuip_index = _build_nuip_index(df_bd)
+        nombre_ap_pat_index = _build_nombre_ap_pat_index(df_bd)
         identidad_index = _build_identidad_index(df_bd)
         apellidos_cache = _build_apellidos_cache(df_bd)
         used_indices = set()
@@ -859,6 +922,7 @@ def _build_compare_summary(
                 act_row,
                 df_bd,
                 nuip_index,
+                nombre_ap_pat_index,
                 identidad_index,
                 apellidos_cache,
                 used_indices=used_indices,
@@ -893,8 +957,6 @@ def _pick_best_match(
 ) -> Optional[int]:
     if not indices:
         return None
-    if len(indices) == 1:
-        return int(indices[0])
 
     target_nombre = _normalize_text(base_row.get("nombre"))
     target_fecha = _normalize_date(base_row.get("fecha_nacimiento"))
@@ -905,10 +967,10 @@ def _pick_best_match(
     for idx in indices:
         candidate = df_act.loc[idx]
         score = 0
-        if target_nombre and _normalize_text(candidate.get("nombre")) == target_nombre:
-            score += 2
+        if target_nombre:
+            score += _score_name_match(base_row.get("nombre"), candidate.get("nombre"))
         if target_fecha and _normalize_date(candidate.get("fecha_nacimiento")) == target_fecha:
-            score += 1
+            score += 3
         if target_sexo and _normalize_text(candidate.get("sexo")) == target_sexo:
             score += 1
         if score > best_score:
@@ -918,7 +980,7 @@ def _pick_best_match(
             best_indices.append(int(idx))
 
     # Evita empates ambiguos y matches sin señales de identidad.
-    if best_score <= 0:
+    if best_score < 3:
         return None
     if len(best_indices) != 1:
         return None
@@ -937,6 +999,7 @@ def _build_comparacion_bd(
         )
 
     nuip_index = _build_nuip_index(df_bd) if not df_bd.empty else {}
+    nombre_ap_pat_index = _build_nombre_ap_pat_index(df_bd) if not df_bd.empty else {}
     identidad_index = _build_identidad_index(df_bd) if not df_bd.empty else {}
     apellidos_cache = _build_apellidos_cache(df_bd) if not df_bd.empty else []
     rows: List[Dict[str, object]] = []
@@ -953,6 +1016,7 @@ def _build_comparacion_bd(
                 act_row,
                 df_bd,
                 nuip_index,
+                nombre_ap_pat_index,
                 identidad_index,
                 apellidos_cache,
                 used_indices=bd_matched_indices,
@@ -987,14 +1051,6 @@ def _build_comparacion_bd(
         row_out: Dict[str, object] = {}
         for source, target in BASE_OUTPUT_MAP.items():
             row_out[target] = _clean_cell_value(bd_row.get(source, ""))
-
-        for source, target in ACTUALIZADA_BASE_FIELDS.items():
-            value_actualizada = _clean_cell_value(act_row.get(source, ""))
-            # En actualizacion: si Login viene vacio en Plantilla_Actualizada,
-            # conservar el Login de Plantilla_BD.
-            if source == "login" and not value_actualizada:
-                continue
-            row_out[target] = value_actualizada
 
         row_out["Activo"] = "Si"
 

@@ -8749,12 +8749,12 @@ with tab_crud_alumnos:
                 compare_mode_options = {
                     "Por DNI": COMPARE_MODE_DNI,
                     "Por apellido paterno + materno": COMPARE_MODE_APELLIDOS,
-                    "Por ambos": COMPARE_MODE_AMBOS,
+                    "Por apellidos y luego DNI": COMPARE_MODE_AMBOS,
                 }
                 compare_mode_label = st.selectbox(
                     "Criterio de comparacion",
                     options=list(compare_mode_options.keys()),
-                    index=0,
+                    index=2,
                     key="alumnos_compare_mode",
                 )
                 if st.button("Generar resultado", type="primary", key="alumnos_compare"):
@@ -8769,7 +8769,7 @@ with tab_crud_alumnos:
                             tmp_path = Path(tmp.name)
                         output_bytes, summary = comparar_plantillas(
                             excel_path=tmp_path,
-                            compare_mode=compare_mode_options.get(compare_mode_label, COMPARE_MODE_DNI),
+                            compare_mode=compare_mode_options.get(compare_mode_label, COMPARE_MODE_AMBOS),
                         )
                     except Exception as exc:  # pragma: no cover - UI
                         st.error(f"Error: {exc}")

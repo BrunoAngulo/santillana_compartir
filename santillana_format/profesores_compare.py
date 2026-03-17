@@ -7,7 +7,9 @@ from typing import Dict, List, Sequence, Tuple
 import pandas as pd
 from openpyxl.utils import get_column_letter
 
-DEFAULT_SHEET_BD = "ProfesoresBD"
+from santillana_format.profesores import PROFESOR_COLUMNS, export_profesores_excel
+
+DEFAULT_SHEET_BD = "Profesores_BD"
 DEFAULT_SHEET_ACTUALIZADA = "Plantilla_Actualizada"
 PROFESORES_COMPARE_COLUMNS = [
     "Nombre",
@@ -30,17 +32,37 @@ PROFESORES_CREAR_COLUMNS = [
     "Primaria",
     "Secundaria",
 ]
+PROFESORES_BASE_PREVIEW_COLUMNS = [
+    "Id",
+    "Nombre",
+    "Apellido Paterno",
+    "Apellido Materno",
+    "Estado",
+    "Sexo",
+    "DNI",
+    "E-mail",
+    "Login",
+]
 
 HEADER_ALIASES = {
+    "id": "id",
+    "persona id": "id",
+    "personaid": "id",
     "nombre": "nombre",
     "apellido paterno": "apellido_paterno",
     "apellido materno": "apellido_materno",
+    "estado": "estado",
+    "sexo": "sexo",
     "dni": "dni",
     "documento": "dni",
     "e mail": "email",
     "email": "email",
     "e-mail": "email",
     "login": "login",
+    "password": "password",
+    "inicial": "inicial",
+    "primaria": "primaria",
+    "secundaria": "secundaria",
 }
 
 
@@ -62,7 +84,7 @@ def compare_profesores_bd_excel(
         colegio_row = _row_to_profesor_record(row)
         if _record_is_empty(colegio_row):
             continue
-        ref_row, criterio = _match_reference(colegio_row, df_bd, indexes)
+        ref_row, ref_base_row, criterio = _match_reference(colegio_row, df_bd, indexes)
         has_reference = ref_row is not None
         if has_reference:
             coincidencias_total += 1
@@ -76,6 +98,7 @@ def compare_profesores_bd_excel(
                 "Coincidencia por": criterio,
                 "Usar referencia BD": bool(has_reference),
                 "_tiene_referencia": bool(has_reference),
+                "_reference_base_record": ref_base_row if isinstance(ref_base_row, dict) else {},
             }
         )
 
@@ -117,11 +140,41 @@ def build_profesores_crear_filename(source_name: str) -> str:
     return f"profesores_crear_{stem}.xlsx"
 
 
+def build_profesores_base_filename(source_name: str) -> str:
+    stem = Path(str(source_name or "profesores")).stem.strip() or "profesores"
+    return f"profesores_base_{stem}.xlsx"
+
+
+def export_profesores_base_excel(rows: List[Dict[str, object]]) -> bytes:
+    export_rows: List[Dict[str, object]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        ref_row = row.get("_reference_base_record")
+        if not isinstance(ref_row, dict):
+            continue
+        export_rows.append(
+            {col: str(ref_row.get(col) or "").strip() for col in PROFESOR_COLUMNS}
+        )
+    export_rows.sort(
+        key=lambda row: (
+            str(row.get("Apellido Paterno") or "").upper(),
+            str(row.get("Apellido Materno") or "").upper(),
+            str(row.get("Nombre") or "").upper(),
+            str(row.get("DNI") or ""),
+        )
+    )
+    return export_profesores_excel(export_rows, profesores_clases=export_rows)
+
+
 def _read_sheet(excel_path: Path, desired: str) -> pd.DataFrame:
     if not excel_path.exists():
         raise FileNotFoundError(f"No existe el archivo: {excel_path}")
     with pd.ExcelFile(excel_path, engine="openpyxl") as excel:
-        resolved = _resolve_sheet_name(excel.sheet_names, desired)
+        if desired == DEFAULT_SHEET_BD:
+            resolved = _resolve_sheet_name_fallback(excel.sheet_names, desired, ["ProfesoresBD"])
+        else:
+            resolved = _resolve_sheet_name(excel.sheet_names, desired)
         return pd.read_excel(excel, sheet_name=resolved, dtype=str).fillna("")
 
 
@@ -136,6 +189,23 @@ def _resolve_sheet_name(available: Sequence[str], desired: str) -> str:
     for sheet in available:
         if _normalize_header(sheet) == desired_norm:
             return sheet
+    available_txt = ", ".join(str(item) for item in available) if available else "(sin hojas)"
+    raise ValueError(
+        f"No se encontro la hoja '{desired}'. Hojas disponibles: {available_txt}."
+    )
+
+
+def _resolve_sheet_name_fallback(
+    available: Sequence[str], desired: str, fallbacks: Sequence[str]
+) -> str:
+    try:
+        return _resolve_sheet_name(available, desired)
+    except ValueError:
+        for fallback in fallbacks:
+            try:
+                return _resolve_sheet_name(available, fallback)
+            except ValueError:
+                continue
     available_txt = ", ".join(str(item) for item in available) if available else "(sin hojas)"
     raise ValueError(
         f"No se encontro la hoja '{desired}'. Hojas disponibles: {available_txt}."
@@ -160,6 +230,10 @@ def _normalize_text(value: object) -> str:
 
 def _normalize_dni(value: object) -> str:
     return re.sub(r"\D", "", str(value or ""))
+
+
+def _normalize_email(value: object) -> str:
+    return str(value or "").strip().casefold()
 
 
 def _canonicalize_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -198,6 +272,45 @@ def _row_to_profesor_record(row: pd.Series) -> Dict[str, str]:
     }
 
 
+def _row_to_profesor_base_record(row: pd.Series) -> Dict[str, str]:
+    values = {
+        "Id": str(row.get("id") or row.get("Id") or "").strip(),
+        "Nombre": str(row.get("nombre") or row.get("Nombre") or "").strip(),
+        "Apellido Paterno": str(
+            row.get("apellido_paterno") or row.get("Apellido Paterno") or ""
+        ).strip(),
+        "Apellido Materno": str(
+            row.get("apellido_materno") or row.get("Apellido Materno") or ""
+        ).strip(),
+        "Estado": str(row.get("estado") or row.get("Estado") or "").strip(),
+        "Sexo": str(row.get("sexo") or row.get("Sexo") or "").strip(),
+        "DNI": str(row.get("dni") or row.get("DNI") or "").strip(),
+        "E-mail": str(row.get("email") or row.get("E-mail") or "").strip(),
+        "Login": str(row.get("login") or row.get("Login") or "").strip(),
+        "Password": str(row.get("password") or row.get("Password") or "").strip(),
+        "Inicial": str(row.get("inicial") or row.get("Inicial") or "").strip(),
+        "Primaria": str(row.get("primaria") or row.get("Primaria") or "").strip(),
+        "Secundaria": str(row.get("secundaria") or row.get("Secundaria") or "").strip(),
+        "I3": str(row.get("I3") or "").strip(),
+        "I4": str(row.get("I4") or "").strip(),
+        "I5": str(row.get("I5") or "").strip(),
+        "P1": str(row.get("P1") or "").strip(),
+        "P2": str(row.get("P2") or "").strip(),
+        "P3": str(row.get("P3") or "").strip(),
+        "P4": str(row.get("P4") or "").strip(),
+        "P5": str(row.get("P5") or "").strip(),
+        "P6": str(row.get("P6") or "").strip(),
+        "S1": str(row.get("S1") or "").strip(),
+        "S2": str(row.get("S2") or "").strip(),
+        "S3": str(row.get("S3") or "").strip(),
+        "S4": str(row.get("S4") or "").strip(),
+        "S5": str(row.get("S5") or "").strip(),
+        "Clases": str(row.get("Clases") or "").strip(),
+        "Secciones": str(row.get("Secciones") or "").strip(),
+    }
+    return {col: values.get(col, "") for col in PROFESOR_COLUMNS}
+
+
 def _record_is_empty(record: Dict[str, str]) -> bool:
     return not any(str(record.get(col) or "").strip() for col in PROFESORES_COMPARE_COLUMNS)
 
@@ -223,6 +336,7 @@ def _record_name_compact_key(record: Dict[str, str]) -> str:
 
 def _build_reference_indexes(df_bd: pd.DataFrame) -> Dict[str, Dict[str, List[int]]]:
     by_dni: Dict[str, List[int]] = {}
+    by_email: Dict[str, List[int]] = {}
     by_name: Dict[str, List[int]] = {}
     by_name_compact: Dict[str, List[int]] = {}
     for idx, row in df_bd.iterrows():
@@ -230,36 +344,56 @@ def _build_reference_indexes(df_bd: pd.DataFrame) -> Dict[str, Dict[str, List[in
         dni = _normalize_dni(record.get("DNI"))
         if dni:
             by_dni.setdefault(dni, []).append(int(idx))
+        email = _normalize_email(record.get("E-mail"))
+        if email:
+            by_email.setdefault(email, []).append(int(idx))
         name_key = _record_name_key(record)
         if name_key.replace("|", ""):
             by_name.setdefault(name_key, []).append(int(idx))
         name_compact_key = _record_name_compact_key(record)
         if name_compact_key:
             by_name_compact.setdefault(name_compact_key, []).append(int(idx))
-    return {"dni": by_dni, "name": by_name, "name_compact": by_name_compact}
+    return {
+        "dni": by_dni,
+        "email": by_email,
+        "name": by_name,
+        "name_compact": by_name_compact,
+    }
 
 
 def _match_reference(
     colegio_row: Dict[str, str],
     df_bd: pd.DataFrame,
     indexes: Dict[str, Dict[str, List[int]]],
-) -> Tuple[Dict[str, str] | None, str]:
+) -> Tuple[Dict[str, str] | None, Dict[str, str] | None, str]:
     dni = _normalize_dni(colegio_row.get("DNI"))
     if dni and dni in indexes["dni"]:
         idx = indexes["dni"][dni][0]
-        return _row_to_profesor_record(df_bd.iloc[int(idx)]), "DNI"
+        bd_row = df_bd.iloc[int(idx)]
+        return _row_to_profesor_record(bd_row), _row_to_profesor_base_record(bd_row), "DNI"
+
+    email = _normalize_email(colegio_row.get("E-mail"))
+    email_candidates = indexes["email"].get(email) or []
+    if email and len(email_candidates) == 1:
+        idx = email_candidates[0]
+        bd_row = df_bd.iloc[int(idx)]
+        return _row_to_profesor_record(bd_row), _row_to_profesor_base_record(bd_row), "E-mail"
 
     name_key = _record_name_key(colegio_row)
-    if name_key.replace("|", "") and name_key in indexes["name"]:
-        idx = indexes["name"][name_key][0]
-        return _row_to_profesor_record(df_bd.iloc[int(idx)]), "Nombre"
+    name_candidates = indexes["name"].get(name_key) or []
+    if name_key.replace("|", "") and len(name_candidates) == 1:
+        idx = name_candidates[0]
+        bd_row = df_bd.iloc[int(idx)]
+        return _row_to_profesor_record(bd_row), _row_to_profesor_base_record(bd_row), "Nombre"
 
     name_compact_key = _record_name_compact_key(colegio_row)
-    if name_compact_key and name_compact_key in indexes["name_compact"]:
-        idx = indexes["name_compact"][name_compact_key][0]
-        return _row_to_profesor_record(df_bd.iloc[int(idx)]), "Nombre"
+    compact_candidates = indexes["name_compact"].get(name_compact_key) or []
+    if name_compact_key and len(compact_candidates) == 1:
+        idx = compact_candidates[0]
+        bd_row = df_bd.iloc[int(idx)]
+        return _row_to_profesor_record(bd_row), _row_to_profesor_base_record(bd_row), "Nombre"
 
-    return None, ""
+    return None, None, ""
 
 
 def _format_profesor_label(record: Dict[str, str] | None) -> str:
@@ -294,19 +428,20 @@ def _exportable_rows(rows: List[Dict[str, object]]) -> List[Dict[str, str]]:
     for row in rows:
         if not isinstance(row, dict):
             continue
+        sexo = str(row.get("Sexo") or "").strip() or _infer_sexo(row.get("Nombre"))
         export_rows.append(
             {
                 "Nombre": str(row.get("Nombre") or "").strip(),
                 "Apellido Paterno": str(row.get("Apellido Paterno") or "").strip(),
                 "Apellido Materno": str(row.get("Apellido Materno") or "").strip(),
-                "Sexo": _infer_sexo(row.get("Nombre")),
+                "Sexo": sexo,
                 "DNI": str(row.get("DNI") or "").strip(),
                 "E-mail": str(row.get("E-mail") or "").strip(),
-                "Login": "",
+                "Login": str(row.get("Login") or "").strip(),
                 "Password": "",
-                "Inicial": "",
-                "Primaria": "",
-                "Secundaria": "",
+                "Inicial": str(row.get("Inicial") or "").strip(),
+                "Primaria": str(row.get("Primaria") or "").strip(),
+                "Secundaria": str(row.get("Secundaria") or "").strip(),
             }
         )
     return export_rows

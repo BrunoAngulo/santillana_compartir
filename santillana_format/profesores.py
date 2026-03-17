@@ -56,7 +56,7 @@ PROFESOR_COLUMNS = [
     "Clases",
     "Secciones",
 ]
-PROFESOR_BD_COLUMNS = [
+PROFESOR_COMPARE_TEMPLATE_COLUMNS = [
     "Nombre",
     "Apellido Paterno",
     "Apellido Materno",
@@ -328,13 +328,20 @@ def _parse_activo(value: object) -> bool:
     return False
 
 
-def export_profesores_excel(profesores: List[Dict[str, object]]) -> bytes:
+def export_profesores_excel(
+    profesores: List[Dict[str, object]],
+    profesores_clases: Optional[List[Dict[str, object]]] = None,
+) -> bytes:
     output = BytesIO()
     df_profesores = _ensure_columns(pd.DataFrame(profesores), PROFESOR_COLUMNS)
+    df_profesores_clases = _ensure_columns(
+        pd.DataFrame(profesores_clases if profesores_clases is not None else []),
+        PROFESOR_COLUMNS,
+    )
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
         df_profesores.to_excel(writer, index=False, sheet_name="Profesores")
-        df_profesores.head(0).to_excel(writer, index=False, sheet_name="Profesores_clases")
+        df_profesores_clases.to_excel(writer, index=False, sheet_name="Profesores_clases")
         ws = writer.book["Profesores"]
         ws.freeze_panes = "A2"
         ws.auto_filter.ref = ws.dimensions
@@ -385,15 +392,16 @@ def export_profesores_excel(profesores: List[Dict[str, object]]) -> bytes:
 
 def export_profesores_bd_excel(profesores: List[Dict[str, object]]) -> bytes:
     output = BytesIO()
-    df_profesores = _ensure_columns(pd.DataFrame(profesores), PROFESOR_BD_COLUMNS)
+    df_profesores_bd = _ensure_columns(pd.DataFrame(profesores), PROFESOR_COLUMNS)
+    df_actualizada = pd.DataFrame(columns=PROFESOR_COMPARE_TEMPLATE_COLUMNS)
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df_profesores.to_excel(writer, index=False, sheet_name="ProfesoresBD")
-        df_profesores.head(0).to_excel(writer, index=False, sheet_name="Plantilla_Actualizada")
+        df_profesores_bd.to_excel(writer, index=False, sheet_name="Profesores_BD")
+        df_actualizada.to_excel(writer, index=False, sheet_name="Plantilla_Actualizada")
 
         for sheet_name, df_sheet in (
-            ("ProfesoresBD", df_profesores),
-            ("Plantilla_Actualizada", df_profesores.head(0)),
+            ("Profesores_BD", df_profesores_bd),
+            ("Plantilla_Actualizada", df_actualizada),
         ):
             ws = writer.book[sheet_name]
             ws.freeze_panes = "A2"
@@ -622,6 +630,12 @@ def listar_profesores(
         on_progress=on_progress,
     )
 
+    filas = _build_profesores_export_rows(data)
+    output_bytes = export_profesores_excel(filas)
+    return output_bytes, summary, errores
+
+
+def _build_profesores_export_rows(data: Sequence[Dict[str, object]]) -> List[Dict[str, object]]:
     filas: List[Dict[str, object]] = []
     for entry in data:
         niveles = entry.get("niveles_detalle_activos") or set()
@@ -661,8 +675,15 @@ def listar_profesores(
             }
         )
 
-    output_bytes = export_profesores_excel(filas)
-    return output_bytes, summary, errores
+    filas.sort(
+        key=lambda row: (
+            str(row.get("Apellido Paterno") or "").upper(),
+            str(row.get("Apellido Materno") or "").upper(),
+            str(row.get("Nombre") or "").upper(),
+            str(row.get("DNI") or ""),
+        )
+    )
+    return filas
 
 
 def listar_profesores_bd_data(
@@ -673,69 +694,20 @@ def listar_profesores_bd_data(
     timeout: int = 30,
     on_progress: Optional[Callable[[int, int], None]] = None,
 ) -> Tuple[List[Dict[str, object]], Dict[str, int], List[Dict[str, object]]]:
-    errores: List[Dict[str, object]] = []
-    resultados: List[Dict[str, object]] = []
-    seen_persona_ids: Set[int] = set()
-
-    with requests.Session() as session:
-        data, error, status_code, url = _fetch_profesores_by_filters(
-            session=session,
-            token=token,
-            empresa_id=int(empresa_id),
-            ciclo_id=int(ciclo_id),
-            colegio_id=int(colegio_id),
-            timeout=int(timeout),
-        )
-        if error:
-            errores.append(
-                {
-                    "tipo": "profesores_by_filters",
-                    "nivel_id": "",
-                    "persona_id": "",
-                    "url": url,
-                    "status_code": status_code or "",
-                    "error": error,
-                }
-            )
-        else:
-            for item in data:
-                if not isinstance(item, dict):
-                    continue
-                persona_id = item.get("personaId")
-                try:
-                    persona_id_int = int(persona_id)
-                except (TypeError, ValueError):
-                    persona_id_int = None
-                if persona_id_int is not None:
-                    if persona_id_int in seen_persona_ids:
-                        continue
-                    seen_persona_ids.add(persona_id_int)
-
-                persona_login = item.get("personaLogin") if isinstance(item.get("personaLogin"), dict) else {}
-                resultados.append(
-                    {
-                        "Nombre": str(item.get("nombre") or "").strip(),
-                        "Apellido Paterno": str(item.get("apellidoPaterno") or "").strip(),
-                        "Apellido Materno": str(item.get("apellidoMaterno") or "").strip(),
-                        "DNI": str(item.get("idOficial") or "").strip(),
-                        "E-mail": str(item.get("email") or "").strip(),
-                        "Login": str(persona_login.get("login") or "").strip(),
-                    }
-                )
-        if on_progress:
-            on_progress(1, 1)
-
-    resultados.sort(
-        key=lambda row: (
-            str(row.get("Apellido Paterno") or "").upper(),
-            str(row.get("Apellido Materno") or "").upper(),
-            str(row.get("Nombre") or "").upper(),
-            str(row.get("DNI") or ""),
-        )
+    data, summary_base, errores = listar_profesores_data(
+        token=token,
+        colegio_id=colegio_id,
+        nivel_ids=list(NIVEL_MAP.values()),
+        empresa_id=empresa_id,
+        ciclo_id=ciclo_id,
+        timeout=timeout,
+        on_progress=on_progress,
     )
+    resultados = _build_profesores_export_rows(data)
     summary = {
-        "consultas_total": 1,
-        "consultas_error": len(errores),
+        "consultas_total": int(summary_base.get("niveles_total", 0)),
+        "consultas_error": int(summary_base.get("niveles_error", 0))
+        + int(summary_base.get("detalle_error", 0)),
         "profesores_total": len(resultados),
     }
     return resultados, summary, errores

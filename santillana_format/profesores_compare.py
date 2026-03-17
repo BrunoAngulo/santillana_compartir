@@ -2,7 +2,7 @@ import re
 import unicodedata
 from io import BytesIO
 from pathlib import Path
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import pandas as pd
 from openpyxl.utils import get_column_letter
@@ -365,7 +365,7 @@ def _match_reference(
     colegio_row: Dict[str, str],
     df_bd: pd.DataFrame,
     indexes: Dict[str, Dict[str, List[int]]],
-) -> Tuple[Dict[str, str] | None, Dict[str, str] | None, str]:
+) -> Tuple[Optional[Dict[str, str]], Optional[Dict[str, str]], str]:
     dni = _normalize_dni(colegio_row.get("DNI"))
     if dni and dni in indexes["dni"]:
         idx = indexes["dni"][dni][0]
@@ -396,7 +396,7 @@ def _match_reference(
     return None, None, ""
 
 
-def _format_profesor_label(record: Dict[str, str] | None) -> str:
+def _format_profesor_label(record: Optional[Dict[str, str]]) -> str:
     if not record:
         return ""
     nombre = " ".join(

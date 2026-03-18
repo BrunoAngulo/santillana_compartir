@@ -7994,6 +7994,9 @@ with tab_crud_clases:
                     st.caption(
                         "Procesa siempre la lista fija de colegios definida para este flujo y conserva el combo de destino por fila."
                     )
+                    st.info(
+                        "Este bloque no usa el 'Colegio Clave global'. Siempre trabaja con la lista fija de colegios de abajo."
+                    )
                     st.caption(
                         "Colegios incluidos: {total}".format(
                             total=len(AUTO_MOVE_MULTI_DEFAULT_COLEGIO_IDS)

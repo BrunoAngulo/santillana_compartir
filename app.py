@@ -4888,6 +4888,7 @@ def _build_auto_move_multi_save_preview(
         referencial = (
             plan.get("alumno_inactivar") if isinstance(plan.get("alumno_inactivar"), dict) else {}
         )
+        clases_destino = plan.get("clases_destino") if isinstance(plan.get("clases_destino"), list) else []
         nivel_txt = str(pagado.get("nivel") or plan.get("nivel") or "").strip()
         grado_txt = str(pagado.get("grado") or plan.get("grado") or "").strip()
         seccion_origen_txt = _normalize_seccion_key(
@@ -4898,14 +4899,22 @@ def _build_auto_move_multi_save_preview(
         )
         seccion_destino_txt = _normalize_seccion_key(plan.get("seccion_destino") or "")
         acciones: List[str] = []
+        rutas: List[str] = []
         if _to_bool(plan.get("requiere_inactivar")) and referencial:
             acciones.append(f"Inactivar referencia: {_format_alumno_label(referencial)}")
+            rutas.append("censo/alumnos/{alumnoId}/activarInactivar")
         else:
             acciones.append("No inactivar referencia")
         if seccion_destino_txt:
             acciones.append(f"Mover a {nivel_txt} | {grado_txt} ({seccion_destino_txt})")
+            rutas.append("censo/alumnos/{alumnoId}/mover")
         else:
             acciones.append("Destino pendiente")
+        if clases_destino:
+            acciones.append(f"Asignar clases destino: {len(clases_destino)}")
+            rutas.append(f"gestionEscolar/clases/{{claseId}}/alumnos x{len(clases_destino)}")
+        else:
+            acciones.append("Sin clases destino")
         preview_rows.append(
             {
                 "Colegio": str(
@@ -4918,7 +4927,8 @@ def _build_auto_move_multi_save_preview(
                     f"{_format_alumno_label(pagado)} | "
                     f"{nivel_txt} | {grado_txt} ({seccion_origen_txt})"
                 ),
-                "Simulacion de guardado": " | ".join(acciones),
+                "Cambios a ejecutar": " | ".join(acciones),
+                "Rutas simuladas": " | ".join(rutas) if rutas else "Sin rutas",
             }
         )
     return preview_rows
@@ -8279,6 +8289,7 @@ with tab_crud_clases:
                             use_container_width=True,
                             hide_index=True,
                         )
+                    confirm_preview_placeholder_multi = st.empty()
 
                     errors_multi_cached = st.session_state.get("auto_move_multi_errors") or []
                     if errors_multi_cached:
@@ -8360,12 +8371,15 @@ with tab_crud_clases:
                             authorized_plans_multi
                         )
                         if save_preview_rows_multi:
-                            st.markdown("**Simulacion de guardado**")
-                            st.dataframe(
-                                pd.DataFrame(save_preview_rows_multi),
-                                use_container_width=True,
-                                hide_index=True,
-                            )
+                            with confirm_preview_placeholder_multi.container():
+                                st.markdown("**Confirmar cambios**")
+                                st.dataframe(
+                                    pd.DataFrame(save_preview_rows_multi),
+                                    use_container_width=True,
+                                    hide_index=True,
+                                )
+                        else:
+                            confirm_preview_placeholder_multi.empty()
 
                         st.caption(
                             "Cambios listos para guardar: {total} | Referencias quitadas: {removed}".format(

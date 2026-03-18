@@ -8289,7 +8289,6 @@ with tab_crud_clases:
                             use_container_width=True,
                             hide_index=True,
                         )
-                    confirm_preview_placeholder_multi = st.empty()
 
                     errors_multi_cached = st.session_state.get("auto_move_multi_errors") or []
                     if errors_multi_cached:
@@ -8370,16 +8369,6 @@ with tab_crud_clases:
                         save_preview_rows_multi = _build_auto_move_multi_save_preview(
                             authorized_plans_multi
                         )
-                        if save_preview_rows_multi:
-                            with confirm_preview_placeholder_multi.container():
-                                st.markdown("**Confirmar cambios**")
-                                st.dataframe(
-                                    pd.DataFrame(save_preview_rows_multi),
-                                    use_container_width=True,
-                                    hide_index=True,
-                                )
-                        else:
-                            confirm_preview_placeholder_multi.empty()
 
                         st.caption(
                             "Cambios listos para guardar: {total} | Referencias quitadas: {removed}".format(
@@ -8402,22 +8391,48 @@ with tab_crud_clases:
                                     f"... y {pending_validation_multi} validaciones pendientes."
                                 )
 
+                        apply_changes_multi = st.checkbox(
+                            "Aplicar cambios",
+                            key="auto_move_multi_apply_checkbox",
+                            value=False,
+                            help=(
+                                "Si no lo marcas, el boton solo simula las rutas y no ejecuta cambios reales."
+                            ),
+                        )
+                        if save_preview_rows_multi:
+                            st.markdown("**Simulacion final de ejecucion**")
+                            st.dataframe(
+                                pd.DataFrame(save_preview_rows_multi),
+                                use_container_width=True,
+                                hide_index=True,
+                            )
+
                         run_apply_auto_multi = st.button(
-                            "Guardar cambios autorizados de la lista",
+                            (
+                                "Aplicar cambios autorizados de la lista"
+                                if apply_changes_multi
+                                else "Simular ejecucion final"
+                            ),
                             key="auto_move_multi_apply_btn",
                             use_container_width=True,
                         )
 
                         if run_apply_auto_multi:
-                            token = _get_shared_token()
-                            if not token:
-                                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-                                st.stop()
                             if validation_errors_multi:
                                 st.error("Corrige los destinos marcados antes de guardar.")
                                 st.stop()
                             if not authorized_plans_multi:
                                 st.warning("No hay cambios autorizados para guardar.")
+                                st.stop()
+                            if not apply_changes_multi:
+                                st.info(
+                                    "Modo simulacion: no se aplicaron cambios reales. "
+                                    "Revisa la tabla 'Simulacion final de ejecucion'."
+                                )
+                                st.stop()
+                            token = _get_shared_token()
+                            if not token:
+                                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
                                 st.stop()
                             try:
                                 st.info(

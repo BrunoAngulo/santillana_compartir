@@ -157,13 +157,9 @@ AUTO_MOVE_MULTI_DEFAULT_COLEGIO_NAME_BY_ID = {
     int(row["Clave ID"]): str(row["Nombre del colegio"] or "").strip()
     for row in AUTO_MOVE_MULTI_DEFAULT_SCHOOLS
 }
-# Sublista activa para pruebas sin tocar el catalogo completo.
-AUTO_MOVE_MULTI_ACTIVE_COLEGIO_IDS = [9039, 7384, 19701, 11117]
-AUTO_MOVE_MULTI_ACTIVE_SCHOOLS = [
-    row
-    for row in AUTO_MOVE_MULTI_DEFAULT_SCHOOLS
-    if int(row.get("Clave ID") or 0) in set(AUTO_MOVE_MULTI_ACTIVE_COLEGIO_IDS)
-]
+# La lista activa del flujo masivo usa todo el catalogo por defecto.
+AUTO_MOVE_MULTI_ACTIVE_COLEGIO_IDS = list(AUTO_MOVE_MULTI_DEFAULT_COLEGIO_IDS)
+AUTO_MOVE_MULTI_ACTIVE_SCHOOLS = list(AUTO_MOVE_MULTI_DEFAULT_SCHOOLS)
 RICHMONDSTUDIO_USERS_URL = "https://richmondstudio.global/api/users"
 RICHMONDSTUDIO_GROUPS_URL = "https://richmondstudio.global/api/groups"
 RICHMONDSTUDIO_CURRENT_USER_URL = "https://richmondstudio.global/api/users/current"
@@ -7288,7 +7284,7 @@ with tab_crud_clases:
         timeout = 30
 
         @st.fragment(run_every="2s")
-        def _render_clases_participantes_section() -> None:
+        def _render_asignacion_clases_usuarios_section() -> None:
             colegio_id_int: Optional[int] = None
             colegio_error = ""
             if str(colegio_id_raw).strip():
@@ -7314,7 +7310,7 @@ with tab_crud_clases:
             is_running = _is_participantes_sync_job_active(current_job)
 
             with st.container(border=True):
-                st.markdown("**Asignacion de Participantes**")
+                st.markdown("**Asignacion de clases a usuarios**")
                 st.caption(
                     "Sincroniza automaticamente alumnos activos por grado y seccion: "
                     "agrega faltantes y elimina sobrantes en cada clase. El proceso "
@@ -7323,7 +7319,7 @@ with tab_crud_clases:
                 col_run, col_cancel = st.columns([4, 1], gap="small")
                 with col_run:
                     run_actualizar_participantes_auto = st.button(
-                        "Actualizar participantes auto",
+                        "Actualizar asignacion",
                         key="clases_auto_group_sync_auto_btn",
                         type="primary",
                         use_container_width=True,
@@ -7355,7 +7351,7 @@ with tab_crud_clases:
                         st.session_state["clases_auto_group_job_id"] = current_job_id
                         current_job = _get_participantes_sync_job(current_job_id)
                         is_running = _is_participantes_sync_job_active(current_job)
-                        st.success("Proceso iniciado en segundo plano.")
+                        st.success("Asignacion iniciada en segundo plano.")
 
                 if run_cancelar_participantes_auto:
                     if _request_cancel_participantes_sync_job(current_job_id):
@@ -7405,9 +7401,9 @@ with tab_crud_clases:
                         and not group_error_lines
                         and not warnings_auto
                     ):
-                        st.success("Actualizacion automatica completada.")
+                        st.success("Asignacion automatica completada.")
                     else:
-                        st.warning("Actualizacion automatica completada con observaciones.")
+                        st.warning("Asignacion automatica completada con observaciones.")
                 elif state == "cancelled":
                     st.warning("Proceso cancelado. Se conserva el resumen parcial.")
                 elif state == "error":
@@ -7633,7 +7629,7 @@ with tab_crud_clases:
                 [
                     ("crear", "Crear", "Genera clases desde Excel"),
                     ("gestion", "Gestion", "Lista, vacia o elimina clases"),
-                    ("otros", "Otros", "Asignacion de participantes"),
+                    ("otros", "Asignacion de clases a usuarios", "Asignacion de clases a usuarios"),
                     ("simulador", "Actualizar users Payments", "Prepara y aplica cambios de users payments"),
                 ],
                 state_key="clases_crud_nav",
@@ -7695,7 +7691,7 @@ with tab_crud_clases:
                 st.markdown("**2) Gestion de clases**")
                 _render_clases_gestion_section()
             if clases_crud_view == "otros":
-                _render_clases_participantes_section()
+                _render_asignacion_clases_usuarios_section()
             if clases_crud_view == "simulador":
                 with st.container(border=True):
                     st.markdown("**3) Actualizar users Payments**")
@@ -7792,10 +7788,7 @@ with tab_crud_clases:
                             st.caption(f"... y {pending} errores mas.")
 
                     plan_rows_cached = st.session_state.get("auto_move_plan_rows") or []
-                    if not plan_rows_cached:
-                        st.caption("No hay lista preparada aun.")
-                        st.caption("Presiona 'Analizar y preparar lista de cambios' para iniciar.")
-                    else:
+                    if plan_rows_cached:
                         st.markdown("**Lista de cambios para autorizar**")
                         plan_by_id = {
                             int(plan.get("plan_id")): plan
@@ -8080,7 +8073,7 @@ with tab_crud_clases:
                 with st.container(border=True):
                     st.markdown("**4) Verificar colegios Payments**")
                     st.caption(
-                        "Colegios incluidos en esta prueba: {total}".format(
+                        "Colegios incluidos: {total}".format(
                             total=len(AUTO_MOVE_MULTI_ACTIVE_COLEGIO_IDS)
                         )
                     )

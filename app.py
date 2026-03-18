@@ -157,6 +157,13 @@ AUTO_MOVE_MULTI_DEFAULT_COLEGIO_NAME_BY_ID = {
     int(row["Clave ID"]): str(row["Nombre del colegio"] or "").strip()
     for row in AUTO_MOVE_MULTI_DEFAULT_SCHOOLS
 }
+# Sublista activa para pruebas sin tocar el catalogo completo.
+AUTO_MOVE_MULTI_ACTIVE_COLEGIO_IDS = [9039, 7384, 19701, 11117]
+AUTO_MOVE_MULTI_ACTIVE_SCHOOLS = [
+    row
+    for row in AUTO_MOVE_MULTI_DEFAULT_SCHOOLS
+    if int(row.get("Clave ID") or 0) in set(AUTO_MOVE_MULTI_ACTIVE_COLEGIO_IDS)
+]
 RICHMONDSTUDIO_USERS_URL = "https://richmondstudio.global/api/users"
 RICHMONDSTUDIO_GROUPS_URL = "https://richmondstudio.global/api/groups"
 RICHMONDSTUDIO_CURRENT_USER_URL = "https://richmondstudio.global/api/users/current"
@@ -4867,73 +4874,6 @@ def _build_auto_move_multi_summary_preview(
     return preview_rows
 
 
-def _build_auto_move_multi_save_preview(
-    plan_rows: List[Dict[str, object]],
-) -> List[Dict[str, object]]:
-    preview_rows: List[Dict[str, object]] = []
-    for plan in sorted(
-        [row for row in plan_rows if isinstance(row, dict)],
-        key=lambda row: (
-            str(
-                AUTO_MOVE_MULTI_DEFAULT_COLEGIO_NAME_BY_ID.get(
-                    int(_safe_int(row.get("colegio_id")) or 0),
-                    "",
-                )
-            ).upper(),
-            int(_safe_int(row.get("plan_id")) or 0),
-        ),
-    ):
-        colegio_id = _safe_int(plan.get("colegio_id"))
-        pagado = plan.get("alumno_pagado") if isinstance(plan.get("alumno_pagado"), dict) else {}
-        referencial = (
-            plan.get("alumno_inactivar") if isinstance(plan.get("alumno_inactivar"), dict) else {}
-        )
-        clases_destino = plan.get("clases_destino") if isinstance(plan.get("clases_destino"), list) else []
-        nivel_txt = str(pagado.get("nivel") or plan.get("nivel") or "").strip()
-        grado_txt = str(pagado.get("grado") or plan.get("grado") or "").strip()
-        seccion_origen_txt = _normalize_seccion_key(
-            plan.get("seccion_origen")
-            or pagado.get("seccion_norm")
-            or pagado.get("seccion")
-            or AUTO_MOVE_SECCION_ORIGEN
-        )
-        seccion_destino_txt = _normalize_seccion_key(plan.get("seccion_destino") or "")
-        acciones: List[str] = []
-        rutas: List[str] = []
-        if _to_bool(plan.get("requiere_inactivar")) and referencial:
-            acciones.append(f"Inactivar referencia: {_format_alumno_label(referencial)}")
-            rutas.append("censo/alumnos/{alumnoId}/activarInactivar")
-        else:
-            acciones.append("No inactivar referencia")
-        if seccion_destino_txt:
-            acciones.append(f"Mover a {nivel_txt} | {grado_txt} ({seccion_destino_txt})")
-            rutas.append("censo/alumnos/{alumnoId}/mover")
-        else:
-            acciones.append("Destino pendiente")
-        if clases_destino:
-            acciones.append(f"Asignar clases destino: {len(clases_destino)}")
-            rutas.append(f"gestionEscolar/clases/{{claseId}}/alumnos x{len(clases_destino)}")
-        else:
-            acciones.append("Sin clases destino")
-        preview_rows.append(
-            {
-                "Colegio": str(
-                    AUTO_MOVE_MULTI_DEFAULT_COLEGIO_NAME_BY_ID.get(
-                        int(colegio_id or 0),
-                        f"Colegio {int(colegio_id)}" if colegio_id is not None else "",
-                    )
-                ).strip(),
-                "Alumno | Grado y seccion": (
-                    f"{_format_alumno_label(pagado)} | "
-                    f"{nivel_txt} | {grado_txt} ({seccion_origen_txt})"
-                ),
-                "Cambios a ejecutar": " | ".join(acciones),
-                "Rutas simuladas": " | ".join(rutas) if rutas else "Sin rutas",
-            }
-        )
-    return preview_rows
-
-
 def _materialize_auto_move_multi_plans(
     base_plan_rows: List[Dict[str, object]],
     edited_rows: List[Dict[str, object]],
@@ -8140,12 +8080,12 @@ with tab_crud_clases:
                 with st.container(border=True):
                     st.markdown("**4) Verificar colegios Payments**")
                     st.caption(
-                        "Colegios incluidos: {total}".format(
-                            total=len(AUTO_MOVE_MULTI_DEFAULT_COLEGIO_IDS)
+                        "Colegios incluidos en esta prueba: {total}".format(
+                            total=len(AUTO_MOVE_MULTI_ACTIVE_COLEGIO_IDS)
                         )
                     )
                     st.dataframe(
-                        pd.DataFrame(AUTO_MOVE_MULTI_DEFAULT_SCHOOLS),
+                        pd.DataFrame(AUTO_MOVE_MULTI_ACTIVE_SCHOOLS),
                         use_container_width=True,
                         hide_index=True,
                         height=260,
@@ -8180,7 +8120,7 @@ with tab_crud_clases:
                         if not token:
                             st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
                             st.stop()
-                        colegio_ids_multi = list(AUTO_MOVE_MULTI_DEFAULT_COLEGIO_IDS)
+                        colegio_ids_multi = list(AUTO_MOVE_MULTI_ACTIVE_COLEGIO_IDS)
 
                         try:
                             progress_bar_multi = st.progress(
@@ -8366,10 +8306,6 @@ with tab_crud_clases:
                             destino_payload_by_option=destino_payload_by_option_multi,
                         )
 
-                        save_preview_rows_multi = _build_auto_move_multi_save_preview(
-                            authorized_plans_multi
-                        )
-
                         st.caption(
                             "Cambios listos para guardar: {total} | Referencias quitadas: {removed}".format(
                                 total=len(authorized_plans_multi),
@@ -8391,28 +8327,8 @@ with tab_crud_clases:
                                     f"... y {pending_validation_multi} validaciones pendientes."
                                 )
 
-                        apply_changes_multi = st.checkbox(
-                            "Aplicar cambios",
-                            key="auto_move_multi_apply_checkbox",
-                            value=False,
-                            help=(
-                                "Si no lo marcas, el boton solo simula las rutas y no ejecuta cambios reales."
-                            ),
-                        )
-                        if save_preview_rows_multi:
-                            st.markdown("**Simulacion final de ejecucion**")
-                            st.dataframe(
-                                pd.DataFrame(save_preview_rows_multi),
-                                use_container_width=True,
-                                hide_index=True,
-                            )
-
                         run_apply_auto_multi = st.button(
-                            (
-                                "Aplicar cambios autorizados de la lista"
-                                if apply_changes_multi
-                                else "Simular ejecucion final"
-                            ),
+                            "Aplicar cambios autorizados de la lista",
                             key="auto_move_multi_apply_btn",
                             use_container_width=True,
                         )
@@ -8423,12 +8339,6 @@ with tab_crud_clases:
                                 st.stop()
                             if not authorized_plans_multi:
                                 st.warning("No hay cambios autorizados para guardar.")
-                                st.stop()
-                            if not apply_changes_multi:
-                                st.info(
-                                    "Modo simulacion: no se aplicaron cambios reales. "
-                                    "Revisa la tabla 'Simulacion final de ejecucion'."
-                                )
                                 st.stop()
                             token = _get_shared_token()
                             if not token:

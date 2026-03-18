@@ -153,6 +153,10 @@ AUTO_MOVE_MULTI_DEFAULT_SCHOOLS: List[Dict[str, object]] = [
 AUTO_MOVE_MULTI_DEFAULT_COLEGIO_IDS = [
     int(row["Clave ID"]) for row in AUTO_MOVE_MULTI_DEFAULT_SCHOOLS
 ]
+AUTO_MOVE_MULTI_DEFAULT_COLEGIO_NAME_BY_ID = {
+    int(row["Clave ID"]): str(row["Nombre del colegio"] or "").strip()
+    for row in AUTO_MOVE_MULTI_DEFAULT_SCHOOLS
+}
 RICHMONDSTUDIO_USERS_URL = "https://richmondstudio.global/api/users"
 RICHMONDSTUDIO_GROUPS_URL = "https://richmondstudio.global/api/groups"
 RICHMONDSTUDIO_CURRENT_USER_URL = "https://richmondstudio.global/api/users/current"
@@ -4571,11 +4575,29 @@ def _build_auto_move_simulation_multi(
     ciclo_id: int,
     timeout: int,
     on_status: Optional[Callable[[str], None]] = None,
+    on_progress: Optional[Callable[[Dict[str, object]], None]] = None,
 ) -> Dict[str, object]:
     def _status(message: str) -> None:
         if callable(on_status):
             try:
                 on_status(str(message))
+            except Exception:
+                pass
+
+    def _progress(current_colegio_id: int, current_status: str) -> None:
+        if callable(on_progress):
+            try:
+                on_progress(
+                    {
+                        "processed": len(per_colegio_rows),
+                        "total": total_colegios,
+                        "current_colegio_id": int(current_colegio_id),
+                        "current_status": str(current_status or "").strip(),
+                        "summary_rows": [dict(row) for row in per_colegio_rows],
+                        "plan_rows_total": len(plan_rows),
+                        "errors_total": len(errors),
+                    }
+                )
             except Exception:
                 pass
 
@@ -4612,6 +4634,7 @@ def _build_auto_move_simulation_multi(
                     "Estado": f"Error: {exc}",
                 }
             )
+            _progress(int(colegio_id), f"Error: {exc}")
             continue
 
         plan_rows_colegio = simulation.get("plan_rows") or []
@@ -4660,6 +4683,10 @@ def _build_auto_move_simulation_multi(
                 "Estado": "OK",
             }
         )
+        _progress(
+            int(colegio_id),
+            "OK ({changes} cambios sugeridos)".format(changes=len(plan_rows_colegio)),
+        )
 
     return {
         "plan_rows": plan_rows,
@@ -4697,6 +4724,11 @@ def _build_auto_move_multi_editor_state(
     for plan in sorted_plans:
         plan_id = int(_safe_int(plan.get("plan_id")) or 0)
         colegio_id = _safe_int(plan.get("colegio_id"))
+        colegio_nombre = str(
+            AUTO_MOVE_MULTI_DEFAULT_COLEGIO_NAME_BY_ID.get(int(colegio_id or 0), "")
+        ).strip() or (
+            f"Colegio {int(colegio_id)}" if colegio_id is not None else ""
+        )
         pagado = plan.get("alumno_pagado") if isinstance(plan.get("alumno_pagado"), dict) else {}
         referencial = (
             plan.get("alumno_inactivar")
@@ -4774,8 +4806,8 @@ def _build_auto_move_multi_editor_state(
         )
         table_rows.append(
             {
-                "PlanId": int(plan_id),
-                "Colegio": int(colegio_id) if colegio_id is not None else "",
+                "_plan_id": int(plan_id),
+                "Colegio": colegio_nombre,
                 "Alumno | Grado y seccion": alumno_col,
                 "Referencia": referencia_col,
                 "Inactivar referencia": requiere_inactivar,
@@ -4784,6 +4816,112 @@ def _build_auto_move_multi_editor_state(
         )
 
     return table_rows, destino_payload_by_option, sorted(destino_options)
+
+
+def _build_auto_move_multi_summary_preview(
+    plan_rows: List[Dict[str, object]],
+) -> List[Dict[str, object]]:
+    preview_rows: List[Dict[str, object]] = []
+    for plan in sorted(
+        [row for row in plan_rows if isinstance(row, dict)],
+        key=lambda row: (
+            str(
+                AUTO_MOVE_MULTI_DEFAULT_COLEGIO_NAME_BY_ID.get(
+                    int(_safe_int(row.get("colegio_id")) or 0),
+                    "",
+                )
+            ).upper(),
+            str(
+                (
+                    row.get("alumno_pagado", {}).get("nombre_completo")
+                    if isinstance(row.get("alumno_pagado"), dict)
+                    else ""
+                )
+            ).upper(),
+        ),
+    ):
+        colegio_id = _safe_int(plan.get("colegio_id"))
+        pagado = plan.get("alumno_pagado") if isinstance(plan.get("alumno_pagado"), dict) else {}
+        nivel_txt = str(pagado.get("nivel") or plan.get("nivel") or "").strip()
+        grado_txt = str(pagado.get("grado") or plan.get("grado") or "").strip()
+        seccion_origen_txt = _normalize_seccion_key(
+            plan.get("seccion_origen")
+            or pagado.get("seccion_norm")
+            or pagado.get("seccion")
+            or AUTO_MOVE_SECCION_ORIGEN
+        )
+        preview_rows.append(
+            {
+                "Colegio": str(
+                    AUTO_MOVE_MULTI_DEFAULT_COLEGIO_NAME_BY_ID.get(
+                        int(colegio_id or 0),
+                        f"Colegio {int(colegio_id)}" if colegio_id is not None else "",
+                    )
+                ).strip(),
+                "Alumno | Grado y seccion": (
+                    f"{_format_alumno_label(pagado)} | "
+                    f"{nivel_txt} | {grado_txt} ({seccion_origen_txt})"
+                ),
+            }
+        )
+    return preview_rows
+
+
+def _build_auto_move_multi_save_preview(
+    plan_rows: List[Dict[str, object]],
+) -> List[Dict[str, object]]:
+    preview_rows: List[Dict[str, object]] = []
+    for plan in sorted(
+        [row for row in plan_rows if isinstance(row, dict)],
+        key=lambda row: (
+            str(
+                AUTO_MOVE_MULTI_DEFAULT_COLEGIO_NAME_BY_ID.get(
+                    int(_safe_int(row.get("colegio_id")) or 0),
+                    "",
+                )
+            ).upper(),
+            int(_safe_int(row.get("plan_id")) or 0),
+        ),
+    ):
+        colegio_id = _safe_int(plan.get("colegio_id"))
+        pagado = plan.get("alumno_pagado") if isinstance(plan.get("alumno_pagado"), dict) else {}
+        referencial = (
+            plan.get("alumno_inactivar") if isinstance(plan.get("alumno_inactivar"), dict) else {}
+        )
+        nivel_txt = str(pagado.get("nivel") or plan.get("nivel") or "").strip()
+        grado_txt = str(pagado.get("grado") or plan.get("grado") or "").strip()
+        seccion_origen_txt = _normalize_seccion_key(
+            plan.get("seccion_origen")
+            or pagado.get("seccion_norm")
+            or pagado.get("seccion")
+            or AUTO_MOVE_SECCION_ORIGEN
+        )
+        seccion_destino_txt = _normalize_seccion_key(plan.get("seccion_destino") or "")
+        acciones: List[str] = []
+        if _to_bool(plan.get("requiere_inactivar")) and referencial:
+            acciones.append(f"Inactivar referencia: {_format_alumno_label(referencial)}")
+        else:
+            acciones.append("No inactivar referencia")
+        if seccion_destino_txt:
+            acciones.append(f"Mover a {nivel_txt} | {grado_txt} ({seccion_destino_txt})")
+        else:
+            acciones.append("Destino pendiente")
+        preview_rows.append(
+            {
+                "Colegio": str(
+                    AUTO_MOVE_MULTI_DEFAULT_COLEGIO_NAME_BY_ID.get(
+                        int(colegio_id or 0),
+                        f"Colegio {int(colegio_id)}" if colegio_id is not None else "",
+                    )
+                ).strip(),
+                "Alumno | Grado y seccion": (
+                    f"{_format_alumno_label(pagado)} | "
+                    f"{nivel_txt} | {grado_txt} ({seccion_origen_txt})"
+                ),
+                "Simulacion de guardado": " | ".join(acciones),
+            }
+        )
+    return preview_rows
 
 
 def _materialize_auto_move_multi_plans(
@@ -4796,7 +4934,7 @@ def _materialize_auto_move_multi_plans(
     validation_errors: List[str] = []
     edited_rows_by_plan_id: Dict[int, Dict[str, object]] = {}
     for row in edited_rows:
-        plan_id = _safe_int(row.get("PlanId")) if isinstance(row, dict) else None
+        plan_id = _safe_int(row.get("_plan_id")) if isinstance(row, dict) else None
         if plan_id is None:
             continue
         edited_rows_by_plan_id[int(plan_id)] = row
@@ -7990,13 +8128,7 @@ with tab_crud_clases:
                                     st.caption(f"... y {len(results_apply) - 80} filas mas.")
 
                 with st.container(border=True):
-                    st.markdown("**4) Actualizar users Payments por lista de colegios**")
-                    st.caption(
-                        "Procesa siempre la lista fija de colegios definida para este flujo y conserva el combo de destino por fila."
-                    )
-                    st.info(
-                        "Este bloque no usa el 'Colegio Clave global'. Siempre trabaja con la lista fija de colegios de abajo."
-                    )
+                    st.markdown("**4) Verificar colegios Payments**")
                     st.caption(
                         "Colegios incluidos: {total}".format(
                             total=len(AUTO_MOVE_MULTI_DEFAULT_COLEGIO_IDS)
@@ -8007,9 +8139,6 @@ with tab_crud_clases:
                         use_container_width=True,
                         hide_index=True,
                         height=260,
-                    )
-                    st.caption(
-                        "El combo de destino muestra el colegio al inicio para evitar cruces entre colegios."
                     )
 
                     col_prepare_multi, col_clear_multi = st.columns([2, 1], gap="small")
@@ -8044,12 +8173,52 @@ with tab_crud_clases:
                         colegio_ids_multi = list(AUTO_MOVE_MULTI_DEFAULT_COLEGIO_IDS)
 
                         try:
+                            progress_bar_multi = st.progress(
+                                0,
+                                text="Iniciando analisis de colegios...",
+                            )
+                            progress_status_box_multi = st.empty()
+                            progress_metrics_box_multi = st.empty()
+                            progress_table_box_multi = st.empty()
                             status_box_multi = st.empty()
 
                             def _on_status_multi(message: str) -> None:
                                 msg = str(message or "").strip()
                                 if msg:
                                     status_box_multi.info(msg)
+
+                            def _on_progress_multi(payload: Dict[str, object]) -> None:
+                                processed = int(payload.get("processed") or 0)
+                                total = max(int(payload.get("total") or 0), 1)
+                                current_colegio_id = int(payload.get("current_colegio_id") or 0)
+                                current_status = str(payload.get("current_status") or "").strip()
+                                plan_rows_total = int(payload.get("plan_rows_total") or 0)
+                                errors_total = int(payload.get("errors_total") or 0)
+                                summary_rows = payload.get("summary_rows") or []
+                                progress_value = min(processed / total, 1.0)
+                                progress_bar_multi.progress(
+                                    progress_value,
+                                    text=(
+                                        f"Procesados {processed}/{total} colegios | "
+                                        f"Ultimo: {current_colegio_id}"
+                                    ),
+                                )
+                                progress_status_box_multi.info(
+                                    f"Colegio {current_colegio_id} finalizado: {current_status}"
+                                )
+                                progress_metrics_box_multi.caption(
+                                    "Avance acumulado: "
+                                    f"{processed}/{total} colegios | "
+                                    f"Cambios sugeridos: {plan_rows_total} | "
+                                    f"Errores acumulados: {errors_total}"
+                                )
+                                if isinstance(summary_rows, list) and summary_rows:
+                                    progress_table_box_multi.dataframe(
+                                        pd.DataFrame(summary_rows),
+                                        use_container_width=True,
+                                        hide_index=True,
+                                        height=260,
+                                    )
 
                             with st.spinner("Preparando simulacion masiva por colegios..."):
                                 simulation_multi = _build_auto_move_simulation_multi(
@@ -8059,7 +8228,15 @@ with tab_crud_clases:
                                     ciclo_id=int(ciclo_id),
                                     timeout=int(timeout),
                                     on_status=_on_status_multi,
+                                    on_progress=_on_progress_multi,
                                 )
+                            progress_bar_multi.progress(
+                                1.0,
+                                text=(
+                                    "Analisis completado: "
+                                    f"{len(colegio_ids_multi)}/{len(colegio_ids_multi)} colegios"
+                                ),
+                            )
                             status_box_multi.empty()
                         except Exception as exc:  # pragma: no cover - UI
                             st.error(f"Error: {exc}")
@@ -8092,10 +8269,13 @@ with tab_crud_clases:
                     summary_rows_multi_cached = (
                         st.session_state.get("auto_move_multi_summary_rows") or []
                     )
-                    if summary_rows_multi_cached:
+                    summary_preview_rows_multi = _build_auto_move_multi_summary_preview(
+                        st.session_state.get("auto_move_multi_plan_rows") or []
+                    )
+                    if summary_preview_rows_multi:
                         st.markdown("**Resumen por colegio**")
                         st.dataframe(
-                            pd.DataFrame(summary_rows_multi_cached),
+                            pd.DataFrame(summary_preview_rows_multi),
                             use_container_width=True,
                             hide_index=True,
                         )
@@ -8138,14 +8318,14 @@ with tab_crud_clases:
                             hide_index=True,
                             use_container_width=True,
                             disabled=[
-                                "PlanId",
+                                "_plan_id",
                                 "Colegio",
                                 "Alumno | Grado y seccion",
                                 "Referencia",
                             ],
                             column_config={
-                                "PlanId": st.column_config.NumberColumn("PlanId", format="%d"),
-                                "Colegio": st.column_config.NumberColumn("Colegio", format="%d"),
+                                "_plan_id": None,
+                                "Colegio": st.column_config.TextColumn("Colegio"),
                                 "Alumno | Grado y seccion": st.column_config.TextColumn(
                                     "Alumno | Grado y seccion"
                                 ),
@@ -8175,6 +8355,17 @@ with tab_crud_clases:
                             edited_rows=edited_rows_multi,
                             destino_payload_by_option=destino_payload_by_option_multi,
                         )
+
+                        save_preview_rows_multi = _build_auto_move_multi_save_preview(
+                            authorized_plans_multi
+                        )
+                        if save_preview_rows_multi:
+                            st.markdown("**Simulacion de guardado**")
+                            st.dataframe(
+                                pd.DataFrame(save_preview_rows_multi),
+                                use_container_width=True,
+                                hide_index=True,
+                            )
 
                         st.caption(
                             "Cambios listos para guardar: {total} | Referencias quitadas: {removed}".format(

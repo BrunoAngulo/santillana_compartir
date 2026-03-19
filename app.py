@@ -36,14 +36,6 @@ from santillana_format.processor import (
     process_excel,
 )
 from santillana_format.jira_focus_web import render_jira_focus_web
-from santillana_format.profesores_compare import (
-    build_profesores_base_filename,
-    build_profesores_crear_filename,
-    compare_profesores_bd_excel,
-    compare_profesores_sistema_excel,
-    export_profesores_base_excel,
-    export_profesores_crear_excel,
-)
 from santillana_format.profesores import (
     DEFAULT_CICLO_ID as PROFESORES_CICLO_ID_DEFAULT,
     build_profesores_bd_filename,
@@ -54,11 +46,49 @@ from santillana_format.profesores import (
 )
 from santillana_format.profesores_clases import asignar_profesores_clases
 from santillana_format.profesores_password import actualizar_passwords_docentes
-from santillana_format.profesores_manual import (
-    asignar_clases_profesor_manual,
-    listar_profesores_clases_panel_data,
-)
 from santillana_format.clases_api import listar_y_mapear_clases
+
+PROFESORES_COMPARE_IMPORT_ERROR = ""
+try:
+    from santillana_format.profesores_compare import (
+        build_profesores_base_filename,
+        build_profesores_crear_filename,
+        compare_profesores_bd_excel,
+        compare_profesores_sistema_excel,
+        export_profesores_base_excel,
+        export_profesores_crear_excel,
+    )
+except Exception as exc:  # pragma: no cover - arranque defensivo
+    PROFESORES_COMPARE_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
+
+    def _raise_profesores_compare_import_error(*args, **kwargs):
+        raise ImportError(PROFESORES_COMPARE_IMPORT_ERROR)
+
+    def build_profesores_base_filename(*args, **kwargs) -> str:
+        return "profesores_base.xlsx"
+
+    def build_profesores_crear_filename(*args, **kwargs) -> str:
+        return "profesores_crear.xlsx"
+
+    compare_profesores_bd_excel = _raise_profesores_compare_import_error
+    compare_profesores_sistema_excel = _raise_profesores_compare_import_error
+    export_profesores_base_excel = _raise_profesores_compare_import_error
+    export_profesores_crear_excel = _raise_profesores_compare_import_error
+
+PROFESORES_MANUAL_IMPORT_ERROR = ""
+try:
+    from santillana_format.profesores_manual import (
+        asignar_clases_profesor_manual,
+        listar_profesores_clases_panel_data,
+    )
+except Exception as exc:  # pragma: no cover - arranque defensivo
+    PROFESORES_MANUAL_IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
+
+    def _raise_profesores_manual_import_error(*args, **kwargs):
+        raise ImportError(PROFESORES_MANUAL_IMPORT_ERROR)
+
+    asignar_clases_profesor_manual = _raise_profesores_manual_import_error
+    listar_profesores_clases_panel_data = _raise_profesores_manual_import_error
 
 
 GESTION_ESCOLAR_URL = (
@@ -682,8 +712,7 @@ if menu_option != "Richmond Studio":
             st.text_input(
                 "Token",
                 key="shared_pegasus_token_input",
-                on_change=_sync_shared_token_from_input,
-                help="Acepta token solo o con prefijo Bearer. Se guarda limpio en la sesion actual.",
+                help="Acepta token solo o con prefijo Bearer. Guarda primero para cargar la lista de colegios.",
             )
         with token_col_save:
             if st.button("Guardar", key="shared_token_save_btn", use_container_width=True):
@@ -699,7 +728,6 @@ if menu_option != "Richmond Studio":
     with global_col_colegio:
         shared_token_current = _clean_token_value(
             str(st.session_state.get("shared_pegasus_token", ""))
-            or str(st.session_state.get("shared_pegasus_token_input", ""))
         )
         if shared_token_current:
             _ensure_shared_colegios_loaded(
@@ -807,10 +835,6 @@ def _get_shared_token() -> str:
     token_saved = _clean_token(str(st.session_state.get("shared_pegasus_token", "")))
     if token_saved:
         return token_saved
-    token_input = _clean_token(str(st.session_state.get("shared_pegasus_token_input", "")))
-    if token_input:
-        st.session_state["shared_pegasus_token"] = token_input
-        return token_input
     return _clean_token(os.environ.get("PEGASUS_TOKEN", ""))
 
 
@@ -8811,15 +8835,22 @@ with tab_crud_profesores:
                     st.caption(
                         "Sube el Excel con Profesores_BD y Plantilla_Actualizada para detectar profesores registrados y separar los que se deben crear."
                     )
+                    if PROFESORES_COMPARE_IMPORT_ERROR:
+                        st.error(
+                            "La comparacion de profesores no esta disponible en este despliegue: "
+                            f"{PROFESORES_COMPARE_IMPORT_ERROR}"
+                        )
                     uploaded_profesores_compare = st.file_uploader(
                         "Excel con Profesores_BD y Plantilla_Actualizada",
                         type=["xlsx"],
                         key="profesores_compare_excel",
+                        disabled=bool(PROFESORES_COMPARE_IMPORT_ERROR),
                     )
                     run_compare_profesores = st.button(
                         "Analizar coincidencias",
                         type="primary",
                         key="profesores_compare_run",
+                        disabled=bool(PROFESORES_COMPARE_IMPORT_ERROR),
                     )
 
                 if run_compare_profesores:
@@ -9022,21 +9053,29 @@ with tab_crud_profesores:
                     st.caption(
                         "Los encontrados conservaran Id, Estado y Login del sistema, pero usaran Password y niveles del Excel."
                     )
+                    if PROFESORES_COMPARE_IMPORT_ERROR:
+                        st.error(
+                            "El cruce directo contra sistema no esta disponible en este despliegue: "
+                            f"{PROFESORES_COMPARE_IMPORT_ERROR}"
+                        )
                     uploaded_profesores_compare_system = st.file_uploader(
                         "Excel simple de profesores",
                         type=["xlsx"],
                         key="profesores_compare_system_excel",
+                        disabled=bool(PROFESORES_COMPARE_IMPORT_ERROR),
                     )
                     compare_system_sheet = st.text_input(
                         "Hoja (opcional)",
                         value="",
                         key="profesores_compare_system_sheet",
                         help="Si lo dejas vacio, se usa la primera hoja del archivo.",
+                        disabled=bool(PROFESORES_COMPARE_IMPORT_ERROR),
                     )
                     run_compare_profesores_system = st.button(
                         "Analizar contra sistema",
                         type="primary",
                         key="profesores_compare_system_run",
+                        disabled=bool(PROFESORES_COMPARE_IMPORT_ERROR),
                     )
 
                 if run_compare_profesores_system:
@@ -9291,6 +9330,11 @@ with tab_crud_profesores:
                 st.caption(
                     "Carga docentes y clases del colegio, busca un docente y asignale varias clases desde un solo panel."
                 )
+                if PROFESORES_MANUAL_IMPORT_ERROR:
+                    st.error(
+                        "La asignacion manual no esta disponible en este despliegue: "
+                        f"{PROFESORES_MANUAL_IMPORT_ERROR}"
+                    )
 
                 col_load_manual, col_clear_manual = st.columns([2, 1], gap="small")
                 run_manual_load = col_load_manual.button(
@@ -9298,6 +9342,7 @@ with tab_crud_profesores:
                     type="primary",
                     key="profesores_manual_load",
                     use_container_width=True,
+                    disabled=bool(PROFESORES_MANUAL_IMPORT_ERROR),
                 )
                 clear_manual = col_clear_manual.button(
                     "Limpiar",
@@ -9532,11 +9577,13 @@ with tab_crud_profesores:
                                 "Simular",
                                 type="primary",
                                 key="profesores_manual_simular",
+                                disabled=bool(PROFESORES_MANUAL_IMPORT_ERROR),
                             )
                             run_manual_apply = col_manual_apply.button(
                                 "Aplicar cambios",
                                 type="secondary",
                                 key="profesores_manual_apply",
+                                disabled=bool(PROFESORES_MANUAL_IMPORT_ERROR),
                             )
                             st.info(
                                 "Para aplicar cambios, marca 'Confirmo aplicar cambios'."

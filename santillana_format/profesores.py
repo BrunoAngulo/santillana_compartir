@@ -630,12 +630,14 @@ def listar_profesores(
         on_progress=on_progress,
     )
 
-    filas = _build_profesores_export_rows(data)
+    filas = build_profesores_export_rows(data)
     output_bytes = export_profesores_excel(filas)
     return output_bytes, summary, errores
 
 
-def _build_profesores_export_rows(data: Sequence[Dict[str, object]]) -> List[Dict[str, object]]:
+def build_profesores_export_rows(
+    data: Sequence[Dict[str, object]]
+) -> List[Dict[str, object]]:
     filas: List[Dict[str, object]] = []
     for entry in data:
         niveles = entry.get("niveles_detalle_activos") or set()
@@ -686,6 +688,147 @@ def _build_profesores_export_rows(data: Sequence[Dict[str, object]]) -> List[Dic
     return filas
 
 
+def listar_profesores_filters_data(
+    token: str,
+    colegio_id: int,
+    empresa_id: int = DEFAULT_EMPRESA_ID,
+    ciclo_id: int = DEFAULT_CICLO_ID,
+    timeout: int = 30,
+) -> Tuple[List[Dict[str, object]], Dict[str, int], List[Dict[str, object]]]:
+    errores: List[Dict[str, object]] = []
+
+    with requests.Session() as session:
+        data, error, status_code, url = _fetch_profesores_by_filters(
+            session=session,
+            token=token,
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            colegio_id=int(colegio_id),
+            timeout=timeout,
+        )
+
+    if error:
+        errores.append(
+            {
+                "tipo": "filters",
+                "nivel_id": "",
+                "persona_id": "",
+                "url": url,
+                "status_code": status_code or "",
+                "error": error,
+            }
+        )
+        return [], {"consultas_total": 1, "consultas_error": 1, "profesores_total": 0}, errores
+
+    profesores: Dict[int, Dict[str, object]] = {}
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+
+        persona_id = item.get("personaId")
+        if persona_id is None:
+            persona = item.get("persona") if isinstance(item.get("persona"), dict) else {}
+            persona_id = persona.get("personaId")
+        if persona_id is None:
+            errores.append(
+                {
+                    "tipo": "filters",
+                    "nivel_id": "",
+                    "persona_id": "",
+                    "url": url,
+                    "status_code": status_code or "",
+                    "error": "Profesor sin personaId.",
+                }
+            )
+            continue
+        try:
+            persona_id_int = int(persona_id)
+        except (TypeError, ValueError):
+            errores.append(
+                {
+                    "tipo": "filters",
+                    "nivel_id": "",
+                    "persona_id": persona_id,
+                    "url": url,
+                    "status_code": status_code or "",
+                    "error": "personaId invalido.",
+                }
+            )
+            continue
+
+        persona_login = item.get("personaLogin") if isinstance(item.get("personaLogin"), dict) else {}
+        login = persona_login.get("login") or ""
+        niveles_presentes = set(_extract_niveles(item, only_activos=False))
+        niveles_activos = set(_extract_niveles(item, only_activos=True))
+        activos_map = _extract_niveles_activos_map(item)
+        if not activos_map and niveles_presentes:
+            activos_map = {
+                int(nivel_id): int(nivel_id) in niveles_activos for nivel_id in niveles_presentes
+            }
+
+        estado = _derive_estado(activos_map)
+        if not estado:
+            if niveles_activos:
+                estado = "Activo"
+            elif niveles_presentes:
+                estado = "Inactivo"
+
+        current = profesores.get(persona_id_int)
+        if current is None:
+            profesores[persona_id_int] = {
+                "persona_id": persona_id_int,
+                "nombre": item.get("nombre") or "",
+                "apellido_paterno": item.get("apellidoPaterno") or "",
+                "apellido_materno": item.get("apellidoMaterno") or "",
+                "sexo": item.get("sexoMoral") or "",
+                "dni": item.get("idOficial") or "",
+                "email": item.get("email") or "",
+                "login": login,
+                "estado": estado,
+                "niveles_presentes": set(niveles_presentes),
+                "niveles_activos": dict(activos_map),
+                "niveles_detalle": set(niveles_presentes),
+                "niveles_detalle_activos": set(niveles_activos),
+                "detalle": item,
+            }
+            continue
+
+        for target_key, source_key in (
+            ("nombre", "nombre"),
+            ("apellido_paterno", "apellidoPaterno"),
+            ("apellido_materno", "apellidoMaterno"),
+            ("sexo", "sexoMoral"),
+            ("dni", "idOficial"),
+            ("email", "email"),
+        ):
+            if current.get(target_key) in (None, "") and item.get(source_key) not in (None, ""):
+                current[target_key] = item.get(source_key)
+        if not current.get("login") and login:
+            current["login"] = login
+
+        current["niveles_presentes"].update(niveles_presentes)
+        current["niveles_detalle"].update(niveles_presentes)
+        current["niveles_detalle_activos"].update(niveles_activos)
+        for nivel_id, activo in activos_map.items():
+            nivel_id_int = int(nivel_id)
+            if nivel_id_int in current["niveles_activos"]:
+                current["niveles_activos"][nivel_id_int] = (
+                    current["niveles_activos"][nivel_id_int] or bool(activo)
+                )
+            else:
+                current["niveles_activos"][nivel_id_int] = bool(activo)
+        if estado == "Activo" or not current.get("estado"):
+            current["estado"] = estado
+
+    resultados = list(profesores.values())
+    summary = {
+        "consultas_total": 1,
+        "consultas_error": len(errores),
+        "profesores_total": len(resultados),
+    }
+    return resultados, summary, errores
+
+
 def listar_profesores_bd_data(
     token: str,
     colegio_id: int,
@@ -703,7 +846,7 @@ def listar_profesores_bd_data(
         timeout=timeout,
         on_progress=on_progress,
     )
-    resultados = _build_profesores_export_rows(data)
+    resultados = build_profesores_export_rows(data)
     summary = {
         "consultas_total": int(summary_base.get("niveles_total", 0)),
         "consultas_error": int(summary_base.get("niveles_error", 0))

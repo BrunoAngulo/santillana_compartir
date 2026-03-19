@@ -7,7 +7,14 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import pandas as pd
 from openpyxl.utils import get_column_letter
 
-from santillana_format.profesores import PROFESOR_COLUMNS, export_profesores_excel
+from santillana_format.profesores import (
+    DEFAULT_CICLO_ID,
+    DEFAULT_EMPRESA_ID,
+    PROFESOR_COLUMNS,
+    build_profesores_export_rows,
+    export_profesores_excel,
+    listar_profesores_filters_data,
+)
 
 DEFAULT_SHEET_BD = "Profesores_BD"
 DEFAULT_SHEET_ACTUALIZADA = "Plantilla_Actualizada"
@@ -43,6 +50,25 @@ PROFESORES_BASE_PREVIEW_COLUMNS = [
     "E-mail",
     "Login",
 ]
+TRUTHY_VALUES = {"SI", "S", "1", "X", "TRUE", "VERDADERO", "YES"}
+RESET_BASE_COLUMNS = [
+    "I3",
+    "I4",
+    "I5",
+    "P1",
+    "P2",
+    "P3",
+    "P4",
+    "P5",
+    "P6",
+    "S1",
+    "S2",
+    "S3",
+    "S4",
+    "S5",
+    "Clases",
+    "Secciones",
+]
 
 HEADER_ALIASES = {
     "id": "id",
@@ -74,6 +100,71 @@ def compare_profesores_bd_excel(
     df_bd = _canonicalize_columns(_read_sheet(excel_path, sheet_bd))
     df_act = _canonicalize_columns(_read_sheet(excel_path, sheet_actualizada))
 
+    rows, bd_total, act_total, coincidencias_total = _compare_profesores_frames(
+        df_bd,
+        df_act,
+        merge_excel_into_reference=False,
+    )
+    summary = {
+        "bd_total": bd_total,
+        "actualizada_total": act_total,
+        "coincidencias_total": coincidencias_total,
+        "sin_referencia_total": max(len(rows) - coincidencias_total, 0),
+    }
+    return rows, summary
+
+
+def compare_profesores_sistema_excel(
+    token: str,
+    colegio_id: int,
+    excel_path: Path,
+    sheet_name: Optional[str] = None,
+    empresa_id: int = DEFAULT_EMPRESA_ID,
+    ciclo_id: int = DEFAULT_CICLO_ID,
+    timeout: int = 30,
+) -> Tuple[List[Dict[str, object]], Dict[str, int], List[Dict[str, object]]]:
+    system_data, _system_summary, errores = listar_profesores_filters_data(
+        token=token,
+        colegio_id=int(colegio_id),
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        timeout=timeout,
+    )
+    if errores and not system_data:
+        summary = {
+            "sistema_total": 0,
+            "excel_total": 0,
+            "coincidencias_total": 0,
+            "sin_referencia_total": 0,
+            "consultas_error": len(errores),
+        }
+        return [], summary, errores
+    reference_rows = build_profesores_export_rows(system_data)
+    df_bd = _canonicalize_columns(pd.DataFrame(reference_rows, columns=PROFESOR_COLUMNS).fillna(""))
+    df_act = _canonicalize_columns(_read_input_sheet(excel_path, sheet_name=sheet_name))
+
+    rows, bd_total, act_total, coincidencias_total = _compare_profesores_frames(
+        df_bd,
+        df_act,
+        merge_excel_into_reference=True,
+    )
+    summary = {
+        "sistema_total": bd_total,
+        "excel_total": act_total,
+        "coincidencias_total": coincidencias_total,
+        "sin_referencia_total": max(len(rows) - coincidencias_total, 0),
+        "consultas_error": len(errores),
+    }
+    return rows, summary, errores
+
+
+def _compare_profesores_frames(
+    df_bd: pd.DataFrame,
+    df_act: pd.DataFrame,
+    *,
+    merge_excel_into_reference: bool,
+) -> Tuple[List[Dict[str, object]], int, int, int]:
+
     df_bd = _filter_non_empty_rows(df_bd)
     df_act = _filter_non_empty_rows(df_act)
     indexes = _build_reference_indexes(df_bd)
@@ -88,6 +179,12 @@ def compare_profesores_bd_excel(
         has_reference = ref_row is not None
         if has_reference:
             coincidencias_total += 1
+        reference_base_record = {}
+        if isinstance(ref_base_row, dict):
+            if merge_excel_into_reference:
+                reference_base_record = _merge_reference_base_record(ref_base_row, colegio_row)
+            else:
+                reference_base_record = ref_base_row
         rows.append(
             {
                 **colegio_row,
@@ -95,10 +192,13 @@ def compare_profesores_bd_excel(
                 "Profesor referencia de la BD": _format_profesor_label(ref_row)
                 if ref_row
                 else "",
+                "Profesor referencia del sistema": _format_profesor_label(ref_row)
+                if ref_row
+                else "",
                 "Coincidencia por": criterio,
                 "Usar referencia BD": bool(has_reference),
                 "_tiene_referencia": bool(has_reference),
-                "_reference_base_record": ref_base_row if isinstance(ref_base_row, dict) else {},
+                "_reference_base_record": reference_base_record,
             }
         )
 
@@ -110,13 +210,7 @@ def compare_profesores_bd_excel(
             str(row.get("DNI") or ""),
         )
     )
-    summary = {
-        "bd_total": len(df_bd.index),
-        "actualizada_total": len(df_act.index),
-        "coincidencias_total": coincidencias_total,
-        "sin_referencia_total": max(len(rows) - coincidencias_total, 0),
-    }
-    return rows, summary
+    return rows, len(df_bd.index), len(df_act.index), coincidencias_total
 
 
 def export_profesores_crear_excel(rows: List[Dict[str, object]]) -> bytes:
@@ -178,6 +272,19 @@ def _read_sheet(excel_path: Path, desired: str) -> pd.DataFrame:
         return pd.read_excel(excel, sheet_name=resolved, dtype=str).fillna("")
 
 
+def _read_input_sheet(excel_path: Path, sheet_name: Optional[str] = None) -> pd.DataFrame:
+    if not excel_path.exists():
+        raise FileNotFoundError(f"No existe el archivo: {excel_path}")
+    with pd.ExcelFile(excel_path, engine="openpyxl") as excel:
+        if sheet_name:
+            resolved = _resolve_sheet_name(excel.sheet_names, sheet_name)
+        else:
+            if not excel.sheet_names:
+                raise ValueError("No se encontraron hojas en el Excel.")
+            resolved = excel.sheet_names[0]
+        return pd.read_excel(excel, sheet_name=resolved, dtype=str).fillna("")
+
+
 def _resolve_sheet_name(available: Sequence[str], desired: str) -> str:
     if desired in available:
         return desired
@@ -236,6 +343,21 @@ def _normalize_email(value: object) -> str:
     return str(value or "").strip().casefold()
 
 
+def _normalize_login(value: object) -> str:
+    return str(value or "").strip().casefold()
+
+
+def _normalize_level_flag(value: object) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = unicodedata.normalize("NFD", text)
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+    if text.strip().upper() in TRUTHY_VALUES:
+        return "SI"
+    return ""
+
+
 def _canonicalize_columns(df: pd.DataFrame) -> pd.DataFrame:
     mapping: Dict[str, str] = {}
     used = set()
@@ -266,9 +388,14 @@ def _row_to_profesor_record(row: pd.Series) -> Dict[str, str]:
         "Apellido Materno": str(
             row.get("apellido_materno") or row.get("Apellido Materno") or ""
         ).strip(),
+        "Sexo": str(row.get("sexo") or row.get("Sexo") or "").strip(),
         "DNI": str(row.get("dni") or row.get("DNI") or "").strip(),
         "E-mail": str(row.get("email") or row.get("E-mail") or "").strip(),
         "Login": str(row.get("login") or row.get("Login") or "").strip(),
+        "Password": str(row.get("password") or row.get("Password") or "").strip(),
+        "Inicial": str(row.get("inicial") or row.get("Inicial") or "").strip(),
+        "Primaria": str(row.get("primaria") or row.get("Primaria") or "").strip(),
+        "Secundaria": str(row.get("secundaria") or row.get("Secundaria") or "").strip(),
     }
 
 
@@ -337,6 +464,7 @@ def _record_name_compact_key(record: Dict[str, str]) -> str:
 def _build_reference_indexes(df_bd: pd.DataFrame) -> Dict[str, Dict[str, List[int]]]:
     by_dni: Dict[str, List[int]] = {}
     by_email: Dict[str, List[int]] = {}
+    by_login: Dict[str, List[int]] = {}
     by_name: Dict[str, List[int]] = {}
     by_name_compact: Dict[str, List[int]] = {}
     for idx, row in df_bd.iterrows():
@@ -347,6 +475,9 @@ def _build_reference_indexes(df_bd: pd.DataFrame) -> Dict[str, Dict[str, List[in
         email = _normalize_email(record.get("E-mail"))
         if email:
             by_email.setdefault(email, []).append(int(idx))
+        login = _normalize_login(record.get("Login"))
+        if login:
+            by_login.setdefault(login, []).append(int(idx))
         name_key = _record_name_key(record)
         if name_key.replace("|", ""):
             by_name.setdefault(name_key, []).append(int(idx))
@@ -356,6 +487,7 @@ def _build_reference_indexes(df_bd: pd.DataFrame) -> Dict[str, Dict[str, List[in
     return {
         "dni": by_dni,
         "email": by_email,
+        "login": by_login,
         "name": by_name,
         "name_compact": by_name_compact,
     }
@@ -378,6 +510,13 @@ def _match_reference(
         idx = email_candidates[0]
         bd_row = df_bd.iloc[int(idx)]
         return _row_to_profesor_record(bd_row), _row_to_profesor_base_record(bd_row), "E-mail"
+
+    login = _normalize_login(colegio_row.get("Login"))
+    login_candidates = indexes["login"].get(login) or []
+    if login and len(login_candidates) == 1:
+        idx = login_candidates[0]
+        bd_row = df_bd.iloc[int(idx)]
+        return _row_to_profesor_record(bd_row), _row_to_profesor_base_record(bd_row), "Login"
 
     name_key = _record_name_key(colegio_row)
     name_candidates = indexes["name"].get(name_key) or []
@@ -423,6 +562,31 @@ def _infer_sexo(nombre: object) -> str:
     return "M"
 
 
+def _merge_reference_base_record(
+    reference_row: Dict[str, str], excel_row: Dict[str, str]
+) -> Dict[str, str]:
+    merged = {col: str(reference_row.get(col) or "").strip() for col in PROFESOR_COLUMNS}
+
+    for col in (
+        "Nombre",
+        "Apellido Paterno",
+        "Apellido Materno",
+        "Sexo",
+        "DNI",
+        "E-mail",
+        "Login",
+    ):
+        if not merged.get(col):
+            merged[col] = str(excel_row.get(col) or "").strip()
+
+    merged["Password"] = str(excel_row.get("Password") or "").strip()
+    for col in ("Inicial", "Primaria", "Secundaria"):
+        merged[col] = _normalize_level_flag(excel_row.get(col))
+    for col in RESET_BASE_COLUMNS:
+        merged[col] = ""
+    return merged
+
+
 def _exportable_rows(rows: List[Dict[str, object]]) -> List[Dict[str, str]]:
     export_rows: List[Dict[str, str]] = []
     for row in rows:
@@ -438,10 +602,10 @@ def _exportable_rows(rows: List[Dict[str, object]]) -> List[Dict[str, str]]:
                 "DNI": str(row.get("DNI") or "").strip(),
                 "E-mail": str(row.get("E-mail") or "").strip(),
                 "Login": str(row.get("Login") or "").strip(),
-                "Password": "",
-                "Inicial": str(row.get("Inicial") or "").strip(),
-                "Primaria": str(row.get("Primaria") or "").strip(),
-                "Secundaria": str(row.get("Secundaria") or "").strip(),
+                "Password": str(row.get("Password") or "").strip(),
+                "Inicial": _normalize_level_flag(row.get("Inicial")),
+                "Primaria": _normalize_level_flag(row.get("Primaria")),
+                "Secundaria": _normalize_level_flag(row.get("Secundaria")),
             }
         )
     return export_rows

@@ -40,6 +40,7 @@ from santillana_format.profesores_compare import (
     build_profesores_base_filename,
     build_profesores_crear_filename,
     compare_profesores_bd_excel,
+    compare_profesores_sistema_excel,
     export_profesores_base_excel,
     export_profesores_crear_excel,
 )
@@ -53,6 +54,10 @@ from santillana_format.profesores import (
 )
 from santillana_format.profesores_clases import asignar_profesores_clases
 from santillana_format.profesores_password import actualizar_passwords_docentes
+from santillana_format.profesores_manual import (
+    asignar_clases_profesor_manual,
+    listar_profesores_clases_panel_data,
+)
 from santillana_format.clases_api import listar_y_mapear_clases
 
 
@@ -112,6 +117,10 @@ DASHBOARD_VALIDAR_IDENTIFICADOR_URL = (
 DASHBOARD_VALIDAR_LOGIN_URL = (
     "https://www.uno-internacional.com/pegasus-api/dashboard/empresas/{empresa_id}"
     "/validarLogin"
+)
+DASHBOARD_COLEGIOS_URL = (
+    "https://www.uno-internacional.com/pegasus-api/dashboard/empresas/{empresa_id}"
+    "/ciclos/{ciclo_id}/colegios"
 )
 GESTION_ESCOLAR_CICLO_ID_DEFAULT = 207
 AUTO_MOVE_SECCION_ORIGEN = "Y"
@@ -411,10 +420,210 @@ def _clean_token_value(token: object) -> str:
     return re.sub(r"^bearer\s+", "", text, flags=re.IGNORECASE).strip()
 
 
+def _normalize_school_search_text(value: object) -> str:
+    text = str(value or "").strip().upper()
+    text = unicodedata.normalize("NFD", text)
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _clear_shared_colegios_cache(clear_selection: bool = False) -> None:
+    for state_key in (
+        "shared_colegios_rows",
+        "shared_colegios_error",
+        "shared_colegios_token_loaded",
+    ):
+        st.session_state.pop(state_key, None)
+    if clear_selection:
+        for state_key in ("shared_colegio_selected_id", "shared_colegio_id", "shared_colegio_label"):
+            st.session_state.pop(state_key, None)
+
+
+def _build_shared_colegio_label(row: Dict[str, object]) -> str:
+    colegio = str(row.get("colegio") or "").strip() or "Colegio sin nombre"
+    colegio_id = str(row.get("colegio_id") or "").strip()
+    municipio = str(row.get("municipio") or "").strip()
+    estado = str(row.get("estado") or "").strip()
+    location = ", ".join(part for part in (municipio, estado) if part).strip()
+    if colegio_id and location:
+        return f"{colegio} | ID {colegio_id} | {location}"
+    if colegio_id:
+        return f"{colegio} | ID {colegio_id}"
+    return colegio
+
+
+def _fetch_dashboard_colegios(
+    token: str,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int = 30,
+) -> List[Dict[str, object]]:
+    url = DASHBOARD_COLEGIOS_URL.format(
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+    )
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    try:
+        response = requests.get(url, headers=headers, timeout=int(timeout))
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Error de red: {exc}") from exc
+
+    status_code = response.status_code
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError(f"Respuesta no JSON (status {status_code})") from exc
+
+    if not response.ok:
+        message = payload.get("message") if isinstance(payload, dict) else ""
+        raise RuntimeError(message or f"HTTP {status_code}")
+
+    if not isinstance(payload, dict) or not payload.get("success", False):
+        message = payload.get("message") if isinstance(payload, dict) else "Respuesta invalida"
+        raise RuntimeError(message or "Respuesta invalida")
+
+    data = payload.get("data") if isinstance(payload, dict) else None
+    colegios_raw = data.get("colegios") if isinstance(data, dict) else None
+    if not isinstance(colegios_raw, list):
+        raise RuntimeError("Campo data.colegios no es lista")
+
+    rows: List[Dict[str, object]] = []
+    for item in colegios_raw:
+        if not isinstance(item, dict):
+            continue
+        colegio = item.get("colegio") if isinstance(item.get("colegio"), dict) else {}
+        contrato = item.get("contrato") if isinstance(item.get("contrato"), dict) else {}
+        municipio = colegio.get("municipio") if isinstance(colegio.get("municipio"), dict) else {}
+        estado = municipio.get("estado") if isinstance(municipio.get("estado"), dict) else {}
+
+        colegio_id = colegio.get("colegioId")
+        try:
+            colegio_id_int = int(colegio_id)
+        except (TypeError, ValueError):
+            continue
+
+        row = {
+            "colegio_id": int(colegio_id_int),
+            "colegio": str(colegio.get("colegio") or "").strip(),
+            "colegio_clave": str(colegio.get("colegioClave") or "").strip(),
+            "sap_id": str(colegio.get("sapId") or "").strip(),
+            "crm_id": str(colegio.get("crmId") or "").strip(),
+            "payment_code": str(colegio.get("paymentCode") or "").strip(),
+            "cliente": str(colegio.get("cliente") or "").strip(),
+            "municipio": str(municipio.get("municipio") or "").strip(),
+            "estado": str(estado.get("estado") or "").strip(),
+            "telefono": str(colegio.get("telefono") or "").strip(),
+            "contrato_estatus": str(contrato.get("estatus") or "").strip(),
+            "contrato_ciclo": str(contrato.get("cicloEscolar") or "").strip(),
+            "quien_paga": str(item.get("quienPaga") or "").strip(),
+            "demo": bool(colegio.get("demo")),
+            "tiene_configuracion": bool(item.get("tieneConfiguracion")),
+        }
+        row["label"] = _build_shared_colegio_label(row)
+        row["search_text"] = _normalize_school_search_text(
+            " ".join(
+                [
+                    str(row.get("colegio") or ""),
+                    str(row.get("colegio_id") or ""),
+                    str(row.get("colegio_clave") or ""),
+                    str(row.get("sap_id") or ""),
+                    str(row.get("crm_id") or ""),
+                    str(row.get("payment_code") or ""),
+                    str(row.get("cliente") or ""),
+                    str(row.get("municipio") or ""),
+                    str(row.get("estado") or ""),
+                ]
+            )
+        )
+        rows.append(row)
+
+    rows.sort(
+        key=lambda row: (
+            str(row.get("colegio") or "").upper(),
+            int(row.get("colegio_id") or 0),
+        )
+    )
+    return rows
+
+
+def _sync_shared_colegio_from_select() -> None:
+    selected = st.session_state.get("shared_colegio_selected_id")
+    if selected in (None, "", "None"):
+        st.session_state["shared_colegio_id"] = ""
+        st.session_state["shared_colegio_label"] = ""
+        return
+    try:
+        selected_int = int(selected)
+    except (TypeError, ValueError):
+        st.session_state["shared_colegio_id"] = ""
+        st.session_state["shared_colegio_label"] = ""
+        return
+
+    st.session_state["shared_colegio_id"] = str(selected_int)
+    for row in st.session_state.get("shared_colegios_rows") or []:
+        if int(row.get("colegio_id") or 0) == selected_int:
+            st.session_state["shared_colegio_label"] = str(row.get("label") or "").strip()
+            break
+
+
+def _ensure_shared_colegios_loaded(
+    token: str,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int = 30,
+) -> None:
+    token_clean = _clean_token_value(token)
+    loaded_for_token = str(st.session_state.get("shared_colegios_token_loaded") or "")
+    if not token_clean:
+        _clear_shared_colegios_cache(clear_selection=False)
+        return
+    if token_clean == loaded_for_token and "shared_colegios_rows" in st.session_state:
+        return
+
+    st.session_state["shared_colegios_error"] = ""
+    try:
+        rows = _fetch_dashboard_colegios(
+            token=token_clean,
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+        )
+    except Exception as exc:
+        st.session_state["shared_colegios_rows"] = []
+        st.session_state["shared_colegios_error"] = str(exc)
+        st.session_state["shared_colegios_token_loaded"] = token_clean
+        return
+
+    st.session_state["shared_colegios_rows"] = rows
+    st.session_state["shared_colegios_token_loaded"] = token_clean
+    current_raw = str(st.session_state.get("shared_colegio_id") or "").strip()
+    current_selected = st.session_state.get("shared_colegio_selected_id")
+    valid_ids = {int(row.get("colegio_id") or 0) for row in rows}
+
+    current_id_int: Optional[int] = None
+    try:
+        if current_raw:
+            current_id_int = int(current_raw)
+    except ValueError:
+        current_id_int = None
+
+    if current_id_int is not None and current_id_int in valid_ids:
+        st.session_state["shared_colegio_selected_id"] = int(current_id_int)
+        _sync_shared_colegio_from_select()
+        return
+    if current_selected not in valid_ids:
+        st.session_state["shared_colegio_selected_id"] = None
+        st.session_state["shared_colegio_id"] = ""
+        st.session_state["shared_colegio_label"] = ""
+
+
 def _sync_shared_token_from_input() -> None:
+    old_token = _clean_token_value(st.session_state.get("shared_pegasus_token", ""))
     token_input = _clean_token_value(st.session_state.get("shared_pegasus_token_input", ""))
-    if token_input:
-        st.session_state["shared_pegasus_token"] = token_input
+    st.session_state["shared_pegasus_token"] = token_input
+    if token_input != old_token:
+        _clear_shared_colegios_cache(clear_selection=False)
 
 
 st.set_page_config(page_title="Generador de Plantilla", layout="wide")
@@ -483,16 +692,104 @@ if menu_option != "Richmond Studio":
             if st.button("Limpiar", key="shared_token_clear_btn", use_container_width=True):
                 st.session_state["shared_pegasus_token"] = ""
                 st.session_state["shared_pegasus_token_input"] = ""
+                _clear_shared_colegios_cache(clear_selection=True)
                 st.rerun()
         if st.session_state.get("shared_pegasus_token"):
             st.caption("Token guardado en sesion.")
     with global_col_colegio:
-        st.text_input(
-            "Colegio Clave (global)",
-            key="shared_colegio_id",
-            placeholder="2326",
+        shared_token_current = _clean_token_value(
+            str(st.session_state.get("shared_pegasus_token", ""))
+            or str(st.session_state.get("shared_pegasus_token_input", ""))
+        )
+        if shared_token_current:
+            _ensure_shared_colegios_loaded(
+                token=shared_token_current,
+                empresa_id=int(DEFAULT_EMPRESA_ID),
+                ciclo_id=int(PROFESORES_CICLO_ID_DEFAULT),
+                timeout=30,
+            )
+
+        colegio_rows_global = st.session_state.get("shared_colegios_rows") or []
+        colegio_error_global = str(st.session_state.get("shared_colegios_error") or "").strip()
+        colegio_search_col, colegio_refresh_col = st.columns([4, 1], gap="small")
+        with colegio_search_col:
+            colegio_search_global = st.text_input(
+                "Buscar colegio",
+                key="shared_colegio_search",
+                placeholder="Nombre, ID, SAP, CRM o ciudad",
+                disabled=not bool(colegio_rows_global),
+            )
+        with colegio_refresh_col:
+            if st.button(
+                "Recargar",
+                key="shared_colegio_reload_btn",
+                use_container_width=True,
+                disabled=not bool(shared_token_current),
+            ):
+                _clear_shared_colegios_cache(clear_selection=False)
+                st.rerun()
+
+        filtered_colegio_rows = []
+        colegio_search_norm = _normalize_school_search_text(colegio_search_global)
+        for row in colegio_rows_global:
+            if not colegio_search_norm or colegio_search_norm in str(row.get("search_text") or ""):
+                filtered_colegio_rows.append(row)
+
+        row_by_id_global = {
+            int(row["colegio_id"]): row
+            for row in colegio_rows_global
+            if row.get("colegio_id") is not None
+        }
+        selected_colegio_current = st.session_state.get("shared_colegio_selected_id")
+        select_options_global: List[Optional[int]] = [None]
+        if selected_colegio_current is not None:
+            try:
+                selected_colegio_current = int(selected_colegio_current)
+            except (TypeError, ValueError):
+                selected_colegio_current = None
+        if (
+            selected_colegio_current is not None
+            and selected_colegio_current in row_by_id_global
+            and selected_colegio_current
+            not in [int(row["colegio_id"]) for row in filtered_colegio_rows if row.get("colegio_id") is not None]
+        ):
+            select_options_global.append(int(selected_colegio_current))
+        select_options_global.extend(
+            [
+                int(row["colegio_id"])
+                for row in filtered_colegio_rows
+                if row.get("colegio_id") is not None
+                and int(row["colegio_id"]) not in select_options_global
+            ]
+        )
+        if selected_colegio_current not in select_options_global:
+            st.session_state["shared_colegio_selected_id"] = None
+        st.selectbox(
+            "Colegio (global)",
+            options=select_options_global,
+            key="shared_colegio_selected_id",
+            on_change=_sync_shared_colegio_from_select,
+            format_func=lambda value: (
+                "Selecciona un colegio"
+                if value in (None, "", "None")
+                else str((row_by_id_global.get(int(value)) or {}).get("label") or f"Colegio {value}")
+            ),
+            disabled=not bool(colegio_rows_global),
             help="Se reutiliza en las funciones que requieren colegio.",
         )
+
+        if colegio_error_global:
+            st.caption(f"No se pudo cargar la lista de colegios: {colegio_error_global}")
+        elif not shared_token_current:
+            st.caption("Guarda un token para cargar tu lista de colegios.")
+        elif colegio_rows_global:
+            if st.session_state.get("shared_colegio_label"):
+                st.caption(str(st.session_state.get("shared_colegio_label")))
+            st.caption(
+                f"Colegios disponibles: {len(colegio_rows_global)} | Visibles por filtro: {max(len(select_options_global) - 1, 0)}"
+            )
+        else:
+            st.caption("No se encontraron colegios para este token.")
     tab_crud_clases, tab_crud_profesores, tab_crud_alumnos = st.tabs(
         [
             "CRUD Clases",
@@ -8411,12 +8708,30 @@ with tab_crud_profesores:
         colegio_id_raw = str(st.session_state.get("shared_colegio_id", "")).strip()
         ciclo_id = PROFESORES_CICLO_ID_DEFAULT
         timeout = 30
+        loaded_profesores_manual_colegio_id = _safe_int(
+            st.session_state.get("profesores_manual_colegio_id")
+        )
+        current_profesores_manual_colegio_id = _safe_int(colegio_id_raw)
+        if (
+            loaded_profesores_manual_colegio_id is not None
+            and current_profesores_manual_colegio_id is not None
+            and loaded_profesores_manual_colegio_id != current_profesores_manual_colegio_id
+        ):
+            for state_key in (
+                "profesores_manual_rows",
+                "profesores_manual_clases",
+                "profesores_manual_summary",
+                "profesores_manual_errors",
+                "profesores_manual_colegio_id",
+            ):
+                st.session_state.pop(state_key, None)
         profesores_nav_col, profesores_body_col = st.columns([1.15, 4.85], gap="large")
         with profesores_nav_col:
             profesores_crud_view = _render_crud_menu(
                 "Funciones de profesores",
                 [
                     ("bd", "BD", "Consulta, exporta y compara ProfesoresBD"),
+                    ("manual", "Manual", "Asigna clases por docente"),
                     ("base", "Base", "Genera Excel operativo"),
                     ("asignar", "Asignar", "Aplica cambios a clases"),
                 ],
@@ -8698,6 +9013,673 @@ with tab_crud_profesores:
                         st.caption(
                             "No hay profesores para crear. Si quieres forzar uno, desmarca 'Usar referencia BD'."
                         )
+
+                with st.container(border=True):
+                    st.markdown("**Cruce directo contra sistema**")
+                    st.caption(
+                        "Sube el Excel simple de profesores para cruzarlo directo contra Pegasus usando profesoresByFilters."
+                    )
+                    st.caption(
+                        "Los encontrados conservaran Id, Estado y Login del sistema, pero usaran Password y niveles del Excel."
+                    )
+                    uploaded_profesores_compare_system = st.file_uploader(
+                        "Excel simple de profesores",
+                        type=["xlsx"],
+                        key="profesores_compare_system_excel",
+                    )
+                    compare_system_sheet = st.text_input(
+                        "Hoja (opcional)",
+                        value="",
+                        key="profesores_compare_system_sheet",
+                        help="Si lo dejas vacio, se usa la primera hoja del archivo.",
+                    )
+                    run_compare_profesores_system = st.button(
+                        "Analizar contra sistema",
+                        type="primary",
+                        key="profesores_compare_system_run",
+                    )
+
+                if run_compare_profesores_system:
+                    for state_key in (
+                        "profesores_compare_system_rows",
+                        "profesores_compare_system_summary",
+                        "profesores_compare_system_source_name",
+                        "profesores_compare_system_editor",
+                        "profesores_compare_system_errors",
+                    ):
+                        st.session_state.pop(state_key, None)
+                    if not uploaded_profesores_compare_system:
+                        st.error("Sube un Excel simple de profesores.")
+                        st.stop()
+
+                    token = _get_shared_token()
+                    if not token:
+                        st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                        st.stop()
+                    try:
+                        colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                    except ValueError as exc:
+                        st.error(f"Error: {exc}")
+                        st.stop()
+
+                    suffix = Path(uploaded_profesores_compare_system.name).suffix or ".xlsx"
+                    tmp_path = None
+                    try:
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                            tmp.write(uploaded_profesores_compare_system.read())
+                            tmp_path = Path(tmp.name)
+                        compare_rows_system, compare_summary_system, compare_errors_system = (
+                            compare_profesores_sistema_excel(
+                                token=token,
+                                colegio_id=colegio_id_int,
+                                excel_path=tmp_path,
+                                sheet_name=compare_system_sheet.strip() or None,
+                                empresa_id=DEFAULT_EMPRESA_ID,
+                                ciclo_id=int(ciclo_id),
+                                timeout=int(timeout),
+                            )
+                        )
+                    except Exception as exc:  # pragma: no cover - UI
+                        st.error(f"Error: {exc}")
+                        st.stop()
+                    finally:
+                        if tmp_path:
+                            try:
+                                tmp_path.unlink()
+                            except OSError:
+                                pass
+
+                    st.session_state["profesores_compare_system_rows"] = compare_rows_system
+                    st.session_state["profesores_compare_system_summary"] = compare_summary_system
+                    st.session_state["profesores_compare_system_source_name"] = str(
+                        uploaded_profesores_compare_system.name or "profesores.xlsx"
+                    )
+                    st.session_state["profesores_compare_system_errors"] = (
+                        compare_errors_system
+                    )
+                    st.success(
+                        "Cruce directo listo. Sistema: {sistema_total}, Excel: {excel_total}, "
+                        "Coincidencias: {coincidencias_total}, Sin referencia: {sin_referencia_total}, "
+                        "Observaciones API: {consultas_error}.".format(
+                            **compare_summary_system
+                        )
+                    )
+
+                compare_system_rows_cached = (
+                    st.session_state.get("profesores_compare_system_rows") or []
+                )
+                compare_system_summary_cached = (
+                    st.session_state.get("profesores_compare_system_summary") or {}
+                )
+                compare_system_source_name_cached = str(
+                    st.session_state.get("profesores_compare_system_source_name")
+                    or "profesores.xlsx"
+                )
+                compare_system_errors_cached = (
+                    st.session_state.get("profesores_compare_system_errors") or []
+                )
+                if compare_system_errors_cached:
+                    st.error("Observaciones al consultar profesores del sistema:")
+                    _show_dataframe(compare_system_errors_cached, use_container_width=True)
+
+                if compare_system_rows_cached:
+                    matched_system_rows = [
+                        row
+                        for row in compare_system_rows_cached
+                        if bool(row.get("_tiene_referencia"))
+                    ]
+                    unmatched_system_rows = [
+                        row
+                        for row in compare_system_rows_cached
+                        if not bool(row.get("_tiene_referencia"))
+                    ]
+                    st.info(
+                        "Cruce directo -> Coincidencias: {coincidencias_total} | Sin referencia sistema: {sin_referencia_total}".format(
+                            **compare_system_summary_cached
+                        )
+                    )
+
+                    edited_system_match_rows: List[Dict[str, object]] = []
+                    if matched_system_rows:
+                        st.markdown("**Vista previa de coincidencias directas**")
+                        edited_system_matches_df = st.data_editor(
+                            pd.DataFrame(
+                                [
+                                    {
+                                        "Profesor Colegio": row.get("Profesor Colegio", ""),
+                                        "Profesor referencia del sistema": row.get(
+                                            "Profesor referencia del sistema", ""
+                                        ),
+                                        "Coincidencia por": row.get("Coincidencia por", ""),
+                                        "Usar referencia BD": bool(
+                                            row.get("Usar referencia BD", False)
+                                        ),
+                                    }
+                                    for row in matched_system_rows
+                                ]
+                            ),
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "Usar referencia BD": st.column_config.CheckboxColumn(
+                                    "Usar referencia sistema",
+                                    help="Desmarca para incluir este profesor en el Excel de creacion.",
+                                    default=True,
+                                ),
+                            },
+                            disabled=[
+                                "Profesor Colegio",
+                                "Profesor referencia del sistema",
+                                "Coincidencia por",
+                            ],
+                            key="profesores_compare_system_editor",
+                        )
+                        edited_system_match_rows = edited_system_matches_df.to_dict(
+                            "records"
+                        )
+                    else:
+                        st.caption("No se detectaron coincidencias directas contra el sistema.")
+
+                    base_system_rows: List[Dict[str, object]] = []
+                    create_system_rows: List[Dict[str, object]] = [
+                        dict(row) for row in unmatched_system_rows
+                    ]
+                    for index, base_row in enumerate(matched_system_rows):
+                        edited_row = (
+                            edited_system_match_rows[index]
+                            if index < len(edited_system_match_rows)
+                            else {"Usar referencia BD": True}
+                        )
+                        if bool(edited_row.get("Usar referencia BD", True)):
+                            base_system_rows.append(dict(base_row))
+                        else:
+                            create_system_rows.append(dict(base_row))
+
+                    base_system_rows.sort(
+                        key=lambda row: (
+                            str(row.get("Apellido Paterno") or "").upper(),
+                            str(row.get("Apellido Materno") or "").upper(),
+                            str(row.get("Nombre") or "").upper(),
+                            str(row.get("DNI") or ""),
+                        )
+                    )
+                    create_system_rows.sort(
+                        key=lambda row: (
+                            str(row.get("Apellido Paterno") or "").upper(),
+                            str(row.get("Apellido Materno") or "").upper(),
+                            str(row.get("Nombre") or "").upper(),
+                            str(row.get("DNI") or ""),
+                        )
+                    )
+
+                    st.markdown("**Profesores encontrados en sistema para base**")
+                    if base_system_rows:
+                        base_system_preview_rows = []
+                        for row in base_system_rows:
+                            reference_row = row.get("_reference_base_record")
+                            if not isinstance(reference_row, dict):
+                                continue
+                            base_system_preview_rows.append(
+                                {
+                                    "Id": reference_row.get("Id", ""),
+                                    "Nombre": reference_row.get("Nombre", ""),
+                                    "Apellido Paterno": reference_row.get(
+                                        "Apellido Paterno", ""
+                                    ),
+                                    "Apellido Materno": reference_row.get(
+                                        "Apellido Materno", ""
+                                    ),
+                                    "Estado": reference_row.get("Estado", ""),
+                                    "Sexo": reference_row.get("Sexo", ""),
+                                    "DNI": reference_row.get("DNI", ""),
+                                    "E-mail": reference_row.get("E-mail", ""),
+                                    "Login": reference_row.get("Login", ""),
+                                    "Inicial": reference_row.get("Inicial", ""),
+                                    "Primaria": reference_row.get("Primaria", ""),
+                                    "Secundaria": reference_row.get("Secundaria", ""),
+                                    "Coincidencia por": row.get("Coincidencia por", ""),
+                                }
+                            )
+                        _show_dataframe(base_system_preview_rows, use_container_width=True)
+                        st.download_button(
+                            label="Descargar profesores base desde sistema",
+                            data=export_profesores_base_excel(base_system_rows),
+                            file_name=build_profesores_base_filename(
+                                compare_system_source_name_cached
+                            ),
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="profesores_base_system_download",
+                        )
+                        st.caption(
+                            "Para aplicar solo niveles/password luego, usa este Excel en 'Asignar' y desmarca 'Asignar clases y secciones'."
+                        )
+                    else:
+                        st.caption("No hay profesores encontrados en sistema para base.")
+
+                    st.markdown("**Profesores a crear desde el Excel**")
+                    if create_system_rows:
+                        create_system_preview_rows = [
+                            {
+                                "Nombre": row.get("Nombre", ""),
+                                "Apellido Paterno": row.get("Apellido Paterno", ""),
+                                "Apellido Materno": row.get("Apellido Materno", ""),
+                                "DNI": row.get("DNI", ""),
+                                "E-mail": row.get("E-mail", ""),
+                                "Login": row.get("Login", ""),
+                                "Inicial": row.get("Inicial", ""),
+                                "Primaria": row.get("Primaria", ""),
+                                "Secundaria": row.get("Secundaria", ""),
+                            }
+                            for row in create_system_rows
+                        ]
+                        _show_dataframe(create_system_preview_rows, use_container_width=True)
+                        st.download_button(
+                            label="Descargar profesores a crear",
+                            data=export_profesores_crear_excel(create_system_rows),
+                            file_name=build_profesores_crear_filename(
+                                compare_system_source_name_cached
+                            ),
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="profesores_compare_system_download",
+                        )
+                    else:
+                        st.caption(
+                            "No hay profesores para crear. Si quieres forzar uno, desmarca 'Usar referencia sistema'."
+                        )
+            if profesores_crud_view == "manual":
+                st.subheader("Asignacion manual de clases")
+                st.caption(
+                    "Carga docentes y clases del colegio, busca un docente y asignale varias clases desde un solo panel."
+                )
+
+                col_load_manual, col_clear_manual = st.columns([2, 1], gap="small")
+                run_manual_load = col_load_manual.button(
+                    "Cargar docentes y clases",
+                    type="primary",
+                    key="profesores_manual_load",
+                    use_container_width=True,
+                )
+                clear_manual = col_clear_manual.button(
+                    "Limpiar",
+                    key="profesores_manual_clear",
+                    use_container_width=True,
+                )
+
+                if clear_manual:
+                    for state_key in (
+                        "profesores_manual_rows",
+                        "profesores_manual_clases",
+                        "profesores_manual_summary",
+                        "profesores_manual_errors",
+                        "profesores_manual_colegio_id",
+                        "profesores_manual_selected",
+                        "profesores_manual_search",
+                        "profesores_manual_confirm_apply",
+                    ):
+                        st.session_state.pop(state_key, None)
+                    st.rerun()
+
+                if run_manual_load:
+                    token = _get_shared_token()
+                    if not token:
+                        st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                        st.stop()
+                    try:
+                        colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                    except ValueError as exc:
+                        st.error(f"Error: {exc}")
+                        st.stop()
+
+                    progress = st.progress(0)
+                    status = st.empty()
+
+                    def _manual_load_progress(
+                        phase: str, current: int, total: int, message: str
+                    ) -> None:
+                        percent = int((current / total) * 100) if total else 0
+                        progress.progress(percent)
+                        status.write(f"{phase}: {message} ({current}/{total})")
+
+                    try:
+                        profesores_manual_rows, profesores_manual_clases, profesores_manual_summary, profesores_manual_errors = listar_profesores_clases_panel_data(
+                            token=token,
+                            colegio_id=colegio_id_int,
+                            empresa_id=DEFAULT_EMPRESA_ID,
+                            ciclo_id=int(ciclo_id),
+                            timeout=int(timeout),
+                            on_progress=_manual_load_progress,
+                        )
+                    except Exception as exc:  # pragma: no cover - UI
+                        st.error(f"Error: {exc}")
+                        st.stop()
+                    finally:
+                        progress.empty()
+                        status.empty()
+
+                    st.session_state["profesores_manual_rows"] = profesores_manual_rows
+                    st.session_state["profesores_manual_clases"] = profesores_manual_clases
+                    st.session_state["profesores_manual_summary"] = profesores_manual_summary
+                    st.session_state["profesores_manual_errors"] = profesores_manual_errors
+                    st.session_state["profesores_manual_colegio_id"] = int(colegio_id_int)
+                    st.success(
+                        "Panel manual listo. Docentes: {profesores_total}, Clases: {clases_total}, "
+                        "Consultas staff: {staff_consultas_total}, Errores staff: {staff_consultas_error}.".format(
+                            **profesores_manual_summary
+                        )
+                    )
+
+                profesores_manual_rows_cached = st.session_state.get("profesores_manual_rows") or []
+                profesores_manual_clases_cached = (
+                    st.session_state.get("profesores_manual_clases") or []
+                )
+                profesores_manual_summary_cached = (
+                    st.session_state.get("profesores_manual_summary") or {}
+                )
+                profesores_manual_errors_cached = (
+                    st.session_state.get("profesores_manual_errors") or []
+                )
+
+                if profesores_manual_summary_cached:
+                    st.info(
+                        "Docentes: {profesores_total} | Clases: {clases_total} | Staff con error: {staff_consultas_error}".format(
+                            **profesores_manual_summary_cached
+                        )
+                    )
+
+                if profesores_manual_errors_cached:
+                    st.error("Observaciones al cargar staff de clases:")
+                    _show_dataframe(profesores_manual_errors_cached, use_container_width=True)
+
+                if profesores_manual_rows_cached and profesores_manual_clases_cached:
+                    search_profesor_manual = st.text_input(
+                        "Buscar profesor",
+                        key="profesores_manual_search",
+                        placeholder="Nombre, login, DNI o persona ID",
+                    )
+                    search_profesor_manual_norm = _normalize_plain_text(search_profesor_manual)
+                    filtered_profesores_manual = []
+                    for row in profesores_manual_rows_cached:
+                        haystack = " ".join(
+                            [
+                                str(row.get("nombre") or ""),
+                                str(row.get("login") or ""),
+                                str(row.get("dni") or ""),
+                                str(row.get("email") or ""),
+                                str(row.get("persona_id") or ""),
+                            ]
+                        )
+                        if (
+                            not search_profesor_manual_norm
+                            or search_profesor_manual_norm in _normalize_plain_text(haystack)
+                        ):
+                            filtered_profesores_manual.append(row)
+
+                    st.caption(
+                        f"Docentes visibles: {len(filtered_profesores_manual)} de {len(profesores_manual_rows_cached)}"
+                    )
+
+                    profesores_manual_preview = [
+                        {
+                            "Persona ID": row.get("persona_id", ""),
+                            "Docente": row.get("nombre", ""),
+                            "Login": row.get("login", ""),
+                            "DNI": row.get("dni", ""),
+                            "Estado": row.get("estado", ""),
+                            "Clases actuales": row.get("clases_actuales_count", 0),
+                        }
+                        for row in filtered_profesores_manual
+                    ]
+                    if profesores_manual_preview:
+                        _show_dataframe(profesores_manual_preview, use_container_width=True)
+                    else:
+                        st.caption("No hay docentes para ese filtro.")
+
+                    profesores_manual_by_id = {
+                        int(row["persona_id"]): row
+                        for row in filtered_profesores_manual
+                        if _safe_int(row.get("persona_id")) is not None
+                    }
+                    clases_manual_by_id = {
+                        int(row["clase_id"]): row
+                        for row in profesores_manual_clases_cached
+                        if _safe_int(row.get("clase_id")) is not None
+                    }
+
+                    if profesores_manual_by_id:
+                        profesores_manual_options = sorted(profesores_manual_by_id.keys())
+                        selected_profesor_cached = _safe_int(
+                            st.session_state.get("profesores_manual_selected")
+                        )
+                        if selected_profesor_cached not in profesores_manual_options:
+                            st.session_state["profesores_manual_selected"] = int(
+                                profesores_manual_options[0]
+                            )
+                        selected_profesor_manual = st.selectbox(
+                            "Profesor",
+                            options=profesores_manual_options,
+                            format_func=lambda persona_id: str(
+                                profesores_manual_by_id.get(int(persona_id), {}).get("label")
+                                or f"Persona {persona_id}"
+                            ),
+                            key="profesores_manual_selected",
+                        )
+                        profesor_manual_row = profesores_manual_by_id.get(
+                            int(selected_profesor_manual)
+                        )
+                    else:
+                        profesor_manual_row = None
+
+                    if profesor_manual_row:
+                        cols_manual_left, cols_manual_right = st.columns(
+                            [1.5, 2.5], gap="large"
+                        )
+                        with cols_manual_left:
+                            st.markdown("**Docente seleccionado**")
+                            st.markdown(
+                                "\n".join(
+                                    [
+                                        f"- ID: {profesor_manual_row.get('persona_id', '')}",
+                                        f"- Nombre: {profesor_manual_row.get('nombre', '') or '-'}",
+                                        f"- Login: {profesor_manual_row.get('login', '') or '-'}",
+                                        f"- DNI: {profesor_manual_row.get('dni', '') or '-'}",
+                                        f"- Estado: {profesor_manual_row.get('estado', '') or '-'}",
+                                        f"- Clases actuales: {profesor_manual_row.get('clases_actuales_count', 0)}",
+                                    ]
+                                )
+                            )
+                            clases_actuales_txt = profesor_manual_row.get("clases_actuales") or []
+                            if clases_actuales_txt:
+                                st.markdown("**Cursos ya vinculados**")
+                                st.markdown(
+                                    "\n".join(
+                                        f"- {item}" for item in clases_actuales_txt[:20]
+                                    )
+                                )
+                                if len(clases_actuales_txt) > 20:
+                                    st.caption(
+                                        f"... y {len(clases_actuales_txt) - 20} mas."
+                                    )
+                            else:
+                                st.caption("El docente no tiene clases vinculadas.")
+
+                        with cols_manual_right:
+                            clases_options = sorted(clases_manual_by_id.keys())
+                            default_class_ids = [
+                                int(item)
+                                for item in profesor_manual_row.get("clase_ids_actuales", [])
+                                if int(item) in clases_manual_by_id
+                            ]
+                            selected_manual_class_ids = st.multiselect(
+                                "Clases del docente",
+                                options=clases_options,
+                                default=default_class_ids,
+                                format_func=lambda clase_id: str(
+                                    clases_manual_by_id.get(int(clase_id), {}).get("clase_label")
+                                    or f"Clase {clase_id}"
+                                ),
+                                key=f"profesores_manual_clases_{int(profesor_manual_row['persona_id'])}",
+                            )
+                            st.caption(
+                                "Se precargan las clases actuales. Esta accion solo agrega clases nuevas; no elimina las desmarcadas."
+                            )
+                            confirm_manual_apply = st.checkbox(
+                                "Confirmo aplicar cambios",
+                                value=False,
+                                key="profesores_manual_confirm_apply",
+                            )
+                            col_manual_sim, col_manual_apply = st.columns(2)
+                            run_manual_sim = col_manual_sim.button(
+                                "Simular",
+                                type="primary",
+                                key="profesores_manual_simular",
+                            )
+                            run_manual_apply = col_manual_apply.button(
+                                "Aplicar cambios",
+                                type="secondary",
+                                key="profesores_manual_apply",
+                            )
+                            st.info(
+                                "Para aplicar cambios, marca 'Confirmo aplicar cambios'."
+                            )
+
+                            if run_manual_sim or run_manual_apply:
+                                token = _get_shared_token()
+                                if not token:
+                                    st.error(
+                                        "Falta el token. Configura el token global o PEGASUS_TOKEN."
+                                    )
+                                    st.stop()
+                                if run_manual_apply and not confirm_manual_apply:
+                                    st.error("Debes confirmar antes de aplicar cambios.")
+                                    st.stop()
+                                if not selected_manual_class_ids:
+                                    st.error("Selecciona al menos una clase.")
+                                    st.stop()
+
+                                progress = st.progress(0)
+                                status = st.empty()
+
+                                def _manual_assign_progress(
+                                    current: int, total: int, message: str
+                                ) -> None:
+                                    percent = int((current / total) * 100) if total else 0
+                                    progress.progress(percent)
+                                    status.write(f"{message} ({current}/{total})")
+
+                                try:
+                                    manual_summary, manual_warnings, manual_results = asignar_clases_profesor_manual(
+                                        token=token,
+                                        persona_id=int(profesor_manual_row["persona_id"]),
+                                        clase_ids=selected_manual_class_ids,
+                                        empresa_id=DEFAULT_EMPRESA_ID,
+                                        ciclo_id=int(ciclo_id),
+                                        timeout=int(timeout),
+                                        dry_run=not run_manual_apply,
+                                        on_progress=_manual_assign_progress,
+                                    )
+                                except Exception as exc:  # pragma: no cover - UI
+                                    st.error(f"Error: {exc}")
+                                    st.stop()
+                                finally:
+                                    progress.empty()
+                                    status.empty()
+
+                                resumen_manual = [
+                                    f"Clases seleccionadas: {manual_summary.get('clases_total', 0)}",
+                                    f"Ya asignadas: {manual_summary.get('ya_asignadas', 0)}",
+                                    f"Pendientes: {manual_summary.get('pendientes', 0)}",
+                                    f"Asignadas: {manual_summary.get('asignadas', 0)}",
+                                    f"Errores API: {manual_summary.get('errores_api', 0)}",
+                                ]
+                                st.success("Resumen de asignacion manual")
+                                st.markdown(
+                                    "\n".join(f"- {item}" for item in resumen_manual)
+                                )
+                                if manual_warnings:
+                                    st.warning("Advertencias:")
+                                    st.markdown(
+                                        "\n".join(f"- {item}" for item in manual_warnings)
+                                    )
+                                if manual_results:
+                                    manual_results_display = []
+                                    for item in manual_results:
+                                        clase_id_result = _safe_int(item.get("clase_id"))
+                                        clase_info = (
+                                            clases_manual_by_id.get(int(clase_id_result))
+                                            if clase_id_result is not None
+                                            else {}
+                                        )
+                                        manual_results_display.append(
+                                            {
+                                                "Clase ID": clase_id_result or "",
+                                                "Clase": clase_info.get("clase_label", ""),
+                                                "Estado": item.get("estado", ""),
+                                                "Detalle": item.get("detalle", ""),
+                                            }
+                                        )
+                                    _show_dataframe(
+                                        manual_results_display, use_container_width=True
+                                    )
+
+                                if run_manual_apply:
+                                    nuevas_clases_ids = set(
+                                        int(item.get("clase_id"))
+                                        for item in manual_results
+                                        if item.get("estado") in {"asignada", "ya_asignada"}
+                                        and _safe_int(item.get("clase_id")) is not None
+                                    )
+                                    if nuevas_clases_ids:
+                                        for row in st.session_state.get(
+                                            "profesores_manual_rows", []
+                                        ):
+                                            if int(row.get("persona_id") or 0) != int(
+                                                profesor_manual_row["persona_id"]
+                                            ):
+                                                continue
+                                            current_ids = {
+                                                int(item)
+                                                for item in row.get("clase_ids_actuales", [])
+                                                if _safe_int(item) is not None
+                                            }
+                                            current_ids.update(nuevas_clases_ids)
+                                            row["clase_ids_actuales"] = sorted(current_ids)
+                                            current_labels = {
+                                                str(item).strip()
+                                                for item in row.get("clases_actuales", [])
+                                                if str(item).strip()
+                                            }
+                                            for clase_id_new in nuevas_clases_ids:
+                                                clase_info = clases_manual_by_id.get(
+                                                    int(clase_id_new), {}
+                                                )
+                                                clase_label = str(
+                                                    clase_info.get("clase_label") or ""
+                                                ).strip()
+                                                if clase_label:
+                                                    current_labels.add(clase_label)
+                                            row["clases_actuales"] = sorted(current_labels)
+                                            row["clases_actuales_count"] = len(
+                                                row["clase_ids_actuales"]
+                                            )
+                                        for row in st.session_state.get(
+                                            "profesores_manual_clases", []
+                                        ):
+                                            clase_id_row = _safe_int(row.get("clase_id"))
+                                            if (
+                                                clase_id_row is None
+                                                or int(clase_id_row) not in nuevas_clases_ids
+                                            ):
+                                                continue
+                                            current_staff_ids = {
+                                                int(item)
+                                                for item in row.get("staff_persona_ids", [])
+                                                if _safe_int(item) is not None
+                                            }
+                                            current_staff_ids.add(
+                                                int(profesor_manual_row["persona_id"])
+                                            )
+                                            row["staff_persona_ids"] = sorted(current_staff_ids)
+                                            row["staff_count"] = len(current_staff_ids)
             if profesores_crud_view == "base":
                 with st.container(border=True):
                     st.markdown("**3) Generar Excel base operativo de profesores**")

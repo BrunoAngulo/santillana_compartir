@@ -13,6 +13,7 @@ STAFF_URL = (
     "https://www.uno-internacional.com/pegasus-api/gestionEscolar/empresas/{empresa_id}"
     "/ciclos/{ciclo_id}/clases/{clase_id}/staff"
 )
+STAFF_PERSON_URL = f"{STAFF_URL}" + "/{persona_id}"
 ROLE_CLAVE_PROF = "PROF"
 
 
@@ -208,6 +209,7 @@ def asignar_clases_profesor_manual(
     token: str,
     persona_id: int,
     clase_ids: Sequence[int],
+    current_clase_ids: Optional[Sequence[int]] = None,
     empresa_id: int = DEFAULT_EMPRESA_ID,
     ciclo_id: int = DEFAULT_CICLO_ID,
     timeout: int = 30,
@@ -223,20 +225,57 @@ def asignar_clases_profesor_manual(
         unique_clase_ids.append(int(clase_id))
         seen.add(int(clase_id))
 
+    unique_current_clase_ids: List[int] = []
+    seen_current = set()
+    for item in current_clase_ids or []:
+        clase_id = _safe_int(item)
+        if clase_id is None or clase_id in seen_current:
+            continue
+        unique_current_clase_ids.append(int(clase_id))
+        seen_current.add(int(clase_id))
+
+    target_ids = set(unique_clase_ids)
+    current_ids = set(unique_current_clase_ids)
+    unchanged_ids = sorted(target_ids & current_ids)
+    add_ids = sorted(target_ids - current_ids)
+    remove_ids = sorted(current_ids - target_ids)
+    planned_ops = [("assign", clase_id) for clase_id in add_ids] + [
+        ("remove", clase_id) for clase_id in remove_ids
+    ]
+
     summary = {
         "clases_total": len(unique_clase_ids),
+        "clases_actuales": len(unique_current_clase_ids),
         "ya_asignadas": 0,
         "pendientes": 0,
         "asignadas": 0,
+        "desasignadas": 0,
         "errores_api": 0,
     }
     warnings: List[str] = []
     results: List[Dict[str, object]] = []
 
+    if unchanged_ids:
+        summary["ya_asignadas"] = len(unchanged_ids)
+        for clase_id in unchanged_ids:
+            results.append(
+                {
+                    "clase_id": int(clase_id),
+                    "estado": "ya_asignada",
+                    "detalle": "El profesor ya estaba asignado.",
+                }
+            )
+
+    if not planned_ops:
+        warnings.append("No hay cambios para aplicar.")
+        return summary, warnings, results
+
     with requests.Session() as session:
-        for index, clase_id in enumerate(unique_clase_ids, start=1):
+        total_ops = len(planned_ops)
+        for index, (action, clase_id) in enumerate(planned_ops, start=1):
             if on_progress:
-                on_progress(index, len(unique_clase_ids), f"Validando clase {clase_id}")
+                action_label = "alta" if action == "assign" else "baja"
+                on_progress(index, total_ops, f"Validando {action_label} clase {clase_id}")
 
             staff_rows, error = _fetch_staff_profesores_detalle(
                 session=session,
@@ -257,8 +296,13 @@ def asignar_clases_profesor_manual(
                 )
                 continue
 
-            current_ids = {int(item["persona_id"]) for item in staff_rows if _safe_int(item.get("persona_id")) is not None}
-            if int(persona_id) in current_ids:
+            current_staff_ids = {
+                int(item["persona_id"])
+                for item in staff_rows
+                if _safe_int(item.get("persona_id")) is not None
+            }
+
+            if action == "assign" and int(persona_id) in current_staff_ids:
                 summary["ya_asignadas"] += 1
                 results.append(
                     {
@@ -269,50 +313,91 @@ def asignar_clases_profesor_manual(
                 )
                 continue
 
+            if action == "remove" and int(persona_id) not in current_staff_ids:
+                results.append(
+                    {
+                        "clase_id": int(clase_id),
+                        "estado": "ya_desasignada",
+                        "detalle": "El profesor ya no estaba asignado.",
+                    }
+                )
+                continue
+
             if dry_run:
                 summary["pendientes"] += 1
                 results.append(
                     {
                         "clase_id": int(clase_id),
-                        "estado": "pendiente",
-                        "detalle": "Asignacion lista para aplicar.",
+                        "estado": (
+                            "pendiente_asignar"
+                            if action == "assign"
+                            else "pendiente_desasignar"
+                        ),
+                        "detalle": (
+                            "Asignacion lista para aplicar."
+                            if action == "assign"
+                            else "Desasignacion lista para aplicar."
+                        ),
                     }
                 )
                 continue
 
             if on_progress:
-                on_progress(index, len(unique_clase_ids), f"Asignando clase {clase_id}")
-            ok, error = _assign_staff_profesor(
-                session=session,
-                token=token,
-                empresa_id=int(empresa_id),
-                ciclo_id=int(ciclo_id),
-                clase_id=int(clase_id),
-                persona_id=int(persona_id),
-                timeout=int(timeout),
-            )
+                action_label = "Asignando" if action == "assign" else "Desasignando"
+                on_progress(index, total_ops, f"{action_label} clase {clase_id}")
+            if action == "assign":
+                ok, error = _assign_staff_profesor(
+                    session=session,
+                    token=token,
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    clase_id=int(clase_id),
+                    persona_id=int(persona_id),
+                    timeout=int(timeout),
+                )
+            else:
+                ok, error = _unassign_staff_profesor(
+                    session=session,
+                    token=token,
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    clase_id=int(clase_id),
+                    persona_id=int(persona_id),
+                    timeout=int(timeout),
+                )
             if not ok:
                 summary["errores_api"] += 1
                 results.append(
                     {
                         "clase_id": int(clase_id),
-                        "estado": "error_asignar",
+                        "estado": (
+                            "error_asignar"
+                            if action == "assign"
+                            else "error_desasignar"
+                        ),
                         "detalle": error or "Error desconocido.",
                     }
                 )
                 continue
 
-            summary["asignadas"] += 1
+            if action == "assign":
+                summary["asignadas"] += 1
+            else:
+                summary["desasignadas"] += 1
             results.append(
                 {
                     "clase_id": int(clase_id),
-                    "estado": "asignada",
-                    "detalle": "Asignacion realizada.",
+                    "estado": "asignada" if action == "assign" else "desasignada",
+                    "detalle": (
+                        "Asignacion realizada."
+                        if action == "assign"
+                        else "Desasignacion realizada."
+                    ),
                 }
             )
 
-    if not unique_clase_ids:
-        warnings.append("No se seleccionaron clases.")
+    if not unique_clase_ids and unique_current_clase_ids:
+        warnings.append("Se desasignaran todas las clases actuales.")
 
     return summary, warnings, results
 
@@ -494,6 +579,43 @@ def _assign_staff_profesor(
         data = response.json() if response.content else {}
     except ValueError:
         return False, f"Respuesta no JSON (status {status_code})"
+
+    if not response.ok:
+        message = data.get("message") if isinstance(data, dict) else ""
+        return False, message or f"HTTP {status_code}"
+
+    if isinstance(data, dict) and data.get("success") is False:
+        message = data.get("message") or "Respuesta invalida"
+        return False, message
+    return True, None
+
+
+def _unassign_staff_profesor(
+    session: requests.Session,
+    token: str,
+    empresa_id: int,
+    ciclo_id: int,
+    clase_id: int,
+    persona_id: int,
+    timeout: int,
+) -> Tuple[bool, Optional[str]]:
+    url = STAFF_PERSON_URL.format(
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        clase_id=int(clase_id),
+        persona_id=int(persona_id),
+    )
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    try:
+        response = session.delete(url, headers=headers, timeout=int(timeout))
+    except requests.RequestException as exc:
+        return False, f"Error de red: {exc}"
+
+    status_code = response.status_code
+    try:
+        data = response.json() if response.content else {}
+    except ValueError:
+        data = {}
 
     if not response.ok:
         message = data.get("message") if isinstance(data, dict) else ""

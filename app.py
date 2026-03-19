@@ -7,7 +7,7 @@ from datetime import date, datetime
 from html import escape
 from io import BytesIO
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 from urllib.parse import unquote, urljoin
 from uuid import uuid4
 
@@ -1450,6 +1450,280 @@ def _create_richmondstudio_user(
     if not isinstance(body, dict):
         raise RuntimeError("Respuesta invalida al crear usuario en RS.")
     return body
+
+
+def _fetch_richmondstudio_user_detail(
+    token: str,
+    user_id: str,
+    timeout: int = 30,
+) -> Dict[str, object]:
+    user_id_txt = str(user_id or "").strip()
+    if not user_id_txt:
+        raise ValueError("Falta user_id de RS.")
+    try:
+        response = requests.get(
+            f"{RICHMONDSTUDIO_USERS_URL}/{user_id_txt}",
+            headers=_richmondstudio_headers(token),
+            params={"include": "groups,subscriptions"},
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Error de red: {exc}") from exc
+
+    status_code = response.status_code
+    try:
+        body = response.json()
+    except ValueError:
+        body = None
+
+    if not response.ok:
+        raise RuntimeError(_richmondstudio_response_error(response, status_code, body))
+    if body is None:
+        raise RuntimeError(f"Respuesta no JSON (status {status_code})")
+    if not isinstance(body, dict):
+        raise RuntimeError("Respuesta invalida al consultar usuario en RS.")
+    return body
+
+
+def _update_richmondstudio_user(
+    token: str,
+    user_id: str,
+    payload: Dict[str, object],
+    timeout: int = 30,
+) -> Dict[str, object]:
+    user_id_txt = str(user_id or "").strip()
+    if not user_id_txt:
+        raise ValueError("Falta user_id de RS.")
+    try:
+        response = requests.put(
+            f"{RICHMONDSTUDIO_USERS_URL}/{user_id_txt}",
+            headers=_richmondstudio_headers(token),
+            json=payload,
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Error de red: {exc}") from exc
+
+    status_code = response.status_code
+    try:
+        body = response.json() if response.content else {}
+    except ValueError:
+        body = None
+
+    if not response.ok:
+        raise RuntimeError(_richmondstudio_response_error(response, status_code, body))
+    if body is None:
+        raise RuntimeError(f"Respuesta no JSON (status {status_code})")
+    if not isinstance(body, dict):
+        raise RuntimeError("Respuesta invalida al actualizar usuario en RS.")
+    return body
+
+
+def _richmondstudio_relationship_ids(
+    resource: Dict[str, object],
+    relationship_name: str,
+) -> List[str]:
+    relationships = (
+        resource.get("relationships")
+        if isinstance(resource.get("relationships"), dict)
+        else {}
+    )
+    relation = (
+        relationships.get(relationship_name)
+        if isinstance(relationships.get(relationship_name), dict)
+        else {}
+    )
+    relation_data = relation.get("data") if isinstance(relation.get("data"), list) else []
+    ids: List[str] = []
+    seen = set()
+    for item in relation_data:
+        if not isinstance(item, dict):
+            continue
+        item_id = str(item.get("id") or "").strip()
+        if not item_id or item_id in seen:
+            continue
+        seen.add(item_id)
+        ids.append(item_id)
+    return ids
+
+
+def _richmondstudio_group_label(group_meta: Optional[Dict[str, object]]) -> str:
+    if not isinstance(group_meta, dict):
+        return ""
+    class_name = str(group_meta.get("class_name") or "").strip()
+    code = str(group_meta.get("code") or "").strip()
+    if class_name and code:
+        return f"{class_name} | {code}"
+    return class_name or code or str(group_meta.get("id") or "").strip()
+
+
+def _normalize_richmondstudio_teacher_row(
+    user_item: Dict[str, object],
+    groups_lookup: Dict[str, Dict[str, object]],
+) -> Optional[Dict[str, object]]:
+    if not isinstance(user_item, dict):
+        return None
+    user_id = str(user_item.get("id") or "").strip()
+    attrs = (
+        user_item.get("attributes")
+        if isinstance(user_item.get("attributes"), dict)
+        else {}
+    )
+    role = str(attrs.get("role") or "").strip().lower()
+    if role != "teacher":
+        return None
+
+    first_name = str(
+        attrs.get("firstName")
+        or attrs.get("first_name")
+        or ""
+    ).strip()
+    last_name = str(
+        attrs.get("lastName")
+        or attrs.get("last_name")
+        or ""
+    ).strip()
+    email = str(
+        attrs.get("email")
+        or attrs.get("identifier")
+        or ""
+    ).strip()
+    teachermatic = bool(attrs.get("teachermatic", False))
+    group_ids = _richmondstudio_relationship_ids(user_item, "groups")
+    group_by_id = groups_lookup.get("by_id") if isinstance(groups_lookup.get("by_id"), dict) else {}
+    group_labels = []
+    for group_id in group_ids:
+        label = _richmondstudio_group_label(group_by_id.get(group_id))
+        if not label:
+            label = group_id
+        if label not in group_labels:
+            group_labels.append(label)
+
+    full_name = " ".join(part for part in (first_name, last_name) if part).strip()
+    if not full_name:
+        full_name = email or user_id or "Docente sin nombre"
+
+    grupos_txt = ", ".join(group_labels[:4])
+    if len(group_labels) > 4:
+        grupos_txt = f"{grupos_txt}, +{len(group_labels) - 4}"
+
+    return {
+        "ID": user_id,
+        "Docente": full_name,
+        "First name": first_name,
+        "Last name": last_name,
+        "Email": email,
+        "Role": role,
+        "Teachermatic": teachermatic,
+        "Grupos": len(group_ids),
+        "Clases": grupos_txt,
+        "_group_ids": group_ids,
+    }
+
+
+def _build_richmondstudio_teacher_payload(
+    first_name: object,
+    last_name: object,
+    email: object,
+    group_ids: Sequence[object],
+    user_id: object = "",
+    teachermatic: Optional[bool] = None,
+    subscription_ids: Optional[Sequence[object]] = None,
+) -> Dict[str, object]:
+    first_name_txt = str(first_name or "").strip()
+    last_name_txt = str(last_name or "").strip()
+    email_txt = str(email or "").strip()
+    user_id_txt = str(user_id or "").strip()
+
+    if not first_name_txt:
+        raise ValueError("Falta First name.")
+    if not last_name_txt:
+        raise ValueError("Falta Last name.")
+    if not email_txt:
+        raise ValueError("Falta Email.")
+    if "@" not in email_txt:
+        raise ValueError(f"Email invalido: {email_txt}")
+
+    normalized_group_ids: List[str] = []
+    seen_group_ids = set()
+    for item in group_ids or []:
+        group_id = str(item or "").strip()
+        if not group_id or group_id in seen_group_ids:
+            continue
+        seen_group_ids.add(group_id)
+        normalized_group_ids.append(group_id)
+
+    payload: Dict[str, object] = {
+        "data": {
+            "type": "users",
+            "attributes": {
+                "first_name": first_name_txt,
+                "last_name": last_name_txt,
+                "email": email_txt,
+                "role": "teacher",
+            },
+            "relationships": {
+                "groups": {
+                    "data": [
+                        {"type": "groups", "id": group_id}
+                        for group_id in normalized_group_ids
+                    ]
+                }
+            },
+        }
+    }
+
+    if user_id_txt:
+        payload["data"]["id"] = user_id_txt
+        payload["data"]["attributes"]["teachermatic"] = bool(teachermatic)
+        normalized_subscription_ids: List[str] = []
+        seen_subscription_ids = set()
+        for item in subscription_ids or []:
+            subscription_id = str(item or "").strip()
+            if not subscription_id or subscription_id in seen_subscription_ids:
+                continue
+            seen_subscription_ids.add(subscription_id)
+            normalized_subscription_ids.append(subscription_id)
+        payload["data"]["relationships"]["subscriptions"] = {
+            "data": [
+                {"type": "subscriptions", "id": subscription_id}
+                for subscription_id in normalized_subscription_ids
+            ]
+        }
+
+    return payload
+
+
+def _load_richmondstudio_teacher_panel_data(
+    token: str,
+    timeout: int = 30,
+) -> Dict[str, object]:
+    users = _fetch_richmondstudio_users(token, timeout=timeout)
+    groups = _fetch_richmondstudio_groups(
+        token,
+        timeout=timeout,
+        include_users=False,
+    )
+    groups_lookup = _build_richmondstudio_groups_lookup(groups)
+
+    teacher_rows = []
+    for item in users:
+        normalized = _normalize_richmondstudio_teacher_row(item, groups_lookup)
+        if isinstance(normalized, dict):
+            teacher_rows.append(normalized)
+
+    teacher_rows = sorted(
+        teacher_rows,
+        key=lambda row: (
+            str(row.get("Docente") or "").upper(),
+            str(row.get("Email") or "").upper(),
+        ),
+    )
+    return {
+        "rows": teacher_rows,
+        "groups": groups,
+        "groups_lookup": groups_lookup,
+    }
 
 
 def _extract_richmondstudio_user_create_result(
@@ -6634,8 +6908,8 @@ def render_richmond_studio_view() -> None:
     if rs_notice:
         st.info(rs_notice)
 
-    tab_rs_clases, tab_rs_usuarios, tab_rs_excel = st.tabs(
-        ["Clases RS", "Usuarios RS", "EXCEL RS"]
+    tab_rs_clases, tab_rs_usuarios, tab_rs_docentes, tab_rs_excel = st.tabs(
+        ["Clases RS", "Usuarios RS", "Docentes RS", "EXCEL RS"]
     )
     with tab_rs_clases:
         st.markdown("**RS | Listado y creacion masiva de clases**")
@@ -7524,6 +7798,450 @@ def render_richmond_studio_view() -> None:
                     key="rs_users_create_output_download",
                     use_container_width=True,
                 )
+
+    with tab_rs_docentes:
+        with st.container(border=True):
+            st.markdown("**RS | Docentes manual**")
+            st.caption(
+                "Carga docentes y clases de Richmond Studio para crear o editar docentes con sus grupos."
+            )
+
+            teacher_notice = str(
+                st.session_state.pop("rs_teacher_save_notice", "") or ""
+            ).strip()
+            teacher_meta = st.session_state.pop("rs_teacher_save_meta", None)
+            if teacher_notice:
+                st.success(teacher_notice)
+            if isinstance(teacher_meta, dict):
+                login_txt = str(teacher_meta.get("login") or "").strip()
+                password_txt = str(teacher_meta.get("password") or "").strip()
+                if login_txt or password_txt:
+                    parts = []
+                    if login_txt:
+                        parts.append(f"Login: {login_txt}")
+                    if password_txt:
+                        parts.append(f"Password: {password_txt}")
+                    st.caption(" | ".join(parts))
+
+            if "rs_teachers_loaded_rows" not in st.session_state:
+                st.session_state["rs_teachers_loaded_rows"] = []
+            if "rs_teachers_groups_lookup" not in st.session_state:
+                st.session_state["rs_teachers_groups_lookup"] = {
+                    "by_id": {},
+                    "by_name": {},
+                }
+
+            run_rs_teachers_load = st.button(
+                "Cargar docentes RS",
+                key="rs_teachers_load_btn",
+                use_container_width=True,
+            )
+            if run_rs_teachers_load:
+                if not rs_token:
+                    st.error("Ingresa el bearer token de Richmond Studio.")
+                else:
+                    try:
+                        with st.spinner("Consultando docentes RS..."):
+                            teacher_panel_data = _load_richmondstudio_teacher_panel_data(
+                                rs_token,
+                                timeout=int(timeout),
+                            )
+                    except Exception as exc:  # pragma: no cover - UI
+                        st.error(f"Error RS: {exc}")
+                    else:
+                        st.session_state["rs_teachers_loaded_rows"] = (
+                            teacher_panel_data.get("rows") or []
+                        )
+                        st.session_state["rs_teachers_groups_lookup"] = (
+                            teacher_panel_data.get("groups_lookup")
+                            if isinstance(
+                                teacher_panel_data.get("groups_lookup"), dict
+                            )
+                            else {"by_id": {}, "by_name": {}}
+                        )
+                        st.session_state["rs_teachers_form_loaded_user_id"] = ""
+
+            teacher_rows = [
+                dict(row)
+                for row in st.session_state.get("rs_teachers_loaded_rows") or []
+                if isinstance(row, dict)
+            ]
+            groups_lookup = (
+                st.session_state.get("rs_teachers_groups_lookup")
+                if isinstance(st.session_state.get("rs_teachers_groups_lookup"), dict)
+                else {"by_id": {}, "by_name": {}}
+            )
+            groups_by_id = (
+                groups_lookup.get("by_id")
+                if isinstance(groups_lookup.get("by_id"), dict)
+                else {}
+            )
+            group_options = sorted(
+                list(groups_by_id.keys()),
+                key=lambda group_id: _richmondstudio_group_label(
+                    groups_by_id.get(group_id)
+                ).upper(),
+            )
+            valid_group_ids = set(group_options)
+
+            teacher_rows_by_id = {
+                str(row.get("ID") or "").strip(): row
+                for row in teacher_rows
+                if str(row.get("ID") or "").strip()
+            }
+            teacher_option_labels = {"__new__": "+ Nuevo docente"}
+            for teacher_id, row in teacher_rows_by_id.items():
+                teacher_label = str(row.get("Docente") or "").strip()
+                teacher_email = str(row.get("Email") or "").strip()
+                if teacher_email:
+                    teacher_option_labels[teacher_id] = (
+                        f"{teacher_label} | {teacher_email}"
+                    ).strip(" |")
+                else:
+                    teacher_option_labels[teacher_id] = teacher_label or teacher_id
+
+            if teacher_rows:
+                teacher_search = st.text_input(
+                    "Filtrar docentes RS",
+                    key="rs_teacher_search_text",
+                    placeholder="Nombre, email o clase",
+                )
+                teacher_search_norm = _normalize_plain_text(teacher_search)
+                filtered_teacher_rows = []
+                for row in teacher_rows:
+                    haystack = " ".join(
+                        [
+                            str(row.get("Docente") or ""),
+                            str(row.get("Email") or ""),
+                            str(row.get("Clases") or ""),
+                        ]
+                    )
+                    if teacher_search_norm and (
+                        teacher_search_norm not in _normalize_plain_text(haystack)
+                    ):
+                        continue
+                    filtered_teacher_rows.append(
+                        {
+                            "Docente": str(row.get("Docente") or "").strip(),
+                            "Email": str(row.get("Email") or "").strip(),
+                            "Grupos": int(row.get("Grupos") or 0),
+                            "Clases": str(row.get("Clases") or "").strip(),
+                        }
+                    )
+                st.caption(
+                    f"Mostrando {len(filtered_teacher_rows)} de {len(teacher_rows)} docentes RS."
+                )
+                if filtered_teacher_rows:
+                    _show_dataframe(filtered_teacher_rows, use_container_width=True)
+
+            teacher_select_options = ["__new__"] + list(teacher_rows_by_id.keys())
+            if (
+                str(st.session_state.get("rs_teacher_selected_user_id") or "").strip()
+                not in teacher_select_options
+            ):
+                st.session_state["rs_teacher_selected_user_id"] = "__new__"
+
+            selected_teacher_id = st.selectbox(
+                "Docente RS",
+                options=teacher_select_options,
+                key="rs_teacher_selected_user_id",
+                format_func=lambda value: teacher_option_labels.get(
+                    str(value or "").strip(),
+                    str(value or "").strip(),
+                ),
+            )
+
+            current_loaded_teacher_id = str(
+                st.session_state.get("rs_teachers_form_loaded_user_id") or ""
+            ).strip()
+            selected_teacher_id = str(selected_teacher_id or "").strip()
+            if current_loaded_teacher_id != selected_teacher_id:
+                selected_teacher_row = (
+                    teacher_rows_by_id.get(selected_teacher_id)
+                    if selected_teacher_id != "__new__"
+                    else None
+                )
+                current_group_ids = []
+                if isinstance(selected_teacher_row, dict):
+                    for item in selected_teacher_row.get("_group_ids") or []:
+                        group_id = str(item or "").strip()
+                        if group_id and group_id in valid_group_ids:
+                            current_group_ids.append(group_id)
+                st.session_state["rs_teacher_first_name"] = str(
+                    (
+                        selected_teacher_row.get("First name")
+                        if isinstance(selected_teacher_row, dict)
+                        else ""
+                    )
+                    or ""
+                ).strip()
+                st.session_state["rs_teacher_last_name"] = str(
+                    (
+                        selected_teacher_row.get("Last name")
+                        if isinstance(selected_teacher_row, dict)
+                        else ""
+                    )
+                    or ""
+                ).strip()
+                st.session_state["rs_teacher_email"] = str(
+                    (
+                        selected_teacher_row.get("Email")
+                        if isinstance(selected_teacher_row, dict)
+                        else ""
+                    )
+                    or ""
+                ).strip()
+                st.session_state["rs_teacher_group_ids"] = current_group_ids
+                st.session_state["rs_teacher_teachermatic"] = bool(
+                    (
+                        selected_teacher_row.get("Teachermatic")
+                        if isinstance(selected_teacher_row, dict)
+                        else False
+                    )
+                )
+                st.session_state["rs_teachers_form_loaded_user_id"] = selected_teacher_id
+
+            is_existing_teacher = selected_teacher_id != "__new__"
+            col_rs_teacher_a, col_rs_teacher_b = st.columns(2, gap="small")
+            col_rs_teacher_a.text_input(
+                "First name",
+                key="rs_teacher_first_name",
+            )
+            col_rs_teacher_b.text_input(
+                "Last name",
+                key="rs_teacher_last_name",
+            )
+            st.text_input(
+                "Email",
+                key="rs_teacher_email",
+            )
+            st.multiselect(
+                "Clases RS",
+                options=group_options,
+                key="rs_teacher_group_ids",
+                format_func=lambda group_id: _richmondstudio_group_label(
+                    groups_by_id.get(str(group_id or "").strip())
+                )
+                or str(group_id or "").strip(),
+                placeholder="Selecciona una o varias clases",
+            )
+            st.checkbox(
+                "Teachermatic",
+                key="rs_teacher_teachermatic",
+                disabled=not is_existing_teacher,
+                help="Solo aplica al editar un docente existente.",
+            )
+
+            run_rs_teacher_save = st.button(
+                "Actualizar docente RS" if is_existing_teacher else "Crear docente RS",
+                type="primary",
+                key="rs_teacher_save_btn",
+                use_container_width=True,
+            )
+            run_rs_teacher_create_confirmed = _consume_richmondstudio_confirmed_action(
+                "rs_teacher_create"
+            )
+            run_rs_teacher_update_confirmed = _consume_richmondstudio_confirmed_action(
+                "rs_teacher_update"
+            )
+
+            if run_rs_teacher_save:
+                teacher_first_name = str(
+                    st.session_state.get("rs_teacher_first_name") or ""
+                ).strip()
+                teacher_last_name = str(
+                    st.session_state.get("rs_teacher_last_name") or ""
+                ).strip()
+                teacher_email = str(
+                    st.session_state.get("rs_teacher_email") or ""
+                ).strip()
+                teacher_group_ids = list(
+                    st.session_state.get("rs_teacher_group_ids") or []
+                )
+                teacher_teachermatic = bool(
+                    st.session_state.get("rs_teacher_teachermatic")
+                )
+                teacher_action_key = (
+                    "rs_teacher_update" if is_existing_teacher else "rs_teacher_create"
+                )
+                teacher_action_label = (
+                    f"actualizar docente RS: {teacher_first_name} {teacher_last_name}".strip()
+                    if is_existing_teacher
+                    else f"crear docente RS: {teacher_first_name} {teacher_last_name}".strip()
+                )
+
+                try:
+                    _build_richmondstudio_teacher_payload(
+                        first_name=teacher_first_name,
+                        last_name=teacher_last_name,
+                        email=teacher_email,
+                        group_ids=teacher_group_ids,
+                        user_id=selected_teacher_id if is_existing_teacher else "",
+                        teachermatic=teacher_teachermatic if is_existing_teacher else None,
+                    )
+                except Exception as exc:
+                    st.error(str(exc))
+                else:
+                    st.session_state["rs_teacher_pending_save"] = {
+                        "mode": "update" if is_existing_teacher else "create",
+                        "user_id": selected_teacher_id if is_existing_teacher else "",
+                        "first_name": teacher_first_name,
+                        "last_name": teacher_last_name,
+                        "email": teacher_email,
+                        "group_ids": teacher_group_ids,
+                        "teachermatic": teacher_teachermatic,
+                    }
+                    _request_richmondstudio_confirmation(
+                        teacher_action_key,
+                        teacher_action_label,
+                    )
+
+            confirmed_teacher_mode = ""
+            if run_rs_teacher_create_confirmed:
+                confirmed_teacher_mode = "create"
+            elif run_rs_teacher_update_confirmed:
+                confirmed_teacher_mode = "update"
+
+            if confirmed_teacher_mode:
+                teacher_pending_save = st.session_state.pop(
+                    "rs_teacher_pending_save",
+                    None,
+                )
+                if not isinstance(teacher_pending_save, dict):
+                    st.error("No se encontro el borrador del docente RS.")
+                elif str(teacher_pending_save.get("mode") or "").strip() != confirmed_teacher_mode:
+                    st.error("La confirmacion no coincide con la accion del docente RS.")
+                elif not rs_token:
+                    st.error("Ingresa el bearer token de Richmond Studio.")
+                else:
+                    try:
+                        with st.spinner("Guardando docente RS..."):
+                            if confirmed_teacher_mode == "update":
+                                teacher_detail = _fetch_richmondstudio_user_detail(
+                                    rs_token,
+                                    str(teacher_pending_save.get("user_id") or "").strip(),
+                                    timeout=int(timeout),
+                                )
+                                teacher_detail_data = (
+                                    teacher_detail.get("data")
+                                    if isinstance(teacher_detail.get("data"), dict)
+                                    else {}
+                                )
+                                subscription_ids = _richmondstudio_relationship_ids(
+                                    teacher_detail_data,
+                                    "subscriptions",
+                                )
+                                teacher_payload = _build_richmondstudio_teacher_payload(
+                                    first_name=teacher_pending_save.get("first_name"),
+                                    last_name=teacher_pending_save.get("last_name"),
+                                    email=teacher_pending_save.get("email"),
+                                    group_ids=teacher_pending_save.get("group_ids") or [],
+                                    user_id=teacher_pending_save.get("user_id"),
+                                    teachermatic=bool(
+                                        teacher_pending_save.get("teachermatic")
+                                    ),
+                                    subscription_ids=subscription_ids,
+                                )
+                                _update_richmondstudio_user(
+                                    rs_token,
+                                    str(teacher_pending_save.get("user_id") or "").strip(),
+                                    teacher_payload,
+                                    timeout=int(timeout),
+                                )
+                                teacher_result_meta = {
+                                    "user_id": str(
+                                        teacher_pending_save.get("user_id") or ""
+                                    ).strip(),
+                                }
+                            else:
+                                teacher_payload = _build_richmondstudio_teacher_payload(
+                                    first_name=teacher_pending_save.get("first_name"),
+                                    last_name=teacher_pending_save.get("last_name"),
+                                    email=teacher_pending_save.get("email"),
+                                    group_ids=teacher_pending_save.get("group_ids") or [],
+                                )
+                                created_teacher = _create_richmondstudio_user(
+                                    rs_token,
+                                    teacher_payload,
+                                    timeout=int(timeout),
+                                )
+                                teacher_result_meta = (
+                                    _extract_richmondstudio_user_create_result(
+                                        created_teacher,
+                                        fallback_email=teacher_pending_save.get("email"),
+                                    )
+                                )
+
+                            refreshed_teacher_panel = (
+                                _load_richmondstudio_teacher_panel_data(
+                                    rs_token,
+                                    timeout=int(timeout),
+                                )
+                            )
+                    except Exception as exc:  # pragma: no cover - UI
+                        st.error(f"Error RS: {exc}")
+                    else:
+                        refreshed_rows = (
+                            refreshed_teacher_panel.get("rows") or []
+                            if isinstance(refreshed_teacher_panel, dict)
+                            else []
+                        )
+                        st.session_state["rs_teachers_loaded_rows"] = refreshed_rows
+                        st.session_state["rs_teachers_groups_lookup"] = (
+                            refreshed_teacher_panel.get("groups_lookup")
+                            if isinstance(
+                                refreshed_teacher_panel.get("groups_lookup"), dict
+                            )
+                            else {"by_id": {}, "by_name": {}}
+                        )
+
+                        target_teacher_id = str(
+                            teacher_result_meta.get("user_id") or ""
+                        ).strip()
+                        if not target_teacher_id:
+                            pending_email_norm = _normalize_compare_text(
+                                teacher_pending_save.get("email")
+                            )
+                            pending_first_name_norm = _normalize_compare_text(
+                                teacher_pending_save.get("first_name")
+                            )
+                            pending_last_name_norm = _normalize_compare_text(
+                                teacher_pending_save.get("last_name")
+                            )
+                            for item in refreshed_rows:
+                                if not isinstance(item, dict):
+                                    continue
+                                same_email = (
+                                    _normalize_compare_text(item.get("Email"))
+                                    == pending_email_norm
+                                )
+                                same_first_name = (
+                                    _normalize_compare_text(item.get("First name"))
+                                    == pending_first_name_norm
+                                )
+                                same_last_name = (
+                                    _normalize_compare_text(item.get("Last name"))
+                                    == pending_last_name_norm
+                                )
+                                if same_email and same_first_name and same_last_name:
+                                    target_teacher_id = str(item.get("ID") or "").strip()
+                                    if target_teacher_id:
+                                        break
+
+                        if target_teacher_id:
+                            st.session_state["rs_teacher_selected_user_id"] = (
+                                target_teacher_id
+                            )
+                        else:
+                            st.session_state["rs_teacher_selected_user_id"] = "__new__"
+                        st.session_state["rs_teachers_form_loaded_user_id"] = ""
+                        st.session_state["rs_teacher_save_notice"] = (
+                            "Docente RS actualizado correctamente."
+                            if confirmed_teacher_mode == "update"
+                            else "Docente RS creado correctamente."
+                        )
+                        st.session_state["rs_teacher_save_meta"] = teacher_result_meta
+                        st.rerun()
 
     with tab_rs_excel:
         with st.container(border=True):
@@ -9667,7 +10385,7 @@ with tab_crud_profesores:
 
                         with cols_manual_right:
                             clases_options = sorted(clases_manual_by_id.keys())
-                            default_class_ids = [
+                            current_manual_class_ids = [
                                 int(item)
                                 for item in profesor_manual_row.get("clase_ids_actuales", [])
                                 if int(item) in clases_manual_by_id
@@ -9675,7 +10393,7 @@ with tab_crud_profesores:
                             selected_manual_class_ids = st.multiselect(
                                 "Clases",
                                 options=clases_options,
-                                default=default_class_ids,
+                                default=current_manual_class_ids,
                                 format_func=lambda clase_id: str(
                                     clases_manual_by_id.get(int(clase_id), {}).get("clase_label")
                                     or f"Clase {clase_id}"
@@ -9705,9 +10423,6 @@ with tab_crud_profesores:
                                 if not confirm_manual_apply:
                                     st.error("Debes confirmar antes de aplicar cambios.")
                                     st.stop()
-                                if not selected_manual_class_ids:
-                                    st.error("Selecciona al menos una clase.")
-                                    st.stop()
 
                                 progress = st.progress(0)
                                 status = st.empty()
@@ -9724,6 +10439,7 @@ with tab_crud_profesores:
                                         token=token,
                                         persona_id=int(profesor_manual_row["persona_id"]),
                                         clase_ids=selected_manual_class_ids,
+                                        current_clase_ids=current_manual_class_ids,
                                         empresa_id=DEFAULT_EMPRESA_ID,
                                         ciclo_id=int(ciclo_id),
                                         timeout=int(timeout),
@@ -9738,7 +10454,7 @@ with tab_crud_profesores:
                                     status.empty()
 
                                 st.success(
-                                    "Asignadas: {asignadas} | Ya asignadas: {ya_asignadas} | Errores: {errores_api}".format(
+                                    "Asignadas: {asignadas} | Quitadas: {desasignadas} | Ya asignadas: {ya_asignadas} | Errores: {errores_api}".format(
                                         **manual_summary
                                     )
                                 )
@@ -9765,13 +10481,19 @@ with tab_crud_profesores:
                                         manual_results_display, use_container_width=True
                                     )
 
-                                nuevas_clases_ids = set(
+                                clases_confirmadas_asignadas = set(
                                     int(item.get("clase_id"))
                                     for item in manual_results
                                     if item.get("estado") in {"asignada", "ya_asignada"}
                                     and _safe_int(item.get("clase_id")) is not None
                                 )
-                                if nuevas_clases_ids:
+                                clases_confirmadas_quitadas = set(
+                                    int(item.get("clase_id"))
+                                    for item in manual_results
+                                    if item.get("estado") in {"desasignada", "ya_desasignada"}
+                                    and _safe_int(item.get("clase_id")) is not None
+                                )
+                                if clases_confirmadas_asignadas or clases_confirmadas_quitadas:
                                     for row in st.session_state.get(
                                         "profesores_manual_rows", []
                                     ):
@@ -9784,22 +10506,21 @@ with tab_crud_profesores:
                                             for item in row.get("clase_ids_actuales", [])
                                             if _safe_int(item) is not None
                                         }
-                                        current_ids.update(nuevas_clases_ids)
+                                        current_ids.difference_update(
+                                            clases_confirmadas_quitadas
+                                        )
+                                        current_ids.update(clases_confirmadas_asignadas)
                                         row["clase_ids_actuales"] = sorted(current_ids)
-                                        current_labels = {
-                                            str(item).strip()
-                                            for item in row.get("clases_actuales", [])
-                                            if str(item).strip()
-                                        }
-                                        for clase_id_new in nuevas_clases_ids:
+                                        current_labels = []
+                                        for clase_id_current in row["clase_ids_actuales"]:
                                             clase_info = clases_manual_by_id.get(
-                                                int(clase_id_new), {}
+                                                int(clase_id_current), {}
                                             )
                                             clase_label = str(
                                                 clase_info.get("clase_label") or ""
                                             ).strip()
-                                            if clase_label:
-                                                current_labels.add(clase_label)
+                                            if clase_label and clase_label not in current_labels:
+                                                current_labels.append(clase_label)
                                         row["clases_actuales"] = sorted(current_labels)
                                         row["clases_actuales_count"] = len(
                                             row["clase_ids_actuales"]
@@ -9808,19 +10529,21 @@ with tab_crud_profesores:
                                         "profesores_manual_clases", []
                                     ):
                                         clase_id_row = _safe_int(row.get("clase_id"))
-                                        if (
-                                            clase_id_row is None
-                                            or int(clase_id_row) not in nuevas_clases_ids
-                                        ):
+                                        if clase_id_row is None:
                                             continue
                                         current_staff_ids = {
                                             int(item)
                                             for item in row.get("staff_persona_ids", [])
                                             if _safe_int(item) is not None
                                         }
-                                        current_staff_ids.add(
-                                            int(profesor_manual_row["persona_id"])
-                                        )
+                                        if int(clase_id_row) in clases_confirmadas_quitadas:
+                                            current_staff_ids.discard(
+                                                int(profesor_manual_row["persona_id"])
+                                            )
+                                        if int(clase_id_row) in clases_confirmadas_asignadas:
+                                            current_staff_ids.add(
+                                                int(profesor_manual_row["persona_id"])
+                                            )
                                         row["staff_persona_ids"] = sorted(current_staff_ids)
                                         row["staff_count"] = len(current_staff_ids)
             if profesores_crud_view == "base":

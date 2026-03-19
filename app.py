@@ -280,6 +280,8 @@ RICHMONDSTUDIO_USER_IMPORT_FIRST_NAME = "First name* MANDATORY"
 RICHMONDSTUDIO_USER_IMPORT_CLASS_NAME = "Class OPTIONAL"
 RICHMONDSTUDIO_USER_IMPORT_EMAIL = "Email* MANDATORY"
 RICHMONDSTUDIO_USER_IMPORT_ROLE = "Role* MANDATORY"
+RICHMONDSTUDIO_USER_IMPORT_LEVEL = "level"
+RICHMONDSTUDIO_USER_LEVEL_OPTIONS = ("preschool", "primary", "secondary", "adult")
 _PARTICIPANTES_SYNC_LOCK = threading.Lock()
 _PARTICIPANTES_SYNC_JOBS: Dict[str, Dict[str, object]] = {}
 _PARTICIPANTES_SYNC_SCOPE_TO_JOB: Dict[Tuple[int, int, int], str] = {}
@@ -1143,6 +1145,7 @@ def _richmondstudio_user_import_template_rows() -> List[Dict[str, str]]:
             RICHMONDSTUDIO_USER_IMPORT_CLASS_NAME: "2025 - 1S Blanca",
             RICHMONDSTUDIO_USER_IMPORT_EMAIL: "78156540@boniffatti.edu.pe",
             RICHMONDSTUDIO_USER_IMPORT_ROLE: "Student",
+            RICHMONDSTUDIO_USER_IMPORT_LEVEL: "secondary",
         }
     ]
 
@@ -1223,6 +1226,15 @@ def _load_richmondstudio_user_rows_from_excel(excel_bytes: bytes) -> List[Dict[s
         ],
         required=True,
     )
+    level_column = _resolve_richmondstudio_import_column(
+        normalized_columns,
+        [
+            RICHMONDSTUDIO_USER_IMPORT_LEVEL,
+            "Level",
+            "Nivel",
+        ],
+        required=True,
+    )
 
     rows: List[Dict[str, object]] = []
     for idx, item in enumerate(df.fillna("").to_dict("records"), start=2):
@@ -1236,6 +1248,7 @@ def _load_richmondstudio_user_rows_from_excel(excel_bytes: bytes) -> List[Dict[s
             else "",
             RICHMONDSTUDIO_USER_IMPORT_EMAIL: str(item.get(email_column) or "").strip(),
             RICHMONDSTUDIO_USER_IMPORT_ROLE: str(item.get(role_column) or "").strip(),
+            RICHMONDSTUDIO_USER_IMPORT_LEVEL: str(item.get(level_column) or "").strip(),
             "_row_number": int(idx),
         }
         values = [
@@ -1244,6 +1257,7 @@ def _load_richmondstudio_user_rows_from_excel(excel_bytes: bytes) -> List[Dict[s
             str(normalized_row.get(RICHMONDSTUDIO_USER_IMPORT_CLASS_NAME) or "").strip(),
             str(normalized_row.get(RICHMONDSTUDIO_USER_IMPORT_EMAIL) or "").strip(),
             str(normalized_row.get(RICHMONDSTUDIO_USER_IMPORT_ROLE) or "").strip(),
+            str(normalized_row.get(RICHMONDSTUDIO_USER_IMPORT_LEVEL) or "").strip(),
         ]
         if not any(values):
             continue
@@ -1272,6 +1286,36 @@ def _normalize_richmondstudio_user_role(value: object) -> str:
     if not role:
         raise ValueError(f"Role invalido: {raw}. Usa Student o Teacher.")
     return role
+
+
+def _normalize_richmondstudio_user_level(value: object) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        raise ValueError("Falta level.")
+    normalized = _normalize_compare_text(raw)
+    mapping = {
+        "PRESCHOOL": "preschool",
+        "PRESCHOOLER": "preschool",
+        "PREPRIMARY": "preschool",
+        "PRESCOLAR": "preschool",
+        "PREESCOLAR": "preschool",
+        "INICIAL": "preschool",
+        "KINDER": "preschool",
+        "PRIMARY": "primary",
+        "PRIMARIA": "primary",
+        "SECONDARY": "secondary",
+        "SECUNDARIA": "secondary",
+        "ADULT": "adult",
+        "ADULTS": "adult",
+        "ADULTO": "adult",
+        "ADULTOS": "adult",
+    }
+    level = mapping.get(normalized, "")
+    if not level:
+        raise ValueError(
+            f"level invalido: {raw}. Usa preschool, primary, secondary o adult."
+        )
+    return level
 
 
 def _build_richmondstudio_groups_lookup(
@@ -1338,6 +1382,9 @@ def _build_richmondstudio_user_payload(
     first_name = str(row.get(RICHMONDSTUDIO_USER_IMPORT_FIRST_NAME) or "").strip()
     email = str(row.get(RICHMONDSTUDIO_USER_IMPORT_EMAIL) or "").strip()
     role = _normalize_richmondstudio_user_role(row.get(RICHMONDSTUDIO_USER_IMPORT_ROLE))
+    level = _normalize_richmondstudio_user_level(
+        row.get(RICHMONDSTUDIO_USER_IMPORT_LEVEL)
+    )
 
     if not last_name:
         raise ValueError("Falta Last name.")
@@ -1356,22 +1403,24 @@ def _build_richmondstudio_user_payload(
                 "last_name": last_name,
                 "email": email,
                 "role": role,
+                "level": level,
+            },
+            "relationships": {
+                "groups": {
+                    "data": [],
+                }
             },
         }
     }
 
     group_id = str(group_meta.get("id") or "").strip() if isinstance(group_meta, dict) else ""
     if group_id:
-        payload["data"]["relationships"] = {
-            "groups": {
-                "data": [
-                    {
-                        "type": "groups",
-                        "id": group_id,
-                    }
-                ]
+        payload["data"]["relationships"]["groups"]["data"] = [
+            {
+                "type": "groups",
+                "id": group_id,
             }
-        }
+        ]
     return payload
 
 
@@ -1560,6 +1609,9 @@ def _build_richmondstudio_users_export_rows(
                 "Last name": str(row.get("Last name") or "").strip(),
                 "First name": str(row.get("First name") or "").strip(),
                 "Class": str(row.get("Class") or "").strip(),
+                "Email": str(row.get("Email") or "").strip(),
+                "Role": str(row.get("Role") or "").strip(),
+                "level": str(row.get("level") or row.get("Level") or "").strip(),
                 "Login": str(row.get("Login") or "").strip(),
                 "Password": str(row.get("Password") or "").strip(),
             }
@@ -7151,9 +7203,9 @@ def render_richmond_studio_view() -> None:
 
             if not rs_users_download_only:
                 st.caption(
-                    "Sube un Excel con columnas Last name, First name, Class, Email y Role. "
+                    "Sube un Excel con columnas Last name, First name, Class, Email, Role y level. "
                     "La clase se resuelve contra /api/groups y cada usuario se crea con una "
-                    "peticion individual a /api/users."
+                    "peticion individual a /api/users. level acepta: preschool, primary, secondary, adult."
                 )
                 template_rs_users_bytes = _export_simple_excel(
                     _richmondstudio_user_import_template_rows(),
@@ -7181,7 +7233,9 @@ def render_richmond_studio_view() -> None:
                         f"{RICHMONDSTUDIO_USER_IMPORT_FIRST_NAME}, "
                         f"{RICHMONDSTUDIO_USER_IMPORT_CLASS_NAME}, "
                         f"{RICHMONDSTUDIO_USER_IMPORT_EMAIL}, "
-                        f"{RICHMONDSTUDIO_USER_IMPORT_ROLE}."
+                        f"{RICHMONDSTUDIO_USER_IMPORT_ROLE}, "
+                        f"{RICHMONDSTUDIO_USER_IMPORT_LEVEL}. "
+                        "Valores validos de level: preschool, primary, secondary, adult."
                     ),
                 )
 
@@ -7212,6 +7266,9 @@ def render_richmond_studio_view() -> None:
                                 ),
                                 RICHMONDSTUDIO_USER_IMPORT_ROLE: row.get(
                                     RICHMONDSTUDIO_USER_IMPORT_ROLE
+                                ),
+                                RICHMONDSTUDIO_USER_IMPORT_LEVEL: row.get(
+                                    RICHMONDSTUDIO_USER_IMPORT_LEVEL
                                 ),
                             }
                             for row in rs_user_import_rows[:100]
@@ -7318,6 +7375,9 @@ def render_richmond_studio_view() -> None:
                                 role_raw = str(
                                     row.get(RICHMONDSTUDIO_USER_IMPORT_ROLE) or ""
                                 ).strip()
+                                level_raw = str(
+                                    row.get(RICHMONDSTUDIO_USER_IMPORT_LEVEL) or ""
+                                ).strip()
                                 row_number = int(row.get("_row_number") or idx_rs_user + 1)
                                 display_name = " ".join(
                                     part for part in (first_name, last_name) if part
@@ -7369,6 +7429,9 @@ def render_richmond_studio_view() -> None:
                                             "Role": _normalize_richmondstudio_user_role(
                                                 role_raw
                                             ),
+                                            "level": _normalize_richmondstudio_user_level(
+                                                level_raw
+                                            ),
                                             "Login": str(
                                                 created_meta.get("login") or email
                                             ).strip(),
@@ -7390,6 +7453,7 @@ def render_richmond_studio_view() -> None:
                                             "Class": class_name_requested,
                                             "Email": email,
                                             "Role": role_raw,
+                                            "level": level_raw,
                                             "Login": email,
                                             "Password": "",
                                             "RS User ID": "",

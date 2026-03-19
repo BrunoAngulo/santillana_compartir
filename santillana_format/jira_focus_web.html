@@ -4279,6 +4279,8 @@
                   <th>Agente (Yo)</th>
                   <th>Fecha y Hora Inicio</th>
                   <th>Fecha y Hora Fin</th>
+                  <th>Cierre WL</th>
+                  <th>Accion</th>
                 </tr>
               </thead>
               <tbody>
@@ -4290,6 +4292,10 @@
                     <td>${escapeHtml(item.agent || 'Yo')}</td>
                     <td>${escapeHtml(TimeService.dtLabel(item.startCreated || new Date()))}</td>
                     <td>${escapeHtml(TimeService.dtLabel(item.endCreated || new Date()))}</td>
+                    <td title="${escapeHtml(item.endingWorklogLabel || '')}">${item.hasEndingWorklog ? '<span class="pill ok">Si</span>' : '<span class="pill">No</span>'}</td>
+                    <td>${item.hasEndingWorklog || !item.lastCommentId
+            ? ''
+            : `<button class="btn" type="button" data-act="open-comment-worklog" data-issue-key="${escapeHtml(item.issueKey)}" data-comment-id="${escapeHtml(item.lastCommentId)}">Tipo/tiempo</button>`}</td>
                   </tr>
                 `).join('')}
               </tbody>
@@ -4330,6 +4336,7 @@
                 return true;
               });
               if (!dayComments.length) return;
+              const lastComment = dayComments[dayComments.length - 1] || null;
               let minStartTs = Number.POSITIVE_INFINITY;
               let maxEndTs = Number.NEGATIVE_INFINITY;
               dayComments.forEach((comment) => {
@@ -4343,13 +4350,20 @@
               });
               const firstCommentTs = tsOf(dayComments[0] && dayComments[0].created ? dayComments[0].created : 0);
               const lastCommentTs = tsOf(dayComments[dayComments.length - 1] && dayComments[dayComments.length - 1].created ? dayComments[dayComments.length - 1].created : 0);
+              const endWorklog = (lastComment ? findExistingWorklogForComment(issue.key, lastComment) : null)
+                || (Number.isFinite(maxEndTs) ? findMineWorklogEndingNear(issue.key, maxEndTs) : null);
               rows.push({
                 issueKey: issue.key,
                 issueStatus: formatIssueStatus(issue),
                 colegio: String(issue.summary || '').trim(),
                 agent: agentName,
                 startCreated: Number.isFinite(minStartTs) ? new Date(minStartTs) : (Number.isFinite(firstCommentTs) ? new Date(firstCommentTs) : ''),
-                endCreated: Number.isFinite(maxEndTs) ? new Date(maxEndTs) : (Number.isFinite(lastCommentTs) ? new Date(lastCommentTs) : '')
+                endCreated: Number.isFinite(maxEndTs) ? new Date(maxEndTs) : (Number.isFinite(lastCommentTs) ? new Date(lastCommentTs) : ''),
+                hasEndingWorklog: !!endWorklog,
+                endingWorklogLabel: endWorklog
+                  ? `${activityOf(endWorklog)} | ${TimeService.jiraDuration(minutesOf(endWorklog))}`
+                  : '',
+                lastCommentId: lastComment && lastComment.id ? String(lastComment.id || '') : ''
               });
             } catch (_error) {
               failedIssues += 1;
@@ -4508,6 +4522,88 @@
         if (el.regInlineMeta && state.regCtx && state.regCtx.baseMetaText) {
           el.regInlineMeta.textContent = state.regCtx.baseMetaText;
         }
+      }
+
+      function openInlineRegistrarForComment(issueKey, comment) {
+        const key = String(issueKey || '').trim();
+        const c = comment || null;
+        if (!key || !c) return { ok: false, mode: '' };
+
+        const existingWorklog = findExistingWorklogForComment(key, c);
+        if (existingWorklog) {
+          hideInlineRegistrar();
+          const existingId = String(existingWorklog.id || '').trim();
+          focusTimelineSelection(
+            key,
+            String(c.id || ''),
+            existingId,
+            activityOf(existingWorklog),
+            minutesOf(existingWorklog)
+          );
+          return {
+            ok: true,
+            mode: openInlineEditorForWorklog(key, existingWorklog) ? 'edit' : 'view'
+          };
+        }
+
+        const plan = registrationPlanFromComment(c);
+        const inferredType = inferOfficialActivityType(commentText(c));
+        const templateType = (inferredType === ESTUDIANTES_TEMPLATE_ACTIVITY)
+          ? ESTUDIANTES_TEMPLATE_ACTIVITY
+          : DOCENTES_TEMPLATE_ACTIVITY;
+        const anchorEndTs = Number(plan.anchorEndTs || 0);
+        const anchorEnd = Number.isFinite(anchorEndTs) && anchorEndTs > 0
+          ? new Date(anchorEndTs)
+          : new Date();
+        const templatePlan = plan.templateMode
+          ? templateRegistrationPlan(key, templateType, TimeService.toInputDate(anchorEnd), {
+            issueKey: key,
+            commentId: String(c.id || ''),
+            anchorEndTs
+          })
+          : null;
+        const resolvedMinutes = templatePlan
+          ? templatePlan.mins
+          : Math.max(1, Math.floor(Number(plan.minutes || 0)));
+        const inferredDue = TimeService.toInputDate(c.created || new Date());
+        const anchorDue = Number.isFinite(anchorEndTs)
+          ? TimeService.toInputDate(anchorEndTs)
+          : TimeService.toInputDate(new Date());
+        const baseType = plan.templateMode
+          ? (templatePlan ? templatePlan.templateType : templateType)
+          : (OFFICIAL_ACTIVITY_TYPES.includes(inferredType) ? inferredType : OFFICIAL_ACTIVITY_TYPES[0]);
+        const baseDueDate = plan.templateMode
+          ? (templatePlan ? templatePlan.dueInputDate : anchorDue)
+          : (isValidInputDate(inferredDue) ? inferredDue : TimeService.toInputDate(new Date()));
+        const createdLabel = TimeService.dtLabel(c.created);
+        const anchorLabel = Number.isFinite(anchorEndTs)
+          ? TimeService.dtLabel(anchorEndTs)
+          : '';
+        const baseMetaText = templatePlan
+          ? templatePlan.metaText
+          : ((anchorLabel && anchorLabel !== createdLabel)
+            ? `${key} | ${createdLabel} -> ${anchorLabel} (fuera de horario)`
+            : `${key} | ${createdLabel}`);
+        state.regCtx = {
+          issueKey: key,
+          commentId: String(c.id),
+          templateMode: !!plan.templateMode,
+          anchorEndTs,
+          templateType,
+          baseMetaText
+        };
+        el.regTypeSel.value = baseType;
+        el.regDateInp.value = baseDueDate;
+        el.regMinInp.value = TimeService.jiraDuration(resolvedMinutes);
+        el.regInlineMeta.textContent = baseMetaText;
+        el.regTypeSel.disabled = false;
+        el.regDateInp.disabled = false;
+        el.regMinInp.disabled = false;
+        el.regMinInp.readOnly = false;
+        syncInlineRegistrarInputs();
+        showInlineRegistrar();
+        focusTimelineSelection(key, String(c.id || ''), '', buildOfficialActivity(baseType, baseDueDate), resolvedMinutes);
+        return { ok: true, mode: 'register' };
       }
 
       function hideInlineRegistrar() {
@@ -5824,6 +5920,19 @@
           endTs,
           minutes
         };
+      }
+
+      function findMineWorklogEndingNear(issueKey, targetTs) {
+        const key = String(issueKey || '').trim();
+        const targetMinute = minuteBucket(targetTs);
+        if (!key || !Number.isFinite(targetMinute)) return null;
+        const rows = state.worklogsByIssue[key] || [];
+        const matches = rows
+          .map((row) => ({ row, win: windowOf(row) }))
+          .filter((item) => mine(item.row && item.row.author) && minuteBucket(item.win.endTs) === targetMinute);
+        if (!matches.length) return null;
+        matches.sort((a, b) => Math.abs(a.win.endTs - targetTs) - Math.abs(b.win.endTs - targetTs));
+        return matches[0].row;
       }
 
       function sortDesc(items, dateFn) {
@@ -7450,6 +7559,33 @@
         });
         el.myCommentsTodayCloseBtn.addEventListener('click', closeMyCommentsTodayModal);
         el.myCommentsTodayModal.addEventListener('click', async (ev) => {
+          const actionBtn = ev.target && ev.target.closest
+            ? ev.target.closest('button[data-act="open-comment-worklog"]')
+            : null;
+          if (actionBtn) {
+            const issueKey = String(actionBtn.getAttribute('data-issue-key') || '').trim();
+            const commentId = String(actionBtn.getAttribute('data-comment-id') || '').trim();
+            if (!issueKey || !commentId) return;
+            try {
+              state.selectedIssueKey = issueKey;
+              if (el.issueSel) {
+                el.issueSel.value = issueKey;
+              }
+              uiStateSave();
+              await loadIssueData(issueKey);
+              const comments = state.commentsByIssue[issueKey] || [];
+              const sourceComment = comments.find((row) => String(row && row.id ? row.id : '') === commentId) || null;
+              if (!sourceComment) {
+                showMsg('error', 'No se encontro el comentario para precargar el registro.');
+                return;
+              }
+              closeMyCommentsTodayModal();
+              openInlineRegistrarForComment(issueKey, sourceComment);
+            } catch (error) {
+              applyError(error, 'No se pudo abrir el registro rapido desde tickets comentados por fecha.');
+            }
+            return;
+          }
           const closeBtn = ev.target && ev.target.closest
             ? ev.target.closest('button[data-act="close-my-comments-modal"]')
             : null;
@@ -7833,81 +7969,13 @@
           const comments = state.commentsByIssue[issueKey] || [];
           const c = comments.find((x) => String(x.id) === String(commentId));
           if (!c) return;
-          const existingWorklog = findExistingWorklogForComment(issueKey, c);
-          if (existingWorklog) {
-            hideInlineRegistrar();
-            const existingId = String(existingWorklog.id || '').trim();
-            focusTimelineSelection(
-              issueKey,
-              String(c.id || ''),
-              existingId,
-              activityOf(existingWorklog),
-              minutesOf(existingWorklog)
-            );
-            const opened = openInlineEditorForWorklog(issueKey, existingWorklog);
-            if (opened) {
-              showMsg('info', 'Ya existe una actividad para este comentario. Abierta en modo edicion.');
-            } else {
-              showMsg('info', 'Ya existe una actividad para este comentario.');
-            }
-            return;
+          const result = openInlineRegistrarForComment(issueKey, c);
+          if (!result || !result.ok) return;
+          if (result.mode === 'edit') {
+            showMsg('info', 'Ya existe una actividad para este comentario. Abierta en modo edicion.');
+          } else if (result.mode === 'view') {
+            showMsg('info', 'Ya existe una actividad para este comentario.');
           }
-          const plan = registrationPlanFromComment(c);
-          const inferredType = inferOfficialActivityType(commentText(c));
-          const templateType = (inferredType === ESTUDIANTES_TEMPLATE_ACTIVITY)
-            ? ESTUDIANTES_TEMPLATE_ACTIVITY
-            : DOCENTES_TEMPLATE_ACTIVITY;
-          const anchorEndTs = Number(plan.anchorEndTs || 0);
-          const anchorEnd = Number.isFinite(anchorEndTs) && anchorEndTs > 0
-            ? new Date(anchorEndTs)
-            : new Date();
-          const templatePlan = plan.templateMode
-            ? templateRegistrationPlan(issueKey, templateType, TimeService.toInputDate(anchorEnd), {
-              issueKey,
-              commentId: String(c.id || ''),
-              anchorEndTs
-            })
-            : null;
-          const resolvedMinutes = templatePlan
-            ? templatePlan.mins
-            : Math.max(1, Math.floor(Number(plan.minutes || 0)));
-          const inferredDue = TimeService.toInputDate(c.created || new Date());
-          const anchorDue = Number.isFinite(anchorEndTs)
-            ? TimeService.toInputDate(anchorEndTs)
-            : TimeService.toInputDate(new Date());
-          const baseType = plan.templateMode
-            ? (templatePlan ? templatePlan.templateType : templateType)
-            : (OFFICIAL_ACTIVITY_TYPES.includes(inferredType) ? inferredType : OFFICIAL_ACTIVITY_TYPES[0]);
-          const baseDueDate = plan.templateMode
-            ? (templatePlan ? templatePlan.dueInputDate : anchorDue)
-            : (isValidInputDate(inferredDue) ? inferredDue : TimeService.toInputDate(new Date()));
-          const createdLabel = TimeService.dtLabel(c.created);
-          const anchorLabel = Number.isFinite(anchorEndTs)
-            ? TimeService.dtLabel(anchorEndTs)
-            : '';
-          const baseMetaText = templatePlan
-            ? templatePlan.metaText
-            : ((anchorLabel && anchorLabel !== createdLabel)
-              ? `${state.selectedIssueKey} | ${createdLabel} -> ${anchorLabel} (fuera de horario)`
-              : `${state.selectedIssueKey} | ${createdLabel}`);
-          state.regCtx = {
-            issueKey,
-            commentId: String(c.id),
-            templateMode: !!plan.templateMode,
-            anchorEndTs,
-            templateType,
-            baseMetaText
-          };
-          el.regTypeSel.value = baseType;
-          el.regDateInp.value = baseDueDate;
-          el.regMinInp.value = TimeService.jiraDuration(resolvedMinutes);
-          el.regInlineMeta.textContent = baseMetaText;
-          el.regTypeSel.disabled = false;
-          el.regDateInp.disabled = false;
-          el.regMinInp.disabled = false;
-          el.regMinInp.readOnly = false;
-          syncInlineRegistrarInputs();
-          showInlineRegistrar();
         });
         el.commentsBox.addEventListener('click', (ev) => {
           const target = ev.target;

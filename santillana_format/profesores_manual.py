@@ -366,21 +366,7 @@ def _build_clase_label(
     activo: bool,
     baja: bool,
 ) -> str:
-    base = clase_name or clase_code or "Clase sin nombre"
-    if clase_code and clase_code != base:
-        base = f"{base} [{clase_code}]"
-    parts = [base]
-    if nivel:
-        parts.append(nivel)
-    if grado:
-        parts.append(grado)
-    if seccion:
-        parts.append(f"Seccion {seccion}")
-    if baja:
-        parts.append("Baja")
-    elif not activo:
-        parts.append("Inactiva")
-    return " | ".join(parts)
+    return (clase_name or clase_code or "Clase sin nombre").strip()
 
 
 def _extract_staff_rows(payload: Dict[str, object]) -> Optional[List[Dict[str, object]]]:

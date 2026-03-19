@@ -122,7 +122,12 @@ def compare_profesores_sistema_excel(
     empresa_id: int = DEFAULT_EMPRESA_ID,
     ciclo_id: int = DEFAULT_CICLO_ID,
     timeout: int = 30,
-) -> Tuple[List[Dict[str, object]], Dict[str, int], List[Dict[str, object]]]:
+) -> Tuple[
+    List[Dict[str, object]],
+    Dict[str, int],
+    List[Dict[str, object]],
+    List[Dict[str, object]],
+]:
     system_data, _system_summary, errores = listar_profesores_filters_data(
         token=token,
         colegio_id=int(colegio_id),
@@ -138,8 +143,9 @@ def compare_profesores_sistema_excel(
             "sin_referencia_total": 0,
             "consultas_error": len(errores),
         }
-        return [], summary, errores
+        return [], summary, errores, []
     reference_rows = build_profesores_export_rows(system_data)
+    reference_catalog = build_profesores_reference_catalog(reference_rows)
     df_bd = _canonicalize_columns(pd.DataFrame(reference_rows, columns=PROFESOR_COLUMNS).fillna(""))
     df_act = _canonicalize_columns(_read_input_sheet(excel_path, sheet_name=sheet_name))
 
@@ -155,7 +161,7 @@ def compare_profesores_sistema_excel(
         "sin_referencia_total": max(len(rows) - coincidencias_total, 0),
         "consultas_error": len(errores),
     }
-    return rows, summary, errores
+    return rows, summary, errores, reference_catalog
 
 
 def _compare_profesores_frames(
@@ -194,6 +200,9 @@ def _compare_profesores_frames(
                 else "",
                 "Profesor referencia del sistema": _format_profesor_label(ref_row)
                 if ref_row
+                else "",
+                "Referencia sistema": _reference_catalog_label(ref_base_row)
+                if ref_base_row
                 else "",
                 "Coincidencia por": criterio,
                 "Usar referencia BD": bool(has_reference),
@@ -237,6 +246,50 @@ def build_profesores_crear_filename(source_name: str) -> str:
 def build_profesores_base_filename(source_name: str) -> str:
     stem = Path(str(source_name or "profesores")).stem.strip() or "profesores"
     return f"profesores_base_{stem}.xlsx"
+
+
+def merge_profesores_reference_base_record(
+    reference_row: Dict[str, str], excel_row: Dict[str, str]
+) -> Dict[str, str]:
+    return _merge_reference_base_record(reference_row, excel_row)
+
+
+def build_profesores_reference_catalog(
+    reference_rows: Sequence[Dict[str, object]],
+) -> List[Dict[str, object]]:
+    catalog: List[Dict[str, object]] = []
+    for row in reference_rows:
+        if not isinstance(row, dict):
+            continue
+        base_record = {col: str(row.get(col) or "").strip() for col in PROFESOR_COLUMNS}
+        catalog.append(
+            {
+                "label": _reference_catalog_label(base_record),
+                "_reference_base_record": base_record,
+                "Id": base_record.get("Id", ""),
+                "Nombre": base_record.get("Nombre", ""),
+                "Apellido Paterno": base_record.get("Apellido Paterno", ""),
+                "Apellido Materno": base_record.get("Apellido Materno", ""),
+                "Estado": base_record.get("Estado", ""),
+                "Sexo": base_record.get("Sexo", ""),
+                "DNI": base_record.get("DNI", ""),
+                "E-mail": base_record.get("E-mail", ""),
+                "Login": base_record.get("Login", ""),
+                "Inicial": base_record.get("Inicial", ""),
+                "Primaria": base_record.get("Primaria", ""),
+                "Secundaria": base_record.get("Secundaria", ""),
+            }
+        )
+    catalog.sort(
+        key=lambda row: (
+            str(row.get("Apellido Paterno") or "").upper(),
+            str(row.get("Apellido Materno") or "").upper(),
+            str(row.get("Nombre") or "").upper(),
+            str(row.get("DNI") or ""),
+            str(row.get("Id") or ""),
+        )
+    )
+    return catalog
 
 
 def export_profesores_base_excel(rows: List[Dict[str, object]]) -> bytes:
@@ -553,6 +606,28 @@ def _format_profesor_label(record: Optional[Dict[str, str]]) -> str:
     return nombre or dni
 
 
+def _reference_catalog_label(record: Optional[Dict[str, str]]) -> str:
+    if not record:
+        return ""
+    nombre = " ".join(
+        part
+        for part in (
+            str(record.get("Nombre") or "").strip(),
+            str(record.get("Apellido Paterno") or "").strip(),
+            str(record.get("Apellido Materno") or "").strip(),
+        )
+        if part
+    ).strip()
+    dni = str(record.get("DNI") or "").strip()
+    persona_id = str(record.get("Id") or "").strip()
+    parts = [nombre or "Profesor sin nombre"]
+    if dni:
+        parts.append(f"DNI {dni}")
+    if persona_id:
+        parts.append(f"ID {persona_id}")
+    return " | ".join(parts)
+
+
 def _infer_sexo(nombre: object) -> str:
     normalized = _normalize_text(nombre)
     if not normalized:
@@ -576,10 +651,13 @@ def _merge_reference_base_record(
         "E-mail",
         "Login",
     ):
-        if not merged.get(col):
-            merged[col] = str(excel_row.get(col) or "").strip()
+        excel_value = str(excel_row.get(col) or "").strip()
+        if excel_value:
+            merged[col] = excel_value
 
-    merged["Password"] = str(excel_row.get("Password") or "").strip()
+    password = str(excel_row.get("Password") or "").strip()
+    if password:
+        merged["Password"] = password
     for col in ("Inicial", "Primaria", "Secundaria"):
         merged[col] = _normalize_level_flag(excel_row.get(col))
     for col in RESET_BASE_COLUMNS:

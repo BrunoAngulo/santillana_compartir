@@ -1,4 +1,4 @@
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 import requests
 
@@ -15,6 +15,10 @@ STAFF_URL = (
 )
 STAFF_PERSON_URL = f"{STAFF_URL}" + "/{persona_id}"
 ROLE_CLAVE_PROF = "PROF"
+ASIGNAR_NIVEL_URL = (
+    "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
+    "/ciclos/{ciclo_id}/colegios/{colegio_id}/profesores/{persona_id}/asignarNivel"
+)
 
 
 def listar_profesores_clases_panel_data(
@@ -210,6 +214,8 @@ def asignar_clases_profesor_manual(
     persona_id: int,
     clase_ids: Sequence[int],
     current_clase_ids: Optional[Sequence[int]] = None,
+    nivel_ids: Optional[Sequence[int]] = None,
+    colegio_id: Optional[int] = None,
     empresa_id: int = DEFAULT_EMPRESA_ID,
     ciclo_id: int = DEFAULT_CICLO_ID,
     timeout: int = 30,
@@ -234,6 +240,15 @@ def asignar_clases_profesor_manual(
         unique_current_clase_ids.append(int(clase_id))
         seen_current.add(int(clase_id))
 
+    unique_nivel_ids: List[int] = []
+    seen_levels = set()
+    for item in nivel_ids or []:
+        nivel_id = _safe_int(item)
+        if nivel_id is None or nivel_id in seen_levels:
+            continue
+        unique_nivel_ids.append(int(nivel_id))
+        seen_levels.add(int(nivel_id))
+
     target_ids = set(unique_clase_ids)
     current_ids = set(unique_current_clase_ids)
     unchanged_ids = sorted(target_ids & current_ids)
@@ -250,6 +265,9 @@ def asignar_clases_profesor_manual(
         "pendientes": 0,
         "asignadas": 0,
         "desasignadas": 0,
+        "niveles_total": len(unique_nivel_ids),
+        "niveles_actualizados": 0,
+        "niveles_omitidos": 0,
         "errores_api": 0,
     }
     warnings: List[str] = []
@@ -266,11 +284,50 @@ def asignar_clases_profesor_manual(
                 }
             )
 
-    if not planned_ops:
-        warnings.append("No hay cambios para aplicar.")
-        return summary, warnings, results
-
     with requests.Session() as session:
+        if unique_nivel_ids and colegio_id is not None:
+            if dry_run:
+                warnings.append(
+                    "Tambien se sincronizaran niveles: {niveles}.".format(
+                        niveles=", ".join(str(item) for item in unique_nivel_ids)
+                    )
+                )
+            else:
+                ok_niveles, err_niveles = _assign_niveles_profesor(
+                    session=session,
+                    token=token,
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    colegio_id=int(colegio_id),
+                    persona_id=int(persona_id),
+                    niveles=unique_nivel_ids,
+                    timeout=int(timeout),
+                )
+                if not ok_niveles:
+                    summary["errores_api"] += 1
+                    summary["niveles_omitidos"] += 1
+                    warnings.append(
+                        "No se pudieron sincronizar niveles: {err}".format(
+                            err=err_niveles or "sin detalle"
+                        )
+                    )
+                else:
+                    summary["niveles_actualizados"] = len(unique_nivel_ids)
+        elif unique_nivel_ids:
+            summary["niveles_omitidos"] += 1
+            warnings.append(
+                "No se pudo sincronizar niveles porque falta colegio_id."
+            )
+        elif unique_current_clase_ids and not unique_clase_ids:
+            summary["niveles_omitidos"] += 1
+            warnings.append(
+                "Se quitaran las clases actuales, pero no se modifican niveles cuando no quedan clases seleccionadas."
+            )
+
+        if not planned_ops:
+            warnings.append("No hay cambios de clases para aplicar.")
+            return summary, warnings, results
+
         total_ops = len(planned_ops)
         for index, (action, clase_id) in enumerate(planned_ops, start=1):
             if on_progress:
@@ -400,6 +457,45 @@ def asignar_clases_profesor_manual(
         warnings.append("Se desasignaran todas las clases actuales.")
 
     return summary, warnings, results
+
+
+def _assign_niveles_profesor(
+    session: requests.Session,
+    token: str,
+    empresa_id: int,
+    ciclo_id: int,
+    colegio_id: int,
+    persona_id: int,
+    niveles: Sequence[int],
+    timeout: int,
+) -> Tuple[bool, Optional[str]]:
+    url = ASIGNAR_NIVEL_URL.format(
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        colegio_id=int(colegio_id),
+        persona_id=int(persona_id),
+    )
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    payload = {"niveles": [{"nivelId": int(nivel_id)} for nivel_id in sorted(set(niveles))]}
+    try:
+        response = session.post(url, headers=headers, json=payload, timeout=int(timeout))
+    except requests.RequestException as exc:
+        return False, f"Error de red: {exc}"
+
+    status_code = response.status_code
+    try:
+        data = response.json() if response.content else {}
+    except ValueError:
+        return False, f"Respuesta no JSON (status {status_code})"
+
+    if not response.ok:
+        message = data.get("message") if isinstance(data, dict) else ""
+        return False, message or f"HTTP {status_code}"
+
+    if isinstance(data, dict) and data.get("success") is False:
+        message = data.get("message") or "Respuesta invalida"
+        return False, str(message)
+    return True, None
 
 
 def _safe_int(value: object) -> Optional[int]:

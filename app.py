@@ -43,6 +43,7 @@ from santillana_format.profesores import (
     export_profesores_excel,
     listar_profesores_bd_data,
     listar_profesores_data,
+    listar_profesores_filters_data,
 )
 from santillana_format.profesores_clases import asignar_profesores_clases
 from santillana_format.profesores_password import actualizar_passwords_docentes
@@ -142,6 +143,16 @@ CENSO_ALUMNO_UPDATE_LOGIN_URL = (
     "/ciclos/{ciclo_id}/colegios/{colegio_id}/niveles/{nivel_id}"
     "/grados/{grado_id}/grupos/{grupo_id}/alumnos/{alumno_id}/updateLogin"
 )
+CENSO_PROFESOR_DETALLE_URL = (
+    "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
+    "/ciclos/{ciclo_id}/colegios/{colegio_id}/niveles/{nivel_id}"
+    "/profesores/{persona_id}"
+)
+CENSO_PROFESOR_UPDATE_LOGIN_URL = (
+    "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
+    "/ciclos/{ciclo_id}/colegios/{colegio_id}/niveles/{nivel_id}"
+    "/profesores/{persona_id}/updateLoginProfesor"
+)
 CENSO_PLANTILLA_EDICION_URL = (
     "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
     "/ciclos/{ciclo_id}/colegios/{colegio_id}/descargarPlantillaEdicionMasiva"
@@ -205,6 +216,11 @@ AUTO_MOVE_MULTI_DEFAULT_COLEGIO_NAME_BY_ID = {
 # La lista activa del flujo masivo usa todo el catalogo por defecto.
 AUTO_MOVE_MULTI_ACTIVE_COLEGIO_IDS = list(AUTO_MOVE_MULTI_DEFAULT_COLEGIO_IDS)
 AUTO_MOVE_MULTI_ACTIVE_SCHOOLS = list(AUTO_MOVE_MULTI_DEFAULT_SCHOOLS)
+PEGASUS_NIVEL_LABEL_BY_ID = {
+    38: "Inicial",
+    39: "Primaria",
+    40: "Secundaria",
+}
 RICHMONDSTUDIO_USERS_URL = "https://richmondstudio.global/api/users"
 RICHMONDSTUDIO_GROUPS_URL = "https://richmondstudio.global/api/groups"
 RICHMONDSTUDIO_CURRENT_USER_URL = "https://richmondstudio.global/api/users/current"
@@ -6152,6 +6168,363 @@ def _update_login_alumno_web(
     return True, data, ""
 
 
+def _profesor_edit_level_label(nivel_id: object) -> str:
+    nivel_id_int = _safe_int(nivel_id)
+    if nivel_id_int is None:
+        return "Nivel"
+    return str(PEGASUS_NIVEL_LABEL_BY_ID.get(int(nivel_id_int)) or f"Nivel {nivel_id_int}")
+
+
+def _profesor_edit_level_ids(row: Dict[str, object]) -> List[int]:
+    level_ids: Set[int] = set()
+
+    niveles_activos = row.get("niveles_activos")
+    if isinstance(niveles_activos, dict):
+        for nivel_id, activo in niveles_activos.items():
+            nivel_id_int = _safe_int(nivel_id)
+            if nivel_id_int is None or not bool(activo):
+                continue
+            level_ids.add(int(nivel_id_int))
+
+    if not level_ids:
+        niveles_presentes = row.get("niveles_presentes")
+        if isinstance(niveles_presentes, (list, tuple, set)):
+            for nivel_id in niveles_presentes:
+                nivel_id_int = _safe_int(nivel_id)
+                if nivel_id_int is not None:
+                    level_ids.add(int(nivel_id_int))
+
+    if not level_ids:
+        niveles_detalle_activos = row.get("niveles_detalle_activos")
+        if isinstance(niveles_detalle_activos, (list, tuple, set)):
+            for nivel_id in niveles_detalle_activos:
+                nivel_id_int = _safe_int(nivel_id)
+                if nivel_id_int is not None:
+                    level_ids.add(int(nivel_id_int))
+
+    if not level_ids:
+        niveles_detalle = row.get("niveles_detalle")
+        if isinstance(niveles_detalle, (list, tuple, set)):
+            for nivel_id in niveles_detalle:
+                nivel_id_int = _safe_int(nivel_id)
+                if nivel_id_int is not None:
+                    level_ids.add(int(nivel_id_int))
+
+    return sorted(level_ids)
+
+
+def _profesor_edit_option_label(row: Dict[str, object]) -> str:
+    parts = [
+        str(row.get("nombre") or "").strip(),
+        str(row.get("apellido_paterno") or "").strip(),
+        str(row.get("apellido_materno") or "").strip(),
+    ]
+    nombre = " ".join(part for part in parts if part).strip() or "SIN NOMBRE"
+    dni = str(row.get("dni") or "").strip() or "-"
+    login = str(row.get("login") or "").strip()
+    email = str(row.get("email") or "").strip()
+    niveles = ", ".join(
+        _profesor_edit_level_label(nivel_id)
+        for nivel_id in _profesor_edit_level_ids(row)
+    )
+    label = f"{nombre} | DNI {dni}"
+    if login:
+        label = f"{label} | {login}"
+    if email:
+        label = f"{label} | {email}"
+    if niveles:
+        label = f"{label} | {niveles}"
+    return label
+
+
+def _profesor_edit_matches_filter(row: Dict[str, object], search_text: object) -> bool:
+    search_norm = _normalize_compare_text(search_text)
+    if not search_norm:
+        return True
+
+    tokens = [_normalize_compare_id(token) for token in search_norm.split() if token]
+    if not tokens:
+        return True
+
+    searchable_values = [
+        _normalize_compare_id(row.get("persona_id")),
+        _normalize_compare_id(row.get("dni")),
+        _normalize_compare_id(row.get("login")),
+        _normalize_compare_text(row.get("login")),
+        _normalize_compare_text(row.get("email")),
+        _normalize_compare_text(row.get("nombre")),
+        _normalize_compare_text(row.get("apellido_paterno")),
+        _normalize_compare_text(row.get("apellido_materno")),
+        _normalize_compare_text(_profesor_edit_option_label(row)),
+    ]
+    searchable = " ".join(value for value in searchable_values if value)
+    return all(token in searchable for token in tokens)
+
+
+def _clear_profesores_edit_state() -> None:
+    for state_key in (
+        "profesores_edit_rows",
+        "profesores_edit_errors",
+        "profesores_edit_summary",
+        "profesores_edit_colegio_id",
+        "profesores_edit_selected_persona_id",
+        "profesores_edit_selected_nivel_id",
+        "profesores_edit_loaded_persona_id",
+        "profesores_edit_loaded_nivel_id",
+        "profesores_edit_detail",
+        "profesores_edit_search",
+        "profesores_edit_nombre",
+        "profesores_edit_apellido_paterno",
+        "profesores_edit_apellido_materno",
+        "profesores_edit_sexo",
+        "profesores_edit_dni",
+        "profesores_edit_email",
+        "profesores_edit_login",
+        "profesores_edit_original_login",
+        "profesores_edit_password",
+        "profesores_edit_fetch_error",
+        "profesores_edit_notice",
+    ):
+        st.session_state.pop(state_key, None)
+
+
+def _store_profesor_edit_detail_state(
+    detail: Dict[str, object],
+    persona_id: int,
+    nivel_id: int,
+) -> None:
+    persona_login = detail.get("personaLogin") if isinstance(detail.get("personaLogin"), dict) else {}
+    login_txt = str(persona_login.get("login") or "").strip()
+    st.session_state["profesores_edit_detail"] = detail
+    st.session_state["profesores_edit_loaded_persona_id"] = int(persona_id)
+    st.session_state["profesores_edit_loaded_nivel_id"] = int(nivel_id)
+    st.session_state["profesores_edit_nombre"] = str(detail.get("nombre") or "").strip()
+    st.session_state["profesores_edit_apellido_paterno"] = str(
+        detail.get("apellidoPaterno") or ""
+    ).strip()
+    st.session_state["profesores_edit_apellido_materno"] = str(
+        detail.get("apellidoMaterno") or ""
+    ).strip()
+    st.session_state["profesores_edit_sexo"] = str(
+        detail.get("sexoMoral") or detail.get("sexo") or ""
+    ).strip()
+    st.session_state["profesores_edit_dni"] = str(detail.get("idOficial") or "").strip()
+    st.session_state["profesores_edit_email"] = str(detail.get("email") or "").strip()
+    st.session_state["profesores_edit_login"] = login_txt
+    st.session_state["profesores_edit_original_login"] = login_txt
+    st.session_state["profesores_edit_password"] = ""
+    st.session_state["profesores_edit_fetch_error"] = ""
+
+
+def _fetch_profesor_edit_detail_web(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    nivel_id: int,
+    persona_id: int,
+    timeout: int,
+) -> Tuple[Optional[Dict[str, object]], str]:
+    url = CENSO_PROFESOR_DETALLE_URL.format(
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        colegio_id=int(colegio_id),
+        nivel_id=int(nivel_id),
+        persona_id=int(persona_id),
+    )
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    try:
+        response = requests.get(url, headers=headers, timeout=int(timeout))
+    except requests.RequestException as exc:
+        return None, f"Error de red: {exc}"
+
+    status_code = response.status_code
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+
+    if not response.ok:
+        message = str(body.get("message") or "").strip() if isinstance(body, dict) else ""
+        return None, message or f"HTTP {status_code}"
+    if isinstance(body, dict) and body.get("success", True) is False:
+        message = str(body.get("message") or "Respuesta invalida").strip()
+        return None, message
+    data = body.get("data") if isinstance(body, dict) else {}
+    if not isinstance(data, dict):
+        return None, "Respuesta invalida"
+    return data, ""
+
+
+def _update_profesor_edit_web(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    nivel_id: int,
+    persona_id: int,
+    nombre: str,
+    apellido_paterno: str,
+    apellido_materno: str,
+    sexo: str,
+    email: str,
+    id_oficial: str,
+    timeout: int,
+) -> Tuple[bool, Dict[str, object], str]:
+    url = CENSO_PROFESOR_DETALLE_URL.format(
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        colegio_id=int(colegio_id),
+        nivel_id=int(nivel_id),
+        persona_id=int(persona_id),
+    )
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    payload = {
+        "nombre": str(nombre or "").strip(),
+        "apellidoPaterno": str(apellido_paterno or "").strip(),
+        "apellidoMaterno": str(apellido_materno or "").strip(),
+        "sexo": str(sexo or "").strip(),
+        "email": str(email or "").strip(),
+        "idOficial": str(id_oficial or "").strip(),
+    }
+    try:
+        response = requests.put(url, headers=headers, json=payload, timeout=int(timeout))
+    except requests.RequestException as exc:
+        return False, {}, f"Error de red: {exc}"
+
+    status_code = response.status_code
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+
+    if not response.ok:
+        message = str(body.get("message") or "").strip() if isinstance(body, dict) else ""
+        return False, {}, message or f"HTTP {status_code}"
+    if isinstance(body, dict) and body.get("success", True) is False:
+        message = str(body.get("message") or "Respuesta invalida").strip()
+        return False, {}, message
+    data = body.get("data") if isinstance(body, dict) else {}
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        return False, {}, "Respuesta invalida"
+    return True, data, ""
+
+
+def _validar_login_profesor_web(
+    token: str,
+    empresa_id: int,
+    login: str,
+    persona_id: int,
+    timeout: int,
+) -> Tuple[bool, str]:
+    url = DASHBOARD_VALIDAR_LOGIN_URL.format(empresa_id=int(empresa_id))
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    payload = {
+        "login": str(login or "").strip(),
+        "personaId": int(persona_id),
+    }
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=int(timeout))
+    except requests.RequestException as exc:
+        return False, f"Error de red: {exc}"
+
+    status_code = response.status_code
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+
+    if not response.ok:
+        message = str(body.get("message") or "").strip() if isinstance(body, dict) else ""
+        return False, message or f"HTTP {status_code}"
+    return _validacion_dashboard_ok(body)
+
+
+def _update_login_profesor_web(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    nivel_id: int,
+    persona_id: int,
+    login: str,
+    password: str,
+    timeout: int,
+) -> Tuple[bool, Dict[str, object], str]:
+    url = CENSO_PROFESOR_UPDATE_LOGIN_URL.format(
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        colegio_id=int(colegio_id),
+        nivel_id=int(nivel_id),
+        persona_id=int(persona_id),
+    )
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    payload = {
+        "login": str(login or "").strip(),
+        "password": str(password or ""),
+    }
+    try:
+        response = requests.put(url, headers=headers, json=payload, timeout=int(timeout))
+    except requests.RequestException as exc:
+        return False, {}, f"Error de red: {exc}"
+
+    status_code = response.status_code
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+
+    if not response.ok:
+        message = str(body.get("message") or "").strip() if isinstance(body, dict) else ""
+        return False, {}, message or f"HTTP {status_code}"
+    if isinstance(body, dict) and body.get("success", True) is False:
+        message = str(body.get("message") or "Respuesta invalida").strip()
+        return False, {}, message
+    data = body.get("data") if isinstance(body, dict) else {}
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        return False, {}, "Respuesta invalida"
+    return True, data, ""
+
+
+def _build_profesor_edit_group_rows(detail: Dict[str, object], nivel_id: int) -> List[Dict[str, object]]:
+    rows: List[Dict[str, object]] = []
+    for nivel_entry in detail.get("niveles") or []:
+        if not isinstance(nivel_entry, dict):
+            continue
+        nivel_info = nivel_entry.get("nivel") if isinstance(nivel_entry.get("nivel"), dict) else {}
+        nivel_id_current = _safe_int(nivel_info.get("nivelId"))
+        if nivel_id_current is None or int(nivel_id_current) != int(nivel_id):
+            continue
+        for group_entry in nivel_entry.get("colegioGradoGrupos") or []:
+            if not isinstance(group_entry, dict):
+                continue
+            grado_info = group_entry.get("grado") if isinstance(group_entry.get("grado"), dict) else {}
+            grupo_info = group_entry.get("grupo") if isinstance(group_entry.get("grupo"), dict) else {}
+            alias_txt = str(group_entry.get("alias") or "").strip()
+            grupo_txt = str(grupo_info.get("grupo") or "").strip()
+            rows.append(
+                {
+                    "ColegioGradoGrupo ID": _safe_int(group_entry.get("colegioGradoGrupoId")) or "",
+                    "Grado": str(grado_info.get("grado") or "").strip(),
+                    "Grupo": grupo_txt,
+                    "Alias": alias_txt,
+                    "Seccion visible": alias_txt or grupo_txt,
+                }
+            )
+    rows.sort(
+        key=lambda row: (
+            str(row.get("Grado") or "").upper(),
+            str(row.get("Seccion visible") or "").upper(),
+            int(_safe_int(row.get("ColegioGradoGrupo ID")) or 0),
+        )
+    )
+    return rows
+
+
 def _asignar_alumno_a_clase_web(
     token: str,
     empresa_id: int,
@@ -8175,7 +8548,7 @@ def render_richmond_studio_view() -> None:
                     or ""
                 ).strip()
                 st.session_state["rs_teacher_group_ids"] = current_group_ids
-                st.session_state["rs_teacher_teachermatic"] = bool(
+                st.session_state["rs_teacher_hidden_teachermatic"] = bool(
                     (
                         selected_teacher_row.get("Teachermatic")
                         if isinstance(selected_teacher_row, dict)
@@ -8208,12 +8581,6 @@ def render_richmond_studio_view() -> None:
                 or str(group_id or "").strip(),
                 placeholder="Selecciona una o varias clases",
             )
-            st.checkbox(
-                "Teachermatic",
-                key="rs_teacher_teachermatic",
-                disabled=not is_existing_teacher,
-                help="Solo aplica al editar un docente existente.",
-            )
 
             run_rs_teacher_save = st.button(
                 "Actualizar docente RS" if is_existing_teacher else "Crear docente RS",
@@ -8242,7 +8609,7 @@ def render_richmond_studio_view() -> None:
                     st.session_state.get("rs_teacher_group_ids") or []
                 )
                 teacher_teachermatic = bool(
-                    st.session_state.get("rs_teacher_teachermatic")
+                    st.session_state.get("rs_teacher_hidden_teachermatic")
                 )
                 teacher_action_key = (
                     "rs_teacher_update" if is_existing_teacher else "rs_teacher_create"
@@ -9689,6 +10056,16 @@ with tab_crud_profesores:
                 "profesores_manual_colegio_id",
             ):
                 st.session_state.pop(state_key, None)
+        loaded_profesores_edit_colegio_id = _safe_int(
+            st.session_state.get("profesores_edit_colegio_id")
+        )
+        current_profesores_edit_colegio_id = _safe_int(colegio_id_raw)
+        if (
+            loaded_profesores_edit_colegio_id is not None
+            and current_profesores_edit_colegio_id is not None
+            and loaded_profesores_edit_colegio_id != current_profesores_edit_colegio_id
+        ):
+            _clear_profesores_edit_state()
         profesores_nav_col, profesores_body_col = st.columns([1.15, 4.85], gap="large")
         with profesores_nav_col:
             profesores_crud_view = _render_crud_menu(
@@ -9696,6 +10073,7 @@ with tab_crud_profesores:
                 [
                     ("bd", "BD", "Consulta, exporta y compara ProfesoresBD"),
                     ("manual", "Manual", "Asigna clases por docente"),
+                    ("editar", "Editar", "Edita datos, login y password"),
                     ("base", "Base", "Genera Excel operativo"),
                     ("asignar", "Asignar", "Aplica cambios a clases"),
                 ],
@@ -10561,12 +10939,26 @@ with tab_crud_profesores:
                                     progress.progress(percent)
                                     status.write(f"{message} ({current}/{total})")
 
+                                target_manual_nivel_ids = sorted(
+                                    {
+                                        int(_safe_int(clases_manual_by_id.get(int(clase_id), {}).get("nivel_id")))
+                                        for clase_id in selected_manual_class_ids
+                                        if _safe_int(clase_id) is not None
+                                        and _safe_int(
+                                            clases_manual_by_id.get(int(clase_id), {}).get("nivel_id")
+                                        )
+                                        is not None
+                                    }
+                                )
+
                                 try:
                                     manual_summary, manual_warnings, manual_results = asignar_clases_profesor_manual(
                                         token=token,
                                         persona_id=int(profesor_manual_row["persona_id"]),
                                         clase_ids=selected_manual_class_ids,
                                         current_clase_ids=current_manual_class_ids,
+                                        nivel_ids=target_manual_nivel_ids,
+                                        colegio_id=int(_parse_colegio_id(colegio_id_raw)),
                                         empresa_id=DEFAULT_EMPRESA_ID,
                                         ciclo_id=int(ciclo_id),
                                         timeout=int(timeout),
@@ -10581,7 +10973,7 @@ with tab_crud_profesores:
                                     status.empty()
 
                                 st.success(
-                                    "Asignadas: {asignadas} | Quitadas: {desasignadas} | Ya asignadas: {ya_asignadas} | Errores: {errores_api}".format(
+                                    "Niveles: {niveles_actualizados}/{niveles_total} | Asignadas: {asignadas} | Quitadas: {desasignadas} | Ya asignadas: {ya_asignadas} | Errores: {errores_api}".format(
                                         **manual_summary
                                     )
                                 )
@@ -10673,6 +11065,681 @@ with tab_crud_profesores:
                                             )
                                         row["staff_persona_ids"] = sorted(current_staff_ids)
                                         row["staff_count"] = len(current_staff_ids)
+            if profesores_crud_view == "editar":
+                st.subheader("Editar docente")
+                st.caption(
+                    "Lista docentes del colegio, carga el detalle por nivel y actualiza datos base, login y password."
+                )
+                st.caption(
+                    "Si cambias el login, completa tambien la password para enviar updateLoginProfesor."
+                )
+
+                notice_profesores_edit = st.session_state.pop(
+                    "profesores_edit_notice", None
+                )
+                if isinstance(notice_profesores_edit, dict):
+                    notice_type = str(
+                        notice_profesores_edit.get("type") or ""
+                    ).strip().lower()
+                    notice_message = str(
+                        notice_profesores_edit.get("message") or ""
+                    ).strip()
+                    if notice_message:
+                        if notice_type == "success":
+                            st.success(notice_message)
+                        elif notice_type == "warning":
+                            st.warning(notice_message)
+                        elif notice_type == "error":
+                            st.error(notice_message)
+                        else:
+                            st.info(notice_message)
+
+                col_load_edit, col_clear_edit = st.columns([2, 1], gap="small")
+                run_edit_load = col_load_edit.button(
+                    "Cargar docentes",
+                    type="primary",
+                    key="profesores_edit_load",
+                    use_container_width=True,
+                )
+                clear_edit = col_clear_edit.button(
+                    "Limpiar",
+                    key="profesores_edit_clear",
+                    use_container_width=True,
+                )
+
+                if clear_edit:
+                    _clear_profesores_edit_state()
+                    st.rerun()
+
+                if run_edit_load:
+                    token = _get_shared_token()
+                    if not token:
+                        st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                        st.stop()
+                    try:
+                        colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                    except ValueError as exc:
+                        st.error(f"Error: {exc}")
+                        st.stop()
+                    try:
+                        with st.spinner("Cargando docentes del colegio..."):
+                            profesores_edit_rows, profesores_edit_summary, profesores_edit_errors = listar_profesores_filters_data(
+                                token=token,
+                                colegio_id=colegio_id_int,
+                                empresa_id=DEFAULT_EMPRESA_ID,
+                                ciclo_id=int(ciclo_id),
+                                timeout=int(timeout),
+                            )
+                    except Exception as exc:  # pragma: no cover - UI
+                        st.error(f"Error: {exc}")
+                        st.stop()
+
+                    for state_key in (
+                        "profesores_edit_selected_persona_id",
+                        "profesores_edit_selected_nivel_id",
+                        "profesores_edit_loaded_persona_id",
+                        "profesores_edit_loaded_nivel_id",
+                        "profesores_edit_detail",
+                        "profesores_edit_fetch_error",
+                        "profesores_edit_nombre",
+                        "profesores_edit_apellido_paterno",
+                        "profesores_edit_apellido_materno",
+                        "profesores_edit_sexo",
+                        "profesores_edit_dni",
+                        "profesores_edit_email",
+                        "profesores_edit_login",
+                        "profesores_edit_original_login",
+                        "profesores_edit_password",
+                    ):
+                        st.session_state.pop(state_key, None)
+                    st.session_state["profesores_edit_rows"] = profesores_edit_rows
+                    st.session_state["profesores_edit_summary"] = profesores_edit_summary
+                    st.session_state["profesores_edit_errors"] = profesores_edit_errors
+                    st.session_state["profesores_edit_colegio_id"] = int(colegio_id_int)
+
+                profesores_edit_rows = st.session_state.get("profesores_edit_rows") or []
+                profesores_edit_summary = (
+                    st.session_state.get("profesores_edit_summary") or {}
+                )
+                profesores_edit_errors = st.session_state.get("profesores_edit_errors") or []
+
+                if profesores_edit_errors:
+                    st.error("Errores al listar docentes:")
+                    _show_dataframe(profesores_edit_errors, use_container_width=True)
+
+                if profesores_edit_rows:
+                    st.caption(
+                        "Docentes cargados: {profesores_total} | Consultas con error: {consultas_error}".format(
+                            profesores_total=int(
+                                profesores_edit_summary.get("profesores_total", 0)
+                            ),
+                            consultas_error=int(
+                                profesores_edit_summary.get("consultas_error", 0)
+                            ),
+                        )
+                    )
+                    profesores_edit_search = st.text_input(
+                        "Buscar docente",
+                        key="profesores_edit_search",
+                        placeholder="Nombre, DNI, login o email",
+                    )
+                    profesores_edit_filtered_rows = [
+                        row
+                        for row in profesores_edit_rows
+                        if _profesor_edit_matches_filter(row, profesores_edit_search)
+                    ]
+                    if not profesores_edit_filtered_rows:
+                        st.warning("No hay docentes que coincidan con la busqueda.")
+                    else:
+                        with st.expander("Vista previa de docentes cargados", expanded=False):
+                            _show_dataframe(
+                                [
+                                    {
+                                        "Persona ID": row.get("persona_id", ""),
+                                        "Docente": " ".join(
+                                            part
+                                            for part in (
+                                                str(row.get("nombre") or "").strip(),
+                                                str(row.get("apellido_paterno") or "").strip(),
+                                                str(row.get("apellido_materno") or "").strip(),
+                                            )
+                                            if part
+                                        ).strip(),
+                                        "DNI": row.get("dni", ""),
+                                        "E-mail": row.get("email", ""),
+                                        "Login": row.get("login", ""),
+                                        "Estado": row.get("estado", ""),
+                                        "Niveles": ", ".join(
+                                            _profesor_edit_level_label(nivel_id)
+                                            for nivel_id in _profesor_edit_level_ids(row)
+                                        ),
+                                    }
+                                    for row in profesores_edit_filtered_rows
+                                ],
+                                use_container_width=True,
+                            )
+
+                        profesores_edit_rows_by_id = {
+                            int(row["persona_id"]): row
+                            for row in profesores_edit_rows
+                            if _safe_int(row.get("persona_id")) is not None
+                        }
+                        profesores_edit_options = [
+                            int(row["persona_id"])
+                            for row in profesores_edit_filtered_rows
+                            if _safe_int(row.get("persona_id")) is not None
+                        ]
+                        current_selected_profesor_id = _safe_int(
+                            st.session_state.get("profesores_edit_selected_persona_id")
+                        )
+                        if (
+                            current_selected_profesor_id is not None
+                            and int(current_selected_profesor_id)
+                            not in profesores_edit_options
+                        ):
+                            st.session_state.pop(
+                                "profesores_edit_selected_persona_id", None
+                            )
+                            st.session_state.pop(
+                                "profesores_edit_selected_nivel_id", None
+                            )
+
+                        selected_profesor_persona_id = st.selectbox(
+                            "Docente",
+                            options=profesores_edit_options,
+                            index=None,
+                            placeholder="Selecciona un docente",
+                            key="profesores_edit_selected_persona_id",
+                            format_func=lambda persona_id: _profesor_edit_option_label(
+                                profesores_edit_rows_by_id.get(int(persona_id), {})
+                            ),
+                        )
+
+                        if selected_profesor_persona_id is not None:
+                            profesor_edit_row = profesores_edit_rows_by_id.get(
+                                int(selected_profesor_persona_id), {}
+                            )
+                            profesor_edit_level_ids = _profesor_edit_level_ids(
+                                profesor_edit_row
+                            )
+                            if not profesor_edit_level_ids:
+                                st.warning(
+                                    "El docente no tiene niveles activos disponibles para editar."
+                                )
+                            else:
+                                current_selected_profesor_level_id = _safe_int(
+                                    st.session_state.get("profesores_edit_selected_nivel_id")
+                                )
+                                if (
+                                    current_selected_profesor_level_id is not None
+                                    and int(current_selected_profesor_level_id)
+                                    not in profesor_edit_level_ids
+                                ):
+                                    st.session_state.pop(
+                                        "profesores_edit_selected_nivel_id", None
+                                    )
+
+                                selected_profesor_level_id = st.selectbox(
+                                    "Nivel para editar",
+                                    options=profesor_edit_level_ids,
+                                    index=None,
+                                    placeholder="Selecciona un nivel",
+                                    key="profesores_edit_selected_nivel_id",
+                                    format_func=_profesor_edit_level_label,
+                                )
+                                if selected_profesor_level_id is not None:
+                                    loaded_profesor_persona_id = _safe_int(
+                                        st.session_state.get(
+                                            "profesores_edit_loaded_persona_id"
+                                        )
+                                    )
+                                    loaded_profesor_level_id = _safe_int(
+                                        st.session_state.get(
+                                            "profesores_edit_loaded_nivel_id"
+                                        )
+                                    )
+                                    current_profesor_detail = st.session_state.get(
+                                        "profesores_edit_detail"
+                                    )
+                                    if not isinstance(current_profesor_detail, dict):
+                                        current_profesor_detail = {}
+
+                                    if (
+                                        int(selected_profesor_persona_id)
+                                        != int(loaded_profesor_persona_id or 0)
+                                        or int(selected_profesor_level_id)
+                                        != int(loaded_profesor_level_id or 0)
+                                        or not current_profesor_detail
+                                    ):
+                                        token = _get_shared_token()
+                                        if not token:
+                                            st.error(
+                                                "Falta el token. Configura el token global o PEGASUS_TOKEN."
+                                            )
+                                            st.stop()
+                                        try:
+                                            colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                                        except ValueError as exc:
+                                            st.error(f"Error: {exc}")
+                                            st.stop()
+
+                                        with st.spinner("Cargando detalle del docente..."):
+                                            profesor_detail, profesor_detail_msg = _fetch_profesor_edit_detail_web(
+                                                token=token,
+                                                colegio_id=int(colegio_id_int),
+                                                empresa_id=DEFAULT_EMPRESA_ID,
+                                                ciclo_id=int(ciclo_id),
+                                                nivel_id=int(selected_profesor_level_id),
+                                                persona_id=int(selected_profesor_persona_id),
+                                                timeout=int(timeout),
+                                            )
+                                        if profesor_detail is None:
+                                            st.session_state["profesores_edit_detail"] = {}
+                                            st.session_state[
+                                                "profesores_edit_loaded_persona_id"
+                                            ] = int(selected_profesor_persona_id)
+                                            st.session_state[
+                                                "profesores_edit_loaded_nivel_id"
+                                            ] = int(selected_profesor_level_id)
+                                            st.session_state[
+                                                "profesores_edit_fetch_error"
+                                            ] = str(
+                                                profesor_detail_msg
+                                                or "No se pudo cargar el detalle."
+                                            )
+                                        else:
+                                            _store_profesor_edit_detail_state(
+                                                profesor_detail,
+                                                persona_id=int(selected_profesor_persona_id),
+                                                nivel_id=int(selected_profesor_level_id),
+                                            )
+
+                                    profesor_edit_fetch_error = str(
+                                        st.session_state.get(
+                                            "profesores_edit_fetch_error"
+                                        )
+                                        or ""
+                                    ).strip()
+                                    if profesor_edit_fetch_error:
+                                        st.error(
+                                            f"No se pudo cargar el detalle del docente: {profesor_edit_fetch_error}"
+                                        )
+
+                                    current_profesor_detail = st.session_state.get(
+                                        "profesores_edit_detail"
+                                    )
+                                    if (
+                                        isinstance(current_profesor_detail, dict)
+                                        and current_profesor_detail
+                                    ):
+                                        niveles_docente_txt = ", ".join(
+                                            _profesor_edit_level_label(nivel_id)
+                                            for nivel_id in profesor_edit_level_ids
+                                        )
+                                        persona_login_current = (
+                                            current_profesor_detail.get("personaLogin")
+                                            if isinstance(
+                                                current_profesor_detail.get("personaLogin"),
+                                                dict,
+                                            )
+                                            else {}
+                                        )
+                                        st.caption(
+                                            "Persona ID: {persona_id} | Nivel ruta: {nivel} | Login actual: {login}".format(
+                                                persona_id=int(selected_profesor_persona_id),
+                                                nivel=_profesor_edit_level_label(
+                                                    selected_profesor_level_id
+                                                ),
+                                                login=str(
+                                                    persona_login_current.get("login") or "-"
+                                                ).strip()
+                                                or "-",
+                                            )
+                                        )
+                                        st.caption(
+                                            f"Niveles del docente: {niveles_docente_txt or '-'}"
+                                        )
+
+                                        profesor_edit_group_rows = _build_profesor_edit_group_rows(
+                                            current_profesor_detail,
+                                            int(selected_profesor_level_id),
+                                        )
+                                        if profesor_edit_group_rows:
+                                            with st.expander(
+                                                "Grupos del nivel seleccionado",
+                                                expanded=False,
+                                            ):
+                                                _show_dataframe(
+                                                    profesor_edit_group_rows,
+                                                    use_container_width=True,
+                                                )
+
+                                        name_col_1, name_col_2, name_col_3 = st.columns(
+                                            3, gap="small"
+                                        )
+                                        name_col_1.text_input(
+                                            "Nombre",
+                                            key="profesores_edit_nombre",
+                                        )
+                                        name_col_2.text_input(
+                                            "Apellido paterno",
+                                            key="profesores_edit_apellido_paterno",
+                                        )
+                                        name_col_3.text_input(
+                                            "Apellido materno",
+                                            key="profesores_edit_apellido_materno",
+                                        )
+
+                                        sexo_actual_profesor = str(
+                                            st.session_state.get("profesores_edit_sexo")
+                                            or ""
+                                        ).strip().upper()
+                                        sexo_profesor_options = ["", "M", "F"]
+                                        if (
+                                            sexo_actual_profesor
+                                            and sexo_actual_profesor
+                                            not in sexo_profesor_options
+                                        ):
+                                            sexo_profesor_options = [
+                                                sexo_actual_profesor
+                                            ] + sexo_profesor_options
+
+                                        data_col_1, data_col_2, data_col_3 = st.columns(
+                                            3, gap="small"
+                                        )
+                                        data_col_1.selectbox(
+                                            "Sexo",
+                                            options=sexo_profesor_options,
+                                            key="profesores_edit_sexo",
+                                        )
+                                        data_col_2.text_input(
+                                            "DNI / identificador",
+                                            key="profesores_edit_dni",
+                                        )
+                                        data_col_3.text_input(
+                                            "E-mail",
+                                            key="profesores_edit_email",
+                                        )
+
+                                        cred_col_1, cred_col_2 = st.columns(
+                                            2, gap="small"
+                                        )
+                                        cred_col_1.text_input(
+                                            "Login",
+                                            key="profesores_edit_login",
+                                        )
+                                        cred_col_1.caption(
+                                            "Minimo 6 caracteres. Solo letras, numeros y @ . - _"
+                                        )
+                                        cred_col_2.text_input(
+                                            "Nueva password",
+                                            key="profesores_edit_password",
+                                            type="password",
+                                        )
+                                        cred_col_2.caption(
+                                            "Opcional. Si cambias el login, debes completar tambien la password."
+                                        )
+
+                                        run_profesor_edit_save = st.button(
+                                            "Guardar cambios del docente",
+                                            type="primary",
+                                            use_container_width=True,
+                                            key="profesores_edit_save",
+                                        )
+                                        if run_profesor_edit_save:
+                                            token = _get_shared_token()
+                                            if not token:
+                                                st.error(
+                                                    "Falta el token. Configura el token global o PEGASUS_TOKEN."
+                                                )
+                                                st.stop()
+                                            try:
+                                                colegio_id_int = _parse_colegio_id(
+                                                    colegio_id_raw
+                                                )
+                                            except ValueError as exc:
+                                                st.error(f"Error: {exc}")
+                                                st.stop()
+
+                                            nombre_txt = str(
+                                                st.session_state.get(
+                                                    "profesores_edit_nombre"
+                                                )
+                                                or ""
+                                            ).strip()
+                                            apellido_paterno_txt = str(
+                                                st.session_state.get(
+                                                    "profesores_edit_apellido_paterno"
+                                                )
+                                                or ""
+                                            ).strip()
+                                            apellido_materno_txt = str(
+                                                st.session_state.get(
+                                                    "profesores_edit_apellido_materno"
+                                                )
+                                                or ""
+                                            ).strip()
+                                            sexo_txt = str(
+                                                st.session_state.get(
+                                                    "profesores_edit_sexo"
+                                                )
+                                                or ""
+                                            ).strip().upper()
+                                            dni_txt = str(
+                                                st.session_state.get(
+                                                    "profesores_edit_dni"
+                                                )
+                                                or ""
+                                            ).strip()
+                                            email_txt = str(
+                                                st.session_state.get(
+                                                    "profesores_edit_email"
+                                                )
+                                                or ""
+                                            ).strip()
+                                            login_txt = str(
+                                                st.session_state.get(
+                                                    "profesores_edit_login"
+                                                )
+                                                or ""
+                                            ).strip()
+                                            original_login_txt = str(
+                                                st.session_state.get(
+                                                    "profesores_edit_original_login"
+                                                )
+                                                or ""
+                                            ).strip()
+                                            password_txt = str(
+                                                st.session_state.get(
+                                                    "profesores_edit_password"
+                                                )
+                                                or ""
+                                            )
+
+                                            if not nombre_txt:
+                                                st.error(
+                                                    "El nombre del docente es obligatorio."
+                                                )
+                                                st.stop()
+                                            if sexo_txt not in {"M", "F"}:
+                                                st.error(
+                                                    "Selecciona un sexo valido para el docente."
+                                                )
+                                                st.stop()
+
+                                            login_changed = (
+                                                login_txt != original_login_txt
+                                            )
+                                            password_provided = bool(password_txt)
+                                            if login_changed or password_provided:
+                                                login_error = _validar_login_reglas(
+                                                    login_txt
+                                                )
+                                                if login_error:
+                                                    st.error(login_error)
+                                                    st.stop()
+                                                if password_provided:
+                                                    password_error = _validar_password_reglas(
+                                                        password_txt
+                                                    )
+                                                    if password_error:
+                                                        st.error(password_error)
+                                                        st.stop()
+                                                elif login_changed:
+                                                    st.error(
+                                                        "Si cambias el login del docente, completa tambien la password."
+                                                    )
+                                                    st.stop()
+
+                                            with st.spinner(
+                                                "Guardando cambios del docente..."
+                                            ):
+                                                update_ok, _update_data, update_msg = _update_profesor_edit_web(
+                                                    token=token,
+                                                    colegio_id=int(colegio_id_int),
+                                                    empresa_id=DEFAULT_EMPRESA_ID,
+                                                    ciclo_id=int(ciclo_id),
+                                                    nivel_id=int(
+                                                        selected_profesor_level_id
+                                                    ),
+                                                    persona_id=int(
+                                                        selected_profesor_persona_id
+                                                    ),
+                                                    nombre=nombre_txt,
+                                                    apellido_paterno=apellido_paterno_txt,
+                                                    apellido_materno=apellido_materno_txt,
+                                                    sexo=sexo_txt,
+                                                    email=email_txt,
+                                                    id_oficial=dni_txt,
+                                                    timeout=int(timeout),
+                                                )
+                                                if not update_ok:
+                                                    st.error(
+                                                        "No se pudo actualizar el docente: {msg}".format(
+                                                            msg=update_msg or "sin detalle"
+                                                        )
+                                                    )
+                                                    st.stop()
+
+                                                login_notice_type = "success"
+                                                login_notice_message = (
+                                                    "Datos del docente actualizados."
+                                                )
+                                                if login_changed or password_provided:
+                                                    login_ok, login_msg = _validar_login_profesor_web(
+                                                        token=token,
+                                                        empresa_id=DEFAULT_EMPRESA_ID,
+                                                        login=login_txt,
+                                                        persona_id=int(
+                                                            selected_profesor_persona_id
+                                                        ),
+                                                        timeout=int(timeout),
+                                                    )
+                                                    if not login_ok:
+                                                        login_notice_type = "warning"
+                                                        login_notice_message = (
+                                                            "Datos base actualizados, pero el login no es valido: {msg}".format(
+                                                                msg=login_msg
+                                                                or "sin detalle"
+                                                            )
+                                                        )
+                                                    else:
+                                                        login_update_ok, _login_update_data, login_update_msg = _update_login_profesor_web(
+                                                            token=token,
+                                                            colegio_id=int(
+                                                                colegio_id_int
+                                                            ),
+                                                            empresa_id=DEFAULT_EMPRESA_ID,
+                                                            ciclo_id=int(ciclo_id),
+                                                            nivel_id=int(
+                                                                selected_profesor_level_id
+                                                            ),
+                                                            persona_id=int(
+                                                                selected_profesor_persona_id
+                                                            ),
+                                                            login=login_txt,
+                                                            password=password_txt,
+                                                            timeout=int(timeout),
+                                                        )
+                                                        if not login_update_ok:
+                                                            login_notice_type = (
+                                                                "warning"
+                                                            )
+                                                            login_notice_message = (
+                                                                "Datos base actualizados, pero no se pudo actualizar login/password: {msg}".format(
+                                                                    msg=login_update_msg
+                                                                    or "sin detalle"
+                                                                )
+                                                            )
+                                                        else:
+                                                            login_notice_message = (
+                                                                "Docente actualizado correctamente."
+                                                            )
+
+                                            refresh_warning = ""
+                                            try:
+                                                profesores_edit_rows_refresh, profesores_edit_summary_refresh, profesores_edit_errors_refresh = listar_profesores_filters_data(
+                                                    token=token,
+                                                    colegio_id=int(colegio_id_int),
+                                                    empresa_id=DEFAULT_EMPRESA_ID,
+                                                    ciclo_id=int(ciclo_id),
+                                                    timeout=int(timeout),
+                                                )
+                                            except Exception as exc:  # pragma: no cover - UI
+                                                refresh_warning = (
+                                                    f" No se pudo refrescar la lista: {exc}"
+                                                )
+                                            else:
+                                                st.session_state[
+                                                    "profesores_edit_rows"
+                                                ] = profesores_edit_rows_refresh
+                                                st.session_state[
+                                                    "profesores_edit_summary"
+                                                ] = profesores_edit_summary_refresh
+                                                st.session_state[
+                                                    "profesores_edit_errors"
+                                                ] = profesores_edit_errors_refresh
+                                                st.session_state[
+                                                    "profesores_edit_colegio_id"
+                                                ] = int(colegio_id_int)
+                                                refreshed_detail, refreshed_detail_msg = _fetch_profesor_edit_detail_web(
+                                                    token=token,
+                                                    colegio_id=int(colegio_id_int),
+                                                    empresa_id=DEFAULT_EMPRESA_ID,
+                                                    ciclo_id=int(ciclo_id),
+                                                    nivel_id=int(
+                                                        selected_profesor_level_id
+                                                    ),
+                                                    persona_id=int(
+                                                        selected_profesor_persona_id
+                                                    ),
+                                                    timeout=int(timeout),
+                                                )
+                                                if refreshed_detail is None:
+                                                    st.session_state[
+                                                        "profesores_edit_fetch_error"
+                                                    ] = str(
+                                                        refreshed_detail_msg
+                                                        or "No se pudo refrescar el detalle."
+                                                    )
+                                                else:
+                                                    _store_profesor_edit_detail_state(
+                                                        refreshed_detail,
+                                                        persona_id=int(
+                                                            selected_profesor_persona_id
+                                                        ),
+                                                        nivel_id=int(
+                                                            selected_profesor_level_id
+                                                        ),
+                                                    )
+
+                                            st.session_state["profesores_edit_notice"] = {
+                                                "type": login_notice_type,
+                                                "message": f"{login_notice_message}{refresh_warning}",
+                                            }
+                                            st.rerun()
+                elif st.session_state.get("profesores_edit_colegio_id"):
+                    st.warning("No se encontraron docentes para este colegio.")
             if profesores_crud_view == "base":
                 with st.container(border=True):
                     st.markdown("**3) Generar Excel base operativo de profesores**")

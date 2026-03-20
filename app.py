@@ -1726,6 +1726,147 @@ def _load_richmondstudio_teacher_panel_data(
     }
 
 
+def _build_richmondstudio_registered_listing_data(
+    rs_users: List[Dict[str, object]],
+    rs_groups: List[Dict[str, object]],
+) -> Dict[str, object]:
+    allowed_roles = {"student", "teacher"}
+    excluded_roles: Dict[str, int] = {}
+    filtered_users: List[Dict[str, object]] = []
+    group_lookup: Dict[str, Dict[str, str]] = {}
+
+    for group_item in rs_groups:
+        group_id = str(group_item.get("id") or "").strip()
+        if not group_id:
+            continue
+        attrs = (
+            group_item.get("attributes")
+            if isinstance(group_item.get("attributes"), dict)
+            else {}
+        )
+        group_lookup[group_id] = {
+            "class_name": str(
+                attrs.get("name") or attrs.get("description") or ""
+            ).strip(),
+            "class_code": str(attrs.get("code") or "").strip(),
+        }
+
+    registered_rows: List[Dict[str, str]] = []
+    multi_class_students_rows: List[Dict[str, str]] = []
+
+    for item in rs_users:
+        attrs = item.get("attributes") if isinstance(item.get("attributes"), dict) else {}
+        role = str(attrs.get("role") or "").strip().lower()
+        if role not in allowed_roles:
+            role_key = role or "sin_rol"
+            excluded_roles[role_key] = int(excluded_roles.get(role_key, 0)) + 1
+            continue
+
+        filtered_users.append(item)
+        first_name = str(attrs.get("firstName") or "").strip()
+        last_name = str(attrs.get("lastName") or "").strip()
+        student_name = " ".join(part for part in [first_name, last_name] if part).strip()
+        identifier = str(attrs.get("identifier") or "").strip()
+        email = str(attrs.get("email") or "").strip()
+        created_at = _richmondstudio_date_display(attrs.get("createdAt"))
+        last_sign_in_at = _richmondstudio_date_display(attrs.get("lastSignInAt"))
+        user_id = str(item.get("id") or "").strip()
+
+        group_ids: List[str] = []
+        seen_group_ids = set()
+        for rel in _richmondstudio_relationship_ids(item, "groups"):
+            group_id = str(rel or "").strip()
+            if not group_id or group_id in seen_group_ids:
+                continue
+            seen_group_ids.add(group_id)
+            group_ids.append(group_id)
+
+        class_names: List[str] = []
+        class_codes: List[str] = []
+        for group_id in group_ids:
+            group_meta = group_lookup.get(group_id) or {}
+            class_name = str(group_meta.get("class_name") or "").strip()
+            class_code = str(group_meta.get("class_code") or "").strip()
+            if class_name and class_name not in class_names:
+                class_names.append(class_name)
+            if class_code and class_code not in class_codes:
+                class_codes.append(class_code)
+            registered_rows.append(
+                {
+                    "CLASS NAME": class_name,
+                    "CLASS CODE": class_code,
+                    "STUDENT NAME": student_name,
+                    "IDENTIFIER": identifier,
+                    "createdAt": created_at,
+                    "lastSignInAt": last_sign_in_at,
+                }
+            )
+
+        if not group_ids:
+            registered_rows.append(
+                {
+                    "CLASS NAME": "",
+                    "CLASS CODE": "",
+                    "STUDENT NAME": student_name,
+                    "IDENTIFIER": identifier,
+                    "createdAt": created_at,
+                    "lastSignInAt": last_sign_in_at,
+                }
+            )
+
+        if role == "student" and len(group_ids) > 1:
+            multi_class_students_rows.append(
+                {
+                    "RS USER ID": user_id,
+                    "STUDENT NAME": student_name,
+                    "IDENTIFIER": identifier,
+                    "EMAIL": email,
+                    "CLASSES COUNT": str(len(group_ids)),
+                    "CLASS NAMES": " | ".join(class_names),
+                    "CLASS CODES": " | ".join(class_codes),
+                    "createdAt": created_at,
+                    "lastSignInAt": last_sign_in_at,
+                }
+            )
+
+    registered_rows = [
+        row
+        for row in registered_rows
+        if row.get("CLASS NAME")
+        or row.get("CLASS CODE")
+        or row.get("STUDENT NAME")
+        or row.get("IDENTIFIER")
+        or row.get("createdAt")
+        or row.get("lastSignInAt")
+    ]
+    registered_rows = sorted(
+        registered_rows,
+        key=lambda row: (
+            str(row.get("CLASS NAME") or "").lower(),
+            str(row.get("CLASS CODE") or "").lower(),
+            str(row.get("STUDENT NAME") or "").lower(),
+            str(row.get("IDENTIFIER") or "").lower(),
+            str(row.get("createdAt") or "").lower(),
+            str(row.get("lastSignInAt") or "").lower(),
+        ),
+    )
+    multi_class_students_rows = sorted(
+        multi_class_students_rows,
+        key=lambda row: (
+            -int(str(row.get("CLASSES COUNT") or "0") or "0"),
+            str(row.get("STUDENT NAME") or "").lower(),
+            str(row.get("IDENTIFIER") or "").lower(),
+        ),
+    )
+    return {
+        "registered_rows": registered_rows,
+        "multi_class_students_rows": multi_class_students_rows,
+        "excluded_roles": excluded_roles,
+        "valid_users_count": int(len(filtered_users)),
+        "total_users_count": int(len(rs_users)),
+    }
+
+
 def _extract_richmondstudio_user_create_result(
     body: Dict[str, object],
     fallback_email: object = "",
@@ -1965,10 +2106,14 @@ def _richmondstudio_date_display(date_text: object) -> str:
     if not raw:
         return ""
     try:
-        parsed = date.fromisoformat(raw)
-        return parsed.strftime("%d/%m/%Y")
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return parsed.date().strftime("%d/%m/%Y")
     except ValueError:
-        return raw
+        try:
+            parsed = date.fromisoformat(raw.split("T", 1)[0])
+            return parsed.strftime("%d/%m/%Y")
+        except ValueError:
+            return raw
 
 
 def _richmondstudio_default_dates() -> Tuple[date, date]:
@@ -2311,6 +2456,34 @@ def _richmondstudio_level_from_test_level(
     return str(fallback_level or "").strip().lower()
 
 
+def _richmondstudio_level_from_grade(
+    grade_code: object,
+    fallback_level: object = "",
+) -> str:
+    code = str(grade_code or "").strip().lower()
+    if code in {"grade12", "grade13", "grade14", "grade15"}:
+        return "preschool"
+    if code in {"grade1", "grade2", "grade3", "grade4", "grade5", "grade6"}:
+        return "primary"
+    if code in {"grade7", "grade8", "grade9", "grade10", "grade11"}:
+        return "secondary"
+    return str(fallback_level or "").strip().lower()
+
+
+def _richmondstudio_group_level(
+    grade_code: object,
+    test_level_value: object = "",
+    fallback_level: object = "",
+) -> str:
+    level_from_test = _richmondstudio_level_from_test_level(
+        test_level_value,
+        fallback_level,
+    )
+    if level_from_test:
+        return level_from_test
+    return _richmondstudio_level_from_grade(grade_code, fallback_level)
+
+
 def _richmondstudio_group_users_data(group_item: Dict[str, object]) -> List[Dict[str, str]]:
     relationships = group_item.get("relationships")
     if not isinstance(relationships, dict):
@@ -2379,7 +2552,8 @@ def _normalize_richmondstudio_group_row(group_item: Dict[str, object]) -> Dict[s
         if grade_level_value
         else ""
     )
-    level_value = _richmondstudio_level_from_test_level(
+    level_value = _richmondstudio_group_level(
+        grade_code,
         grade_level_value,
         attrs.get("level"),
     )
@@ -2435,7 +2609,8 @@ def _normalize_richmondstudio_loaded_rows(rows: List[Dict[str, object]]) -> List
         users_data = row.get("_users_data")
         if not isinstance(users_data, list):
             users_data = []
-        level_value = _richmondstudio_level_from_test_level(
+        level_value = _richmondstudio_group_level(
+            grade_code,
             test_level_label,
             row.get("_level_value"),
         )
@@ -2508,11 +2683,13 @@ def _build_richmondstudio_group_payload(row: Dict[str, object]) -> Dict[str, obj
 
     test_level_label = str(row.get("Test level") or "").strip()
     grade_level = str(RICHMONDSTUDIO_TEST_LEVEL_BY_LABEL.get(test_level_label, "")).strip()
+    level_value = _richmondstudio_group_level(grade_code, test_level_label)
     start_date_obj, end_date_obj = _richmondstudio_default_dates()
     attributes: Dict[str, object] = {
         "name": class_name,
         "description": description,
         "grade": grade_code,
+        "level": level_value,
         "startDate": start_date_obj.isoformat(),
         "endDate": end_date_obj.isoformat(),
     }
@@ -2544,6 +2721,11 @@ def _build_richmondstudio_group_update_payload(row: Dict[str, object]) -> Dict[s
 
     test_level_label = str(row.get("Test level") or "").strip()
     grade_level = str(RICHMONDSTUDIO_TEST_LEVEL_BY_LABEL.get(test_level_label, "")).strip()
+    level_value = _richmondstudio_group_level(
+        grade_code,
+        test_level_label,
+        row.get("_level_value"),
+    )
     users_data = row.get("_users_data")
     if not isinstance(users_data, list):
         users_data = []
@@ -2551,6 +2733,7 @@ def _build_richmondstudio_group_update_payload(row: Dict[str, object]) -> Dict[s
         "name": class_name,
         "description": description,
         "grade": grade_code,
+        "level": level_value,
         "startDate": _coerce_iso_date(row.get("Start date"), "Start date"),
         "endDate": _coerce_iso_date(row.get("End date"), "End date"),
     }
@@ -6909,7 +7092,7 @@ def render_richmond_studio_view() -> None:
         st.info(rs_notice)
 
     tab_rs_clases, tab_rs_usuarios, tab_rs_docentes, tab_rs_excel = st.tabs(
-        ["Clases RS", "Usuarios RS", "Docentes RS", "EXCEL RS"]
+        ["Clases RS", "Usuarios RS", "Asignar clases a docentes", "Listar alumnos registrados"]
     )
     with tab_rs_clases:
         st.markdown("**RS | Listado y creacion masiva de clases**")
@@ -7801,9 +7984,9 @@ def render_richmond_studio_view() -> None:
 
     with tab_rs_docentes:
         with st.container(border=True):
-            st.markdown("**RS | Docentes manual**")
+            st.markdown("**Asignar clases a docentes**")
             st.caption(
-                "Carga docentes y clases de Richmond Studio para crear o editar docentes con sus grupos."
+                "Carga docentes y clases de Richmond Studio para crear o editar docentes y sincronizar sus clases."
             )
 
             teacher_notice = str(
@@ -8245,12 +8428,12 @@ def render_richmond_studio_view() -> None:
 
     with tab_rs_excel:
         with st.container(border=True):
-            st.markdown("**EXCEL RS**")
+            st.markdown("**Listar alumnos registrados**")
             st.caption(
                 "Richmond Studio: CLASS NAME, CLASS CODE, STUDENT NAME, IDENTIFIER, createdAt y lastSignInAt. Solo roles student/teacher."
             )
             run_rs_excel = st.button(
-                "EXCEL RS",
+                "Listar alumnos registrados",
                 type="primary",
                 key="rs_rs_excel_generate",
             )
@@ -8267,126 +8450,38 @@ def render_richmond_studio_view() -> None:
                     st.error(f"Error: {exc}")
                     st.stop()
 
-                allowed_roles = {"student", "teacher"}
-                excluded_roles: Dict[str, int] = {}
-                filtered_users: List[Dict[str, object]] = []
-                for item in rs_users:
-                    attrs = (
-                        item.get("attributes")
-                        if isinstance(item.get("attributes"), dict)
-                        else {}
-                    )
-                    role = str(attrs.get("role") or "").strip().lower()
-                    if role not in allowed_roles:
-                        role_key = role or "sin_rol"
-                        excluded_roles[role_key] = int(excluded_roles.get(role_key, 0)) + 1
-                        continue
-                    filtered_users.append(item)
-
-                group_lookup: Dict[str, Dict[str, str]] = {}
-                for group_item in rs_groups:
-                    group_id = str(group_item.get("id") or "").strip()
-                    if not group_id:
-                        continue
-                    attrs = (
-                        group_item.get("attributes")
-                        if isinstance(group_item.get("attributes"), dict)
-                        else {}
-                    )
-                    group_lookup[group_id] = {
-                        "class_name": str(
-                            attrs.get("name") or attrs.get("description") or ""
-                        ).strip(),
-                        "class_code": str(attrs.get("code") or "").strip(),
-                    }
-
-                rows_rs: List[Dict[str, str]] = []
-                for item in filtered_users:
-                    attrs = item.get("attributes") if isinstance(item.get("attributes"), dict) else {}
-                    relationships = (
-                        item.get("relationships")
-                        if isinstance(item.get("relationships"), dict)
-                        else {}
-                    )
-                    groups_rel = (
-                        relationships.get("groups")
-                        if isinstance(relationships.get("groups"), dict)
-                        else {}
-                    )
-                    groups_data = groups_rel.get("data") if isinstance(groups_rel.get("data"), list) else []
-
-                    first_name = str(attrs.get("firstName") or "").strip()
-                    last_name = str(attrs.get("lastName") or "").strip()
-                    student_name = " ".join(part for part in [first_name, last_name] if part).strip()
-                    identifier = str(attrs.get("identifier") or "").strip()
-                    created_at = str(attrs.get("createdAt") or "").strip()
-                    last_sign_in_at = str(attrs.get("lastSignInAt") or "").strip()
-
-                    group_ids: List[str] = []
-                    seen_group_ids = set()
-                    for rel in groups_data:
-                        if not isinstance(rel, dict):
-                            continue
-                        group_id = str(rel.get("id") or "").strip()
-                        if not group_id or group_id in seen_group_ids:
-                            continue
-                        seen_group_ids.add(group_id)
-                        group_ids.append(group_id)
-
-                    if group_ids:
-                        for group_id in group_ids:
-                            group_meta = group_lookup.get(group_id) or {}
-                            rows_rs.append(
-                                {
-                                    "CLASS NAME": str(group_meta.get("class_name") or "").strip(),
-                                    "CLASS CODE": str(group_meta.get("class_code") or "").strip(),
-                                    "STUDENT NAME": student_name,
-                                    "IDENTIFIER": identifier,
-                                    "createdAt": created_at,
-                                    "lastSignInAt": last_sign_in_at,
-                                }
-                            )
-                    else:
-                        rows_rs.append(
-                            {
-                                "CLASS NAME": "",
-                                "CLASS CODE": "",
-                                "STUDENT NAME": student_name,
-                                "IDENTIFIER": identifier,
-                                "createdAt": created_at,
-                                "lastSignInAt": last_sign_in_at,
-                            }
-                        )
-                rows_rs = [
-                    row
-                    for row in rows_rs
-                    if row.get("CLASS NAME")
-                    or row.get("CLASS CODE")
-                    or row.get("STUDENT NAME")
-                    or row.get("IDENTIFIER")
-                    or row.get("createdAt")
-                    or row.get("lastSignInAt")
-                ]
-                rows_rs = sorted(
-                    rows_rs,
-                    key=lambda row: (
-                        str(row.get("CLASS NAME") or "").lower(),
-                        str(row.get("CLASS CODE") or "").lower(),
-                        str(row.get("STUDENT NAME") or "").lower(),
-                        str(row.get("IDENTIFIER") or "").lower(),
-                        str(row.get("createdAt") or "").lower(),
-                        str(row.get("lastSignInAt") or "").lower(),
-                    ),
+                listing_data = _build_richmondstudio_registered_listing_data(
+                    rs_users,
+                    rs_groups,
                 )
-
+                rows_rs = list(listing_data.get("registered_rows") or [])
+                multi_class_students_rows = list(
+                    listing_data.get("multi_class_students_rows") or []
+                )
+                excluded_roles = (
+                    listing_data.get("excluded_roles")
+                    if isinstance(listing_data.get("excluded_roles"), dict)
+                    else {}
+                )
                 rs_excel_bytes = _export_simple_excel(rows_rs, sheet_name="users")
                 st.session_state["rs_excel_bytes"] = rs_excel_bytes
                 st.session_state["rs_excel_count"] = int(len(rows_rs))
+                st.session_state["rs_multi_class_students_rows"] = (
+                    multi_class_students_rows
+                )
+                st.session_state["rs_multi_class_students_bytes"] = (
+                    _export_simple_excel(
+                        multi_class_students_rows,
+                        sheet_name="students_multi_class",
+                    )
+                    if multi_class_students_rows
+                    else b""
+                )
                 st.success(
-                    "EXCEL RS listo. Filas: {filas} | Usuarios validos: {validos}/{total}.".format(
+                    "Listado RS listo. Filas: {filas} | Usuarios validos: {validos}/{total}.".format(
                         filas=len(rows_rs),
-                        validos=len(filtered_users),
-                        total=len(rs_users),
+                        validos=int(listing_data.get("valid_users_count") or 0),
+                        total=int(listing_data.get("total_users_count") or 0),
                     )
                 )
                 if excluded_roles:
@@ -8397,15 +8492,37 @@ def render_richmond_studio_view() -> None:
                     st.caption(f"Roles excluidos: {excluded_txt}")
                 if rows_rs:
                     _show_dataframe(rows_rs[:200], use_container_width=True)
+                if multi_class_students_rows:
+                    st.markdown("**Alumnos inscritos en varias clases**")
+                    st.caption(
+                        f"Alumnos detectados en mas de una clase: {len(multi_class_students_rows)}"
+                    )
+                    _show_dataframe(
+                        multi_class_students_rows[:200],
+                        use_container_width=True,
+                    )
+                else:
+                    st.caption("No se detectaron alumnos inscritos en varias clases.")
 
             if st.session_state.get("rs_excel_bytes"):
-                st.download_button(
-                    label="Descargar EXCEL RS",
+                col_rs_download_a, col_rs_download_b = st.columns(2, gap="small")
+                col_rs_download_a.download_button(
+                    label="Descargar listado RS",
                     data=st.session_state["rs_excel_bytes"],
                     file_name="excel_rs.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="rs_rs_excel_download",
+                    use_container_width=True,
                 )
+                if st.session_state.get("rs_multi_class_students_bytes"):
+                    col_rs_download_b.download_button(
+                        label="Descargar alumnos en varias clases",
+                        data=st.session_state["rs_multi_class_students_bytes"],
+                        file_name="alumnos_varias_clases_rs.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="rs_rs_multi_students_download",
+                        use_container_width=True,
+                    )
 
     if isinstance(st.session_state.get("rs_pending_confirmation"), dict):
         _render_richmondstudio_confirmation_dialog()

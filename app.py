@@ -8247,7 +8247,7 @@ def render_richmond_studio_view() -> None:
         with st.container(border=True):
             st.markdown("**EXCEL RS**")
             st.caption(
-                "Richmond Studio: CLASS NAME, CLASS CODE, STUDENT NAME, IDENTIFIER. Solo roles student/teacher."
+                "Richmond Studio: CLASS NAME, CLASS CODE, STUDENT NAME, IDENTIFIER, createdAt y lastSignInAt. Solo roles student/teacher."
             )
             run_rs_excel = st.button(
                 "EXCEL RS",
@@ -8319,6 +8319,8 @@ def render_richmond_studio_view() -> None:
                     last_name = str(attrs.get("lastName") or "").strip()
                     student_name = " ".join(part for part in [first_name, last_name] if part).strip()
                     identifier = str(attrs.get("identifier") or "").strip()
+                    created_at = str(attrs.get("createdAt") or "").strip()
+                    last_sign_in_at = str(attrs.get("lastSignInAt") or "").strip()
 
                     group_ids: List[str] = []
                     seen_group_ids = set()
@@ -8340,6 +8342,8 @@ def render_richmond_studio_view() -> None:
                                     "CLASS CODE": str(group_meta.get("class_code") or "").strip(),
                                     "STUDENT NAME": student_name,
                                     "IDENTIFIER": identifier,
+                                    "createdAt": created_at,
+                                    "lastSignInAt": last_sign_in_at,
                                 }
                             )
                     else:
@@ -8349,6 +8353,8 @@ def render_richmond_studio_view() -> None:
                                 "CLASS CODE": "",
                                 "STUDENT NAME": student_name,
                                 "IDENTIFIER": identifier,
+                                "createdAt": created_at,
+                                "lastSignInAt": last_sign_in_at,
                             }
                         )
                 rows_rs = [
@@ -8358,6 +8364,8 @@ def render_richmond_studio_view() -> None:
                     or row.get("CLASS CODE")
                     or row.get("STUDENT NAME")
                     or row.get("IDENTIFIER")
+                    or row.get("createdAt")
+                    or row.get("lastSignInAt")
                 ]
                 rows_rs = sorted(
                     rows_rs,
@@ -8366,6 +8374,8 @@ def render_richmond_studio_view() -> None:
                         str(row.get("CLASS CODE") or "").lower(),
                         str(row.get("STUDENT NAME") or "").lower(),
                         str(row.get("IDENTIFIER") or "").lower(),
+                        str(row.get("createdAt") or "").lower(),
+                        str(row.get("lastSignInAt") or "").lower(),
                     ),
                 )
 

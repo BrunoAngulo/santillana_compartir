@@ -6247,6 +6247,7 @@ def _clear_alumnos_edit_state() -> None:
         "alumnos_edit_original_login",
         "alumnos_edit_password",
         "alumnos_edit_notice",
+        "alumnos_edit_pending_detail_refresh",
     ):
         st.session_state.pop(state_key, None)
 
@@ -6518,6 +6519,7 @@ def _clear_profesores_edit_state() -> None:
         "profesores_edit_password",
         "profesores_edit_fetch_error",
         "profesores_edit_notice",
+        "profesores_edit_pending_detail_refresh",
     ):
         st.session_state.pop(state_key, None)
 
@@ -11388,6 +11390,7 @@ with tab_crud_profesores:
                         "profesores_edit_login",
                         "profesores_edit_original_login",
                         "profesores_edit_password",
+                        "profesores_edit_pending_detail_refresh",
                     ):
                         st.session_state.pop(state_key, None)
                     st.session_state["profesores_edit_rows"] = profesores_edit_rows
@@ -11400,6 +11403,34 @@ with tab_crud_profesores:
                     st.session_state.get("profesores_edit_summary") or {}
                 )
                 profesores_edit_errors = st.session_state.get("profesores_edit_errors") or []
+                profesores_edit_pending_refresh = st.session_state.pop(
+                    "profesores_edit_pending_detail_refresh", None
+                )
+                if isinstance(profesores_edit_pending_refresh, dict):
+                    pending_detail = profesores_edit_pending_refresh.get("detail")
+                    pending_persona_id = _safe_int(
+                        profesores_edit_pending_refresh.get("persona_id")
+                    )
+                    pending_nivel_id = _safe_int(
+                        profesores_edit_pending_refresh.get("nivel_id")
+                    )
+                    pending_fetch_error = str(
+                        profesores_edit_pending_refresh.get("fetch_error") or ""
+                    ).strip()
+                    if (
+                        isinstance(pending_detail, dict)
+                        and pending_persona_id is not None
+                        and pending_nivel_id is not None
+                    ):
+                        _store_profesor_edit_detail_state(
+                            pending_detail,
+                            persona_id=int(pending_persona_id),
+                            nivel_id=int(pending_nivel_id),
+                        )
+                    elif pending_fetch_error:
+                        st.session_state["profesores_edit_fetch_error"] = (
+                            pending_fetch_error
+                        )
 
                 if profesores_edit_errors:
                     st.error("Errores al listar docentes:")
@@ -11924,21 +11955,33 @@ with tab_crud_profesores:
                                                 )
                                                 if refreshed_detail is None:
                                                     st.session_state[
-                                                        "profesores_edit_fetch_error"
-                                                    ] = str(
-                                                        refreshed_detail_msg
-                                                        or "No se pudo refrescar el detalle."
-                                                    )
-                                                else:
-                                                    _store_profesor_edit_detail_state(
-                                                        refreshed_detail,
-                                                        persona_id=int(
+                                                        "profesores_edit_pending_detail_refresh"
+                                                    ] = {
+                                                        "detail": None,
+                                                        "persona_id": int(
                                                             selected_profesor_persona_id
                                                         ),
-                                                        nivel_id=int(
+                                                        "nivel_id": int(
                                                             selected_profesor_level_id
                                                         ),
-                                                    )
+                                                        "fetch_error": str(
+                                                            refreshed_detail_msg
+                                                            or "No se pudo refrescar el detalle."
+                                                        ),
+                                                    }
+                                                else:
+                                                    st.session_state[
+                                                        "profesores_edit_pending_detail_refresh"
+                                                    ] = {
+                                                        "detail": refreshed_detail,
+                                                        "persona_id": int(
+                                                            selected_profesor_persona_id
+                                                        ),
+                                                        "nivel_id": int(
+                                                            selected_profesor_level_id
+                                                        ),
+                                                        "fetch_error": "",
+                                                    }
 
                                             st.session_state["profesores_edit_notice"] = {
                                                 "type": login_notice_type,
@@ -13425,6 +13468,7 @@ with tab_crud_alumnos:
                     "alumnos_edit_login",
                     "alumnos_edit_original_login",
                     "alumnos_edit_password",
+                    "alumnos_edit_pending_detail_refresh",
                 ):
                     st.session_state.pop(state_key, None)
                 st.session_state["alumnos_edit_rows"] = (
@@ -13437,6 +13481,22 @@ with tab_crud_alumnos:
 
             alumnos_edit_rows = st.session_state.get("alumnos_edit_rows") or []
             alumnos_edit_errors = st.session_state.get("alumnos_edit_errors") or []
+            alumnos_edit_pending_refresh = st.session_state.pop(
+                "alumnos_edit_pending_detail_refresh", None
+            )
+            if isinstance(alumnos_edit_pending_refresh, dict):
+                pending_detail = alumnos_edit_pending_refresh.get("detail")
+                pending_context = alumnos_edit_pending_refresh.get("context")
+                pending_fetch_error = str(
+                    alumnos_edit_pending_refresh.get("fetch_error") or ""
+                ).strip()
+                if isinstance(pending_detail, dict) and isinstance(pending_context, dict):
+                    _store_alumno_edit_detail_state(
+                        pending_detail,
+                        context=pending_context,
+                    )
+                elif pending_fetch_error:
+                    st.session_state["alumnos_edit_fetch_error"] = pending_fetch_error
 
             if alumnos_edit_errors:
                 with st.expander(
@@ -13858,15 +13918,24 @@ with tab_crud_alumnos:
                                     timeout=int(timeout),
                                 )
                                 if refreshed_detail is None:
-                                    st.session_state["alumnos_edit_fetch_error"] = str(
-                                        refreshed_detail_msg
-                                        or "No se pudo refrescar el detalle."
-                                    )
+                                    st.session_state[
+                                        "alumnos_edit_pending_detail_refresh"
+                                    ] = {
+                                        "detail": None,
+                                        "context": dict(refreshed_context),
+                                        "fetch_error": str(
+                                            refreshed_detail_msg
+                                            or "No se pudo refrescar el detalle."
+                                        ),
+                                    }
                                 else:
-                                    _store_alumno_edit_detail_state(
-                                        refreshed_detail,
-                                        context=refreshed_context,
-                                    )
+                                    st.session_state[
+                                        "alumnos_edit_pending_detail_refresh"
+                                    ] = {
+                                        "detail": refreshed_detail,
+                                        "context": dict(refreshed_context),
+                                        "fetch_error": "",
+                                    }
 
                             st.session_state["alumnos_edit_notice"] = {
                                 "type": alumno_notice_type,

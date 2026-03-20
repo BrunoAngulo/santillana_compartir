@@ -3878,6 +3878,12 @@ def _is_santillana_inclusiva_class(item: Dict[str, object]) -> bool:
     return target in ge_clase or target in ge_clase_clave
 
 
+def _is_ingles_por_niveles_class(item: Dict[str, object]) -> bool:
+    ge_clase = _normalize_plain_text(item.get("geClase"))
+    ge_clase_clave = _normalize_plain_text(item.get("geClaseClave"))
+    return ge_clase.startswith("INGLES") or ge_clase_clave.startswith("INGLES")
+
+
 def _extract_grupo_contratados_count(grupo_entry: Dict[str, object]) -> Optional[int]:
     grupo = grupo_entry.get("grupo") if isinstance(grupo_entry.get("grupo"), dict) else {}
     keys = (
@@ -4295,6 +4301,7 @@ def _participantes_auto_row_sort_key(row: Dict[str, object]) -> Tuple[object, ..
 def _build_auto_group_rows_for_participantes(
     clases: List[Dict[str, object]],
     niveles_data: List[Dict[str, object]],
+    exclude_ingles_por_niveles: bool = False,
 ) -> Tuple[List[Dict[str, object]], List[str]]:
     grupos_por_grado = _build_grupos_disponibles_por_grado(niveles_data)
     rows_auto: List[Dict[str, object]] = []
@@ -4306,6 +4313,11 @@ def _build_auto_group_rows_for_participantes(
         if _is_santillana_inclusiva_class(item):
             warnings_auto.append(
                 f"Clase omitida por exclusion Santillana inclusiva: {item.get('geClaseId')}"
+            )
+            continue
+        if exclude_ingles_por_niveles and _is_ingles_por_niveles_class(item):
+            warnings_auto.append(
+                f"Clase omitida por exclusion Ingles por niveles: {item.get('geClaseId')}"
             )
             continue
         meta = _extract_clase_meta(item)
@@ -4551,6 +4563,7 @@ def _run_participantes_sync_job(
     empresa_id: int,
     ciclo_id: int,
     timeout: int,
+    exclude_ingles_por_niveles: bool,
 ) -> None:
     _set_participantes_sync_job(job_id, state="running")
     _append_participantes_sync_job_message(job_id, "Preparando sincronizacion automatica...")
@@ -4585,6 +4598,7 @@ def _run_participantes_sync_job(
         rows_auto, warnings_auto = _build_auto_group_rows_for_participantes(
             clases=clases,
             niveles_data=niveles_data,
+            exclude_ingles_por_niveles=bool(exclude_ingles_por_niveles),
         )
         summary_auto = _make_participantes_sync_summary(len(rows_auto))
         _set_participantes_sync_job(
@@ -4594,10 +4608,11 @@ def _run_participantes_sync_job(
         )
         _append_participantes_sync_job_message(
             job_id,
-            "Clases detectadas={total} | Sincronizables={sync} | Advertencias={warn}".format(
+            "Clases detectadas={total} | Sincronizables={sync} | Advertencias={warn} | Ingles por niveles={ingles}".format(
                 total=len(clases),
                 sync=len(rows_auto),
                 warn=len(warnings_auto),
+                ingles="Si" if exclude_ingles_por_niveles else "No",
             ),
         )
 
@@ -4663,6 +4678,7 @@ def _start_participantes_sync_job(
     empresa_id: int,
     ciclo_id: int,
     timeout: int,
+    exclude_ingles_por_niveles: bool = False,
 ) -> str:
     scope = (int(empresa_id), int(ciclo_id), int(colegio_id))
     with _PARTICIPANTES_SYNC_LOCK:
@@ -4680,6 +4696,7 @@ def _start_participantes_sync_job(
             "scope": scope,
             "state": "starting",
             "cancel_requested": False,
+            "exclude_ingles_por_niveles": bool(exclude_ingles_por_niveles),
             "status_messages": [],
             "summary": _make_participantes_sync_summary(),
             "warnings": [],
@@ -4698,6 +4715,7 @@ def _start_participantes_sync_job(
             int(empresa_id),
             int(ciclo_id),
             int(timeout),
+            bool(exclude_ingles_por_niveles),
         ),
         daemon=True,
         name=f"participantes-sync-{job_id[:8]}",
@@ -9184,6 +9202,19 @@ with tab_crud_clases:
                     "Excluye automaticamente clases cuyo geClase o geClaseClave contenga "
                     "'Santillana inclusiva'."
                 )
+                exclude_ingles_por_niveles = st.checkbox(
+                    "Ingles por niveles",
+                    key="clases_auto_group_exclude_ingles_checkbox",
+                    help=(
+                        "Si esta activo, tambien se omitiran clases cuyo geClase o "
+                        "geClaseClave inicie con 'Ingles'."
+                    ),
+                )
+                if exclude_ingles_por_niveles:
+                    st.caption(
+                        "Omitira ademas clases cuyo geClase o geClaseClave inicie con "
+                        "'Ingles'."
+                    )
                 col_run, col_cancel = st.columns([4, 1], gap="small")
                 with col_run:
                     run_actualizar_participantes_auto = st.button(
@@ -9215,6 +9246,9 @@ with tab_crud_clases:
                             empresa_id=int(empresa_id),
                             ciclo_id=int(ciclo_id),
                             timeout=int(timeout),
+                            exclude_ingles_por_niveles=bool(
+                                exclude_ingles_por_niveles
+                            ),
                         )
                         st.session_state["clases_auto_group_job_id"] = current_job_id
                         current_job = _get_participantes_sync_job(current_job_id)
@@ -9247,6 +9281,9 @@ with tab_crud_clases:
                 )
                 warnings_auto = list(current_job.get("warnings") or [])
                 group_error_lines = list(current_job.get("group_error_lines") or [])
+                exclude_ingles_job = bool(
+                    current_job.get("exclude_ingles_por_niveles", False)
+                )
                 status_messages = [
                     str(item).strip()
                     for item in list(current_job.get("status_messages") or [])
@@ -9285,7 +9322,8 @@ with tab_crud_clases:
                     f"Alumnos asignados={summary_auto.get('agregados_ok', 0)} | "
                     f"Alumnos eliminados={summary_auto.get('eliminados_ok', 0)} | "
                     f"Clases sin cambios={summary_auto.get('clases_skip', 0)} | "
-                    f"Clases con error={summary_auto.get('clases_error', 0)}"
+                    f"Clases con error={summary_auto.get('clases_error', 0)} | "
+                    f"Ingles por niveles={'Si' if exclude_ingles_job else 'No'}"
                 )
                 if warnings_auto:
                     st.caption(f"Advertencias de mapeo de clases: {len(warnings_auto)}")

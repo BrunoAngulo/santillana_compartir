@@ -124,6 +124,11 @@ CENSO_ALUMNOS_CREATE_URL = (
     "/ciclos/{ciclo_id}/colegios/{colegio_id}/niveles/{nivel_id}"
     "/grados/{grado_id}/grupos/{grupo_id}/alumnos"
 )
+CENSO_ALUMNO_DETALLE_URL = (
+    "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
+    "/ciclos/{ciclo_id}/colegios/{colegio_id}/niveles/{nivel_id}"
+    "/grados/{grado_id}/grupos/{grupo_id}/alumnos/{alumno_id}"
+)
 CENSO_NIVELES_GRADOS_GRUPOS_URL = (
     "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
     "/ciclos/{ciclo_id}/colegios/{colegio_id}/alumnos/nivelesGradosGrupos"
@@ -3866,6 +3871,13 @@ def _extract_clase_meta(item: Dict[str, object]) -> Optional[Dict[str, object]]:
     }
 
 
+def _is_santillana_inclusiva_class(item: Dict[str, object]) -> bool:
+    ge_clase = _normalize_plain_text(item.get("geClase"))
+    ge_clase_clave = _normalize_plain_text(item.get("geClaseClave"))
+    target = "SANTILLANA INCLUSIVA"
+    return target in ge_clase or target in ge_clase_clave
+
+
 def _extract_grupo_contratados_count(grupo_entry: Dict[str, object]) -> Optional[int]:
     grupo = grupo_entry.get("grupo") if isinstance(grupo_entry.get("grupo"), dict) else {}
     keys = (
@@ -4290,6 +4302,11 @@ def _build_auto_group_rows_for_participantes(
 
     for item in clases:
         if not isinstance(item, dict):
+            continue
+        if _is_santillana_inclusiva_class(item):
+            warnings_auto.append(
+                f"Clase omitida por exclusion Santillana inclusiva: {item.get('geClaseId')}"
+            )
             continue
         meta = _extract_clase_meta(item)
         if not meta:
@@ -6166,6 +6183,223 @@ def _update_login_alumno_web(
     if not isinstance(data, dict):
         return False, {}, "Respuesta invalida"
     return True, data, ""
+
+
+def _alumno_edit_option_label(row: Dict[str, object]) -> str:
+    nombre = str(
+        row.get("nombre_completo")
+        or " ".join(
+            part
+            for part in (
+                str(row.get("nombre") or "").strip(),
+                str(row.get("apellido_paterno") or "").strip(),
+                str(row.get("apellido_materno") or "").strip(),
+            )
+            if part
+        )
+    ).strip() or "SIN NOMBRE"
+    dni = str(row.get("id_oficial") or "").strip() or "-"
+    login = str(row.get("login") or "").strip()
+    nivel = str(row.get("nivel") or "").strip()
+    grado = str(row.get("grado") or "").strip()
+    seccion = str(row.get("seccion") or "").strip()
+    label = f"{nombre} | DNI {dni}"
+    if login:
+        label = f"{label} | {login}"
+    if nivel or grado or seccion:
+        label = f"{label} | {nivel} | {grado} | {seccion or '-'}"
+    return label
+
+
+def _alumno_edit_api_date_to_widget(value: object) -> date:
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value or "").strip()
+    if not text:
+        return date.today()
+    text = text.split("T", 1)[0].strip()
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        return date.today()
+
+
+def _clear_alumnos_edit_state() -> None:
+    for state_key in (
+        "alumnos_edit_rows",
+        "alumnos_edit_errors",
+        "alumnos_edit_colegio_id",
+        "alumnos_edit_selected_alumno_id",
+        "alumnos_edit_loaded_alumno_id",
+        "alumnos_edit_context",
+        "alumnos_edit_detail",
+        "alumnos_edit_fetch_error",
+        "alumnos_edit_nombre",
+        "alumnos_edit_apellido_paterno",
+        "alumnos_edit_apellido_materno",
+        "alumnos_edit_sexo",
+        "alumnos_edit_dni",
+        "alumnos_edit_fecha",
+        "alumnos_edit_extranjero",
+        "alumnos_edit_login",
+        "alumnos_edit_original_login",
+        "alumnos_edit_password",
+        "alumnos_edit_notice",
+    ):
+        st.session_state.pop(state_key, None)
+
+
+def _alumno_edit_context_from_row(row: Dict[str, object]) -> Optional[Dict[str, int]]:
+    alumno_id = _safe_int(row.get("alumno_id"))
+    persona_id = _safe_int(row.get("persona_id"))
+    nivel_id = _safe_int(row.get("nivel_id"))
+    grado_id = _safe_int(row.get("grado_id"))
+    grupo_id = _safe_int(row.get("grupo_id"))
+    if None in {alumno_id, persona_id, nivel_id, grado_id, grupo_id}:
+        return None
+    return {
+        "alumno_id": int(alumno_id),
+        "persona_id": int(persona_id),
+        "nivel_id": int(nivel_id),
+        "grado_id": int(grado_id),
+        "grupo_id": int(grupo_id),
+    }
+
+
+def _fetch_alumno_edit_detail_web(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    nivel_id: int,
+    grado_id: int,
+    grupo_id: int,
+    alumno_id: int,
+    timeout: int,
+) -> Tuple[Optional[Dict[str, object]], str]:
+    url = CENSO_ALUMNO_DETALLE_URL.format(
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        colegio_id=int(colegio_id),
+        nivel_id=int(nivel_id),
+        grado_id=int(grado_id),
+        grupo_id=int(grupo_id),
+        alumno_id=int(alumno_id),
+    )
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    try:
+        response = requests.get(url, headers=headers, timeout=int(timeout))
+    except requests.RequestException as exc:
+        return None, f"Error de red: {exc}"
+
+    status_code = response.status_code
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+
+    if not response.ok:
+        message = str(body.get("message") or "").strip() if isinstance(body, dict) else ""
+        return None, message or f"HTTP {status_code}"
+    if isinstance(body, dict) and body.get("success", True) is False:
+        message = str(body.get("message") or "Respuesta invalida").strip()
+        return None, message
+    data = body.get("data") if isinstance(body, dict) else {}
+    if not isinstance(data, dict):
+        return None, "Respuesta invalida"
+    return data, ""
+
+
+def _update_alumno_edit_web(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    nivel_id: int,
+    grado_id: int,
+    grupo_id: int,
+    alumno_id: int,
+    nombre: str,
+    apellido_paterno: str,
+    apellido_materno: str,
+    sexo: str,
+    fecha_nacimiento: object,
+    id_oficial: str,
+    extranjero: bool,
+    timeout: int,
+) -> Tuple[bool, Dict[str, object], str]:
+    url = CENSO_ALUMNO_DETALLE_URL.format(
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        colegio_id=int(colegio_id),
+        nivel_id=int(nivel_id),
+        grado_id=int(grado_id),
+        grupo_id=int(grupo_id),
+        alumno_id=int(alumno_id),
+    )
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    payload = {
+        "nombre": str(nombre or "").strip(),
+        "apellidoPaterno": str(apellido_paterno or "").strip(),
+        "apellidoMaterno": str(apellido_materno or "").strip(),
+        "sexo": str(sexo or "").strip(),
+        "fechaNacimiento": _alumno_birthdate_to_api(fecha_nacimiento),
+        "idOficial": str(id_oficial or "").strip(),
+        "extranjero": bool(extranjero),
+    }
+    try:
+        response = requests.put(url, headers=headers, json=payload, timeout=int(timeout))
+    except requests.RequestException as exc:
+        return False, {}, f"Error de red: {exc}"
+
+    status_code = response.status_code
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+
+    if not response.ok:
+        message = str(body.get("message") or "").strip() if isinstance(body, dict) else ""
+        return False, {}, message or f"HTTP {status_code}"
+    if isinstance(body, dict) and body.get("success", True) is False:
+        message = str(body.get("message") or "Respuesta invalida").strip()
+        return False, {}, message
+    data = body.get("data") if isinstance(body, dict) else {}
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        return False, {}, "Respuesta invalida"
+    return True, data, ""
+
+
+def _store_alumno_edit_detail_state(detail: Dict[str, object], context: Dict[str, int]) -> None:
+    persona = detail.get("persona") if isinstance(detail.get("persona"), dict) else {}
+    persona_login_raw = persona.get("personaLogin") if isinstance(persona, dict) else None
+    login_txt = str(detail.get("login") or "").strip()
+    if not login_txt and isinstance(persona_login_raw, dict):
+        login_txt = str(persona_login_raw.get("login") or "").strip()
+    st.session_state["alumnos_edit_context"] = dict(context)
+    st.session_state["alumnos_edit_detail"] = detail
+    st.session_state["alumnos_edit_loaded_alumno_id"] = int(context["alumno_id"])
+    st.session_state["alumnos_edit_nombre"] = str(persona.get("nombre") or "").strip()
+    st.session_state["alumnos_edit_apellido_paterno"] = str(
+        persona.get("apellidoPaterno") or ""
+    ).strip()
+    st.session_state["alumnos_edit_apellido_materno"] = str(
+        persona.get("apellidoMaterno") or ""
+    ).strip()
+    st.session_state["alumnos_edit_sexo"] = str(persona.get("sexoMoral") or "").strip()
+    st.session_state["alumnos_edit_dni"] = str(persona.get("idOficial") or "").strip()
+    st.session_state["alumnos_edit_fecha"] = _alumno_edit_api_date_to_widget(
+        persona.get("fechaNacimiento")
+    )
+    st.session_state["alumnos_edit_extranjero"] = bool(persona.get("extranjero", False))
+    st.session_state["alumnos_edit_login"] = login_txt
+    st.session_state["alumnos_edit_original_login"] = login_txt
+    st.session_state["alumnos_edit_password"] = ""
+    st.session_state["alumnos_edit_fetch_error"] = ""
 
 
 def _profesor_edit_level_label(nivel_id: object) -> str:
@@ -8944,6 +9178,10 @@ with tab_crud_clases:
                     "agrega faltantes y elimina sobrantes en cada clase. El proceso "
                     "sigue corriendo en segundo plano aunque cambies de ventana."
                 )
+                st.caption(
+                    "Excluye automaticamente clases cuyo geClase o geClaseClave contenga "
+                    "'Santillana inclusiva'."
+                )
                 col_run, col_cancel = st.columns([4, 1], gap="small")
                 with col_run:
                     run_actualizar_participantes_auto = st.button(
@@ -11071,7 +11309,7 @@ with tab_crud_profesores:
                     "Lista docentes del colegio, carga el detalle por nivel y actualiza datos base, login y password."
                 )
                 st.caption(
-                    "Si cambias el login, completa tambien la password para enviar updateLoginProfesor."
+                    "Puedes cambiar solo el login o enviar tambien una nueva password."
                 )
 
                 notice_profesores_edit = st.session_state.pop(
@@ -11178,18 +11416,9 @@ with tab_crud_profesores:
                             ),
                         )
                     )
-                    profesores_edit_search = st.text_input(
-                        "Buscar docente",
-                        key="profesores_edit_search",
-                        placeholder="Nombre, DNI, login o email",
-                    )
-                    profesores_edit_filtered_rows = [
-                        row
-                        for row in profesores_edit_rows
-                        if _profesor_edit_matches_filter(row, profesores_edit_search)
-                    ]
+                    profesores_edit_filtered_rows = list(profesores_edit_rows)
                     if not profesores_edit_filtered_rows:
-                        st.warning("No hay docentes que coincidan con la busqueda.")
+                        st.warning("No hay docentes disponibles para este colegio.")
                     else:
                         with st.expander("Vista previa de docentes cargados", expanded=False):
                             _show_dataframe(
@@ -11267,26 +11496,12 @@ with tab_crud_profesores:
                                     "El docente no tiene niveles activos disponibles para editar."
                                 )
                             else:
-                                current_selected_profesor_level_id = _safe_int(
-                                    st.session_state.get("profesores_edit_selected_nivel_id")
+                                selected_profesor_level_id = int(
+                                    profesor_edit_level_ids[0]
                                 )
-                                if (
-                                    current_selected_profesor_level_id is not None
-                                    and int(current_selected_profesor_level_id)
-                                    not in profesor_edit_level_ids
-                                ):
-                                    st.session_state.pop(
-                                        "profesores_edit_selected_nivel_id", None
-                                    )
-
-                                selected_profesor_level_id = st.selectbox(
-                                    "Nivel para editar",
-                                    options=profesor_edit_level_ids,
-                                    index=None,
-                                    placeholder="Selecciona un nivel",
-                                    key="profesores_edit_selected_nivel_id",
-                                    format_func=_profesor_edit_level_label,
-                                )
+                                st.session_state[
+                                    "profesores_edit_selected_nivel_id"
+                                ] = int(selected_profesor_level_id)
                                 if selected_profesor_level_id is not None:
                                     loaded_profesor_persona_id = _safe_int(
                                         st.session_state.get(
@@ -11385,11 +11600,8 @@ with tab_crud_profesores:
                                             else {}
                                         )
                                         st.caption(
-                                            "Persona ID: {persona_id} | Nivel ruta: {nivel} | Login actual: {login}".format(
+                                            "Persona ID: {persona_id} | Login actual: {login}".format(
                                                 persona_id=int(selected_profesor_persona_id),
-                                                nivel=_profesor_edit_level_label(
-                                                    selected_profesor_level_id
-                                                ),
                                                 login=str(
                                                     persona_login_current.get("login") or "-"
                                                 ).strip()
@@ -11477,7 +11689,7 @@ with tab_crud_profesores:
                                             type="password",
                                         )
                                         cred_col_2.caption(
-                                            "Opcional. Si cambias el login, debes completar tambien la password."
+                                            "Opcional. Si la completas, tambien actualiza la password."
                                         )
 
                                         run_profesor_edit_save = st.button(
@@ -11585,11 +11797,6 @@ with tab_crud_profesores:
                                                     if password_error:
                                                         st.error(password_error)
                                                         st.stop()
-                                                elif login_changed:
-                                                    st.error(
-                                                        "Si cambias el login del docente, completa tambien la password."
-                                                    )
-                                                    st.stop()
 
                                             with st.spinner(
                                                 "Guardando cambios del docente..."
@@ -12042,6 +12249,16 @@ with tab_crud_alumnos:
     ciclo_id = ALUMNOS_CICLO_ID_DEFAULT
     empresa_id = DEFAULT_EMPRESA_ID
     timeout = 30
+    loaded_alumnos_edit_colegio_id = _safe_int(
+        st.session_state.get("alumnos_edit_colegio_id")
+    )
+    current_alumnos_edit_colegio_id = _safe_int(colegio_id_raw)
+    if (
+        loaded_alumnos_edit_colegio_id is not None
+        and current_alumnos_edit_colegio_id is not None
+        and loaded_alumnos_edit_colegio_id != current_alumnos_edit_colegio_id
+    ):
+        _clear_alumnos_edit_state()
     alumnos_nav_col, alumnos_body_col = st.columns([1.15, 4.85], gap="large")
     with alumnos_nav_col:
         alumnos_crud_view = _render_crud_menu(
@@ -12050,6 +12267,7 @@ with tab_crud_alumnos:
                 ("otros", "Otros", "Plantilla y censo"),
                 ("comparar", "Comparar", "Compara BD vs actualizada"),
                 ("mover", "Mover", "Mueve alumno de seccion"),
+                ("editar", "Editar", "Edita datos, login y password"),
                 ("crear", "Crear", "Crea alumno nuevo"),
             ],
             state_key="alumnos_crud_nav",
@@ -13126,9 +13344,541 @@ with tab_crud_alumnos:
     
                             st.divider()
     
+        if alumnos_crud_view == "editar":
+            with st.container(border=True):
+                st.markdown("**5) Editar alumno**")
+                st.caption(
+                    "Lista alumnos del colegio, carga el detalle y actualiza datos base, login y password."
+                )
+                st.caption(
+                    "Puedes cambiar solo el login o enviar tambien una nueva password."
+                )
+
+            alumnos_edit_notice = st.session_state.pop("alumnos_edit_notice", None)
+            if isinstance(alumnos_edit_notice, dict):
+                notice_type = str(alumnos_edit_notice.get("type") or "").strip().lower()
+                notice_message = str(alumnos_edit_notice.get("message") or "").strip()
+                if notice_message:
+                    if notice_type == "success":
+                        st.success(notice_message)
+                    elif notice_type == "warning":
+                        st.warning(notice_message)
+                    elif notice_type == "error":
+                        st.error(notice_message)
+                    else:
+                        st.info(notice_message)
+
+            col_edit_load, col_edit_clear = st.columns([2, 1], gap="small")
+            run_edit_load = col_edit_load.button(
+                "Cargar alumnos",
+                type="primary",
+                key="alumnos_edit_load_btn",
+                use_container_width=True,
+            )
+            run_edit_clear = col_edit_clear.button(
+                "Limpiar",
+                key="alumnos_edit_clear_btn",
+                use_container_width=True,
+            )
+
+            if run_edit_clear:
+                _clear_alumnos_edit_state()
+                st.rerun()
+
+            if run_edit_load:
+                token = _get_shared_token()
+                if not token:
+                    st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                    st.stop()
+                try:
+                    colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                except ValueError as exc:
+                    st.error(f"Error: {exc}")
+                    st.stop()
+
+                try:
+                    with st.spinner("Cargando alumnos del colegio..."):
+                        alumnos_catalog_edit = _fetch_alumnos_catalog_for_manual_move(
+                            token=token,
+                            colegio_id=int(colegio_id_int),
+                            empresa_id=int(empresa_id),
+                            ciclo_id=int(ciclo_id),
+                            timeout=int(timeout),
+                        )
+                except Exception as exc:  # pragma: no cover - UI
+                    st.error(f"Error: {exc}")
+                    st.stop()
+
+                for state_key in (
+                    "alumnos_edit_selected_alumno_id",
+                    "alumnos_edit_loaded_alumno_id",
+                    "alumnos_edit_context",
+                    "alumnos_edit_detail",
+                    "alumnos_edit_fetch_error",
+                    "alumnos_edit_nombre",
+                    "alumnos_edit_apellido_paterno",
+                    "alumnos_edit_apellido_materno",
+                    "alumnos_edit_sexo",
+                    "alumnos_edit_dni",
+                    "alumnos_edit_fecha",
+                    "alumnos_edit_extranjero",
+                    "alumnos_edit_login",
+                    "alumnos_edit_original_login",
+                    "alumnos_edit_password",
+                ):
+                    st.session_state.pop(state_key, None)
+                st.session_state["alumnos_edit_rows"] = (
+                    alumnos_catalog_edit.get("students") or []
+                )
+                st.session_state["alumnos_edit_errors"] = (
+                    alumnos_catalog_edit.get("errors") or []
+                )
+                st.session_state["alumnos_edit_colegio_id"] = int(colegio_id_int)
+
+            alumnos_edit_rows = st.session_state.get("alumnos_edit_rows") or []
+            alumnos_edit_errors = st.session_state.get("alumnos_edit_errors") or []
+
+            if alumnos_edit_errors:
+                with st.expander(
+                    f"Errores de carga ({len(alumnos_edit_errors)})", expanded=False
+                ):
+                    st.write("\n".join(f"- {item}" for item in alumnos_edit_errors[:50]))
+                    pending_errors = len(alumnos_edit_errors) - 50
+                    if pending_errors > 0:
+                        st.caption(f"... y {pending_errors} errores mas.")
+
+            if alumnos_edit_rows:
+                st.caption(f"Alumnos cargados: {len(alumnos_edit_rows)}")
+                with st.expander("Vista previa de alumnos cargados", expanded=False):
+                    _show_dataframe(
+                        [
+                            {
+                                "Alumno ID": row.get("alumno_id", ""),
+                                "Persona ID": row.get("persona_id", ""),
+                                "Alumno": str(row.get("nombre_completo") or "").strip(),
+                                "DNI": row.get("id_oficial", ""),
+                                "Login": row.get("login", ""),
+                                "Nivel": row.get("nivel", ""),
+                                "Grado": row.get("grado", ""),
+                                "Seccion": row.get("seccion", ""),
+                                "Activo": "Si" if bool(row.get("activo")) else "No",
+                            }
+                            for row in alumnos_edit_rows
+                        ],
+                        use_container_width=True,
+                    )
+
+                alumnos_edit_rows_by_id = {
+                    int(row["alumno_id"]): row
+                    for row in alumnos_edit_rows
+                    if _safe_int(row.get("alumno_id")) is not None
+                }
+                alumnos_edit_options = list(alumnos_edit_rows_by_id.keys())
+                current_selected_alumno_id = _safe_int(
+                    st.session_state.get("alumnos_edit_selected_alumno_id")
+                )
+                if (
+                    current_selected_alumno_id is not None
+                    and int(current_selected_alumno_id) not in alumnos_edit_options
+                ):
+                    st.session_state.pop("alumnos_edit_selected_alumno_id", None)
+
+                selected_alumno_id = st.selectbox(
+                    "Alumno",
+                    options=alumnos_edit_options,
+                    index=None,
+                    placeholder="Selecciona un alumno",
+                    key="alumnos_edit_selected_alumno_id",
+                    format_func=lambda alumno_id: _alumno_edit_option_label(
+                        alumnos_edit_rows_by_id.get(int(alumno_id), {})
+                    ),
+                )
+
+                if selected_alumno_id is not None:
+                    alumno_edit_row = alumnos_edit_rows_by_id.get(int(selected_alumno_id), {})
+                    alumno_edit_context = _alumno_edit_context_from_row(alumno_edit_row)
+                    if not isinstance(alumno_edit_context, dict):
+                        st.error(
+                            "No se pudo resolver nivel, grado o grupo actual del alumno."
+                        )
+                        st.stop()
+
+                    loaded_alumno_id = _safe_int(
+                        st.session_state.get("alumnos_edit_loaded_alumno_id")
+                    )
+                    current_alumno_detail = st.session_state.get("alumnos_edit_detail")
+                    if not isinstance(current_alumno_detail, dict):
+                        current_alumno_detail = {}
+
+                    if (
+                        int(selected_alumno_id) != int(loaded_alumno_id or 0)
+                        or not current_alumno_detail
+                    ):
+                        token = _get_shared_token()
+                        if not token:
+                            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                            st.stop()
+                        try:
+                            colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                        except ValueError as exc:
+                            st.error(f"Error: {exc}")
+                            st.stop()
+
+                        with st.spinner("Cargando detalle del alumno..."):
+                            alumno_detail, alumno_detail_msg = _fetch_alumno_edit_detail_web(
+                                token=token,
+                                colegio_id=int(colegio_id_int),
+                                empresa_id=int(empresa_id),
+                                ciclo_id=int(ciclo_id),
+                                nivel_id=int(alumno_edit_context["nivel_id"]),
+                                grado_id=int(alumno_edit_context["grado_id"]),
+                                grupo_id=int(alumno_edit_context["grupo_id"]),
+                                alumno_id=int(alumno_edit_context["alumno_id"]),
+                                timeout=int(timeout),
+                            )
+                        if alumno_detail is None:
+                            st.session_state["alumnos_edit_detail"] = {}
+                            st.session_state["alumnos_edit_loaded_alumno_id"] = int(
+                                selected_alumno_id
+                            )
+                            st.session_state["alumnos_edit_fetch_error"] = str(
+                                alumno_detail_msg or "No se pudo cargar el detalle."
+                            )
+                        else:
+                            _store_alumno_edit_detail_state(
+                                alumno_detail,
+                                context=alumno_edit_context,
+                            )
+
+                    alumno_edit_fetch_error = str(
+                        st.session_state.get("alumnos_edit_fetch_error") or ""
+                    ).strip()
+                    if alumno_edit_fetch_error:
+                        st.error(
+                            f"No se pudo cargar el detalle del alumno: {alumno_edit_fetch_error}"
+                        )
+
+                    current_alumno_detail = st.session_state.get("alumnos_edit_detail")
+                    if isinstance(current_alumno_detail, dict) and current_alumno_detail:
+                        persona_detail = (
+                            current_alumno_detail.get("persona")
+                            if isinstance(current_alumno_detail.get("persona"), dict)
+                            else {}
+                        )
+                        st.caption(
+                            "Alumno ID: {alumno_id} | Persona ID: {persona_id} | {nivel} | {grado} | {seccion}".format(
+                                alumno_id=int(alumno_edit_context["alumno_id"]),
+                                persona_id=int(alumno_edit_context["persona_id"]),
+                                nivel=str(alumno_edit_row.get("nivel") or "").strip() or "-",
+                                grado=str(alumno_edit_row.get("grado") or "").strip() or "-",
+                                seccion=str(alumno_edit_row.get("seccion") or "").strip() or "-",
+                            )
+                        )
+                        st.caption(
+                            "Login actual: {login}".format(
+                                login=str(
+                                    st.session_state.get("alumnos_edit_original_login") or "-"
+                                ).strip()
+                                or "-"
+                            )
+                        )
+                        name_col_1, name_col_2, name_col_3 = st.columns(3, gap="small")
+                        name_col_1.text_input("Nombre", key="alumnos_edit_nombre")
+                        name_col_2.text_input(
+                            "Apellido paterno",
+                            key="alumnos_edit_apellido_paterno",
+                        )
+                        name_col_3.text_input(
+                            "Apellido materno",
+                            key="alumnos_edit_apellido_materno",
+                        )
+
+                        sexo_actual_alumno = str(
+                            st.session_state.get("alumnos_edit_sexo") or ""
+                        ).strip().upper()
+                        sexo_alumno_options = ["", "M", "F"]
+                        if (
+                            sexo_actual_alumno
+                            and sexo_actual_alumno not in sexo_alumno_options
+                        ):
+                            sexo_alumno_options = [sexo_actual_alumno] + sexo_alumno_options
+
+                        data_col_1, data_col_2, data_col_3, data_col_4 = st.columns(
+                            4, gap="small"
+                        )
+                        data_col_1.selectbox(
+                            "Sexo",
+                            options=sexo_alumno_options,
+                            key="alumnos_edit_sexo",
+                        )
+                        data_col_2.text_input(
+                            "DNI / identificador",
+                            key="alumnos_edit_dni",
+                        )
+                        data_col_3.date_input(
+                            "Fecha nacimiento",
+                            key="alumnos_edit_fecha",
+                            format="DD/MM/YYYY",
+                        )
+                        data_col_4.checkbox(
+                            "Extranjero",
+                            key="alumnos_edit_extranjero",
+                        )
+
+                        cred_col_1, cred_col_2 = st.columns(2, gap="small")
+                        cred_col_1.text_input("Login", key="alumnos_edit_login")
+                        cred_col_1.caption(
+                            "Minimo 6 caracteres. Solo letras, numeros y @ . - _"
+                        )
+                        cred_col_2.text_input(
+                            "Nueva password",
+                            key="alumnos_edit_password",
+                            type="password",
+                        )
+                        cred_col_2.caption(
+                            "Opcional. Si la completas, tambien actualiza la password."
+                        )
+
+                        run_alumno_edit_save = st.button(
+                            "Guardar cambios del alumno",
+                            type="primary",
+                            use_container_width=True,
+                            key="alumnos_edit_save_btn",
+                        )
+
+                        if run_alumno_edit_save:
+                            token = _get_shared_token()
+                            if not token:
+                                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                                st.stop()
+                            try:
+                                colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                            except ValueError as exc:
+                                st.error(f"Error: {exc}")
+                                st.stop()
+
+                            alumnos_edit_context_state = st.session_state.get(
+                                "alumnos_edit_context"
+                            )
+                            if not isinstance(alumnos_edit_context_state, dict):
+                                alumnos_edit_context_state = dict(alumno_edit_context)
+
+                            nombre_txt = str(
+                                st.session_state.get("alumnos_edit_nombre") or ""
+                            ).strip()
+                            apellido_paterno_txt = str(
+                                st.session_state.get("alumnos_edit_apellido_paterno") or ""
+                            ).strip()
+                            apellido_materno_txt = str(
+                                st.session_state.get("alumnos_edit_apellido_materno") or ""
+                            ).strip()
+                            sexo_txt = str(
+                                st.session_state.get("alumnos_edit_sexo") or ""
+                            ).strip().upper()
+                            dni_txt = str(
+                                st.session_state.get("alumnos_edit_dni") or ""
+                            ).strip()
+                            fecha_txt = st.session_state.get("alumnos_edit_fecha")
+                            extranjero_flag = bool(
+                                st.session_state.get("alumnos_edit_extranjero", False)
+                            )
+                            login_txt = str(
+                                st.session_state.get("alumnos_edit_login") or ""
+                            ).strip()
+                            original_login_txt = str(
+                                st.session_state.get("alumnos_edit_original_login") or ""
+                            ).strip()
+                            password_txt = str(
+                                st.session_state.get("alumnos_edit_password") or ""
+                            )
+
+                            if not nombre_txt:
+                                st.error("El nombre del alumno es obligatorio.")
+                                st.stop()
+                            if sexo_txt not in {"M", "F"}:
+                                st.error("Selecciona un sexo valido para el alumno.")
+                                st.stop()
+                            try:
+                                _alumno_birthdate_to_api(fecha_txt)
+                            except ValueError as exc:
+                                st.error(str(exc))
+                                st.stop()
+
+                            if dni_txt:
+                                id_ok, id_msg = _validar_identificador_alumno_web(
+                                    token=token,
+                                    colegio_id=int(colegio_id_int),
+                                    empresa_id=int(empresa_id),
+                                    ciclo_id=int(ciclo_id),
+                                    nivel_id=int(alumnos_edit_context_state["nivel_id"]),
+                                    persona_id=int(alumnos_edit_context_state["persona_id"]),
+                                    identificador=dni_txt,
+                                    timeout=int(timeout),
+                                )
+                                if not id_ok:
+                                    st.error(
+                                        "Identificador invalido: {msg}".format(
+                                            msg=id_msg or "sin detalle"
+                                        )
+                                    )
+                                    st.stop()
+
+                            login_changed = login_txt != original_login_txt
+                            password_provided = bool(password_txt)
+                            if login_changed or password_provided:
+                                login_error = _validar_login_reglas(login_txt)
+                                if login_error:
+                                    st.error(login_error)
+                                    st.stop()
+                                if password_provided:
+                                    password_error = _validar_password_reglas(password_txt)
+                                    if password_error:
+                                        st.error(password_error)
+                                        st.stop()
+
+                                login_ok, login_msg = _validar_login_alumno_web(
+                                    token=token,
+                                    empresa_id=int(empresa_id),
+                                    login=login_txt,
+                                    timeout=int(timeout),
+                                    persona_id=int(alumnos_edit_context_state["persona_id"]),
+                                    grado_id=int(alumnos_edit_context_state["grado_id"]),
+                                )
+                                if not login_ok:
+                                    st.error(
+                                        "El login no es valido: {msg}".format(
+                                            msg=login_msg or "sin detalle"
+                                        )
+                                    )
+                                    st.stop()
+
+                            with st.spinner("Guardando cambios del alumno..."):
+                                alumno_update_ok, _alumno_update_data, alumno_update_msg = _update_alumno_edit_web(
+                                    token=token,
+                                    colegio_id=int(colegio_id_int),
+                                    empresa_id=int(empresa_id),
+                                    ciclo_id=int(ciclo_id),
+                                    nivel_id=int(alumnos_edit_context_state["nivel_id"]),
+                                    grado_id=int(alumnos_edit_context_state["grado_id"]),
+                                    grupo_id=int(alumnos_edit_context_state["grupo_id"]),
+                                    alumno_id=int(alumnos_edit_context_state["alumno_id"]),
+                                    nombre=nombre_txt,
+                                    apellido_paterno=apellido_paterno_txt,
+                                    apellido_materno=apellido_materno_txt,
+                                    sexo=sexo_txt,
+                                    fecha_nacimiento=fecha_txt,
+                                    id_oficial=dni_txt,
+                                    extranjero=extranjero_flag,
+                                    timeout=int(timeout),
+                                )
+                                if not alumno_update_ok:
+                                    st.error(
+                                        "No se pudo actualizar el alumno: {msg}".format(
+                                            msg=alumno_update_msg or "sin detalle"
+                                        )
+                                    )
+                                    st.stop()
+
+                                alumno_notice_type = "success"
+                                alumno_notice_message = "Datos del alumno actualizados."
+                                if login_changed or password_provided:
+                                    login_update_ok, _login_update_data, login_update_msg = _update_login_alumno_web(
+                                        token=token,
+                                        colegio_id=int(colegio_id_int),
+                                        empresa_id=int(empresa_id),
+                                        ciclo_id=int(ciclo_id),
+                                        nivel_id=int(alumnos_edit_context_state["nivel_id"]),
+                                        grado_id=int(alumnos_edit_context_state["grado_id"]),
+                                        grupo_id=int(alumnos_edit_context_state["grupo_id"]),
+                                        alumno_id=int(alumnos_edit_context_state["alumno_id"]),
+                                        login=login_txt,
+                                        password=password_txt,
+                                        timeout=int(timeout),
+                                    )
+                                    if not login_update_ok:
+                                        alumno_notice_type = "warning"
+                                        alumno_notice_message = (
+                                            "Datos base actualizados, pero no se pudo actualizar login/password: {msg}".format(
+                                                msg=login_update_msg or "sin detalle"
+                                            )
+                                        )
+                                    else:
+                                        alumno_notice_message = (
+                                            "Alumno actualizado correctamente."
+                                        )
+
+                            refresh_warning = ""
+                            try:
+                                alumnos_catalog_edit_refresh = _fetch_alumnos_catalog_for_manual_move(
+                                    token=token,
+                                    colegio_id=int(colegio_id_int),
+                                    empresa_id=int(empresa_id),
+                                    ciclo_id=int(ciclo_id),
+                                    timeout=int(timeout),
+                                )
+                            except Exception as exc:  # pragma: no cover - UI
+                                refresh_warning = (
+                                    f" No se pudo refrescar la lista: {exc}"
+                                )
+                            else:
+                                refreshed_students = (
+                                    alumnos_catalog_edit_refresh.get("students") or []
+                                )
+                                refreshed_errors = (
+                                    alumnos_catalog_edit_refresh.get("errors") or []
+                                )
+                                st.session_state["alumnos_edit_rows"] = refreshed_students
+                                st.session_state["alumnos_edit_errors"] = refreshed_errors
+                                st.session_state["alumnos_edit_colegio_id"] = int(
+                                    colegio_id_int
+                                )
+                                refreshed_row = next(
+                                    (
+                                        row
+                                        for row in refreshed_students
+                                        if int(_safe_int(row.get("alumno_id")) or 0)
+                                        == int(alumnos_edit_context_state["alumno_id"])
+                                    ),
+                                    None,
+                                )
+                                refreshed_context = (
+                                    _alumno_edit_context_from_row(refreshed_row or {})
+                                    if isinstance(refreshed_row, dict)
+                                    else None
+                                ) or dict(alumnos_edit_context_state)
+                                refreshed_detail, refreshed_detail_msg = _fetch_alumno_edit_detail_web(
+                                    token=token,
+                                    colegio_id=int(colegio_id_int),
+                                    empresa_id=int(empresa_id),
+                                    ciclo_id=int(ciclo_id),
+                                    nivel_id=int(refreshed_context["nivel_id"]),
+                                    grado_id=int(refreshed_context["grado_id"]),
+                                    grupo_id=int(refreshed_context["grupo_id"]),
+                                    alumno_id=int(refreshed_context["alumno_id"]),
+                                    timeout=int(timeout),
+                                )
+                                if refreshed_detail is None:
+                                    st.session_state["alumnos_edit_fetch_error"] = str(
+                                        refreshed_detail_msg
+                                        or "No se pudo refrescar el detalle."
+                                    )
+                                else:
+                                    _store_alumno_edit_detail_state(
+                                        refreshed_detail,
+                                        context=refreshed_context,
+                                    )
+
+                            st.session_state["alumnos_edit_notice"] = {
+                                "type": alumno_notice_type,
+                                "message": f"{alumno_notice_message}{refresh_warning}",
+                            }
+                            st.rerun()
+            elif st.session_state.get("alumnos_edit_colegio_id"):
+                st.warning("No se encontraron alumnos para este colegio.")
+
         if alumnos_crud_view == "crear":
             with st.container(border=True):
-                st.markdown("**5) Crear alumno**")
+                st.markdown("**6) Crear alumno**")
                 st.caption(
                     "Valida DNI, crea el alumno en el grado/seccion elegidos y luego actualiza login/password."
                 )

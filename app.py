@@ -4315,15 +4315,20 @@ def _build_auto_group_rows_for_participantes(
                 f"Clase omitida por exclusion Santillana inclusiva: {item.get('geClaseId')}"
             )
             continue
-        if exclude_ingles_por_niveles and _is_ingles_por_niveles_class(item):
-            warnings_auto.append(
-                f"Clase omitida por exclusion Ingles por niveles: {item.get('geClaseId')}"
-            )
-            continue
         meta = _extract_clase_meta(item)
         if not meta:
             warnings_auto.append(
                 f"Clase omitida por metadata incompleta: {item.get('geClaseId')}"
+            )
+            continue
+        if exclude_ingles_por_niveles and _is_ingles_por_niveles_class(item):
+            rows_auto.append(
+                {
+                    **meta,
+                    "options": [],
+                    "selected_group_id": meta.get("grupo_id_actual"),
+                    "clear_current_students": True,
+                }
             )
             continue
 
@@ -4349,6 +4354,7 @@ def _build_auto_group_rows_for_participantes(
                 **meta,
                 "options": options,
                 "selected_group_id": int(default_group_id),
+                "clear_current_students": False,
             }
         )
 
@@ -4787,6 +4793,7 @@ def _sync_participantes_por_grado_seccion(
         clase_id = _safe_int(row.get("clase_id"))
         nivel_id = _safe_int(row.get("nivel_id"))
         grado_id = _safe_int(row.get("grado_id"))
+        clear_current_students = bool(row.get("clear_current_students"))
         clase_nombre = str(row.get("clase_nombre") or "").strip()
         if clase_id is None or nivel_id is None or grado_id is None:
             summary["clases_error"] += 1
@@ -4803,6 +4810,96 @@ def _sync_participantes_por_grado_seccion(
                     "Eliminar": 0,
                     "Resultado": "Error",
                     "Detalle": "Metadata incompleta de clase.",
+                }
+            )
+            _emit_summary()
+            continue
+
+        if clear_current_students:
+            _status(
+                "Vaciando clase de Ingles {idx}/{total}: {clase_id} | {clase}".format(
+                    idx=idx,
+                    total=total_clases,
+                    clase_id=int(clase_id),
+                    clase=clase_nombre or "-",
+                )
+            )
+            seccion_destino = _normalize_seccion_key(row.get("grupo_clave_actual") or "")
+            try:
+                clase_data = _fetch_alumnos_clase_gestion_escolar(
+                    token=token,
+                    clase_id=int(clase_id),
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                )
+            except Exception as exc:
+                summary["clases_error"] += 1
+                detail_rows.append(
+                    {
+                        "Clase ID": int(clase_id),
+                        "Clase": clase_nombre,
+                        "Nivel": row.get("nivel_nombre") or "",
+                        "Grado": row.get("grado_nombre") or "",
+                        "Seccion": seccion_destino,
+                        "Activos objetivo": 0,
+                        "Actuales": 0,
+                        "Agregar": 0,
+                        "Eliminar": 0,
+                        "Resultado": "Error",
+                        "Detalle": f"No se pudo listar alumnos actuales: {exc}",
+                    }
+                )
+                _emit_summary()
+                continue
+
+            alumnos_actuales_ids = _extract_alumno_ids_from_clase_data(clase_data)
+            to_remove = sorted(alumnos_actuales_ids)
+            remove_errors: List[str] = []
+            for alumno_id in to_remove:
+                _raise_if_cancelled()
+                try:
+                    _delete_alumno_clase_gestion_escolar(
+                        token=token,
+                        clase_id=int(clase_id),
+                        alumno_id=int(alumno_id),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                    )
+                    summary["eliminados_ok"] += 1
+                except Exception as exc:
+                    summary["eliminados_error"] += 1
+                    remove_errors.append(f"{int(alumno_id)}: {exc}")
+
+            if remove_errors:
+                summary["clases_error"] += 1
+                resultado = "Parcial" if to_remove else "Error"
+                detalle_txt = (
+                    f"Vaciado de clase de Ingles con errores al eliminar={len(remove_errors)}"
+                )
+            elif not to_remove:
+                summary["clases_skip"] += 1
+                resultado = "Sin cambios"
+                detalle_txt = "La clase de Ingles ya no tenia alumnos."
+            else:
+                summary["clases_ok"] += 1
+                resultado = "OK"
+                detalle_txt = "Se quitaron todos los alumnos de la clase de Ingles."
+
+            detail_rows.append(
+                {
+                    "Clase ID": int(clase_id),
+                    "Clase": clase_nombre,
+                    "Nivel": row.get("nivel_nombre") or "",
+                    "Grado": row.get("grado_nombre") or "",
+                    "Seccion": seccion_destino,
+                    "Activos objetivo": 0,
+                    "Actuales": len(alumnos_actuales_ids),
+                    "Agregar": 0,
+                    "Eliminar": len(to_remove),
+                    "Resultado": resultado,
+                    "Detalle": detalle_txt,
                 }
             )
             _emit_summary()
@@ -9206,14 +9303,15 @@ with tab_crud_clases:
                     "Ingles por niveles",
                     key="clases_auto_group_exclude_ingles_checkbox",
                     help=(
-                        "Si esta activo, tambien se omitiran clases cuyo geClase o "
-                        "geClaseClave inicie con 'Ingles'."
+                        "Si esta activo, las clases cuyo geClase o geClaseClave "
+                        "inicie con 'Ingles' se vaciaran y no recibiran asignacion "
+                        "automatica por grado y seccion."
                     ),
                 )
                 if exclude_ingles_por_niveles:
                     st.caption(
-                        "Omitira ademas clases cuyo geClase o geClaseClave inicie con "
-                        "'Ingles'."
+                        "Las clases cuyo geClase o geClaseClave inicie con 'Ingles' "
+                        "se vaciaran de alumnos y no se sincronizaran por grado y seccion."
                     )
                 col_run, col_cancel = st.columns([4, 1], gap="small")
                 with col_run:

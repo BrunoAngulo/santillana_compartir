@@ -9513,14 +9513,9 @@ with tab_crud_clases:
                             st.session_state[
                                 "clases_auto_group_ingles_grades_scope"
                             ] = current_ingles_scope
-                            loaded_option_keys = [
-                                str(item.get("key") or "").strip()
-                                for item in ingles_grade_options
-                                if str(item.get("key") or "").strip()
-                            ]
                             st.session_state[
                                 "clases_auto_group_ingles_grade_selected_keys"
-                            ] = list(loaded_option_keys)
+                            ] = []
 
                     st.caption(
                         "Las clases cuyo geClase o geClaseClave contenga 'Ingles' "
@@ -9549,16 +9544,6 @@ with tab_crud_clases:
                             )
                             if str(item).strip() in valid_ingles_option_keys
                         ]
-                        if (
-                            not current_selected_ingles_keys
-                            and valid_ingles_option_keys
-                        ):
-                            current_selected_ingles_keys = list(
-                                valid_ingles_option_keys
-                            )
-                            st.session_state[
-                                "clases_auto_group_ingles_grade_selected_keys"
-                            ] = current_selected_ingles_keys
                         st.markdown("**Grados con Ingles por niveles**")
                         checkbox_cols = st.columns(2, gap="small")
                         selected_ingles_grade_keys = []

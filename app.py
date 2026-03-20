@@ -3889,7 +3889,11 @@ def _is_santillana_inclusiva_class(item: Dict[str, object]) -> bool:
 def _is_ingles_por_niveles_class(item: Dict[str, object]) -> bool:
     ge_clase = _normalize_plain_text(item.get("geClase"))
     ge_clase_clave = _normalize_plain_text(item.get("geClaseClave"))
-    return "INGLES" in ge_clase or "INGLES" in ge_clase_clave
+    alias = _normalize_plain_text(item.get("alias"))
+    search_text = " ".join(
+        part for part in (ge_clase, ge_clase_clave, alias) if part
+    )
+    return "INGLES" in search_text or "ENGLISH" in search_text
 
 
 def _participantes_ingles_grade_key(nivel_id: object, grado_id: object) -> str:

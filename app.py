@@ -3927,6 +3927,11 @@ def _build_ingles_grade_options_for_participantes(
     return options
 
 
+def _participantes_ingles_grade_checkbox_key(option_key: object) -> str:
+    option_key_txt = str(option_key or "").strip().replace(":", "_")
+    return f"clases_auto_group_ingles_grade_checkbox_{option_key_txt}"
+
+
 def _extract_grupo_contratados_count(grupo_entry: Dict[str, object]) -> Optional[int]:
     grupo = grupo_entry.get("grupo") if isinstance(grupo_entry.get("grupo"), dict) else {}
     keys = (
@@ -9349,6 +9354,16 @@ with tab_crud_clases:
                 "clases_auto_group_ingles_grades_scope"
             )
             if cached_ingles_scope != current_ingles_scope:
+                cached_ingles_options = (
+                    st.session_state.get("clases_auto_group_ingles_grade_options") or []
+                )
+                for option in cached_ingles_options:
+                    if not isinstance(option, dict):
+                        continue
+                    st.session_state.pop(
+                        _participantes_ingles_grade_checkbox_key(option.get("key")),
+                        None,
+                    )
                 for state_key in (
                     "clases_auto_group_ingles_grades_scope",
                     "clases_auto_group_ingles_grade_options",
@@ -9487,18 +9502,33 @@ with tab_crud_clases:
                             st.session_state[
                                 "clases_auto_group_ingles_grade_selected_keys"
                             ] = current_selected_ingles_keys
-                        selected_ingles_grade_keys = st.multiselect(
-                            "Grados con Ingles por niveles",
-                            options=valid_ingles_option_keys,
-                            key="clases_auto_group_ingles_grade_selected_keys",
-                            format_func=lambda option_key: ingles_grade_label_by_key.get(
-                                str(option_key), str(option_key)
-                            ),
-                            placeholder="Selecciona uno o varios grados.",
-                        )
+                        st.markdown("**Grados con Ingles por niveles**")
+                        checkbox_cols = st.columns(2, gap="small")
+                        selected_ingles_grade_keys = []
+                        for idx_option, option_key in enumerate(valid_ingles_option_keys):
+                            checkbox_key = _participantes_ingles_grade_checkbox_key(
+                                option_key
+                            )
+                            if checkbox_key not in st.session_state:
+                                st.session_state[checkbox_key] = (
+                                    option_key in current_selected_ingles_keys
+                                )
+                            with checkbox_cols[idx_option % 2]:
+                                is_selected = st.checkbox(
+                                    ingles_grade_label_by_key.get(
+                                        str(option_key), str(option_key)
+                                    ),
+                                    key=checkbox_key,
+                                )
+                            if is_selected:
+                                selected_ingles_grade_keys.append(str(option_key))
+                        st.session_state[
+                            "clases_auto_group_ingles_grade_selected_keys"
+                        ] = list(selected_ingles_grade_keys)
                         st.caption(
-                            "Solo estos grados vaciaran sus clases de Ingles. Los no "
-                            "seleccionados se asignaran normal."
+                            "Si el checkbox de un grado esta marcado, se borran los "
+                            "alumnos de sus clases de Ingles. Si no esta marcado, ese "
+                            "grado se asigna normal."
                         )
                     else:
                         st.caption(

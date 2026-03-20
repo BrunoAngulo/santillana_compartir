@@ -3838,6 +3838,15 @@ def _safe_int(value: object) -> Optional[int]:
 
 
 def _extract_clase_meta(item: Dict[str, object]) -> Optional[Dict[str, object]]:
+    base_meta = _extract_clase_base_meta(item)
+    if not isinstance(base_meta, dict):
+        return None
+    if base_meta.get("nivel_id") is None or base_meta.get("grado_id") is None:
+        return None
+    return base_meta
+
+
+def _extract_clase_base_meta(item: Dict[str, object]) -> Optional[Dict[str, object]]:
     clase_id = _safe_int(item.get("geClaseId"))
     if clase_id is None:
         return None
@@ -3852,12 +3861,11 @@ def _extract_clase_meta(item: Dict[str, object]) -> Optional[Dict[str, object]]:
     grado_id = _safe_int(grado.get("gradoId"))
     grupo_id_actual = _safe_int(grupo.get("grupoId"))
 
-    if nivel_id is None or grado_id is None:
-        return None
-
     clase_nombre = str(item.get("geClase") or item.get("geClaseClave") or "")
     nivel_nombre = str(nivel.get("nivel") or "")
-    grado_nombre = str(grado.get("grado") or "")
+    grado_nombre = str(grado.get("grado") or grado.get("gradoClave") or "")
+    if not grado_nombre:
+        grado_nombre = clase_nombre
     grupo_clave_actual = str(grupo.get("grupoClave") or grupo.get("grupo") or "")
     return {
         "clase_id": clase_id,
@@ -3892,6 +3900,20 @@ def _participantes_ingles_grade_key(nivel_id: object, grado_id: object) -> str:
     return f"{int(nivel_id_int)}:{int(grado_id_int)}"
 
 
+def _participantes_ingles_option_key_from_meta(meta: Dict[str, object]) -> str:
+    option_key = _participantes_ingles_grade_key(
+        meta.get("nivel_id"),
+        meta.get("grado_id"),
+    )
+    if option_key:
+        return option_key
+    nivel_txt = _normalize_compare_text(meta.get("nivel_nombre"))
+    grado_txt = _normalize_compare_text(meta.get("grado_nombre"))
+    if not (nivel_txt or grado_txt):
+        return ""
+    return f"label:{nivel_txt}:{grado_txt}"
+
+
 def _build_ingles_grade_options_for_participantes(
     clases: List[Dict[str, object]],
 ) -> List[Dict[str, object]]:
@@ -3899,23 +3921,23 @@ def _build_ingles_grade_options_for_participantes(
     for item in clases:
         if not isinstance(item, dict) or not _is_ingles_por_niveles_class(item):
             continue
-        meta = _extract_clase_meta(item)
+        meta = _extract_clase_base_meta(item)
         if not meta:
             continue
-        option_key = _participantes_ingles_grade_key(
-            meta.get("nivel_id"),
-            meta.get("grado_id"),
-        )
+        option_key = _participantes_ingles_option_key_from_meta(meta)
         if not option_key:
             continue
-        options_by_key[option_key] = {
-            "key": option_key,
-            "nivel_id": int(meta["nivel_id"]),
-            "grado_id": int(meta["grado_id"]),
-            "nivel_nombre": str(meta.get("nivel_nombre") or "").strip(),
-            "grado_nombre": str(meta.get("grado_nombre") or "").strip(),
-            "class_names": [],
-        }
+        option = options_by_key.setdefault(
+            option_key,
+            {
+                "key": option_key,
+                "nivel_id": _safe_int(meta.get("nivel_id")),
+                "grado_id": _safe_int(meta.get("grado_id")),
+                "nivel_nombre": str(meta.get("nivel_nombre") or "").strip(),
+                "grado_nombre": str(meta.get("grado_nombre") or "").strip(),
+                "class_names": [],
+            },
+        )
         class_names = options_by_key[option_key].setdefault("class_names", [])
         class_name = str(meta.get("clase_nombre") or "").strip()
         if class_name and class_name not in class_names:
@@ -4373,16 +4395,13 @@ def _build_auto_group_rows_for_participantes(
                 f"Clase omitida por exclusion Santillana inclusiva: {item.get('geClaseId')}"
             )
             continue
-        meta = _extract_clase_meta(item)
-        if not meta:
+        base_meta = _extract_clase_base_meta(item)
+        if not base_meta:
             warnings_auto.append(
                 f"Clase omitida por metadata incompleta: {item.get('geClaseId')}"
             )
             continue
-        ingles_grade_key = _participantes_ingles_grade_key(
-            meta.get("nivel_id"),
-            meta.get("grado_id"),
-        )
+        ingles_grade_key = _participantes_ingles_option_key_from_meta(base_meta)
         if (
             exclude_ingles_por_niveles
             and _is_ingles_por_niveles_class(item)
@@ -4391,11 +4410,17 @@ def _build_auto_group_rows_for_participantes(
         ):
             rows_auto.append(
                 {
-                    **meta,
+                    **base_meta,
                     "options": [],
-                    "selected_group_id": meta.get("grupo_id_actual"),
+                    "selected_group_id": base_meta.get("grupo_id_actual"),
                     "clear_current_students": True,
                 }
+            )
+            continue
+        meta = _extract_clase_meta(item)
+        if not meta:
+            warnings_auto.append(
+                f"Clase omitida por metadata incompleta: {item.get('geClaseId')}"
             )
             continue
 
@@ -4878,7 +4903,7 @@ def _sync_participantes_por_grado_seccion(
         grado_id = _safe_int(row.get("grado_id"))
         clear_current_students = bool(row.get("clear_current_students"))
         clase_nombre = str(row.get("clase_nombre") or "").strip()
-        if clase_id is None or nivel_id is None or grado_id is None:
+        if clase_id is None:
             summary["clases_error"] += 1
             detail_rows.append(
                 {
@@ -4983,6 +5008,26 @@ def _sync_participantes_por_grado_seccion(
                     "Eliminar": len(to_remove),
                     "Resultado": resultado,
                     "Detalle": detalle_txt,
+                }
+            )
+            _emit_summary()
+            continue
+
+        if nivel_id is None or grado_id is None:
+            summary["clases_error"] += 1
+            detail_rows.append(
+                {
+                    "Clase ID": int(clase_id),
+                    "Clase": clase_nombre,
+                    "Nivel": row.get("nivel_nombre") or "",
+                    "Grado": row.get("grado_nombre") or "",
+                    "Seccion": "",
+                    "Activos objetivo": 0,
+                    "Actuales": 0,
+                    "Agregar": 0,
+                    "Eliminar": 0,
+                    "Resultado": "Error",
+                    "Detalle": "Metadata incompleta de clase.",
                 }
             )
             _emit_summary()

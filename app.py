@@ -3881,7 +3881,7 @@ def _is_santillana_inclusiva_class(item: Dict[str, object]) -> bool:
 def _is_ingles_por_niveles_class(item: Dict[str, object]) -> bool:
     ge_clase = _normalize_plain_text(item.get("geClase"))
     ge_clase_clave = _normalize_plain_text(item.get("geClaseClave"))
-    return ge_clase.startswith("INGLES") or ge_clase_clave.startswith("INGLES")
+    return "INGLES" in ge_clase or "INGLES" in ge_clase_clave
 
 
 def _participantes_ingles_grade_key(nivel_id: object, grado_id: object) -> str:
@@ -3914,9 +3914,18 @@ def _build_ingles_grade_options_for_participantes(
             "grado_id": int(meta["grado_id"]),
             "nivel_nombre": str(meta.get("nivel_nombre") or "").strip(),
             "grado_nombre": str(meta.get("grado_nombre") or "").strip(),
+            "class_names": [],
         }
+        class_names = options_by_key[option_key].setdefault("class_names", [])
+        class_name = str(meta.get("clase_nombre") or "").strip()
+        if class_name and class_name not in class_names:
+            class_names.append(class_name)
 
     options = list(options_by_key.values())
+    for option in options:
+        class_names = option.get("class_names")
+        if isinstance(class_names, list):
+            class_names.sort(key=lambda value: _normalize_compare_text(value))
     options.sort(
         key=lambda row: (
             _participantes_nivel_sort_rank(row.get("nivel_nombre")),
@@ -9404,7 +9413,7 @@ with tab_crud_clases:
                     key="clases_auto_group_exclude_ingles_checkbox",
                     help=(
                         "Si esta activo, las clases cuyo geClase o geClaseClave "
-                        "inicie con 'Ingles' se vaciaran y no recibiran asignacion "
+                        "contenga 'Ingles' se vaciaran y no recibiran asignacion "
                         "automatica por grado y seccion."
                     ),
                 )
@@ -9465,7 +9474,7 @@ with tab_crud_clases:
                             ] = list(loaded_option_keys)
 
                     st.caption(
-                        "Las clases cuyo geClase o geClaseClave inicie con 'Ingles' "
+                        "Las clases cuyo geClase o geClaseClave contenga 'Ingles' "
                         "se vaciaran de alumnos solo en los grados que selecciones."
                     )
                     if ingles_grade_error:
@@ -9473,15 +9482,14 @@ with tab_crud_clases:
                             f"No se pudieron cargar los grados de Ingles: {ingles_grade_error}"
                         )
                     elif ingles_grade_options:
-                        ingles_grade_label_by_key = {
-                            str(item.get("key") or "").strip(): (
-                                f"{str(item.get('nivel_nombre') or '').strip() or '-'} | "
-                                f"{str(item.get('grado_nombre') or '').strip() or '-'}"
-                            )
+                        ingles_grade_option_by_key = {
+                            str(item.get("key") or "").strip(): item
                             for item in ingles_grade_options
                             if str(item.get("key") or "").strip()
                         }
-                        valid_ingles_option_keys = list(ingles_grade_label_by_key.keys())
+                        valid_ingles_option_keys = list(
+                            ingles_grade_option_by_key.keys()
+                        )
                         current_selected_ingles_keys = [
                             str(item).strip()
                             for item in (
@@ -9506,6 +9514,22 @@ with tab_crud_clases:
                         checkbox_cols = st.columns(2, gap="small")
                         selected_ingles_grade_keys = []
                         for idx_option, option_key in enumerate(valid_ingles_option_keys):
+                            option_row = ingles_grade_option_by_key.get(
+                                str(option_key), {}
+                            )
+                            class_names = (
+                                option_row.get("class_names")
+                                if isinstance(option_row.get("class_names"), list)
+                                else []
+                            )
+                            checkbox_label = (
+                                f"{str(option_row.get('nivel_nombre') or '').strip() or '-'} | "
+                                f"{str(option_row.get('grado_nombre') or '').strip() or '-'}"
+                            )
+                            if class_names:
+                                checkbox_label = (
+                                    f"{checkbox_label} ({len(class_names)} clase(s))"
+                                )
                             checkbox_key = _participantes_ingles_grade_checkbox_key(
                                 option_key
                             )
@@ -9515,11 +9539,18 @@ with tab_crud_clases:
                                 )
                             with checkbox_cols[idx_option % 2]:
                                 is_selected = st.checkbox(
-                                    ingles_grade_label_by_key.get(
-                                        str(option_key), str(option_key)
-                                    ),
+                                    checkbox_label,
                                     key=checkbox_key,
                                 )
+                                if class_names:
+                                    st.caption(
+                                        "Clases: " + " | ".join(class_names[:6])
+                                    )
+                                    pending_class_names = len(class_names) - 6
+                                    if pending_class_names > 0:
+                                        st.caption(
+                                            f"... y {pending_class_names} clase(s) mas."
+                                        )
                             if is_selected:
                                 selected_ingles_grade_keys.append(str(option_key))
                         st.session_state[

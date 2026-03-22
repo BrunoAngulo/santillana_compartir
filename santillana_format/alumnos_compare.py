@@ -141,6 +141,8 @@ def comparar_plantillas_detalle(
 
     df_bd = _canonicalize_columns(df_bd)
     df_act = _canonicalize_columns(df_act)
+    df_bd = _sanitize_student_name_columns(df_bd)
+    df_act = _sanitize_student_name_columns(df_act)
 
     summary = _build_compare_summary(df_bd, df_act, compare_mode=compare_mode)
     comparacion, nuevos, coincidencias, sin_referencia = _build_comparacion_bd(
@@ -252,6 +254,28 @@ def _normalize_text(value: object) -> str:
     text = re.sub(r"[^a-z0-9]+", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text.replace(" ", "")
+
+
+def _sanitize_student_name_value(value: object) -> str:
+    text = _clean_cell_value(value)
+    if not text:
+        return ""
+    text = re.sub(r"[\'´`\-’]+", "", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _sanitize_student_name_columns(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df.copy()
+    sanitized = df.copy()
+    for column in ("nombre", "apellido_paterno", "apellido_materno"):
+        if column not in sanitized.columns:
+            continue
+        sanitized[column] = sanitized[column].apply(
+            _sanitize_student_name_value
+        )
+    return sanitized
 
 
 def _char_match_ratio(text_a: str, text_b: str) -> float:

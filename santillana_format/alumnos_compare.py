@@ -121,6 +121,21 @@ def comparar_plantillas(
     sheet_actualizada: str = DEFAULT_SHEET_ACTUALIZADA,
     compare_mode: str = COMPARE_MODE_AMBOS,
 ) -> Tuple[bytes, Dict[str, int]]:
+    result = comparar_plantillas_detalle(
+        excel_path=excel_path,
+        sheet_bd=sheet_bd,
+        sheet_actualizada=sheet_actualizada,
+        compare_mode=compare_mode,
+    )
+    return result["resultado_bytes"], result["summary"]
+
+
+def comparar_plantillas_detalle(
+    excel_path: Path,
+    sheet_bd: str = DEFAULT_SHEET_BD,
+    sheet_actualizada: str = DEFAULT_SHEET_ACTUALIZADA,
+    compare_mode: str = COMPARE_MODE_AMBOS,
+) -> Dict[str, object]:
     df_bd = _read_sheet(excel_path, sheet_bd)
     df_act = _read_sheet(excel_path, sheet_actualizada)
 
@@ -128,10 +143,16 @@ def comparar_plantillas(
     df_act = _canonicalize_columns(df_act)
 
     summary = _build_compare_summary(df_bd, df_act, compare_mode=compare_mode)
-    comparacion, nuevos = _build_comparacion_bd(df_bd, df_act, compare_mode=compare_mode)
+    comparacion, nuevos, coincidencias, sin_referencia = _build_comparacion_bd(
+        df_bd,
+        df_act,
+        compare_mode=compare_mode,
+    )
 
     output = Path(excel_path).name
     output_bytes = _export_comparacion(comparacion, nuevos)
+    actualizacion_bytes = export_alumnos_actualizacion_excel(comparacion)
+    alta_bytes = export_alumnos_crear_excel(nuevos)
     summary.update(
         {
             "actualizados_total": len(df_act),
@@ -142,7 +163,14 @@ def comparar_plantillas(
             "compare_mode": compare_mode,
         }
     )
-    return output_bytes, summary
+    return {
+        "resultado_bytes": output_bytes,
+        "actualizacion_bytes": actualizacion_bytes,
+        "alta_bytes": alta_bytes,
+        "summary": summary,
+        "coincidencias_rows": coincidencias.to_dict("records"),
+        "sin_referencia_rows": sin_referencia.to_dict("records"),
+    }
 
 
 def _read_sheet(excel_path: Path, sheet_name: str) -> pd.DataFrame:
@@ -458,6 +486,26 @@ def _export_comparacion(comparacion: pd.DataFrame, nuevos: pd.DataFrame) -> byte
     return output.getvalue()
 
 
+def export_alumnos_actualizacion_excel(comparacion: pd.DataFrame) -> bytes:
+    from io import BytesIO
+
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        _write_sheet(writer, "Plantilla ediciÃ³n masiva", comparacion)
+    output.seek(0)
+    return output.getvalue()
+
+
+def export_alumnos_crear_excel(nuevos: pd.DataFrame) -> bytes:
+    from io import BytesIO
+
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        _write_sheet(writer, "Plantilla alta de alumnos", nuevos)
+    output.seek(0)
+    return output.getvalue()
+
+
 def _write_sheet(writer: pd.ExcelWriter, name: str, df: pd.DataFrame) -> None:
     df = df.copy()
     df.to_excel(writer, index=False, sheet_name=name)
@@ -523,6 +571,93 @@ def _clean_cell_value(value: object) -> str:
     if text.lower() == "nan":
         return ""
     return text
+
+
+def _merge_non_empty_compare_fields(
+    row_out: Dict[str, object],
+    act_row: pd.Series,
+    fields_map: Dict[str, str],
+) -> None:
+    for source, target in fields_map.items():
+        current_value = _clean_cell_value(row_out.get(target, ""))
+        updated_value = _clean_cell_value(act_row.get(source, ""))
+        row_out[target] = updated_value or current_value
+
+
+def _compose_display_name(row: pd.Series) -> str:
+    parts = [
+        _clean_cell_value(row.get("nombre", "")),
+        _clean_cell_value(row.get("apellido_paterno", "")),
+        _clean_cell_value(row.get("apellido_materno", "")),
+    ]
+    return " ".join(part for part in parts if part).strip()
+
+
+def _resolve_final_login(act_row: pd.Series, bd_row: Optional[pd.Series] = None) -> str:
+    act_login = _clean_cell_value(act_row.get("login", ""))
+    if act_login:
+        return act_login
+    if bd_row is not None:
+        return _clean_cell_value(bd_row.get("login", ""))
+    return ""
+
+
+def _describe_match_reference(act_row: pd.Series, bd_row: pd.Series) -> str:
+    act_nuip = _normalize_nuip(act_row.get("nuip"))
+    bd_nuip = _normalize_nuip(bd_row.get("nuip"))
+    if act_nuip and bd_nuip and act_nuip == bd_nuip:
+        return "NUIP"
+
+    act_nombre = _normalize_text(act_row.get("nombre"))
+    bd_nombre = _normalize_text(bd_row.get("nombre"))
+    act_ap_pat = _normalize_text(act_row.get("apellido_paterno"))
+    bd_ap_pat = _normalize_text(bd_row.get("apellido_paterno"))
+    act_ap_mat = _normalize_text(act_row.get("apellido_materno"))
+    bd_ap_mat = _normalize_text(bd_row.get("apellido_materno"))
+
+    if act_nombre and act_ap_pat and act_ap_mat:
+        if (
+            act_nombre == bd_nombre
+            and act_ap_pat == bd_ap_pat
+            and act_ap_mat == bd_ap_mat
+        ):
+            return "Nombre + apellidos"
+    if act_nombre and act_ap_pat and act_nombre == bd_nombre and act_ap_pat == bd_ap_pat:
+        return "Nombre + apellido paterno"
+    if act_ap_pat and act_ap_mat and act_ap_pat == bd_ap_pat and act_ap_mat == bd_ap_mat:
+        return "Apellidos"
+    return "Referencia"
+
+
+def _build_match_preview_row(act_row: pd.Series, bd_row: pd.Series) -> Dict[str, str]:
+    return {
+        "Alumno Plantilla_Actualizada": _compose_display_name(act_row),
+        "NUIP Plantilla_Actualizada": _clean_cell_value(act_row.get("nuip", "")),
+        "Login Plantilla_Actualizada": _clean_cell_value(act_row.get("login", "")),
+        "Login final": _resolve_final_login(act_row, bd_row),
+        "Alumno BD": _compose_display_name(bd_row),
+        "NUIP BD": _clean_cell_value(bd_row.get("nuip", "")),
+        "Login BD": _clean_cell_value(bd_row.get("login", "")),
+        "Referencia por": _describe_match_reference(act_row, bd_row),
+        "Nivel Actualizada": _clean_cell_value(act_row.get("nivel", "")),
+        "Grado Actualizada": _clean_cell_value(act_row.get("grado", "")),
+        "Grupo Actualizada": _clean_cell_value(act_row.get("grupo", "")),
+        "Nivel BD": _clean_cell_value(bd_row.get("nivel", "")),
+        "Grado BD": _clean_cell_value(bd_row.get("grado", "")),
+        "Grupo BD": _clean_cell_value(bd_row.get("grupo", "")),
+    }
+
+
+def _build_unmatched_preview_row(act_row: pd.Series) -> Dict[str, str]:
+    return {
+        "Alumno Plantilla_Actualizada": _compose_display_name(act_row),
+        "NUIP": _clean_cell_value(act_row.get("nuip", "")),
+        "Login Plantilla_Actualizada": _clean_cell_value(act_row.get("login", "")),
+        "Login final": _resolve_final_login(act_row),
+        "Nivel": _clean_cell_value(act_row.get("nivel", "")),
+        "Grado": _clean_cell_value(act_row.get("grado", "")),
+        "Grupo": _clean_cell_value(act_row.get("grupo", "")),
+    }
 
 
 def _pick_row_value(row: pd.Series, aliases: Sequence[str]) -> object:
@@ -991,11 +1126,13 @@ def _build_comparacion_bd(
     df_bd: pd.DataFrame,
     df_act: pd.DataFrame,
     compare_mode: str = COMPARE_MODE_AMBOS,
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     if df_bd.empty and df_act.empty:
         return (
             pd.DataFrame(columns=ALUMNOS_COMPARACION_COLUMNS),
             pd.DataFrame(columns=ALUMNOS_CREAR_COLUMNS),
+            pd.DataFrame(),
+            pd.DataFrame(),
         )
 
     nuip_index = _build_nuip_index(df_bd) if not df_bd.empty else {}
@@ -1004,6 +1141,8 @@ def _build_comparacion_bd(
     apellidos_cache = _build_apellidos_cache(df_bd) if not df_bd.empty else []
     rows: List[Dict[str, object]] = []
     nuevos_rows: List[pd.Series] = []
+    coincidencias_rows: List[Dict[str, str]] = []
+    sin_referencia_rows: List[Dict[str, str]] = []
     bd_matched_indices = set()
     bd_protected_indices = set()
 
@@ -1044,15 +1183,25 @@ def _build_comparacion_bd(
                     int(idx) for idx in protected_candidates if idx is not None
                 )
             nuevos_rows.append(act_row)
+            sin_referencia_rows.append(_build_unmatched_preview_row(act_row))
             continue
         bd_matched_indices.add(int(bd_idx))
         bd_row = df_bd.loc[bd_idx]
+        coincidencias_rows.append(_build_match_preview_row(act_row, bd_row))
 
         row_out: Dict[str, object] = {}
         for source, target in BASE_OUTPUT_MAP.items():
             row_out[target] = _clean_cell_value(bd_row.get(source, ""))
 
         row_out["Activo"] = "Si"
+        _merge_non_empty_compare_fields(
+            row_out,
+            act_row,
+            {
+                "login": "Login",
+                "password": "Password",
+            },
+        )
 
         nuevo_nivel = _clean_cell_value(
             _pick_row_value(act_row, ("nivel", "Nivel", "Nuevo Nivel"))
@@ -1118,7 +1267,9 @@ def _build_comparacion_bd(
             _parse_fecha_excel_with_default
         )
     nuevos_df = _build_alumnos_crear(pd.DataFrame(nuevos_rows))
-    return df_out, nuevos_df
+    coincidencias_df = pd.DataFrame(coincidencias_rows)
+    sin_referencia_df = pd.DataFrame(sin_referencia_rows)
+    return df_out, nuevos_df, coincidencias_df, sin_referencia_df
 
 
 def _count_inactivos(comparacion: pd.DataFrame) -> int:

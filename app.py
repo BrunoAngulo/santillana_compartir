@@ -9897,7 +9897,7 @@ def render_richmond_studio_view() -> None:
                 "Richmond Studio: CLASS NAME, CLASS CODE, STUDENT NAME, IDENTIFIER, createdAt y lastSignInAt. Solo roles student/teacher."
             )
             run_rs_cleanup_subscriptions_confirmed = _consume_richmondstudio_confirmed_action(
-                "rs_multi_class_remove_subscriptions_2025"
+                "rs_single_remove_subscriptions_2025"
             )
             run_rs_excel = st.button(
                 "Listar alumnos registrados",
@@ -9948,6 +9948,7 @@ def render_richmond_studio_view() -> None:
                     "rs_multi_class_cleanup_summary",
                     "rs_multi_class_cleanup_rows",
                     "rs_multi_class_cleanup_bytes",
+                    "rs_multi_class_cleanup_target_user_id",
                 ):
                     st.session_state.pop(state_key, None)
                 st.success(
@@ -9985,19 +9986,39 @@ def render_richmond_studio_view() -> None:
                 for row in multi_class_students_rows_cached
                 if int(_safe_int(row.get("CLASSES COUNT")) or 0) > 1
             ]
+            eligible_row_by_user_id: Dict[str, Dict[str, object]] = {}
+            for row in multi_class_eligible_rows:
+                user_id = str(row.get("RS USER ID") or "").strip()
+                if user_id and user_id not in eligible_row_by_user_id:
+                    eligible_row_by_user_id[user_id] = row
 
             if run_rs_cleanup_subscriptions_confirmed:
+                target_user_id = str(
+                    st.session_state.get("rs_multi_class_cleanup_target_user_id") or ""
+                ).strip()
+                target_row = eligible_row_by_user_id.get(target_user_id)
                 if not rs_token:
                     st.error("Ingresa el bearer token de Richmond Studio.")
                 elif not multi_class_eligible_rows:
                     st.warning("No hay alumnos con mas de una clase para limpiar.")
+                elif not target_row:
+                    st.warning(
+                        "No se encontro el alumno seleccionado para limpiar. Vuelve a elegirlo."
+                    )
                 else:
                     try:
-                        with st.spinner("Quitando suscripciones 2025 en RS..."):
+                        student_name = str(target_row.get("STUDENT NAME") or "").strip()
+                        with st.spinner(
+                            (
+                                f"Quitando suscripciones 2025 de {student_name}..."
+                                if student_name
+                                else "Quitando suscripciones 2025 en RS..."
+                            )
+                        ):
                             cleanup_summary, cleanup_rows = (
                                 _remove_richmondstudio_subscriptions_2025_for_multiclass_students(
                                     token=rs_token,
-                                    rows=multi_class_students_rows_cached,
+                                    rows=[target_row],
                                     timeout=int(timeout),
                                     target_year=2025,
                                 )
@@ -10005,6 +10026,7 @@ def render_richmond_studio_view() -> None:
                     except Exception as exc:  # pragma: no cover - UI
                         st.error(f"Error RS: {exc}")
                     else:
+                        st.session_state.pop("rs_multi_class_cleanup_target_user_id", None)
                         st.session_state["rs_multi_class_cleanup_summary"] = dict(
                             cleanup_summary
                         )
@@ -10030,25 +10052,100 @@ def render_richmond_studio_view() -> None:
             if multi_class_eligible_rows:
                 st.markdown("**Alumnos con mas de una clase**")
                 st.caption(
-                    "Estos alumnos son candidatos para quitar suscripciones creadas en 2025."
+                    "Selecciona un alumno para quitar solo suscripciones creadas en 2025. Las suscripciones 2026 se conservan."
                 )
                 _show_dataframe(
                     multi_class_eligible_rows[:200],
                     use_container_width=True,
                 )
+                eligible_user_ids = list(eligible_row_by_user_id.keys())
+                selected_cleanup_user_id = str(
+                    st.session_state.get("rs_multi_class_cleanup_selected_user_id") or ""
+                ).strip()
+                if selected_cleanup_user_id not in eligible_row_by_user_id:
+                    selected_cleanup_user_id = eligible_user_ids[0]
+                    st.session_state["rs_multi_class_cleanup_selected_user_id"] = (
+                        selected_cleanup_user_id
+                    )
+                selected_cleanup_user_id = str(
+                    st.selectbox(
+                        "Alumno a limpiar",
+                        options=eligible_user_ids,
+                        key="rs_multi_class_cleanup_selected_user_id",
+                        format_func=lambda user_id: (
+                            "{name} | {identifier} | {classes} clases".format(
+                                name=str(
+                                    eligible_row_by_user_id.get(user_id, {}).get(
+                                        "STUDENT NAME"
+                                    )
+                                    or user_id
+                                ).strip(),
+                                identifier=str(
+                                    eligible_row_by_user_id.get(user_id, {}).get(
+                                        "IDENTIFIER"
+                                    )
+                                    or ""
+                                ).strip(),
+                                classes=str(
+                                    eligible_row_by_user_id.get(user_id, {}).get(
+                                        "CLASSES COUNT"
+                                    )
+                                    or "0"
+                                ).strip(),
+                            )
+                        ),
+                    )
+                    or ""
+                ).strip()
+                selected_cleanup_row = (
+                    eligible_row_by_user_id.get(selected_cleanup_user_id) or {}
+                )
+                if selected_cleanup_row:
+                    st.caption(
+                        "Seleccionado: {name} | Usuario: {identifier} | Clases: {classes}".format(
+                            name=str(selected_cleanup_row.get("STUDENT NAME") or "").strip()
+                            or "(sin nombre)",
+                            identifier=str(
+                                selected_cleanup_row.get("IDENTIFIER") or ""
+                            ).strip()
+                            or "(sin identificador)",
+                            classes=str(
+                                selected_cleanup_row.get("CLASSES COUNT") or "0"
+                            ).strip(),
+                        )
+                    )
                 if st.button(
-                    "Quitar suscripciones 2025 (>1 clase)",
+                    "Quitar suscripciones 2025 del alumno seleccionado",
                     type="primary",
                     key="rs_multi_class_cleanup_request_btn",
                     use_container_width=True,
                 ):
-                    _request_richmondstudio_confirmation(
-                        "rs_multi_class_remove_subscriptions_2025",
-                        (
-                            f"quitar suscripciones 2025 a {len(multi_class_eligible_rows)} "
-                            "alumnos con mas de una clase"
-                        ),
-                    )
+                    target_user_id = str(
+                        selected_cleanup_row.get("RS USER ID") or ""
+                    ).strip()
+                    if not target_user_id:
+                        st.error("No se pudo identificar el alumno seleccionado.")
+                    else:
+                        st.session_state["rs_multi_class_cleanup_target_user_id"] = (
+                            target_user_id
+                        )
+                        target_name = str(
+                            selected_cleanup_row.get("STUDENT NAME") or ""
+                        ).strip()
+                        target_identifier = str(
+                            selected_cleanup_row.get("IDENTIFIER") or ""
+                        ).strip()
+                        target_classes = str(
+                            selected_cleanup_row.get("CLASSES COUNT") or "0"
+                        ).strip()
+                        _request_richmondstudio_confirmation(
+                            "rs_single_remove_subscriptions_2025",
+                            (
+                                "quitar suscripciones 2025 de "
+                                f"{target_name or target_identifier or target_user_id} "
+                                f"({target_classes} clases)"
+                            ),
+                        )
 
             cleanup_summary_cached = (
                 st.session_state.get("rs_multi_class_cleanup_summary") or {}

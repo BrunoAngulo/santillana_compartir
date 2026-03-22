@@ -1740,7 +1740,7 @@ def _remove_richmondstudio_subscriptions_2025_for_multiclass_students(
     eligible_rows = [
         row
         for row in rows
-        if int(_safe_int(row.get("CLASSES COUNT")) or 0) > 2
+        if int(_safe_int(row.get("CLASSES COUNT")) or 0) > 1
     ]
     summary["eligible_total"] = int(len(eligible_rows))
 
@@ -2109,7 +2109,7 @@ def _build_richmondstudio_registered_listing_data(
                     "IDENTIFIER": identifier,
                     "EMAIL": email,
                     "CLASSES COUNT": str(len(group_ids)),
-                    "REMOVE 2025 SUBSCRIPTIONS": "Si" if len(group_ids) > 2 else "",
+                    "REMOVE 2025 SUBSCRIPTIONS": "Si" if len(group_ids) > 1 else "",
                     "CLASS NAMES": " | ".join(class_names),
                     "CLASS CODES": " | ".join(class_codes),
                     "createdAt": created_at,
@@ -9980,17 +9980,17 @@ def render_richmond_studio_view() -> None:
             multi_class_students_rows_cached = list(
                 st.session_state.get("rs_multi_class_students_rows") or []
             )
-            multi_class_gt2_rows = [
+            multi_class_eligible_rows = [
                 row
                 for row in multi_class_students_rows_cached
-                if int(_safe_int(row.get("CLASSES COUNT")) or 0) > 2
+                if int(_safe_int(row.get("CLASSES COUNT")) or 0) > 1
             ]
 
             if run_rs_cleanup_subscriptions_confirmed:
                 if not rs_token:
                     st.error("Ingresa el bearer token de Richmond Studio.")
-                elif not multi_class_gt2_rows:
-                    st.warning("No hay alumnos con mas de dos clases para limpiar.")
+                elif not multi_class_eligible_rows:
+                    st.warning("No hay alumnos con mas de una clase para limpiar.")
                 else:
                     try:
                         with st.spinner("Quitando suscripciones 2025 en RS..."):
@@ -10027,17 +10027,17 @@ def render_richmond_studio_view() -> None:
                             )
                         )
 
-            if multi_class_gt2_rows:
-                st.markdown("**Alumnos con mas de dos clases**")
+            if multi_class_eligible_rows:
+                st.markdown("**Alumnos con mas de una clase**")
                 st.caption(
                     "Estos alumnos son candidatos para quitar suscripciones creadas en 2025."
                 )
                 _show_dataframe(
-                    multi_class_gt2_rows[:200],
+                    multi_class_eligible_rows[:200],
                     use_container_width=True,
                 )
                 if st.button(
-                    "Quitar suscripciones 2025 (>2 clases)",
+                    "Quitar suscripciones 2025 (>1 clase)",
                     type="primary",
                     key="rs_multi_class_cleanup_request_btn",
                     use_container_width=True,
@@ -10045,8 +10045,8 @@ def render_richmond_studio_view() -> None:
                     _request_richmondstudio_confirmation(
                         "rs_multi_class_remove_subscriptions_2025",
                         (
-                            f"quitar suscripciones 2025 a {len(multi_class_gt2_rows)} "
-                            "alumnos con mas de dos clases"
+                            f"quitar suscripciones 2025 a {len(multi_class_eligible_rows)} "
+                            "alumnos con mas de una clase"
                         ),
                     )
 

@@ -5837,20 +5837,85 @@ def _build_ingles_assignment_class_key(value: object) -> str:
 
 def _build_ingles_assignment_students_lookup(
     students: List[Dict[str, object]]
-) -> Dict[Tuple[str, str, str], List[Dict[str, object]]]:
-    lookup: Dict[Tuple[str, str, str], List[Dict[str, object]]] = {}
+) -> Dict[Tuple[str, str], List[Dict[str, object]]]:
+    lookup: Dict[Tuple[str, str], List[Dict[str, object]]] = {}
     for row in students:
         if not isinstance(row, dict):
             continue
-        key = _build_ingles_assignment_student_key(
-            row.get("nombre"),
+        key = (
             row.get("apellido_paterno"),
             row.get("apellido_materno"),
+        )
+        key = (
+            _normalize_compare_apellido(key[0]),
+            _normalize_compare_apellido(key[1]),
         )
         if not any(key):
             continue
         lookup.setdefault(key, []).append(row)
     return lookup
+
+
+def _build_ingles_assignment_name_tokens(value: object) -> List[str]:
+    return [token for token in _normalize_compare_text(value).split() if token]
+
+
+def _ingles_assignment_given_name_match_score(
+    requested_name: object,
+    candidate_name: object,
+) -> int:
+    requested_norm = _normalize_compare_text(requested_name)
+    candidate_norm = _normalize_compare_text(candidate_name)
+    if not requested_norm or not candidate_norm:
+        return 0
+    if requested_norm == candidate_norm:
+        return 3
+
+    requested_tokens = _build_ingles_assignment_name_tokens(requested_name)
+    candidate_tokens = _build_ingles_assignment_name_tokens(candidate_name)
+    if not requested_tokens or not candidate_tokens:
+        return 0
+    if requested_tokens == candidate_tokens[: len(requested_tokens)]:
+        return 2
+    if all(token in candidate_tokens for token in requested_tokens):
+        return 1
+    return 0
+
+
+def _find_ingles_assignment_student_matches(
+    nombre: object,
+    apellido_paterno: object,
+    apellido_materno: object,
+    students_lookup: Dict[Tuple[str, str], List[Dict[str, object]]],
+) -> Tuple[List[Dict[str, object]], str]:
+    surname_key = (
+        _normalize_compare_apellido(apellido_paterno),
+        _normalize_compare_apellido(apellido_materno),
+    )
+    candidates = list(students_lookup.get(surname_key) or [])
+    if not candidates:
+        return [], ""
+
+    matched_by_score: Dict[int, List[Dict[str, object]]] = {}
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        score = max(
+            _ingles_assignment_given_name_match_score(nombre, candidate.get("nombre")),
+            _ingles_assignment_given_name_match_score(
+                nombre,
+                candidate.get("nombre_completo"),
+            ),
+        )
+        if score <= 0:
+            continue
+        matched_by_score.setdefault(int(score), []).append(candidate)
+
+    for score, mode in ((3, "exacto"), (2, "prefijo"), (1, "parcial")):
+        matches = matched_by_score.get(score) or []
+        if matches:
+            return matches, mode
+    return [], ""
 
 
 def _build_ingles_assignment_classes_lookup(
@@ -5900,9 +5965,11 @@ def _build_ingles_assignment_preview_rows(
         clase = str(raw_row.get("Clase") or "").strip()
         row_number = _safe_int(raw_row.get("_row_number")) or 0
 
-        matched_students = students_lookup.get(
-            _build_ingles_assignment_student_key(nombre, ap_pat, ap_mat),
-            [],
+        matched_students, student_match_mode = _find_ingles_assignment_student_matches(
+            nombre,
+            ap_pat,
+            ap_mat,
+            students_lookup,
         )
         matched_classes = classes_lookup.get(
             _build_ingles_assignment_class_key(clase),
@@ -5922,16 +5989,32 @@ def _build_ingles_assignment_preview_rows(
             detalle = "Alumno no encontrado."
         elif len(matched_students) > 1:
             estado = "Error"
-            detalle = f"Alumno ambiguo: {len(matched_students)} coincidencias exactas."
+            detalle = (
+                "Alumno ambiguo: {total} coincidencias por nombre {mode}.".format(
+                    total=len(matched_students),
+                    mode=student_match_mode or "compatible",
+                )
+            )
         elif not matched_classes:
             estado = "Error"
             detalle = "Clase no encontrada."
         elif len(matched_classes) > 1:
             estado = "Error"
             detalle = f"Clase ambigua: {len(matched_classes)} coincidencias exactas."
-        elif not _to_bool(student_row.get("activo")):
-            estado = "Error"
-            detalle = "Alumno encontrado pero inactivo."
+        else:
+            detail_parts: List[str] = []
+            if student_match_mode == "prefijo":
+                detail_parts.append(
+                    "Alumno encontrado por coincidencia de prefijo en nombres."
+                )
+            elif student_match_mode == "parcial":
+                detail_parts.append(
+                    "Alumno encontrado por coincidencia parcial en nombres."
+                )
+            if not _to_bool(student_row.get("activo")):
+                detail_parts.append("Alumno inactivo: se activara antes de asignar.")
+            detail_parts.append("Se asignara a la clase encontrada.")
+            detalle = " ".join(detail_parts)
 
         preview_rows.append(
             {
@@ -5956,6 +6039,10 @@ def _build_ingles_assignment_preview_rows(
                 "Detalle": detalle,
                 "_alumno_id": _safe_int(student_row.get("alumno_id")) if student_row else None,
                 "_clase_id": _safe_int(class_row.get("clase_id")) if class_row else None,
+                "_nivel_id": _safe_int(student_row.get("nivel_id")) if student_row else None,
+                "_grado_id": _safe_int(student_row.get("grado_id")) if student_row else None,
+                "_grupo_id": _safe_int(student_row.get("grupo_id")) if student_row else None,
+                "_activo": bool(_to_bool(student_row.get("activo"))) if student_row else False,
             }
         )
 
@@ -6000,6 +6087,7 @@ def _build_ingles_assignment_preview_display_rows(
 
 def _apply_ingles_assignment_preview_rows(
     token: str,
+    colegio_id: int,
     empresa_id: int,
     ciclo_id: int,
     timeout: int,
@@ -6058,6 +6146,10 @@ def _apply_ingles_assignment_preview_rows(
         result_row = dict(row) if isinstance(row, dict) else {}
         alumno_id = _safe_int(result_row.get("_alumno_id"))
         clase_id = _safe_int(result_row.get("_clase_id"))
+        nivel_id = _safe_int(result_row.get("_nivel_id"))
+        grado_id = _safe_int(result_row.get("_grado_id"))
+        grupo_id = _safe_int(result_row.get("_grupo_id"))
+        alumno_activo = bool(result_row.get("_activo"))
         estado = str(result_row.get("Estado") or "").strip()
 
         if estado != "Listo":
@@ -6081,10 +6173,56 @@ def _apply_ingles_assignment_preview_rows(
             results.append(result_row)
             continue
 
+        activation_prefix = ""
+        if not alumno_activo:
+            if nivel_id is None or grado_id is None or grupo_id is None:
+                result_row["Resultado aplicar"] = "Error"
+                result_row["Detalle aplicar"] = (
+                    "No se pudo activar al alumno: falta nivel_id, grado_id o grupo_id."
+                )
+                results.append(result_row)
+                continue
+            _status(
+                "Activando alumno antes de asignar: {alumno}".format(
+                    alumno=str(
+                        result_row.get("Alumno encontrado")
+                        or result_row.get("Nombre")
+                        or alumno_id
+                    ).strip()
+                )
+            )
+            activation_ok, activation_msg = _set_alumno_activo_web(
+                token=token,
+                colegio_id=int(colegio_id),
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                nivel_id=int(nivel_id),
+                grado_id=int(grado_id),
+                grupo_id=int(grupo_id),
+                alumno_id=int(alumno_id),
+                activo=1,
+                observaciones="Activado automaticamente antes de asignacion de ingles por niveles.",
+                timeout=int(timeout),
+            )
+            if not activation_ok:
+                result_row["Resultado aplicar"] = "Error"
+                result_row["Detalle aplicar"] = (
+                    "No se pudo activar al alumno antes de asignar: {msg}".format(
+                        msg=str(activation_msg or "sin detalle").strip()
+                    )
+                )
+                results.append(result_row)
+                continue
+            result_row["_activo"] = True
+            result_row["Activo"] = "Si"
+            activation_prefix = "Alumno activado. "
+
         class_members = members_by_class.setdefault(int(clase_id), set())
         if int(alumno_id) in class_members:
             result_row["Resultado aplicar"] = "Sin cambios"
-            result_row["Detalle aplicar"] = "El alumno ya estaba asignado a la clase."
+            result_row["Detalle aplicar"] = (
+                f"{activation_prefix}El alumno ya estaba asignado a la clase."
+            ).strip()
             results.append(result_row)
             continue
 
@@ -6108,10 +6246,14 @@ def _apply_ingles_assignment_preview_rows(
         if ok_assign:
             class_members.add(int(alumno_id))
             result_row["Resultado aplicar"] = "OK"
-            result_row["Detalle aplicar"] = "Asignado correctamente."
+            result_row["Detalle aplicar"] = (
+                f"{activation_prefix}Asignado correctamente."
+            ).strip()
         else:
             result_row["Resultado aplicar"] = "Error"
-            result_row["Detalle aplicar"] = str(msg_assign or "No se pudo asignar.").strip()
+            result_row["Detalle aplicar"] = (
+                f"{activation_prefix}{str(msg_assign or 'No se pudo asignar.').strip()}"
+            ).strip()
         results.append(result_row)
 
     return results
@@ -6310,6 +6452,7 @@ def _render_ingles_por_niveles_excel_assignment_block(
                     with st.spinner("Aplicando asignacion de ingles..."):
                         apply_rows = _apply_ingles_assignment_preview_rows(
                             token=token,
+                            colegio_id=int(colegio_id),
                             empresa_id=int(empresa_id),
                             ciclo_id=int(ciclo_id),
                             timeout=int(timeout),

@@ -1800,7 +1800,15 @@ def _remove_richmondstudio_expiring_subscriptions_for_multiclass_students(
     timeout: int = 30,
     target_year: Optional[int] = None,
     cutoff_month: int = 6,
+    on_status: Optional[Callable[[str], None]] = None,
 ) -> Tuple[Dict[str, int], List[Dict[str, str]]]:
+    def _status(message: str) -> None:
+        if callable(on_status):
+            try:
+                on_status(str(message or ""))
+            except Exception:
+                pass
+
     target_year_int = int(target_year or _richmondstudio_cleanup_target_year())
     cutoff_month_int = int(cutoff_month)
     cutoff_label = _richmondstudio_cleanup_cutoff_label(
@@ -1825,11 +1833,19 @@ def _remove_richmondstudio_expiring_subscriptions_for_multiclass_students(
     ]
     summary["eligible_total"] = int(len(eligible_rows))
 
-    for row in eligible_rows:
+    total_rows = len(eligible_rows)
+    for idx_row, row in enumerate(eligible_rows, start=1):
         user_id = str(row.get("RS USER ID") or "").strip()
         student_name = str(row.get("STUDENT NAME") or "").strip()
         identifier = str(row.get("IDENTIFIER") or "").strip()
         classes_count = int(_safe_int(row.get("CLASSES COUNT")) or 0)
+        _status(
+            "Procesando limpieza RS {idx}/{total}: {student}".format(
+                idx=idx_row,
+                total=max(total_rows, 1),
+                student=student_name or identifier or user_id or "(sin usuario)",
+            )
+        )
 
         result_row = {
             "RS USER ID": user_id,
@@ -10634,6 +10650,9 @@ def render_richmond_studio_view() -> None:
             run_rs_cleanup_subscriptions_confirmed = _consume_richmondstudio_confirmed_action(
                 "rs_single_remove_expiring_subscriptions"
             )
+            run_rs_cleanup_subscriptions_mass_confirmed = _consume_richmondstudio_confirmed_action(
+                "rs_mass_remove_expiring_subscriptions"
+            )
             run_rs_excel = st.button(
                 "Listar alumnos registrados",
                 type="primary",
@@ -10785,6 +10804,57 @@ def render_richmond_studio_view() -> None:
                             )
                         )
 
+            if run_rs_cleanup_subscriptions_mass_confirmed:
+                if not rs_token:
+                    st.error("Ingresa el bearer token de Richmond Studio.")
+                elif not multi_class_eligible_rows:
+                    st.warning("No hay alumnos con mas de una clase para limpiar.")
+                else:
+                    status_placeholder = st.empty()
+                    try:
+                        with st.spinner(
+                            "Quitando suscripciones que expiran "
+                            f"{cleanup_cutoff_label} para todos los alumnos elegibles..."
+                        ):
+                            cleanup_summary, cleanup_rows = (
+                                _remove_richmondstudio_expiring_subscriptions_for_multiclass_students(
+                                    token=rs_token,
+                                    rows=multi_class_eligible_rows,
+                                    timeout=int(timeout),
+                                    target_year=int(cleanup_target_year),
+                                    cutoff_month=int(cleanup_cutoff_month),
+                                    on_status=lambda message: status_placeholder.write(message),
+                                )
+                            )
+                    except Exception as exc:  # pragma: no cover - UI
+                        status_placeholder.empty()
+                        st.error(f"Error RS: {exc}")
+                    else:
+                        status_placeholder.empty()
+                        st.session_state.pop("rs_multi_class_cleanup_target_user_id", None)
+                        st.session_state["rs_multi_class_cleanup_summary"] = dict(
+                            cleanup_summary
+                        )
+                        st.session_state["rs_multi_class_cleanup_rows"] = list(
+                            cleanup_rows
+                        )
+                        st.session_state["rs_multi_class_cleanup_bytes"] = (
+                            _export_simple_excel(
+                                cleanup_rows,
+                                sheet_name=cleanup_sheet_name,
+                            )
+                            if cleanup_rows
+                            else b""
+                        )
+                        st.success(
+                            "Limpieza masiva RS completada. Elegibles: {eligible_total} | "
+                            "Procesados: {processed_total} | Actualizados: {updated_total} | "
+                            "Sin cambios: {skipped_total} | Errores: {error_total} | "
+                            "Suscripciones removidas: {removed_total}.".format(
+                                **cleanup_summary
+                            )
+                        )
+
             if multi_class_eligible_rows:
                 st.markdown("**Alumnos con mas de una clase**")
                 st.caption(
@@ -10795,6 +10865,20 @@ def render_richmond_studio_view() -> None:
                     multi_class_eligible_rows[:200],
                     use_container_width=True,
                 )
+                if st.button(
+                    f"Quitar suscripciones {cleanup_cutoff_label} de todos los alumnos elegibles",
+                    type="primary",
+                    key="rs_multi_class_cleanup_mass_request_btn",
+                    use_container_width=True,
+                ):
+                    _request_richmondstudio_confirmation(
+                        "rs_mass_remove_expiring_subscriptions",
+                        (
+                            "quitar suscripciones "
+                            f"{cleanup_cutoff_label} de {len(multi_class_eligible_rows)} "
+                            "alumno(s) en varias clases"
+                        ),
+                    )
                 eligible_user_ids = list(eligible_row_by_user_id.keys())
                 selected_cleanup_user_id = str(
                     st.session_state.get("rs_multi_class_cleanup_selected_user_id") or ""

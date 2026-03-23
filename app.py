@@ -1619,6 +1619,55 @@ def _richmondstudio_parse_year(value: object) -> Optional[int]:
     return None
 
 
+def _richmondstudio_parse_year_month(value: object) -> Optional[Tuple[int, int]]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    text = text.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(text)
+        return int(parsed.year), int(parsed.month)
+    except ValueError:
+        match = re.match(r"^(\d{4})-(\d{2})", text)
+        if match:
+            try:
+                return int(match.group(1)), int(match.group(2))
+            except ValueError:
+                return None
+    return None
+
+
+def _richmondstudio_cleanup_target_year() -> int:
+    return int(date.today().year)
+
+
+def _richmondstudio_cleanup_cutoff_month() -> int:
+    return 6
+
+
+def _richmondstudio_cleanup_cutoff_label(
+    year: Optional[int] = None,
+    cutoff_month: int = 6,
+) -> str:
+    year_int = int(year or _richmondstudio_cleanup_target_year())
+    month_names = {
+        1: "ENE",
+        2: "FEB",
+        3: "MAR",
+        4: "ABR",
+        5: "MAY",
+        6: "JUN",
+        7: "JUL",
+        8: "AGO",
+        9: "SEP",
+        10: "OCT",
+        11: "NOV",
+        12: "DIC",
+    }
+    month_label = month_names.get(int(cutoff_month), str(int(cutoff_month)).zfill(2))
+    return f"<= {month_label} {year_int}"
+
+
 def _richmondstudio_subscription_rows_from_detail(
     detail_body: Dict[str, object],
 ) -> List[Dict[str, str]]:
@@ -1653,6 +1702,30 @@ def _richmondstudio_subscription_ids_by_year(
             continue
         created_year = _richmondstudio_parse_year(row.get("created_at"))
         if created_year != int(year):
+            continue
+        seen.add(subscription_id)
+        ids.append(subscription_id)
+    return ids
+
+
+def _richmondstudio_subscription_ids_expiring_until_month_in_year(
+    detail_body: Dict[str, object],
+    year: int,
+    cutoff_month: int,
+) -> List[str]:
+    ids: List[str] = []
+    seen: Set[str] = set()
+    for row in _richmondstudio_subscription_rows_from_detail(detail_body):
+        subscription_id = str(row.get("id") or "").strip()
+        if not subscription_id or subscription_id in seen:
+            continue
+        expiration_date = _richmondstudio_parse_year_month(row.get("expiration_date"))
+        if expiration_date is None:
+            continue
+        expiration_year, expiration_month = expiration_date
+        if int(expiration_year) != int(year):
+            continue
+        if int(expiration_month) > int(cutoff_month):
             continue
         seen.add(subscription_id)
         ids.append(subscription_id)
@@ -1721,12 +1794,20 @@ def _build_richmondstudio_user_patch_payload_from_detail(
     }
 
 
-def _remove_richmondstudio_subscriptions_2025_for_multiclass_students(
+def _remove_richmondstudio_expiring_subscriptions_for_multiclass_students(
     token: str,
     rows: List[Dict[str, object]],
     timeout: int = 30,
-    target_year: int = 2025,
+    target_year: Optional[int] = None,
+    cutoff_month: int = 6,
 ) -> Tuple[Dict[str, int], List[Dict[str, str]]]:
+    target_year_int = int(target_year or _richmondstudio_cleanup_target_year())
+    cutoff_month_int = int(cutoff_month)
+    cutoff_label = _richmondstudio_cleanup_cutoff_label(
+        target_year_int,
+        cutoff_month=cutoff_month_int,
+    )
+    removable_column = f"EXPIRAN {cutoff_label}"
     summary = {
         "eligible_total": 0,
         "processed_total": 0,
@@ -1756,7 +1837,7 @@ def _remove_richmondstudio_subscriptions_2025_for_multiclass_students(
             "IDENTIFIER": identifier,
             "CLASSES COUNT": str(classes_count),
             "TOTAL SUBSCRIPTIONS": "0",
-            f"SUBSCRIPTIONS {target_year}": "0",
+            removable_column: "0",
             "REMOVED SUBSCRIPTIONS": "0",
             "STATUS": "",
             "DETAIL": "",
@@ -1780,23 +1861,28 @@ def _remove_richmondstudio_subscriptions_2025_for_multiclass_students(
                 data,
                 "subscriptions",
             )
-            subscription_ids_2025 = _richmondstudio_subscription_ids_by_year(
+            subscription_ids_to_remove = _richmondstudio_subscription_ids_expiring_until_month_in_year(
                 detail_body,
-                year=int(target_year),
+                year=int(target_year_int),
+                cutoff_month=int(cutoff_month_int),
             )
             keep_subscription_ids = [
                 subscription_id
                 for subscription_id in current_subscription_ids
-                if subscription_id not in set(subscription_ids_2025)
+                if subscription_id not in set(subscription_ids_to_remove)
             ]
             result_row["TOTAL SUBSCRIPTIONS"] = str(len(current_subscription_ids))
-            result_row[f"SUBSCRIPTIONS {target_year}"] = str(len(subscription_ids_2025))
+            result_row[removable_column] = str(len(subscription_ids_to_remove))
             summary["processed_total"] += 1
 
-            if not subscription_ids_2025:
+            if not subscription_ids_to_remove:
                 summary["skipped_total"] += 1
                 result_row["STATUS"] = "SIN CAMBIOS"
-                result_row["DETAIL"] = f"No tiene suscripciones {target_year}."
+                result_row["DETAIL"] = (
+                    "No tiene suscripciones que expiren {cutoff}.".format(
+                        cutoff=cutoff_label
+                    )
+                )
                 result_rows.append(result_row)
                 continue
 
@@ -1810,12 +1896,17 @@ def _remove_richmondstudio_subscriptions_2025_for_multiclass_students(
                 payload=payload,
                 timeout=int(timeout),
             )
-            removed_count = len(subscription_ids_2025)
+            removed_count = len(subscription_ids_to_remove)
             summary["updated_total"] += 1
             summary["removed_total"] += int(removed_count)
             result_row["REMOVED SUBSCRIPTIONS"] = str(removed_count)
             result_row["STATUS"] = "ACTUALIZADO"
-            result_row["DETAIL"] = f"Se removieron {removed_count} suscripciones {target_year}."
+            result_row["DETAIL"] = (
+                "Se removieron {count} suscripciones que expiran {cutoff}.".format(
+                    count=removed_count,
+                    cutoff=cutoff_label,
+                )
+            )
         except Exception as exc:
             summary["error_total"] += 1
             result_row["STATUS"] = "ERROR"
@@ -2017,6 +2108,12 @@ def _build_richmondstudio_registered_listing_data(
     rs_users: List[Dict[str, object]],
     rs_groups: List[Dict[str, object]],
 ) -> Dict[str, object]:
+    cleanup_target_year = _richmondstudio_cleanup_target_year()
+    cleanup_cutoff_month = _richmondstudio_cleanup_cutoff_month()
+    cleanup_flag_column = (
+        "REMOVE SUBSCRIPTIONS "
+        f"{_richmondstudio_cleanup_cutoff_label(cleanup_target_year, cleanup_cutoff_month)}"
+    )
     allowed_roles = {"student", "teacher"}
     excluded_roles: Dict[str, int] = {}
     filtered_users: List[Dict[str, object]] = []
@@ -2109,7 +2206,7 @@ def _build_richmondstudio_registered_listing_data(
                     "IDENTIFIER": identifier,
                     "EMAIL": email,
                     "CLASSES COUNT": str(len(group_ids)),
-                    "REMOVE 2025 SUBSCRIPTIONS": "Si" if len(group_ids) > 1 else "",
+                    cleanup_flag_column: "Si" if len(group_ids) > 1 else "",
                     "CLASS NAMES": " | ".join(class_names),
                     "CLASS CODES": " | ".join(class_codes),
                     "createdAt": created_at,
@@ -4166,7 +4263,9 @@ def _is_ingles_por_niveles_class(item: Dict[str, object]) -> bool:
     search_text = " ".join(
         part for part in (ge_clase, ge_clase_clave, alias) if part
     )
-    return "INGLES" in search_text or "ENGLISH" in search_text
+    if "INGLES" in search_text or "ENGLISH" in search_text:
+        return True
+    return "PAI" in search_text and "EMERGENT" in search_text
 
 
 def _participantes_ingles_grade_key(nivel_id: object, grado_id: object) -> str:
@@ -5625,6 +5724,623 @@ def _format_alumno_label(row: Dict[str, object]) -> str:
         nombre = "SIN NOMBRE"
     dni = str(row.get("id_oficial") or "").strip()
     return f"{nombre}|{dni or '-'}"
+
+
+def _ingles_assignment_template_rows() -> List[Dict[str, str]]:
+    return [
+        {
+            "Nombre": "Mia Cataleya",
+            "Apellido Paterno": "BEJARANO",
+            "Apellido Materno": "IPANAQUE",
+            "Clase": "PAI 2 - EMERGENT D",
+        }
+    ]
+
+
+def _clear_ingles_por_niveles_assignment_state() -> None:
+    for state_key in (
+        "clases_auto_group_ingles_excel_preview_rows",
+        "clases_auto_group_ingles_excel_apply_rows",
+        "clases_auto_group_ingles_excel_fetch_errors",
+    ):
+        st.session_state.pop(state_key, None)
+
+
+def _load_ingles_assignment_rows_from_excel(excel_bytes: bytes) -> List[Dict[str, object]]:
+    try:
+        df = pd.read_excel(BytesIO(excel_bytes), dtype=str)
+    except Exception as exc:
+        raise ValueError(f"No se pudo leer el Excel: {exc}") from exc
+
+    normalized_columns = {
+        _normalize_richmondstudio_import_column(column): str(column)
+        for column in list(df.columns)
+    }
+    nombre_column = _resolve_richmondstudio_import_column(
+        normalized_columns,
+        ["Nombre", "Nombres", "First name"],
+        required=True,
+    )
+    ap_pat_column = _resolve_richmondstudio_import_column(
+        normalized_columns,
+        ["Apellido Paterno", "Apellido paterno", "Paterno", "Last name"],
+        required=True,
+    )
+    ap_mat_column = _resolve_richmondstudio_import_column(
+        normalized_columns,
+        ["Apellido Materno", "Apellido materno", "Materno", "Second last name"],
+        required=True,
+    )
+    clase_column = _resolve_richmondstudio_import_column(
+        normalized_columns,
+        ["Clase", "Class", "Class name", "Grupo"],
+        required=True,
+    )
+
+    rows: List[Dict[str, object]] = []
+    for idx, item in enumerate(df.fillna("").to_dict("records"), start=2):
+        if not isinstance(item, dict):
+            continue
+        normalized_row = {
+            "Nombre": str(item.get(nombre_column) or "").strip(),
+            "Apellido Paterno": str(item.get(ap_pat_column) or "").strip(),
+            "Apellido Materno": str(item.get(ap_mat_column) or "").strip(),
+            "Clase": str(item.get(clase_column) or "").strip(),
+            "_row_number": int(idx),
+        }
+        values = [
+            str(normalized_row.get("Nombre") or "").strip(),
+            str(normalized_row.get("Apellido Paterno") or "").strip(),
+            str(normalized_row.get("Apellido Materno") or "").strip(),
+            str(normalized_row.get("Clase") or "").strip(),
+        ]
+        if not any(values):
+            continue
+        rows.append(normalized_row)
+
+    if not rows:
+        raise ValueError("El Excel no tiene filas con datos para procesar.")
+    return rows
+
+
+def _build_ingles_assignment_student_key(
+    nombre: object,
+    apellido_paterno: object,
+    apellido_materno: object,
+) -> Tuple[str, str, str]:
+    return (
+        _normalize_compare_text(nombre),
+        _normalize_compare_apellido(apellido_paterno),
+        _normalize_compare_apellido(apellido_materno),
+    )
+
+
+def _build_ingles_assignment_class_key(value: object) -> str:
+    return _normalize_compare_text(value)
+
+
+def _build_ingles_assignment_students_lookup(
+    students: List[Dict[str, object]]
+) -> Dict[Tuple[str, str, str], List[Dict[str, object]]]:
+    lookup: Dict[Tuple[str, str, str], List[Dict[str, object]]] = {}
+    for row in students:
+        if not isinstance(row, dict):
+            continue
+        key = _build_ingles_assignment_student_key(
+            row.get("nombre"),
+            row.get("apellido_paterno"),
+            row.get("apellido_materno"),
+        )
+        if not any(key):
+            continue
+        lookup.setdefault(key, []).append(row)
+    return lookup
+
+
+def _build_ingles_assignment_classes_lookup(
+    clases: List[Dict[str, object]]
+) -> Dict[str, List[Dict[str, object]]]:
+    lookup: Dict[str, List[Dict[str, object]]] = {}
+    seen_class_ids: Set[int] = set()
+    for item in clases:
+        if not isinstance(item, dict):
+            continue
+        meta = _extract_clase_base_meta(item)
+        clase_id = _safe_int(meta.get("clase_id")) if isinstance(meta, dict) else None
+        if not isinstance(meta, dict) or clase_id is None or int(clase_id) in seen_class_ids:
+            continue
+        seen_class_ids.add(int(clase_id))
+        class_name = str(meta.get("clase_nombre") or "").strip()
+        key = _build_ingles_assignment_class_key(class_name)
+        if not key:
+            continue
+        lookup.setdefault(key, []).append(
+            {
+                "clase_id": int(clase_id),
+                "clase_nombre": class_name,
+                "nivel_nombre": str(meta.get("nivel_nombre") or "").strip(),
+                "grado_nombre": str(meta.get("grado_nombre") or "").strip(),
+                "seccion": str(meta.get("grupo_clave_actual") or "").strip(),
+            }
+        )
+    return lookup
+
+
+def _build_ingles_assignment_preview_rows(
+    excel_rows: List[Dict[str, object]],
+    students: List[Dict[str, object]],
+    clases: List[Dict[str, object]],
+) -> List[Dict[str, object]]:
+    students_lookup = _build_ingles_assignment_students_lookup(students)
+    classes_lookup = _build_ingles_assignment_classes_lookup(clases)
+    preview_rows: List[Dict[str, object]] = []
+
+    for raw_row in excel_rows:
+        if not isinstance(raw_row, dict):
+            continue
+        nombre = str(raw_row.get("Nombre") or "").strip()
+        ap_pat = str(raw_row.get("Apellido Paterno") or "").strip()
+        ap_mat = str(raw_row.get("Apellido Materno") or "").strip()
+        clase = str(raw_row.get("Clase") or "").strip()
+        row_number = _safe_int(raw_row.get("_row_number")) or 0
+
+        matched_students = students_lookup.get(
+            _build_ingles_assignment_student_key(nombre, ap_pat, ap_mat),
+            [],
+        )
+        matched_classes = classes_lookup.get(
+            _build_ingles_assignment_class_key(clase),
+            [],
+        )
+
+        student_row = matched_students[0] if len(matched_students) == 1 else {}
+        class_row = matched_classes[0] if len(matched_classes) == 1 else {}
+        estado = "Listo"
+        detalle = "Se asignara a la clase encontrada."
+
+        if not all([nombre, ap_pat, ap_mat, clase]):
+            estado = "Error"
+            detalle = "Faltan Nombre, Apellido Paterno, Apellido Materno o Clase."
+        elif not matched_students:
+            estado = "Error"
+            detalle = "Alumno no encontrado."
+        elif len(matched_students) > 1:
+            estado = "Error"
+            detalle = f"Alumno ambiguo: {len(matched_students)} coincidencias exactas."
+        elif not matched_classes:
+            estado = "Error"
+            detalle = "Clase no encontrada."
+        elif len(matched_classes) > 1:
+            estado = "Error"
+            detalle = f"Clase ambigua: {len(matched_classes)} coincidencias exactas."
+        elif not _to_bool(student_row.get("activo")):
+            estado = "Error"
+            detalle = "Alumno encontrado pero inactivo."
+
+        preview_rows.append(
+            {
+                "Fila": int(row_number),
+                "Nombre": nombre,
+                "Apellido Paterno": ap_pat,
+                "Apellido Materno": ap_mat,
+                "Clase solicitada": clase,
+                "Alumno encontrado": _format_alumno_label(student_row) if student_row else "",
+                "Alumno ID": _safe_int(student_row.get("alumno_id")) if student_row else "",
+                "DNI": str(student_row.get("id_oficial") or "").strip() if student_row else "",
+                "Activo": "Si" if _to_bool(student_row.get("activo")) else "No" if student_row else "",
+                "Seccion actual": str(
+                    student_row.get("seccion_norm") or student_row.get("seccion") or ""
+                ).strip() if student_row else "",
+                "Clase encontrada": str(class_row.get("clase_nombre") or "").strip() if class_row else "",
+                "Clase ID": _safe_int(class_row.get("clase_id")) if class_row else "",
+                "Nivel clase": str(class_row.get("nivel_nombre") or "").strip() if class_row else "",
+                "Grado clase": str(class_row.get("grado_nombre") or "").strip() if class_row else "",
+                "Seccion clase": str(class_row.get("seccion") or "").strip() if class_row else "",
+                "Estado": estado,
+                "Detalle": detalle,
+                "_alumno_id": _safe_int(student_row.get("alumno_id")) if student_row else None,
+                "_clase_id": _safe_int(class_row.get("clase_id")) if class_row else None,
+            }
+        )
+
+    preview_rows.sort(
+        key=lambda row: (
+            int(_safe_int(row.get("Fila")) or 0),
+            str(row.get("Apellido Paterno") or "").upper(),
+            str(row.get("Apellido Materno") or "").upper(),
+            str(row.get("Nombre") or "").upper(),
+        )
+    )
+    return preview_rows
+
+
+def _build_ingles_assignment_preview_display_rows(
+    rows: List[Dict[str, object]]
+) -> List[Dict[str, object]]:
+    return [
+        {
+            "Fila": row.get("Fila", ""),
+            "Nombre": row.get("Nombre", ""),
+            "Apellido Paterno": row.get("Apellido Paterno", ""),
+            "Apellido Materno": row.get("Apellido Materno", ""),
+            "Clase solicitada": row.get("Clase solicitada", ""),
+            "Alumno encontrado": row.get("Alumno encontrado", ""),
+            "Alumno ID": row.get("Alumno ID", ""),
+            "DNI": row.get("DNI", ""),
+            "Activo": row.get("Activo", ""),
+            "Seccion actual": row.get("Seccion actual", ""),
+            "Clase encontrada": row.get("Clase encontrada", ""),
+            "Clase ID": row.get("Clase ID", ""),
+            "Nivel clase": row.get("Nivel clase", ""),
+            "Grado clase": row.get("Grado clase", ""),
+            "Seccion clase": row.get("Seccion clase", ""),
+            "Estado": row.get("Estado", ""),
+            "Detalle": row.get("Detalle", ""),
+        }
+        for row in rows
+        if isinstance(row, dict)
+    ]
+
+
+def _apply_ingles_assignment_preview_rows(
+    token: str,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+    preview_rows: List[Dict[str, object]],
+    on_status: Optional[Callable[[str], None]] = None,
+) -> List[Dict[str, object]]:
+    def _status(message: str) -> None:
+        if callable(on_status):
+            try:
+                on_status(str(message or ""))
+            except Exception:
+                pass
+
+    actionable_rows: List[Tuple[Dict[str, object], int, int]] = []
+    class_ids: List[int] = []
+    seen_class_ids: Set[int] = set()
+
+    for row in preview_rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("Estado") or "").strip() != "Listo":
+            continue
+        alumno_id = _safe_int(row.get("_alumno_id"))
+        clase_id = _safe_int(row.get("_clase_id"))
+        if alumno_id is None or clase_id is None:
+            continue
+        actionable_rows.append((row, int(alumno_id), int(clase_id)))
+        if int(clase_id) not in seen_class_ids:
+            seen_class_ids.add(int(clase_id))
+            class_ids.append(int(clase_id))
+
+    members_by_class: Dict[int, Set[int]] = {}
+    class_errors: Dict[int, str] = {}
+    total_classes = len(class_ids)
+    for idx_class, clase_id in enumerate(class_ids, start=1):
+        _status(f"Validando clase {idx_class}/{total_classes}: {clase_id}")
+        try:
+            class_data = _fetch_alumnos_clase_gestion_escolar(
+                token=token,
+                clase_id=int(clase_id),
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                timeout=int(timeout),
+            )
+        except Exception as exc:
+            class_errors[int(clase_id)] = str(exc)
+        else:
+            members_by_class[int(clase_id)] = _extract_alumno_ids_from_clase_data(
+                class_data
+            )
+
+    results: List[Dict[str, object]] = []
+    total_actions = len(actionable_rows)
+    executed_actions = 0
+    for row in preview_rows:
+        result_row = dict(row) if isinstance(row, dict) else {}
+        alumno_id = _safe_int(result_row.get("_alumno_id"))
+        clase_id = _safe_int(result_row.get("_clase_id"))
+        estado = str(result_row.get("Estado") or "").strip()
+
+        if estado != "Listo":
+            result_row["Resultado aplicar"] = "SKIP"
+            result_row["Detalle aplicar"] = str(result_row.get("Detalle") or "").strip()
+            results.append(result_row)
+            continue
+
+        if alumno_id is None or clase_id is None:
+            result_row["Resultado aplicar"] = "Error"
+            result_row["Detalle aplicar"] = "Fila valida sin alumno_id o clase_id."
+            results.append(result_row)
+            continue
+
+        if int(clase_id) in class_errors:
+            result_row["Resultado aplicar"] = "Error"
+            result_row["Detalle aplicar"] = (
+                "No se pudo validar la clase actual: "
+                f"{class_errors[int(clase_id)]}"
+            )
+            results.append(result_row)
+            continue
+
+        class_members = members_by_class.setdefault(int(clase_id), set())
+        if int(alumno_id) in class_members:
+            result_row["Resultado aplicar"] = "Sin cambios"
+            result_row["Detalle aplicar"] = "El alumno ya estaba asignado a la clase."
+            results.append(result_row)
+            continue
+
+        executed_actions += 1
+        _status(
+            "Asignando {idx}/{total}: {alumno} -> {clase}".format(
+                idx=executed_actions,
+                total=max(total_actions, 1),
+                alumno=str(result_row.get("Alumno encontrado") or result_row.get("Nombre") or "-"),
+                clase=str(result_row.get("Clase encontrada") or result_row.get("Clase solicitada") or "-"),
+            )
+        )
+        ok_assign, msg_assign = _asignar_alumno_a_clase_web(
+            token=token,
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            clase_id=int(clase_id),
+            alumno_id=int(alumno_id),
+            timeout=int(timeout),
+        )
+        if ok_assign:
+            class_members.add(int(alumno_id))
+            result_row["Resultado aplicar"] = "OK"
+            result_row["Detalle aplicar"] = "Asignado correctamente."
+        else:
+            result_row["Resultado aplicar"] = "Error"
+            result_row["Detalle aplicar"] = str(msg_assign or "No se pudo asignar.").strip()
+        results.append(result_row)
+
+    return results
+
+
+def _build_ingles_assignment_apply_display_rows(
+    rows: List[Dict[str, object]]
+) -> List[Dict[str, object]]:
+    return [
+        {
+            "Fila": row.get("Fila", ""),
+            "Alumno encontrado": row.get("Alumno encontrado", ""),
+            "Alumno ID": row.get("Alumno ID", ""),
+            "DNI": row.get("DNI", ""),
+            "Clase encontrada": row.get("Clase encontrada", ""),
+            "Clase ID": row.get("Clase ID", ""),
+            "Resultado aplicar": row.get("Resultado aplicar", ""),
+            "Detalle aplicar": row.get("Detalle aplicar", ""),
+        }
+        for row in rows
+        if isinstance(row, dict)
+    ]
+
+
+def _render_ingles_por_niveles_excel_assignment_block(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+) -> None:
+    with st.container(border=True):
+        st.markdown("**Asignacion de ingles por niveles**")
+        st.caption(
+            "Sube un Excel con Nombre, Apellido Paterno, Apellido Materno y Clase. "
+            "Se buscara coincidencia exacta de alumno y clase en el colegio actual."
+        )
+
+        template_bytes = _export_simple_excel(
+            _ingles_assignment_template_rows(),
+            sheet_name="ingles_por_niveles",
+        )
+        col_template, col_file = st.columns([1, 2], gap="small")
+        col_template.download_button(
+            label="Descargar plantilla",
+            data=template_bytes,
+            file_name="plantilla_ingles_por_niveles.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="clases_auto_group_ingles_excel_template_download",
+            use_container_width=True,
+        )
+        uploaded_excel = col_file.file_uploader(
+            "Excel de asignacion de ingles",
+            type=["xlsx"],
+            key="clases_auto_group_ingles_excel_uploader",
+            help=(
+                "Columnas requeridas: Nombre, Apellido Paterno, Apellido Materno, Clase."
+            ),
+        )
+
+        uploaded_rows: List[Dict[str, object]] = []
+        uploaded_error = ""
+        uploaded_bytes = b""
+        if uploaded_excel is not None:
+            uploaded_bytes = uploaded_excel.getvalue()
+            try:
+                uploaded_rows = _load_ingles_assignment_rows_from_excel(uploaded_bytes)
+            except Exception as exc:
+                uploaded_error = str(exc)
+                st.error(f"Error en Excel: {exc}")
+            else:
+                st.caption(f"Filas detectadas en el Excel: {len(uploaded_rows)}")
+                _show_dataframe(uploaded_rows[:100], use_container_width=True)
+
+        preview_rows_state = st.session_state.get(
+            "clases_auto_group_ingles_excel_preview_rows"
+        ) or []
+        apply_rows_state = st.session_state.get(
+            "clases_auto_group_ingles_excel_apply_rows"
+        ) or []
+        fetch_errors_state = st.session_state.get(
+            "clases_auto_group_ingles_excel_fetch_errors"
+        ) or []
+
+        col_analyze, col_apply, col_clear = st.columns([1.4, 1.4, 1], gap="small")
+        run_analyze = col_analyze.button(
+            "Buscar alumnos y clases",
+            key="clases_auto_group_ingles_excel_analyze_btn",
+            use_container_width=True,
+        )
+        run_apply = col_apply.button(
+            "Aplicar asignacion",
+            key="clases_auto_group_ingles_excel_apply_btn",
+            use_container_width=True,
+            disabled=not bool(preview_rows_state),
+        )
+        run_clear = col_clear.button(
+            "Limpiar",
+            key="clases_auto_group_ingles_excel_clear_btn",
+            use_container_width=True,
+        )
+
+        if run_clear:
+            _clear_ingles_por_niveles_assignment_state()
+            st.rerun()
+
+        if run_analyze:
+            if not token:
+                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+            elif uploaded_excel is None:
+                st.error("Sube el Excel de asignacion de ingles.")
+            elif uploaded_error:
+                st.error(f"Corrige el Excel antes de continuar: {uploaded_error}")
+            else:
+                try:
+                    with st.spinner("Buscando alumnos y clases del colegio..."):
+                        catalog = _fetch_alumnos_catalog_for_manual_move(
+                            token=token,
+                            colegio_id=int(colegio_id),
+                            empresa_id=int(empresa_id),
+                            ciclo_id=int(ciclo_id),
+                            timeout=int(timeout),
+                        )
+                        clases = _fetch_clases_gestion_escolar(
+                            token=token,
+                            colegio_id=int(colegio_id),
+                            empresa_id=int(empresa_id),
+                            ciclo_id=int(ciclo_id),
+                            timeout=int(timeout),
+                            ordered=True,
+                        )
+                    preview_rows = _build_ingles_assignment_preview_rows(
+                        uploaded_rows,
+                        list(catalog.get("students") or []),
+                        clases,
+                    )
+                except Exception as exc:
+                    st.error(f"No se pudo analizar la asignacion: {exc}")
+                else:
+                    st.session_state[
+                        "clases_auto_group_ingles_excel_preview_rows"
+                    ] = preview_rows
+                    st.session_state[
+                        "clases_auto_group_ingles_excel_fetch_errors"
+                    ] = list(catalog.get("errors") or [])
+                    st.session_state.pop(
+                        "clases_auto_group_ingles_excel_apply_rows",
+                        None,
+                    )
+                    total_ready = sum(
+                        1
+                        for row in preview_rows
+                        if str(row.get("Estado") or "").strip() == "Listo"
+                    )
+                    total_errors = len(preview_rows) - total_ready
+                    if total_errors:
+                        st.warning(
+                            f"Analisis listo. Filas validas: {total_ready} | Observaciones: {total_errors}."
+                        )
+                    else:
+                        st.success(f"Analisis listo. Filas validas: {total_ready}.")
+                    preview_rows_state = preview_rows
+                    apply_rows_state = []
+                    fetch_errors_state = list(catalog.get("errors") or [])
+
+        if fetch_errors_state:
+            st.warning(
+                "Hubo observaciones al cargar alumnos del colegio. "
+                f"Se registraron {len(fetch_errors_state)} error(es) de consulta."
+            )
+
+        if preview_rows_state:
+            total_ready = sum(
+                1
+                for row in preview_rows_state
+                if str(row.get("Estado") or "").strip() == "Listo"
+            )
+            total_errors = len(preview_rows_state) - total_ready
+            st.caption(
+                f"Vista previa: {len(preview_rows_state)} fila(s) | "
+                f"Listas={total_ready} | Observaciones={total_errors}"
+            )
+            _show_dataframe(
+                _build_ingles_assignment_preview_display_rows(preview_rows_state),
+                use_container_width=True,
+            )
+
+        if run_apply:
+            if not token:
+                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+            elif not preview_rows_state:
+                st.error("Primero analiza el Excel para generar la vista previa.")
+            else:
+                status_placeholder = st.empty()
+                try:
+                    with st.spinner("Aplicando asignacion de ingles..."):
+                        apply_rows = _apply_ingles_assignment_preview_rows(
+                            token=token,
+                            empresa_id=int(empresa_id),
+                            ciclo_id=int(ciclo_id),
+                            timeout=int(timeout),
+                            preview_rows=preview_rows_state,
+                            on_status=lambda message: status_placeholder.write(message),
+                        )
+                except Exception as exc:
+                    status_placeholder.empty()
+                    st.error(f"No se pudo aplicar la asignacion: {exc}")
+                else:
+                    status_placeholder.empty()
+                    st.session_state[
+                        "clases_auto_group_ingles_excel_apply_rows"
+                    ] = apply_rows
+                    ok_count = sum(
+                        1
+                        for row in apply_rows
+                        if str(row.get("Resultado aplicar") or "").strip() == "OK"
+                    )
+                    same_count = sum(
+                        1
+                        for row in apply_rows
+                        if str(row.get("Resultado aplicar") or "").strip()
+                        == "Sin cambios"
+                    )
+                    err_count = sum(
+                        1
+                        for row in apply_rows
+                        if str(row.get("Resultado aplicar") or "").strip() == "Error"
+                    )
+                    if err_count:
+                        st.warning(
+                            f"Asignacion aplicada con observaciones. "
+                            f"OK={ok_count} | Sin cambios={same_count} | Error={err_count}"
+                        )
+                    else:
+                        st.success(
+                            f"Asignacion aplicada. OK={ok_count} | Sin cambios={same_count}"
+                        )
+                    apply_rows_state = apply_rows
+
+        if apply_rows_state:
+            st.caption(f"Resultado de aplicacion: {len(apply_rows_state)} fila(s)")
+            _show_dataframe(
+                _build_ingles_assignment_apply_display_rows(apply_rows_state),
+                use_container_width=True,
+            )
 
 
 def _add_auto_move_removed_ref(plan_id: int) -> None:
@@ -9898,12 +10614,25 @@ def render_richmond_studio_view() -> None:
 
     with tab_rs_excel:
         with st.container(border=True):
+            cleanup_target_year = _richmondstudio_cleanup_target_year()
+            cleanup_cutoff_month = _richmondstudio_cleanup_cutoff_month()
+            cleanup_cutoff_label = _richmondstudio_cleanup_cutoff_label(
+                cleanup_target_year,
+                cleanup_cutoff_month,
+            )
+            cleanup_sheet_name = (
+                f"cleanup_subscriptions_{cleanup_target_year}_{cleanup_cutoff_month:02d}"
+            )
+            cleanup_file_name = (
+                "rs_limpieza_suscripciones_"
+                f"{cleanup_target_year}_{cleanup_cutoff_month:02d}.xlsx"
+            )
             st.markdown("**Listar alumnos registrados**")
             st.caption(
                 "Richmond Studio: CLASS NAME, CLASS CODE, STUDENT NAME, IDENTIFIER, createdAt y lastSignInAt. Solo roles student/teacher."
             )
             run_rs_cleanup_subscriptions_confirmed = _consume_richmondstudio_confirmed_action(
-                "rs_single_remove_subscriptions_2025"
+                "rs_single_remove_expiring_subscriptions"
             )
             run_rs_excel = st.button(
                 "Listar alumnos registrados",
@@ -10016,17 +10745,18 @@ def render_richmond_studio_view() -> None:
                         student_name = str(target_row.get("STUDENT NAME") or "").strip()
                         with st.spinner(
                             (
-                                f"Quitando suscripciones 2025 de {student_name}..."
+                                f"Quitando suscripciones que expiran {cleanup_cutoff_label} de {student_name}..."
                                 if student_name
-                                else "Quitando suscripciones 2025 en RS..."
+                                else f"Quitando suscripciones que expiran {cleanup_cutoff_label} en RS..."
                             )
                         ):
                             cleanup_summary, cleanup_rows = (
-                                _remove_richmondstudio_subscriptions_2025_for_multiclass_students(
+                                _remove_richmondstudio_expiring_subscriptions_for_multiclass_students(
                                     token=rs_token,
                                     rows=[target_row],
                                     timeout=int(timeout),
-                                    target_year=2025,
+                                    target_year=int(cleanup_target_year),
+                                    cutoff_month=int(cleanup_cutoff_month),
                                 )
                             )
                     except Exception as exc:  # pragma: no cover - UI
@@ -10042,7 +10772,7 @@ def render_richmond_studio_view() -> None:
                         st.session_state["rs_multi_class_cleanup_bytes"] = (
                             _export_simple_excel(
                                 cleanup_rows,
-                                sheet_name="cleanup_2025_subscriptions",
+                                sheet_name=cleanup_sheet_name,
                             )
                             if cleanup_rows
                             else b""
@@ -10058,7 +10788,8 @@ def render_richmond_studio_view() -> None:
             if multi_class_eligible_rows:
                 st.markdown("**Alumnos con mas de una clase**")
                 st.caption(
-                    "Selecciona un alumno para quitar solo suscripciones creadas en 2025. Las suscripciones 2026 se conservan."
+                    "Selecciona un alumno para quitar solo suscripciones con expirationDate "
+                    f"{cleanup_cutoff_label}. Las que vencen despues se conservan."
                 )
                 _show_dataframe(
                     multi_class_eligible_rows[:200],
@@ -10121,7 +10852,7 @@ def render_richmond_studio_view() -> None:
                         )
                     )
                 if st.button(
-                    "Quitar suscripciones 2025 del alumno seleccionado",
+                    f"Quitar suscripciones {cleanup_cutoff_label} del alumno seleccionado",
                     type="primary",
                     key="rs_multi_class_cleanup_request_btn",
                     use_container_width=True,
@@ -10145,9 +10876,9 @@ def render_richmond_studio_view() -> None:
                             selected_cleanup_row.get("CLASSES COUNT") or "0"
                         ).strip()
                         _request_richmondstudio_confirmation(
-                            "rs_single_remove_subscriptions_2025",
+                            "rs_single_remove_expiring_subscriptions",
                             (
-                                "quitar suscripciones 2025 de "
+                                f"quitar suscripciones {cleanup_cutoff_label} de "
                                 f"{target_name or target_identifier or target_user_id} "
                                 f"({target_classes} clases)"
                             ),
@@ -10163,7 +10894,9 @@ def render_richmond_studio_view() -> None:
                 st.session_state.get("rs_multi_class_cleanup_bytes") or b""
             )
             if cleanup_summary_cached:
-                st.markdown("**Resultado de limpieza de suscripciones 2025**")
+                st.markdown(
+                    f"**Resultado de limpieza de suscripciones {cleanup_cutoff_label}**"
+                )
                 st.info(
                     "Elegibles: {eligible_total} | Procesados: {processed_total} | "
                     "Actualizados: {updated_total} | Sin cambios: {skipped_total} | "
@@ -10175,9 +10908,12 @@ def render_richmond_studio_view() -> None:
                     _show_dataframe(cleanup_rows_cached[:200], use_container_width=True)
                 if cleanup_bytes_cached:
                     st.download_button(
-                        label="Descargar resultado limpieza suscripciones 2025",
+                        label=(
+                            "Descargar resultado limpieza suscripciones "
+                            f"{cleanup_cutoff_label}"
+                        ),
                         data=cleanup_bytes_cached,
-                        file_name="rs_limpieza_suscripciones_2025.xlsx",
+                        file_name=cleanup_file_name,
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         key="rs_multi_class_cleanup_download",
                         use_container_width=True,
@@ -10258,6 +10994,7 @@ with tab_crud_clases:
                     "clases_auto_group_ingles_grade_selected_keys",
                 ):
                     st.session_state.pop(state_key, None)
+                _clear_ingles_por_niveles_assignment_state()
 
             current_job_id = ""
             if colegio_id_int is not None:
@@ -10427,6 +11164,18 @@ with tab_crud_clases:
                     else:
                         st.caption(
                             "No se detectaron clases de Ingles para seleccionar por grado."
+                        )
+                    if colegio_id_int is not None:
+                        _render_ingles_por_niveles_excel_assignment_block(
+                            token=token,
+                            colegio_id=int(colegio_id_int),
+                            empresa_id=int(empresa_id),
+                            ciclo_id=int(ciclo_id),
+                            timeout=int(timeout),
+                        )
+                    else:
+                        st.caption(
+                            "Ingresa un Colegio Clave valido para usar la asignacion de ingles por Excel."
                         )
                 col_run, col_cancel = st.columns([4, 1], gap="small")
                 with col_run:

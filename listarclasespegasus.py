@@ -275,6 +275,12 @@ def _normalize_censo_activos_rows(rows: List[Dict[str, object]]) -> List[Dict[st
                     or row.get("Nombre completo")
                     or ""
                 ).strip(),
+                "DNI": str(
+                    row.get("DNI")
+                    or row.get("dni")
+                    or row.get("id_oficial")
+                    or ""
+                ).strip(),
                 "Login": str(row.get("Login") or row.get("login") or "").strip(),
                 "Password": str(row.get("Password") or row.get("password") or "").strip(),
                 "_sort_nivel_id": _safe_int(row.get("_sort_nivel_id")) or 999,
@@ -298,6 +304,7 @@ def _normalize_censo_activos_rows(rows: List[Dict[str, object]]) -> List[Dict[st
             "Grado": str(row.get("Grado") or ""),
             "Grupo": str(row.get("Grupo") or ""),
             "Nombre del alumno": str(row.get("Nombre del alumno") or ""),
+            "DNI": str(row.get("DNI") or ""),
             "Login": str(row.get("Login") or ""),
             "Password": str(row.get("Password") or ""),
         }
@@ -419,6 +426,7 @@ def _run_censo_activos(
                         or item.get("nombreCompleto")
                         or ""
                     ).strip(),
+                    "DNI": _resolve_alumno_dni(item),
                     "Login": login_txt,
                     "Password": "",
                     "_sort_nivel_id": ctx.get("nivel_id"),
@@ -431,13 +439,14 @@ def _run_censo_activos(
     display_rows = _normalize_censo_activos_rows(rows_activos)
 
     print("")
-    print("Nivel\tGrado\tGrupo\tNombre del alumno\tLogin\tPassword")
+    print("Nivel\tGrado\tGrupo\tNombre del alumno\tDNI\tLogin\tPassword")
     for row in display_rows:
         print(
             f"{row.get('Nivel', '')}\t"
             f"{row.get('Grado', '')}\t"
             f"{row.get('Grupo', '')}\t"
             f"{row.get('Nombre del alumno', '')}\t"
+            f"{row.get('DNI', '')}\t"
             f"{row.get('Login', '')}\t"
             f"{row.get('Password', '')}"
         )

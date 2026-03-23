@@ -3079,6 +3079,12 @@ def _normalize_censo_activos_export_rows(
                     or row.get("nombre_completo")
                     or ""
                 ).strip(),
+                "DNI": str(
+                    row.get("DNI")
+                    or row.get("dni")
+                    or row.get("id_oficial")
+                    or ""
+                ).strip(),
                 "Login": str(row.get("Login") or row.get("login") or "").strip(),
                 "Password": str(row.get("Password") or row.get("password") or "").strip(),
             }
@@ -13711,6 +13717,7 @@ with tab_crud_alumnos:
                                     "Grado": flat.get("grado") or "",
                                     "Grupo": flat.get("seccion_norm") or flat.get("seccion") or "",
                                     "Nombre del alumno": flat.get("nombre_completo") or "",
+                                    "DNI": flat.get("id_oficial") or "",
                                     "Login": login_txt,
                                     "Password": "",
                                 }

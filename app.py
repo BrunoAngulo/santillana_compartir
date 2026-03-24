@@ -4223,7 +4223,9 @@ def _extract_clase_base_meta(item: Dict[str, object]) -> Optional[Dict[str, obje
     grado_id = _safe_int(grado.get("gradoId"))
     grupo_id_actual = _safe_int(grupo.get("grupoId"))
 
-    clase_nombre = str(item.get("geClase") or item.get("geClaseClave") or "")
+    # Prefer the class key because it is the identifier shown/exported in the UI
+    # and avoids ambiguous matches like "Ingles" repeated across grades/sections.
+    clase_nombre = str(item.get("geClaseClave") or item.get("geClase") or "")
     nivel_nombre = str(nivel.get("nivel") or "")
     grado_nombre = str(grado.get("grado") or grado.get("gradoClave") or "")
     if not grado_nombre:
@@ -5963,6 +5965,7 @@ def _merge_ingles_assignment_rows(
 def _filter_ingles_assignment_rows_by_selected_ingles_grades(
     rows: List[Dict[str, object]],
     selected_ingles_grade_keys: Sequence[object],
+    include_unresolved: bool = True,
 ) -> List[Dict[str, object]]:
     selected_keys = {
         str(value or "").strip()
@@ -5975,7 +5978,13 @@ def _filter_ingles_assignment_rows_by_selected_ingles_grades(
         dict(row)
         for row in rows
         if isinstance(row, dict)
-        and str(row.get("_ingles_grade_key") or "").strip() in selected_keys
+        and (
+            str(row.get("_ingles_grade_key") or "").strip() in selected_keys
+            or (
+                include_unresolved
+                and not str(row.get("_ingles_grade_key") or "").strip()
+            )
+        )
     ]
 
 
@@ -7007,10 +7016,20 @@ def _render_ingles_por_niveles_excel_assignment_block(
                 if str(row.get("Estado") or "").strip() == "Listo"
             )
             total_errors = len(visible_preview_rows) - total_ready
+            unresolved_grade_rows = sum(
+                1
+                for row in visible_preview_rows
+                if not str(row.get("_ingles_grade_key") or "").strip()
+            )
             st.caption(
                 f"Filas: {len(visible_preview_rows)}/{len(preview_rows_state)} | "
                 f"Listas {total_ready} | Obs {total_errors}"
             )
+            if unresolved_grade_rows:
+                st.info(
+                    "Se muestran tambien filas sin grado/clase resuelto para que "
+                    "puedas revisar errores de coincidencia."
+                )
             if visible_preview_rows:
                 _show_dataframe(
                     _build_ingles_assignment_preview_display_rows(visible_preview_rows),
@@ -7028,6 +7047,7 @@ def _render_ingles_por_niveles_excel_assignment_block(
                 rows_to_apply = _filter_ingles_assignment_rows_by_selected_ingles_grades(
                     preview_rows_state,
                     selected_ingles_grade_keys,
+                    include_unresolved=False,
                 )
                 if not rows_to_apply:
                     st.error(

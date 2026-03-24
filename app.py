@@ -5909,6 +5909,46 @@ def _build_ingles_assignment_default_reference_option(
     return ""
 
 
+def _sort_ingles_assignment_review_rows(
+    rows: List[Dict[str, object]]
+) -> List[Dict[str, object]]:
+    sorted_rows = [dict(row) for row in rows if isinstance(row, dict)]
+    sorted_rows.sort(
+        key=lambda row: (
+            1 if _safe_int(row.get("_alumno_id")) is None else 0,
+            0 if str(row.get("Estado") or "").strip() == "Listo" else 1,
+            int(_safe_int(row.get("Fila")) or 0),
+            _normalize_compare_text(_build_ingles_assignment_excel_full_name(row)),
+        )
+    )
+    return sorted_rows
+
+
+def _prepare_ingles_assignment_review_rows(
+    preview_rows: List[Dict[str, object]],
+    students: List[Dict[str, object]],
+) -> List[Dict[str, object]]:
+    if not preview_rows:
+        return []
+    students_full_name_lookup = _build_ingles_assignment_students_full_name_lookup(students)
+    selected_student_ids_by_fila: Dict[int, Optional[int]] = {}
+    for row in preview_rows:
+        if not isinstance(row, dict):
+            continue
+        fila = int(_safe_int(row.get("Fila")) or 0)
+        default_option = _build_ingles_assignment_default_reference_option(
+            row=row,
+            students_full_name_lookup=students_full_name_lookup,
+        )
+        selected_student_ids_by_fila[fila] = _safe_int(default_option)
+    reviewed_rows = _build_ingles_assignment_review_rows_from_selection(
+        preview_rows=preview_rows,
+        students=students,
+        selected_student_ids_by_fila=selected_student_ids_by_fila,
+    )
+    return _sort_ingles_assignment_review_rows(reviewed_rows)
+
+
 def _build_ingles_assignment_name_tokens(value: object) -> List[str]:
     return [token for token in _normalize_compare_text(value).split() if token]
 
@@ -6505,8 +6545,8 @@ def _render_ingles_assignment_reference_review(
 
     st.markdown("**Revision de referencias**")
     st.caption(
-        "Busca el alumno correcto escribiendo en el combo de Referencia. "
-        "Aqui solo se muestra el nombre completo del Excel y el nombre completo del alumno a referenciar."
+        "Las referencias se precargan automaticamente. "
+        "Puedes editarlas despues en el combo; las filas sin referencia quedan al final."
     )
 
     header_cols = st.columns([2.2, 3.0], gap="small")
@@ -6859,31 +6899,51 @@ def _render_ingles_por_niveles_excel_assignment_block(
             elif uploaded_error:
                 st.error(f"Corrige el Excel antes de continuar: {uploaded_error}")
             else:
+                analyze_progress = st.progress(0)
+                analyze_status = st.empty()
                 try:
-                    with st.spinner("Buscando alumnos y clases del colegio..."):
-                        catalog = _fetch_alumnos_catalog_for_manual_move(
-                            token=token,
-                            colegio_id=int(colegio_id),
-                            empresa_id=int(empresa_id),
-                            ciclo_id=int(ciclo_id),
-                            timeout=int(timeout),
-                        )
-                        clases = _fetch_clases_gestion_escolar(
-                            token=token,
-                            colegio_id=int(colegio_id),
-                            empresa_id=int(empresa_id),
-                            ciclo_id=int(ciclo_id),
-                            timeout=int(timeout),
-                            ordered=True,
-                        )
+                    analyze_progress.progress(5)
+                    analyze_status.write("Cargando alumnos del colegio...")
+                    catalog = _fetch_alumnos_catalog_for_manual_move(
+                        token=token,
+                        colegio_id=int(colegio_id),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                        on_status=lambda message: analyze_status.write(str(message or "")),
+                    )
+                    analyze_progress.progress(55)
+                    analyze_status.write("Cargando clases del colegio...")
+                    clases = _fetch_clases_gestion_escolar(
+                        token=token,
+                        colegio_id=int(colegio_id),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                        ordered=True,
+                    )
+                    analyze_progress.progress(75)
+                    analyze_status.write("Comparando Excel contra alumnos y clases...")
                     preview_rows = _build_ingles_assignment_preview_rows(
                         uploaded_rows,
                         list(catalog.get("students") or []),
                         clases,
                     )
+                    analyze_progress.progress(90)
+                    analyze_status.write(
+                        "Precargando referencias y ordenando filas para edicion..."
+                    )
+                    preview_rows = _prepare_ingles_assignment_review_rows(
+                        preview_rows=preview_rows,
+                        students=list(catalog.get("students") or []),
+                    )
                 except Exception as exc:
+                    analyze_progress.empty()
+                    analyze_status.empty()
                     st.error(f"No se pudo analizar la asignacion: {exc}")
                 else:
+                    analyze_progress.progress(100)
+                    analyze_status.write("Analisis completo.")
                     _clear_ingles_por_niveles_assignment_state()
                     st.session_state[
                         "clases_auto_group_ingles_excel_preview_rows"
@@ -6936,6 +6996,9 @@ def _render_ingles_por_niveles_excel_assignment_block(
             reviewed_preview_rows = _render_ingles_assignment_reference_review(
                 preview_rows=preview_rows_state,
                 students=reference_students_state,
+            )
+            reviewed_preview_rows = _sort_ingles_assignment_review_rows(
+                reviewed_preview_rows
             )
             if reviewed_preview_rows != preview_rows_state:
                 st.session_state[

@@ -2,6 +2,7 @@ import os
 import re
 import tempfile
 import threading
+import traceback
 import unicodedata
 from datetime import date, datetime
 from html import escape
@@ -4963,6 +4964,8 @@ def _reconcile_participantes_sync_job(job_id: object) -> None:
         job["status_messages"] = messages[-_PARTICIPANTES_SYNC_STATUS_LIMIT:]
         if not str(job.get("error") or "").strip():
             job["error"] = error_detail
+        if not str(job.get("error_trace") or "").strip():
+            job["error_trace"] = error_detail
         job["state"] = "error"
 
 
@@ -5153,10 +5156,12 @@ def _run_participantes_sync_job(
             warnings=warnings_auto,
             group_error_lines=exc.group_error_lines,
             error="",
+            error_trace="",
         )
         _append_participantes_sync_job_message(job_id, "Proceso cancelado por el usuario.")
         return
     except Exception as exc:
+        trace_text = traceback.format_exc()
         _set_participantes_sync_job(
             job_id,
             state="error",
@@ -5165,6 +5170,7 @@ def _run_participantes_sync_job(
             warnings=warnings_auto,
             group_error_lines=group_error_lines,
             error=str(exc),
+            error_trace=trace_text,
         )
         _append_participantes_sync_job_message(job_id, f"Error: {exc}")
         return
@@ -5177,6 +5183,7 @@ def _run_participantes_sync_job(
         warnings=warnings_auto,
         group_error_lines=group_error_lines,
         error="",
+        error_trace="",
     )
     _append_participantes_sync_job_message(job_id, "Proceso completado.")
 
@@ -5226,6 +5233,7 @@ def _start_participantes_sync_job(
             "group_error_lines": [],
             "detail_rows": [],
             "error": "",
+            "error_trace": "",
         }
         _PARTICIPANTES_SYNC_SCOPE_TO_JOB[scope] = job_id
 
@@ -12131,6 +12139,7 @@ with tab_crud_clases:
                 ]
                 cancel_requested = bool(current_job.get("cancel_requested"))
                 error_text = str(current_job.get("error") or "").strip()
+                error_trace = str(current_job.get("error_trace") or "").strip()
 
                 if (
                     current_job_id
@@ -12198,6 +12207,9 @@ with tab_crud_clases:
                         f"Errores al consultar secciones ({len(group_error_lines)})"
                     ):
                         st.write("\n".join(f"- {item}" for item in group_error_lines))
+                if error_trace and state == "error":
+                    with st.expander("Detalle tecnico del error", expanded=True):
+                        st.code(error_trace)
 
         @st.fragment
         def _render_clases_gestion_section() -> None:

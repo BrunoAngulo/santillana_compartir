@@ -2116,6 +2116,187 @@
       height: 100%;
     }
 
+    .my-comments-modal-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.95fr);
+      gap: 12px;
+      height: 100%;
+      min-height: 0;
+    }
+
+    .my-comments-pane {
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      background: var(--bg-soft);
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .my-comments-pane-head {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      background: #fff;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .my-comments-comment-list {
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+      overflow: auto;
+    }
+
+    .my-comments-comment-item {
+      width: 100%;
+      text-align: left;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      background: #fff;
+      padding: 12px;
+      cursor: pointer;
+      transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+    }
+
+    .my-comments-comment-item:hover {
+      border-color: var(--line-strong);
+      transform: translateY(-1px);
+    }
+
+    .my-comments-comment-item.active {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+      background: #eff6ff;
+    }
+
+    .my-comments-comment-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 8px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+
+    .my-comments-comment-ticket {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .my-comments-comment-time {
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .my-comments-comment-sub {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 8px;
+      overflow-wrap: anywhere;
+    }
+
+    .my-comments-comment-text {
+      font-size: 13px;
+      color: var(--text);
+      line-height: 1.45;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      display: -webkit-box;
+      -webkit-line-clamp: 4;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .my-comments-comment-meta {
+      margin-top: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .my-comments-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: #fff;
+      font-size: 12px;
+      color: var(--text);
+      max-width: 100%;
+      overflow-wrap: anywhere;
+    }
+
+    .my-comments-chip.ok {
+      color: var(--ok);
+      border-color: #a7f3d0;
+      background: #ecfdf5;
+    }
+
+    .my-comments-form-panel {
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+      overflow: auto;
+      background: #fff;
+    }
+
+    .my-comments-form-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .my-comments-form-sub {
+      font-size: 12px;
+      color: var(--muted);
+      overflow-wrap: anywhere;
+    }
+
+    .my-comments-form-block {
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--bg-soft);
+      padding: 10px;
+    }
+
+    .my-comments-form-label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .my-comments-form-comment {
+      font-size: 13px;
+      color: var(--text);
+      line-height: 1.45;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      max-height: 240px;
+      overflow: auto;
+    }
+
+    .my-comments-form-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 180px;
+      gap: 10px;
+      align-items: end;
+    }
+
+    .my-comments-form-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
     .my-comments-modal-foot {
       display: flex;
       justify-content: flex-end;
@@ -2166,6 +2347,14 @@
       .panel-worklogs {
         grid-column: auto;
         grid-row: auto;
+      }
+
+      .my-comments-modal-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .my-comments-form-grid {
+        grid-template-columns: 1fr;
       }
 
       .panel-worklogs .tbl-wrap {
@@ -2340,7 +2529,7 @@
           <select class="sel" id="issueSel"></select>
         </div>
         <div class="board-actions">
-          <button class="btn primary" id="myCommentsTodayBtn" type="button" disabled>Tickets comentados por fecha</button>
+          <button class="btn primary" id="myCommentsTodayBtn" type="button" disabled>Comentarios por fecha</button>
         </div>
         <div id="issueInsight" class="issue-insight empty">Selecciona un ticket para ver contexto rapido.</div>
       </div>
@@ -2731,7 +2920,7 @@
         selectedTimelineActivity: '',
         selectedTimelineMinutes: 0,
         selectedWorklogId: '',
-        myCommentsToday: { loading: false, items: [], refreshedAt: null, failedIssues: 0, selectedDate: '' },
+        myCommentsToday: { loading: false, items: [], refreshedAt: null, failedIssues: 0, selectedDate: '', selectedCommentId: '', form: null, saving: false },
         timelineLinksByIssue: {},
         manualWorklogToCommentByIssue: {},
         chartDesign: DEFAULT_CHART_DESIGN,
@@ -4330,8 +4519,8 @@
         el.disconnectBtn.disabled = !state.connected;
         el.refreshIssuesBtn.disabled = !state.connected;
         if (el.myCommentsTodayBtn) {
-          el.myCommentsTodayBtn.disabled = !state.connected || !!state.myCommentsToday.loading;
-          el.myCommentsTodayBtn.textContent = state.myCommentsToday.loading ? 'Buscando...' : 'Tickets comentados por fecha';
+          el.myCommentsTodayBtn.disabled = !state.connected || !!state.myCommentsToday.loading || !!state.myCommentsToday.saving;
+          el.myCommentsTodayBtn.textContent = state.myCommentsToday.loading ? 'Buscando...' : (state.myCommentsToday.saving ? 'Guardando...' : 'Comentarios por fecha');
         }
         el.loginView.classList.toggle('hide', state.connected);
         el.mainView.classList.toggle('hide', !state.connected);
@@ -4345,6 +4534,189 @@
           : '';
         if (fromState) return fromState;
         return TimeService.toInputDate(new Date());
+      }
+
+      function buildMyCommentsTodayFormForItem(item, selectedDate = '') {
+        const fallbackDate = selectedMyCommentsInputDate(selectedDate);
+        if (!item || !item.comment) {
+          return {
+            issueKey: '',
+            commentId: '',
+            worklogId: '',
+            mode: 'create',
+            activityType: OFFICIAL_ACTIVITY_TYPES[0],
+            dueDate: fallbackDate,
+            minutesText: '',
+            metaText: ''
+          };
+        }
+
+        const issueKey = String(item.issueKey || '').trim();
+        const comment = item.comment || null;
+        const existingWorklog = item.existingWorklogId
+          ? (state.worklogsByIssue[issueKey] || []).find((row) => String(row && row.id ? row.id : '') === String(item.existingWorklogId || '')) || null
+          : findExistingWorklogForComment(issueKey, comment);
+
+        if (existingWorklog) {
+          const currentActivity = activityOf(existingWorklog);
+          const parsed = parseOfficialActivity(currentActivity);
+          const inferredType = parsed && OFFICIAL_ACTIVITY_TYPES.includes(parsed.type)
+            ? parsed.type
+            : inferOfficialActivityType(currentActivity);
+          const dueDate = parsed && isValidInputDate(parsed.dueInput)
+            ? parsed.dueInput
+            : TimeService.toInputDate(existingWorklog.started || existingWorklog.created || new Date());
+          return {
+            issueKey,
+            commentId: String(item.commentId || ''),
+            worklogId: String(existingWorklog.id || ''),
+            mode: 'edit',
+            activityType: OFFICIAL_ACTIVITY_TYPES.includes(inferredType)
+              ? inferredType
+              : OFFICIAL_ACTIVITY_TYPES[0],
+            dueDate: isValidInputDate(dueDate) ? dueDate : fallbackDate,
+            minutesText: TimeService.jiraDuration(minutesOf(existingWorklog)),
+            metaText: `${issueKey} | Worklog ${String(existingWorklog.id || '').trim()}`
+          };
+        }
+
+        const suggestedType = inferOfficialActivityType(commentText(comment));
+        const plan = registrationPlanFromComment(comment);
+        const dueDate = TimeService.toInputDate(comment && comment.created ? comment.created : new Date());
+        return {
+          issueKey,
+          commentId: String(item.commentId || ''),
+          worklogId: '',
+          mode: 'create',
+          activityType: OFFICIAL_ACTIVITY_TYPES.includes(suggestedType)
+            ? suggestedType
+            : OFFICIAL_ACTIVITY_TYPES[0],
+          dueDate: isValidInputDate(dueDate) ? dueDate : fallbackDate,
+          minutesText: TimeService.jiraDuration(Math.max(1, Math.floor(Number(plan && plan.minutes ? plan.minutes : 15)))),
+          metaText: `${issueKey} | ${TimeService.dtLabel(comment && comment.created ? comment.created : new Date())}`
+        };
+      }
+
+      function syncMyCommentsTodaySelection(preferredCommentId = '') {
+        const snapshot = state.myCommentsToday && typeof state.myCommentsToday === 'object'
+          ? state.myCommentsToday
+          : { loading: false, items: [], refreshedAt: null, failedIssues: 0, selectedDate: '', selectedCommentId: '', form: null, saving: false };
+        const items = Array.isArray(snapshot.items) ? snapshot.items : [];
+        const candidateId = String(preferredCommentId || snapshot.selectedCommentId || '').trim();
+        const selectedItem = items.find((item) => String(item && item.commentId ? item.commentId : '') === candidateId) || items[0] || null;
+        const selectedCommentId = selectedItem ? String(selectedItem.commentId || '').trim() : '';
+        const currentForm = snapshot.form && typeof snapshot.form === 'object' ? snapshot.form : null;
+        const nextForm = currentForm && String(currentForm.commentId || '').trim() === selectedCommentId
+          ? currentForm
+          : buildMyCommentsTodayFormForItem(selectedItem, snapshot.selectedDate);
+        state.myCommentsToday = Object.assign({}, snapshot, {
+          selectedCommentId,
+          form: nextForm
+        });
+        return selectedItem;
+      }
+
+      function currentMyCommentsTodayItem() {
+        const snapshot = state.myCommentsToday && typeof state.myCommentsToday === 'object'
+          ? state.myCommentsToday
+          : null;
+        if (!snapshot) return null;
+        const selectedCommentId = String(snapshot.selectedCommentId || '').trim();
+        const items = Array.isArray(snapshot.items) ? snapshot.items : [];
+        return items.find((item) => String(item && item.commentId ? item.commentId : '') === selectedCommentId) || null;
+      }
+
+      function updateMyCommentsTodayFormDraft(patch = {}) {
+        const snapshot = state.myCommentsToday && typeof state.myCommentsToday === 'object'
+          ? state.myCommentsToday
+          : null;
+        if (!snapshot) return;
+        const baseForm = snapshot.form && typeof snapshot.form === 'object'
+          ? snapshot.form
+          : buildMyCommentsTodayFormForItem(currentMyCommentsTodayItem(), snapshot.selectedDate);
+        state.myCommentsToday = Object.assign({}, snapshot, {
+          form: Object.assign({}, baseForm, patch || {})
+        });
+      }
+
+      async function saveMyCommentsTodayForm() {
+        const snapshot = state.myCommentsToday && typeof state.myCommentsToday === 'object'
+          ? state.myCommentsToday
+          : null;
+        const selectedItem = currentMyCommentsTodayItem();
+        if (!snapshot || !selectedItem) {
+          showMsg('error', 'Selecciona un comentario.');
+          return;
+        }
+        if (snapshot.saving) return;
+
+        const typeSel = document.getElementById('myCommentsTodayFormTypeSel');
+        const minutesInp = document.getElementById('myCommentsTodayFormMinutesInp');
+        const baseForm = snapshot.form && typeof snapshot.form === 'object'
+          ? snapshot.form
+          : buildMyCommentsTodayFormForItem(selectedItem, snapshot.selectedDate);
+        const selectedType = OFFICIAL_ACTIVITY_TYPES.includes(String(typeSel && typeSel.value ? typeSel.value : baseForm.activityType).trim())
+          ? String(typeSel && typeSel.value ? typeSel.value : baseForm.activityType).trim()
+          : OFFICIAL_ACTIVITY_TYPES[0];
+        const minutesText = String(minutesInp && minutesInp.value ? minutesInp.value : baseForm.minutesText).trim();
+        const dueDate = isValidInputDate(baseForm.dueDate)
+          ? String(baseForm.dueDate || '').trim()
+          : selectedMyCommentsInputDate(snapshot.selectedDate);
+        const minutes = parseDurationInput(minutesText);
+        if (!Number.isFinite(minutes) || minutes <= 0) {
+          showMsg('error', 'Tiempo invalido. Usa formato Jira como 1h 30m o minutos.');
+          return;
+        }
+
+        updateMyCommentsTodayFormDraft({
+          activityType: selectedType,
+          minutesText,
+          dueDate
+        });
+        state.myCommentsToday = Object.assign({}, state.myCommentsToday, { saving: true });
+        renderTop();
+        renderMyCommentsTodayModal();
+
+        const activity = buildOfficialActivity(selectedType, dueDate);
+        try {
+          if (baseForm.worklogId) {
+            const worklogs = state.worklogsByIssue[selectedItem.issueKey] || [];
+            const existingWorklog = worklogs.find((row) => String(row && row.id ? row.id : '') === String(baseForm.worklogId || '').trim()) || null;
+            if (!existingWorklog) {
+              throw new Error('No se encontro el worklog relacionado.');
+            }
+            const startedAt = new Date(existingWorklog.started || existingWorklog.created || new Date());
+            await updateWorklog(
+              selectedItem.issueKey,
+              String(baseForm.worklogId || '').trim(),
+              activity,
+              startedAt,
+              Math.max(1, Math.floor(minutes))
+            );
+          } else {
+            const comment = selectedItem.comment || null;
+            const anchorRef = comment ? commentLinkAnchor(comment) : null;
+            const anchorTs = anchorRef && Number.isFinite(Number(anchorRef.anchorTs || 0))
+              ? Number(anchorRef.anchorTs || 0)
+              : TimeService.normalizeBusinessCheckpoint(comment && comment.created ? new Date(comment.created) : new Date()).getTime();
+            const explicitStarted = TimeService.subtractBusinessMinutes(new Date(anchorTs), Math.max(1, Math.floor(minutes)));
+            await createWorklog(
+              selectedItem.issueKey,
+              activity,
+              Math.max(1, Math.floor(minutes)),
+              explicitStarted,
+              String(selectedItem.commentId || '').trim()
+            );
+          }
+          state.myCommentsToday = Object.assign({}, state.myCommentsToday, { saving: false });
+          renderTop();
+          await showMyCommentsTodayModal(snapshot.selectedDate);
+        } catch (error) {
+          state.myCommentsToday = Object.assign({}, state.myCommentsToday, { saving: false });
+          renderTop();
+          renderMyCommentsTodayModal();
+          applyError(error, 'No se pudo guardar el registro de actividad.');
+        }
       }
 
       function openMyCommentsTodayModal() {
@@ -4363,7 +4735,7 @@
 
       function renderMyCommentsTodayModal() {
         if (!el.myCommentsTodayMeta || !el.myCommentsTodayBody) return;
-        const snapshot = state.myCommentsToday || { loading: false, items: [], refreshedAt: null, failedIssues: 0, selectedDate: '' };
+        const snapshot = state.myCommentsToday || { loading: false, items: [], refreshedAt: null, failedIssues: 0, selectedDate: '', selectedCommentId: '', form: null, saving: false };
         const selectedInput = selectedMyCommentsInputDate(snapshot.selectedDate);
         const selectedLabel = TimeService.ddmmyyyy(new Date(`${selectedInput}T00:00:00`));
         const items = Array.isArray(snapshot.items) ? snapshot.items : [];
@@ -4373,11 +4745,18 @@
 
         if (snapshot.loading) {
           el.myCommentsTodayMeta.textContent = `Fecha seleccionada: ${selectedLabel}`;
-          el.myCommentsTodayBody.innerHTML = `<div class="empty">Cargando resumen de ${escapeHtml(selectedLabel)}...</div>`;
+          el.myCommentsTodayBody.innerHTML = `<div class="empty">Cargando comentarios de ${escapeHtml(selectedLabel)}...</div>`;
           return;
         }
 
-        el.myCommentsTodayMeta.textContent = `Fecha seleccionada: ${selectedLabel}`;
+        const metaParts = [
+          `Fecha seleccionada: ${selectedLabel}`,
+          `Comentarios: ${items.length}`
+        ];
+        if (snapshot.failedIssues) {
+          metaParts.push(`Tickets con error: ${snapshot.failedIssues}`);
+        }
+        el.myCommentsTodayMeta.textContent = metaParts.join(' | ');
 
         if (!items.length) {
           const emptyLabel = state.issues.length
@@ -4387,40 +4766,78 @@
           return;
         }
 
+        const selectedItem = syncMyCommentsTodaySelection(snapshot.selectedCommentId);
+        const currentSnapshot = state.myCommentsToday || snapshot;
+        const form = currentSnapshot.form && typeof currentSnapshot.form === 'object'
+          ? currentSnapshot.form
+          : buildMyCommentsTodayFormForItem(selectedItem, selectedInput);
+        const typeOptionsHtml = OFFICIAL_ACTIVITY_TYPES
+          .map((name) => `<option value="${escapeHtml(name)}"${String(form.activityType || '') === String(name) ? ' selected' : ''}>${escapeHtml(name)}</option>`)
+          .join('');
+        const listHtml = items.map((item) => {
+          const isActive = String(item && item.commentId ? item.commentId : '') === String(currentSnapshot.selectedCommentId || '');
+          const registroLabel = item && item.existingWorklogId
+            ? `${String(item.existingWorklogType || 'Registro existente').trim()} | ${String(item.existingWorklogTime || '').trim()}`
+            : 'Sin registro';
+          const registroClass = item && item.existingWorklogId ? ' ok' : '';
+          return `
+            <button class="my-comments-comment-item${isActive ? ' active' : ''}" type="button" data-act="select-my-comment" data-comment-id="${escapeHtml(String(item && item.commentId ? item.commentId : ''))}">
+              <div class="my-comments-comment-top">
+                <div class="my-comments-comment-ticket">${escapeHtml(String(item && item.issueKey ? item.issueKey : ''))}</div>
+                <div class="my-comments-comment-time">${escapeHtml(TimeService.dtLabel(item && item.commentCreated ? item.commentCreated : new Date()))}</div>
+              </div>
+              <div class="my-comments-comment-sub">${escapeHtml(String(item && item.issueStatus ? item.issueStatus : 'Sin estado'))} | ${escapeHtml(String(item && item.colegio ? item.colegio : 'SIN_COLEGIO'))}</div>
+              <div class="my-comments-comment-text">${escapeHtml(String(item && item.commentText ? item.commentText : '(sin texto)'))}</div>
+              <div class="my-comments-comment-meta">
+                <span class="my-comments-chip${registroClass}">${escapeHtml(registroLabel)}</span>
+              </div>
+            </button>
+          `;
+        }).join('');
+
+        const formHtml = selectedItem
+          ? `
+            <div class="my-comments-form-panel">
+              <div>
+                <div class="my-comments-form-title">${escapeHtml(String(selectedItem.issueKey || 'Sin ticket'))}</div>
+                <div class="my-comments-form-sub">${escapeHtml(String(selectedItem.issueStatus || 'Sin estado'))} | ${escapeHtml(String(selectedItem.colegio || 'SIN_COLEGIO'))}</div>
+                <div class="my-comments-form-sub">${escapeHtml(String(form.metaText || ''))}</div>
+              </div>
+              <div class="my-comments-form-block">
+                <span class="my-comments-form-label">Comentario</span>
+                <div class="my-comments-form-comment">${escapeHtml(String(selectedItem.commentText || '(sin texto)'))}</div>
+              </div>
+              <div class="my-comments-form-grid">
+                <div>
+                  <label class="my-comments-form-label" for="myCommentsTodayFormTypeSel">Accion realizada</label>
+                  <select id="myCommentsTodayFormTypeSel" class="sel">${typeOptionsHtml}</select>
+                </div>
+                <div>
+                  <label class="my-comments-form-label" for="myCommentsTodayFormMinutesInp">Tiempo</label>
+                  <input id="myCommentsTodayFormMinutesInp" class="inp" type="text" placeholder="1h 30m" value="${escapeHtml(String(form.minutesText || ''))}">
+                </div>
+              </div>
+              <div class="my-comments-form-block">
+                <span class="my-comments-form-label">Fecha del registro</span>
+                <div class="my-comments-form-sub">${escapeHtml(TimeService.ddmmyyyy(new Date(`${String(form.dueDate || selectedInput)}T00:00:00`)))}</div>
+              </div>
+              <div class="my-comments-form-actions">
+                <button class="btn primary" type="button" data-act="save-my-comment-form"${currentSnapshot.saving ? ' disabled' : ''}>${currentSnapshot.saving ? 'Guardando...' : 'Guardar'}</button>
+              </div>
+            </div>
+          `
+          : `<div class="empty">Selecciona un comentario.</div>`;
+
         el.myCommentsTodayBody.innerHTML = `
-          <div class="tbl-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Ticket</th>
-                  <th>Estado</th>
-                  <th>Colegio</th>
-                  <th>Agente (Yo)</th>
-                  <th>Fecha y Hora Inicio</th>
-                  <th>Fecha y Hora Fin</th>
-                  <th>Tipo</th>
-                  <th>Tiempo</th>
-                  <th>Accion</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${items.map((item) => `
-                  <tr>
-                    <td>${escapeHtml(item.issueKey)}</td>
-                    <td>${escapeHtml(item.issueStatus || 'Sin estado')}</td>
-                    <td>${escapeHtml(item.colegio || 'SIN_COLEGIO')}</td>
-                    <td>${escapeHtml(item.agent || 'Yo')}</td>
-                    <td>${escapeHtml(TimeService.dtLabel(item.startCreated || new Date()))}</td>
-                    <td>${escapeHtml(TimeService.dtLabel(item.endCreated || new Date()))}</td>
-                    <td title="${escapeHtml(item.endingWorklogLabel || '')}">${escapeHtml(item.endingWorklogType || '-')}</td>
-                    <td>${escapeHtml(item.endingWorklogTime || '-')}</td>
-                    <td>${!item.lastCommentId
-            ? ''
-            : `<button class="btn" type="button" data-act="open-comment-worklog" data-issue-key="${escapeHtml(item.issueKey)}" data-comment-id="${escapeHtml(item.lastCommentId)}">${item.hasEndingWorklog ? 'Editar tipo/tiempo' : 'Tipo/tiempo'}</button>`}</td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
+          <div class="my-comments-modal-layout">
+            <div class="my-comments-pane">
+              <div class="my-comments-pane-head">Comentarios del dia</div>
+              <div class="my-comments-comment-list">${listHtml}</div>
+            </div>
+            <div class="my-comments-pane">
+              <div class="my-comments-pane-head">Registro de actividad</div>
+              ${formHtml}
+            </div>
           </div>
         `;
       }
@@ -4431,12 +4848,34 @@
           return;
         }
         const targetInput = selectedMyCommentsInputDate(forcedDate);
+        const previousState = state.myCommentsToday && typeof state.myCommentsToday === 'object'
+          ? state.myCommentsToday
+          : { selectedCommentId: '', form: null };
+        const preferredCommentId = String(previousState.selectedCommentId || '').trim();
         openMyCommentsTodayModal();
-        state.myCommentsToday = { loading: true, items: [], refreshedAt: null, failedIssues: 0, selectedDate: targetInput };
+        state.myCommentsToday = {
+          loading: true,
+          items: [],
+          refreshedAt: null,
+          failedIssues: 0,
+          selectedDate: targetInput,
+          selectedCommentId: preferredCommentId,
+          form: null,
+          saving: false
+        };
         renderTop();
         renderMyCommentsTodayModal();
         if (!state.me || !state.issues.length) {
-          state.myCommentsToday = { loading: false, items: [], refreshedAt: new Date(), failedIssues: 0, selectedDate: targetInput };
+          state.myCommentsToday = {
+            loading: false,
+            items: [],
+            refreshedAt: new Date(),
+            failedIssues: 0,
+            selectedDate: targetInput,
+            selectedCommentId: '',
+            form: null,
+            saving: false
+          };
           renderTop();
           renderMyCommentsTodayModal();
           return;
@@ -4457,36 +4896,21 @@
                 return true;
               });
               if (!dayComments.length) return;
-              const lastComment = dayComments[dayComments.length - 1] || null;
-              let minStartTs = Number.POSITIVE_INFINITY;
-              let maxEndTs = Number.NEGATIVE_INFINITY;
               dayComments.forEach((comment) => {
-                const span = commentActivityWindow(issue.key, comment);
-                if (Number.isFinite(span.startTs) && span.startTs < minStartTs) {
-                  minStartTs = span.startTs;
-                }
-                if (Number.isFinite(span.endTs) && span.endTs > maxEndTs) {
-                  maxEndTs = span.endTs;
-                }
-              });
-              const firstCommentTs = tsOf(dayComments[0] && dayComments[0].created ? dayComments[0].created : 0);
-              const lastCommentTs = tsOf(dayComments[dayComments.length - 1] && dayComments[dayComments.length - 1].created ? dayComments[dayComments.length - 1].created : 0);
-              const endWorklog = (lastComment ? findExistingWorklogForComment(issue.key, lastComment) : null)
-                || (Number.isFinite(maxEndTs) ? findMineWorklogEndingNear(issue.key, maxEndTs) : null);
-              rows.push({
-                issueKey: issue.key,
-                issueStatus: formatIssueStatus(issue),
-                colegio: String(issue.summary || '').trim(),
-                agent: agentName,
-                startCreated: Number.isFinite(minStartTs) ? new Date(minStartTs) : (Number.isFinite(firstCommentTs) ? new Date(firstCommentTs) : ''),
-                endCreated: Number.isFinite(maxEndTs) ? new Date(maxEndTs) : (Number.isFinite(lastCommentTs) ? new Date(lastCommentTs) : ''),
-                hasEndingWorklog: !!endWorklog,
-                endingWorklogType: endWorklog ? activityOf(endWorklog) : '',
-                endingWorklogTime: endWorklog ? TimeService.jiraDuration(minutesOf(endWorklog)) : '',
-                endingWorklogLabel: endWorklog
-                  ? `${activityOf(endWorklog)} | ${TimeService.jiraDuration(minutesOf(endWorklog))}`
-                  : '',
-                lastCommentId: lastComment && lastComment.id ? String(lastComment.id || '') : ''
+                const linkedWorklog = findExistingWorklogForComment(issue.key, comment);
+                rows.push({
+                  issueKey: issue.key,
+                  issueStatus: formatIssueStatus(issue),
+                  colegio: String(issue.summary || '').trim(),
+                  agent: agentName,
+                  commentId: String(comment && comment.id ? comment.id : ''),
+                  commentCreated: comment && comment.created ? comment.created : '',
+                  commentText: commentText(comment) || '(sin texto)',
+                  existingWorklogId: linkedWorklog ? String(linkedWorklog.id || '') : '',
+                  existingWorklogType: linkedWorklog ? activityOf(linkedWorklog) : '',
+                  existingWorklogTime: linkedWorklog ? TimeService.jiraDuration(minutesOf(linkedWorklog)) : '',
+                  comment
+                });
               });
             } catch (_error) {
               failedIssues += 1;
@@ -4495,10 +4919,13 @@
         } finally {
           state.myCommentsToday = {
             loading: false,
-            items: sortDesc(rows, (item) => item.endCreated || ''),
+            items: sortDesc(rows, (item) => item.commentCreated || ''),
             refreshedAt: new Date(),
             failedIssues,
-            selectedDate: targetInput
+            selectedDate: targetInput,
+            selectedCommentId: preferredCommentId,
+            form: null,
+            saving: false
           };
           renderTop();
           renderMyCommentsTodayModal();
@@ -7662,7 +8089,16 @@
           try {
             await showMyCommentsTodayModal();
           } catch (e) {
-            state.myCommentsToday = { loading: false, items: [], refreshedAt: new Date(), failedIssues: 0, selectedDate: selectedMyCommentsInputDate() };
+            state.myCommentsToday = {
+              loading: false,
+              items: [],
+              refreshedAt: new Date(),
+              failedIssues: 0,
+              selectedDate: selectedMyCommentsInputDate(),
+              selectedCommentId: '',
+              form: null,
+              saving: false
+            };
             renderTop();
             renderMyCommentsTodayModal();
             applyError(e, 'No se pudieron cargar tus comentarios de la fecha seleccionada.');
@@ -7672,7 +8108,16 @@
           try {
             await showMyCommentsTodayModal(el.myCommentsTodayDateInp ? el.myCommentsTodayDateInp.value : '');
           } catch (e) {
-            state.myCommentsToday = { loading: false, items: [], refreshedAt: new Date(), failedIssues: 0, selectedDate: selectedMyCommentsInputDate(el.myCommentsTodayDateInp ? el.myCommentsTodayDateInp.value : '') };
+            state.myCommentsToday = {
+              loading: false,
+              items: [],
+              refreshedAt: new Date(),
+              failedIssues: 0,
+              selectedDate: selectedMyCommentsInputDate(el.myCommentsTodayDateInp ? el.myCommentsTodayDateInp.value : ''),
+              selectedCommentId: '',
+              form: null,
+              saving: false
+            };
             renderTop();
             renderMyCommentsTodayModal();
             applyError(e, 'No se pudieron cargar tus comentarios de la fecha seleccionada.');
@@ -7680,36 +8125,55 @@
         });
         el.myCommentsTodayDateInp.addEventListener('change', () => {
           const value = selectedMyCommentsInputDate(el.myCommentsTodayDateInp ? el.myCommentsTodayDateInp.value : '');
-          state.myCommentsToday = Object.assign({}, state.myCommentsToday || {}, { selectedDate: value });
+          state.myCommentsToday = Object.assign({}, state.myCommentsToday || {}, {
+            selectedDate: value,
+            selectedCommentId: '',
+            form: null,
+            saving: false
+          });
           renderMyCommentsTodayModal();
+        });
+        el.myCommentsTodayModal.addEventListener('change', (ev) => {
+          const target = ev.target;
+          if (!target) return;
+          if (target.id === 'myCommentsTodayFormTypeSel') {
+            updateMyCommentsTodayFormDraft({
+              activityType: OFFICIAL_ACTIVITY_TYPES.includes(String(target.value || '').trim())
+                ? String(target.value || '').trim()
+                : OFFICIAL_ACTIVITY_TYPES[0]
+            });
+          }
+          if (target.id === 'myCommentsTodayFormMinutesInp') {
+            updateMyCommentsTodayFormDraft({ minutesText: String(target.value || '') });
+          }
+        });
+        el.myCommentsTodayModal.addEventListener('input', (ev) => {
+          const target = ev.target;
+          if (!target) return;
+          if (target.id === 'myCommentsTodayFormMinutesInp') {
+            updateMyCommentsTodayFormDraft({ minutesText: String(target.value || '') });
+          }
         });
         el.myCommentsTodayCloseBtn.addEventListener('click', closeMyCommentsTodayModal);
         el.myCommentsTodayModal.addEventListener('click', async (ev) => {
-          const actionBtn = ev.target && ev.target.closest
-            ? ev.target.closest('button[data-act="open-comment-worklog"]')
+          const selectBtn = ev.target && ev.target.closest
+            ? ev.target.closest('button[data-act="select-my-comment"]')
             : null;
-          if (actionBtn) {
-            const issueKey = String(actionBtn.getAttribute('data-issue-key') || '').trim();
-            const commentId = String(actionBtn.getAttribute('data-comment-id') || '').trim();
-            if (!issueKey || !commentId) return;
-            try {
-              state.selectedIssueKey = issueKey;
-              if (el.issueSel) {
-                el.issueSel.value = issueKey;
-              }
-              uiStateSave();
-              await loadIssueData(issueKey);
-              const comments = state.commentsByIssue[issueKey] || [];
-              const sourceComment = comments.find((row) => String(row && row.id ? row.id : '') === commentId) || null;
-              if (!sourceComment) {
-                showMsg('error', 'No se encontro el comentario para precargar el registro.');
-                return;
-              }
-              closeMyCommentsTodayModal();
-              openInlineRegistrarForComment(issueKey, sourceComment);
-            } catch (error) {
-              applyError(error, 'No se pudo abrir el registro rapido desde tickets comentados por fecha.');
-            }
+          if (selectBtn) {
+            const commentId = String(selectBtn.getAttribute('data-comment-id') || '').trim();
+            if (!commentId) return;
+            state.myCommentsToday = Object.assign({}, state.myCommentsToday || {}, {
+              selectedCommentId: commentId,
+              form: null
+            });
+            renderMyCommentsTodayModal();
+            return;
+          }
+          const saveBtn = ev.target && ev.target.closest
+            ? ev.target.closest('button[data-act="save-my-comment-form"]')
+            : null;
+          if (saveBtn) {
+            await saveMyCommentsTodayForm();
             return;
           }
           const closeBtn = ev.target && ev.target.closest

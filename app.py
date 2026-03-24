@@ -5912,9 +5912,6 @@ def _find_ingles_assignment_student_matches(
         _normalize_compare_apellido(apellido_materno),
     )
     candidates = list(students_lookup.get(surname_key) or [])
-    if not candidates:
-        return [], ""
-
     matched_by_score: Dict[int, List[Dict[str, object]]] = {}
     for candidate in candidates:
         if not isinstance(candidate, dict):

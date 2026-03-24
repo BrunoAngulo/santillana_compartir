@@ -5966,15 +5966,16 @@ def _build_ingles_assignment_students_by_id(
 
 
 def _build_ingles_assignment_reference_option_label(row: Dict[str, object]) -> str:
-    nombre = str(row.get("nombre_completo") or "").strip() or "SIN NOMBRE"
-    dni = str(row.get("id_oficial") or "").strip() or "-"
-    alumno_id = _safe_int(row.get("alumno_id"))
-    seccion = str(row.get("seccion_norm") or row.get("seccion") or "").strip() or "-"
-    activo_label = "Activo" if _to_bool(row.get("activo")) else "Inactivo"
-    return (
-        f"{nombre} | DNI {dni} | Alumno ID {alumno_id or '-'} | "
-        f"Seccion {seccion} | {activo_label}"
-    )
+    return str(row.get("nombre_completo") or "").strip() or "SIN NOMBRE"
+
+
+def _build_ingles_assignment_excel_full_name(row: Dict[str, object]) -> str:
+    parts = [
+        str(row.get("Nombre") or "").strip(),
+        str(row.get("Apellido Paterno") or "").strip(),
+        str(row.get("Apellido Materno") or "").strip(),
+    ]
+    return " ".join(part for part in parts if part).strip() or "SIN NOMBRE"
 
 
 def _hydrate_ingles_assignment_preview_row(
@@ -6297,22 +6298,27 @@ def _render_ingles_assignment_reference_review(
 
     option_values: List[str] = [""]
     option_labels: Dict[str, str] = {"": "Selecciona un alumno"}
-    for alumno_id, row in students_by_id.items():
+    sorted_students = sorted(
+        students_by_id.items(),
+        key=lambda item: (
+            _build_ingles_assignment_reference_option_label(item[1]).upper(),
+            int(item[0]),
+        ),
+    )
+    for alumno_id, row in sorted_students:
         option_key = str(int(alumno_id))
         option_values.append(option_key)
         option_labels[option_key] = _build_ingles_assignment_reference_option_label(row)
 
     st.markdown("**Revision de referencias**")
     st.caption(
-        "Usa Referencia del alumno para corregir coincidencias. "
-        "Si el mismo alumno queda referenciado en mas de una fila, quedara en Revisar."
+        "Busca el alumno correcto escribiendo en el combo de Referencia. "
+        "Aqui solo se muestra el nombre completo del Excel y el nombre completo del alumno a referenciar."
     )
 
-    header_cols = st.columns([0.7, 1.8, 1.5, 2.6], gap="small")
-    header_cols[0].markdown("**Fila**")
-    header_cols[1].markdown("**Alumno Excel**")
-    header_cols[2].markdown("**Clase destino**")
-    header_cols[3].markdown("**Referencia del alumno**")
+    header_cols = st.columns([2.2, 3.0], gap="small")
+    header_cols[0].markdown("**Nombre completo Excel**")
+    header_cols[1].markdown("**Referencia del alumno**")
 
     selected_student_ids_by_fila: Dict[int, Optional[int]] = {}
     for row in preview_rows:
@@ -6324,18 +6330,9 @@ def _render_ingles_assignment_reference_review(
         if st.session_state.get(row_key) not in option_values:
             st.session_state[row_key] = default_option if default_option in option_values else ""
 
-        cols = st.columns([0.7, 1.8, 1.5, 2.6], gap="small")
-        cols[0].markdown(str(fila or "-"))
-        cols[1].markdown(
-            "{nombre} {ap_pat} {ap_mat}".format(
-                nombre=str(row.get("Nombre") or "").strip(),
-                ap_pat=str(row.get("Apellido Paterno") or "").strip(),
-                ap_mat=str(row.get("Apellido Materno") or "").strip(),
-            ).strip()
-            or "-"
-        )
-        cols[2].markdown(str(row.get("Clase solicitada") or "").strip() or "-")
-        selected_option = cols[3].selectbox(
+        cols = st.columns([2.2, 3.0], gap="small")
+        cols[0].markdown(_build_ingles_assignment_excel_full_name(row))
+        selected_option = cols[1].selectbox(
             f"Referencia del alumno fila {fila}",
             options=option_values,
             key=row_key,
@@ -6604,7 +6601,18 @@ def _render_ingles_por_niveles_excel_assignment_block(
                 st.error(f"Error en Excel: {exc}")
             else:
                 st.caption(f"Filas detectadas en el Excel: {len(uploaded_rows)}")
-                _show_dataframe(uploaded_rows[:100], use_container_width=True)
+                _show_dataframe(
+                    [
+                        {
+                            key: value
+                            for key, value in row.items()
+                            if str(key) != "_row_number"
+                        }
+                        for row in uploaded_rows[:100]
+                        if isinstance(row, dict)
+                    ],
+                    use_container_width=True,
+                )
 
         preview_rows_state = st.session_state.get(
             "clases_auto_group_ingles_excel_preview_rows"

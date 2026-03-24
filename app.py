@@ -6523,14 +6523,18 @@ def _render_ingles_assignment_reference_review(
             row=row,
             students_full_name_lookup=students_full_name_lookup,
         )
-        if row_key not in st.session_state or st.session_state.get(row_key) not in option_values:
-            st.session_state[row_key] = default_option if default_option in option_values else ""
+        current_option = str(st.session_state.get(row_key) or "").strip()
+        if current_option not in option_values:
+            current_option = default_option if default_option in option_values else ""
+            st.session_state[row_key] = current_option
+        selected_index = option_values.index(current_option) if current_option in option_values else 0
 
         cols = st.columns([2.2, 3.0], gap="small")
         cols[0].markdown(_build_ingles_assignment_excel_full_name(row))
         selected_option = cols[1].selectbox(
             f"Referencia del alumno fila {fila}",
             options=option_values,
+            index=int(selected_index),
             key=row_key,
             format_func=lambda value: option_labels.get(str(value), str(value)),
             label_visibility="collapsed",

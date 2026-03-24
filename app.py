@@ -304,10 +304,16 @@ RICHMONDSTUDIO_USER_IMPORT_EMAIL = "Email* MANDATORY"
 RICHMONDSTUDIO_USER_IMPORT_ROLE = "Role* MANDATORY"
 RICHMONDSTUDIO_USER_IMPORT_LEVEL = "level"
 RICHMONDSTUDIO_USER_LEVEL_OPTIONS = ("preschool", "primary", "secondary", "adult")
-_PARTICIPANTES_SYNC_LOCK = threading.Lock()
-_PARTICIPANTES_SYNC_JOBS: Dict[str, Dict[str, object]] = {}
-_PARTICIPANTES_SYNC_SCOPE_TO_JOB: Dict[Tuple[int, int, int], str] = {}
 _PARTICIPANTES_SYNC_STATUS_LIMIT = 12
+
+
+@st.cache_resource
+def _get_participantes_sync_state() -> Dict[str, object]:
+    return {
+        "lock": threading.Lock(),
+        "jobs": {},
+        "scope_to_job": {},
+    }
 
 
 def _richmondstudio_grade_option_from_code(grade_code: object) -> str:
@@ -4941,8 +4947,11 @@ def _reconcile_participantes_sync_job(job_id: object) -> None:
     job_key = str(job_id or "").strip()
     if not job_key:
         return
-    with _PARTICIPANTES_SYNC_LOCK:
-        job = _PARTICIPANTES_SYNC_JOBS.get(job_key)
+    state = _get_participantes_sync_state()
+    lock = state["lock"]
+    jobs = state["jobs"]
+    with lock:
+        job = jobs.get(job_key)
         if not isinstance(job, dict):
             return
         state = str(job.get("state") or "").strip()
@@ -4972,8 +4981,11 @@ def _reconcile_participantes_sync_job(job_id: object) -> None:
 def _set_participantes_sync_job(job_id: str, **fields: object) -> None:
     if not str(job_id or "").strip():
         return
-    with _PARTICIPANTES_SYNC_LOCK:
-        job = _PARTICIPANTES_SYNC_JOBS.get(str(job_id))
+    state = _get_participantes_sync_state()
+    lock = state["lock"]
+    jobs = state["jobs"]
+    with lock:
+        job = jobs.get(str(job_id))
         if not isinstance(job, dict):
             return
         for key, value in fields.items():
@@ -4989,8 +5001,11 @@ def _append_participantes_sync_job_message(job_id: str, message: object) -> None
     msg = str(message or "").strip()
     if not msg:
         return
-    with _PARTICIPANTES_SYNC_LOCK:
-        job = _PARTICIPANTES_SYNC_JOBS.get(str(job_id))
+    state = _get_participantes_sync_state()
+    lock = state["lock"]
+    jobs = state["jobs"]
+    with lock:
+        job = jobs.get(str(job_id))
         if not isinstance(job, dict):
             return
         messages = list(job.get("status_messages") or [])
@@ -5004,8 +5019,11 @@ def _get_participantes_sync_job(job_id: object) -> Optional[Dict[str, object]]:
     if not job_key:
         return None
     _reconcile_participantes_sync_job(job_key)
-    with _PARTICIPANTES_SYNC_LOCK:
-        job = _PARTICIPANTES_SYNC_JOBS.get(job_key)
+    state = _get_participantes_sync_state()
+    lock = state["lock"]
+    jobs = state["jobs"]
+    with lock:
+        job = jobs.get(job_key)
         if not isinstance(job, dict):
             return None
         return _copy_participantes_sync_job(job)
@@ -5017,11 +5035,15 @@ def _get_participantes_sync_job_id_for_scope(
     colegio_id: int,
 ) -> Optional[str]:
     scope = (int(empresa_id), int(ciclo_id), int(colegio_id))
-    with _PARTICIPANTES_SYNC_LOCK:
-        job_id = _PARTICIPANTES_SYNC_SCOPE_TO_JOB.get(scope)
+    state = _get_participantes_sync_state()
+    lock = state["lock"]
+    jobs = state["jobs"]
+    scope_to_job = state["scope_to_job"]
+    with lock:
+        job_id = scope_to_job.get(scope)
         if not str(job_id or "").strip():
             return None
-        if not isinstance(_PARTICIPANTES_SYNC_JOBS.get(str(job_id)), dict):
+        if not isinstance(jobs.get(str(job_id)), dict):
             return None
         resolved_job_id = str(job_id)
     _reconcile_participantes_sync_job(resolved_job_id)
@@ -5038,8 +5060,11 @@ def _request_cancel_participantes_sync_job(job_id: object) -> bool:
     job_key = str(job_id or "").strip()
     if not job_key:
         return False
-    with _PARTICIPANTES_SYNC_LOCK:
-        job = _PARTICIPANTES_SYNC_JOBS.get(job_key)
+    state = _get_participantes_sync_state()
+    lock = state["lock"]
+    jobs = state["jobs"]
+    with lock:
+        job = jobs.get(job_key)
         if not isinstance(job, dict):
             return False
         state = str(job.get("state") or "").strip()
@@ -5059,8 +5084,11 @@ def _is_participantes_sync_job_cancel_requested(job_id: object) -> bool:
     job_key = str(job_id or "").strip()
     if not job_key:
         return False
-    with _PARTICIPANTES_SYNC_LOCK:
-        job = _PARTICIPANTES_SYNC_JOBS.get(job_key)
+    state = _get_participantes_sync_state()
+    lock = state["lock"]
+    jobs = state["jobs"]
+    with lock:
+        job = jobs.get(job_key)
         if not isinstance(job, dict):
             return False
         return bool(job.get("cancel_requested"))
@@ -5203,16 +5231,20 @@ def _start_participantes_sync_job(
         for item in (ingles_grade_keys or [])
         if str(item).strip()
     )
+    state_store = _get_participantes_sync_state()
+    lock = state_store["lock"]
+    jobs = state_store["jobs"]
+    scope_to_job = state_store["scope_to_job"]
     existing_id = ""
     existing_job: Optional[Dict[str, object]] = None
-    with _PARTICIPANTES_SYNC_LOCK:
-        existing_id = str(_PARTICIPANTES_SYNC_SCOPE_TO_JOB.get(scope) or "").strip()
-        existing_job = _PARTICIPANTES_SYNC_JOBS.get(existing_id) if existing_id else None
+    with lock:
+        existing_id = str(scope_to_job.get(scope) or "").strip()
+        existing_job = jobs.get(existing_id) if existing_id else None
     if existing_id:
         _reconcile_participantes_sync_job(existing_id)
-        with _PARTICIPANTES_SYNC_LOCK:
-            existing_job = _PARTICIPANTES_SYNC_JOBS.get(existing_id)
-    with _PARTICIPANTES_SYNC_LOCK:
+        with lock:
+            existing_job = jobs.get(existing_id)
+    with lock:
         if isinstance(existing_job, dict) and str(existing_job.get("state") or "").strip() in {
             "starting",
             "running",
@@ -5220,7 +5252,7 @@ def _start_participantes_sync_job(
             return str(existing_id)
 
         job_id = uuid4().hex
-        _PARTICIPANTES_SYNC_JOBS[job_id] = {
+        jobs[job_id] = {
             "job_id": job_id,
             "scope": scope,
             "state": "starting",
@@ -5235,7 +5267,7 @@ def _start_participantes_sync_job(
             "error": "",
             "error_trace": "",
         }
-        _PARTICIPANTES_SYNC_SCOPE_TO_JOB[scope] = job_id
+        scope_to_job[scope] = job_id
 
     worker = threading.Thread(
         target=_run_participantes_sync_job,
@@ -5252,8 +5284,8 @@ def _start_participantes_sync_job(
         daemon=True,
         name=f"participantes-sync-{job_id[:8]}",
     )
-    with _PARTICIPANTES_SYNC_LOCK:
-        job = _PARTICIPANTES_SYNC_JOBS.get(job_id)
+    with lock:
+        job = jobs.get(job_id)
         if isinstance(job, dict):
             job["thread"] = worker
     worker.start()

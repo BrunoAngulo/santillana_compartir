@@ -3135,16 +3135,6 @@ def _export_simple_excel(rows: List[Dict[str, object]], sheet_name: str = "data"
     return output.getvalue()
 
 
-def _export_multi_sheet_excel(sheets: Dict[str, List[Dict[str, object]]]) -> bytes:
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        for sheet_name, rows in sheets.items():
-            safe_sheet_name = str(sheet_name or "data").strip()[:31] or "data"
-            pd.DataFrame(rows or []).to_excel(writer, index=False, sheet_name=safe_sheet_name)
-    output.seek(0)
-    return output.getvalue()
-
-
 def _show_dataframe(data: object, use_container_width: bool = True) -> None:
     if isinstance(data, pd.DataFrame):
         df_view = data.copy()
@@ -5745,7 +5735,6 @@ def _clear_ingles_por_niveles_assignment_state() -> None:
         "clases_auto_group_ingles_excel_apply_rows",
         "clases_auto_group_ingles_excel_fetch_errors",
         "clases_auto_group_ingles_excel_reference_students",
-        "clases_auto_group_ingles_excel_debug_bytes",
         "clases_auto_group_ingles_excel_result_notice",
     ):
         st.session_state.pop(state_key, None)
@@ -5981,7 +5970,7 @@ def _filter_ingles_assignment_rows_by_selected_ingles_grades(
         if str(value or "").strip()
     }
     if not selected_keys:
-        return [dict(row) for row in rows if isinstance(row, dict)]
+        return []
     return [
         dict(row)
         for row in rows
@@ -6157,119 +6146,6 @@ def _build_ingles_assignment_grade_filter_label(row: Dict[str, object]) -> str:
     if grado:
         return grado
     return "Sin grado/clase"
-
-
-def _build_ingles_assignment_debug_excel_rows(
-    rows: List[Dict[str, object]]
-) -> List[Dict[str, object]]:
-    debug_rows: List[Dict[str, object]] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        excel_full_name = _build_ingles_assignment_excel_full_name(row)
-        debug_rows.append(
-            {
-                "Fila": _safe_int(row.get("_row_number")) or _safe_int(row.get("Fila")) or "",
-                "Nombre": str(row.get("Nombre") or "").strip(),
-                "Apellido Paterno": str(row.get("Apellido Paterno") or "").strip(),
-                "Apellido Materno": str(row.get("Apellido Materno") or "").strip(),
-                "Nombre completo Excel": excel_full_name,
-                "Clase": str(row.get("Clase") or row.get("Clase solicitada") or "").strip(),
-                "Nombre normalizado": _normalize_compare_text(row.get("Nombre")),
-                "Apellido Paterno normalizado": _normalize_compare_apellido(
-                    row.get("Apellido Paterno")
-                ),
-                "Apellido Materno normalizado": _normalize_compare_apellido(
-                    row.get("Apellido Materno")
-                ),
-                "Nombre completo normalizado": _normalize_compare_text(excel_full_name),
-            }
-        )
-    return debug_rows
-
-
-def _build_ingles_assignment_debug_bd_rows(
-    students: List[Dict[str, object]]
-) -> List[Dict[str, object]]:
-    debug_rows: List[Dict[str, object]] = []
-    for row in students:
-        if not isinstance(row, dict):
-            continue
-        nombre_completo = str(row.get("nombre_completo") or "").strip()
-        debug_rows.append(
-            {
-                "Alumno ID": _safe_int(row.get("alumno_id")) or "",
-                "Persona ID": _safe_int(row.get("persona_id")) or "",
-                "Nombre": str(row.get("nombre") or "").strip(),
-                "Apellido Paterno": str(row.get("apellido_paterno") or "").strip(),
-                "Apellido Materno": str(row.get("apellido_materno") or "").strip(),
-                "Nombre completo BD": nombre_completo,
-                "DNI": str(row.get("id_oficial") or "").strip(),
-                "Activo": "Si" if _to_bool(row.get("activo")) else "No",
-                "Nivel": str(row.get("nivel") or "").strip(),
-                "Grado": str(row.get("grado") or "").strip(),
-                "Seccion": str(row.get("seccion_norm") or row.get("seccion") or "").strip(),
-                "Nombre normalizado": _normalize_compare_text(row.get("nombre")),
-                "Apellido Paterno normalizado": _normalize_compare_apellido(
-                    row.get("apellido_paterno")
-                ),
-                "Apellido Materno normalizado": _normalize_compare_apellido(
-                    row.get("apellido_materno")
-                ),
-                "Nombre completo normalizado": _normalize_compare_text(nombre_completo),
-            }
-        )
-    debug_rows.sort(
-        key=lambda item: (
-            str(item.get("Nombre completo BD") or "").upper(),
-            int(_safe_int(item.get("Alumno ID")) or 0),
-        )
-    )
-    return debug_rows
-
-
-def _build_ingles_assignment_debug_comparison_rows(
-    preview_rows: List[Dict[str, object]]
-) -> List[Dict[str, object]]:
-    debug_rows: List[Dict[str, object]] = []
-    for row in preview_rows:
-        if not isinstance(row, dict):
-            continue
-        excel_full_name = _build_ingles_assignment_excel_full_name(row)
-        debug_rows.append(
-            {
-                "Fila": _safe_int(row.get("Fila")) or "",
-                "Nombre completo Excel": excel_full_name,
-                "Clase solicitada": str(row.get("Clase solicitada") or row.get("Clase") or "").strip(),
-                "Alumno encontrado": str(row.get("Alumno encontrado") or "").strip(),
-                "Alumno ID": _safe_int(row.get("Alumno ID")) or _safe_int(row.get("_alumno_id")) or "",
-                "DNI": str(row.get("DNI") or "").strip(),
-                "Estado": str(row.get("Estado") or "").strip(),
-                "Detalle": str(row.get("Detalle") or "").strip(),
-                "Modo match": str(row.get("_student_match_mode") or "").strip(),
-                "Coincidencias alumno": _safe_int(row.get("_student_match_count")) or "",
-                "Coincidencias clase": _safe_int(row.get("_class_match_count")) or "",
-                "Nombre completo Excel normalizado": _normalize_compare_text(excel_full_name),
-                "Alumno encontrado normalizado": _normalize_compare_text(
-                    str(row.get("Alumno encontrado") or "").split("|", 1)[0]
-                ),
-            }
-        )
-    return debug_rows
-
-
-def _export_ingles_assignment_debug_excel(
-    uploaded_rows: List[Dict[str, object]],
-    students: List[Dict[str, object]],
-    preview_rows: List[Dict[str, object]],
-) -> bytes:
-    return _export_multi_sheet_excel(
-        {
-            "excel": _build_ingles_assignment_debug_excel_rows(uploaded_rows),
-            "bd": _build_ingles_assignment_debug_bd_rows(students),
-            "comparacion": _build_ingles_assignment_debug_comparison_rows(preview_rows),
-        }
-    )
 
 
 def _hydrate_ingles_assignment_preview_row(
@@ -6618,45 +6494,79 @@ def _render_ingles_assignment_reference_review(
         option_values.append(option_key)
         option_labels[option_key] = _build_ingles_assignment_reference_option_label(row)
 
-    st.markdown("**Revision de referencias**")
-    st.caption(
-        "Las referencias se precargan automaticamente. "
-        "Puedes editarlas despues en el combo; las filas sin referencia quedan al final."
+    st.markdown(
+        """
+        <style>
+        div[data-testid="stSelectbox"] div[data-baseweb="select"] > div {
+            min-height: 2.15rem;
+            padding-top: 0;
+            padding-bottom: 0;
+        }
+        .ingles-ref-card-meta {
+            font-size: 0.72rem;
+            color: rgba(49, 51, 63, 0.62);
+            margin-bottom: 0.1rem;
+        }
+        .ingles-ref-card-name {
+            font-size: 0.92rem;
+            font-weight: 600;
+            line-height: 1.15;
+            min-height: 2.1rem;
+            margin-bottom: 0.3rem;
+            overflow-wrap: anywhere;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
     )
 
-    header_cols = st.columns([2.2, 3.0], gap="small")
-    header_cols[0].markdown("**Nombre completo Excel**")
-    header_cols[1].markdown("**Referencia del alumno**")
-
     selected_student_ids_by_fila: Dict[int, Optional[int]] = {}
-    for row in preview_rows:
-        if not isinstance(row, dict):
+    for row_start in range(0, len(preview_rows), 2):
+        row_pair = [
+            row
+            for row in preview_rows[row_start : row_start + 2]
+            if isinstance(row, dict)
+        ]
+        if not row_pair:
             continue
-        fila = int(_safe_int(row.get("Fila")) or 0)
-        row_key = f"clases_auto_group_ingles_ref_select_{fila}"
-        default_option = _build_ingles_assignment_default_reference_option(
-            row=row,
-            students_full_name_lookup=students_full_name_lookup,
-        )
-        current_option = str(st.session_state.get(row_key) or "").strip()
-        if current_option not in option_values or (
-            not current_option and default_option in option_values and default_option
-        ):
-            current_option = default_option if default_option in option_values else ""
-            st.session_state[row_key] = current_option
-        selected_index = option_values.index(current_option) if current_option in option_values else 0
+        review_cols = st.columns(len(row_pair), gap="small")
+        for col_idx, row in enumerate(row_pair):
+            fila = int(_safe_int(row.get("Fila")) or 0)
+            row_key = f"clases_auto_group_ingles_ref_select_{fila}"
+            default_option = _build_ingles_assignment_default_reference_option(
+                row=row,
+                students_full_name_lookup=students_full_name_lookup,
+            )
+            current_option = str(st.session_state.get(row_key) or "").strip()
+            if current_option not in option_values or (
+                not current_option and default_option in option_values and default_option
+            ):
+                current_option = default_option if default_option in option_values else ""
+                st.session_state[row_key] = current_option
+            selected_index = (
+                option_values.index(current_option) if current_option in option_values else 0
+            )
 
-        cols = st.columns([2.2, 3.0], gap="small")
-        cols[0].markdown(_build_ingles_assignment_excel_full_name(row))
-        selected_option = cols[1].selectbox(
-            f"Referencia del alumno fila {fila}",
-            options=option_values,
-            index=int(selected_index),
-            key=row_key,
-            format_func=lambda value: option_labels.get(str(value), str(value)),
-            label_visibility="collapsed",
-        )
-        selected_student_ids_by_fila[fila] = _safe_int(selected_option)
+            with review_cols[col_idx]:
+                with st.container(border=True):
+                    st.markdown(
+                        (
+                            f"<div class='ingles-ref-card-meta'>Fila {fila}</div>"
+                            f"<div class='ingles-ref-card-name'>"
+                            f"{escape(_build_ingles_assignment_excel_full_name(row))}"
+                            f"</div>"
+                        ),
+                        unsafe_allow_html=True,
+                    )
+                    selected_option = st.selectbox(
+                        f"Referencia del alumno fila {fila}",
+                        options=option_values,
+                        index=int(selected_index),
+                        key=row_key,
+                        format_func=lambda value: option_labels.get(str(value), str(value)),
+                        label_visibility="collapsed",
+                    )
+                    selected_student_ids_by_fila[fila] = _safe_int(selected_option)
 
     reviewed_rows = _build_ingles_assignment_review_rows_from_selection(
         preview_rows=preview_rows,
@@ -6879,10 +6789,7 @@ def _render_ingles_por_niveles_excel_assignment_block(
 ) -> None:
     with st.container(border=True):
         st.markdown("**Asignacion de ingles por niveles**")
-        st.caption(
-            "Sube un Excel con Nombre, Apellido Paterno, Apellido Materno y Clase. "
-            "Se buscara coincidencia exacta de alumno y clase en el colegio actual."
-        )
+        st.caption("Excel: Nombre, Apellido Paterno, Apellido Materno y Clase.")
 
         template_bytes = _export_simple_excel(
             _ingles_assignment_template_rows(),
@@ -6943,9 +6850,6 @@ def _render_ingles_por_niveles_excel_assignment_block(
         fetch_errors_state = st.session_state.get(
             "clases_auto_group_ingles_excel_fetch_errors"
         ) or []
-        debug_excel_bytes_state = st.session_state.get(
-            "clases_auto_group_ingles_excel_debug_bytes"
-        ) or b""
         result_notice_state = st.session_state.get(
             "clases_auto_group_ingles_excel_result_notice"
         ) or {}
@@ -7018,13 +6922,6 @@ def _render_ingles_por_niveles_excel_assignment_block(
                         preview_rows=preview_rows,
                         students=list(catalog.get("students") or []),
                     )
-                    analyze_progress.progress(96)
-                    analyze_status.write("Generando archivo de comparacion...")
-                    debug_excel_bytes = _export_ingles_assignment_debug_excel(
-                        uploaded_rows=uploaded_rows,
-                        students=list(catalog.get("students") or []),
-                        preview_rows=preview_rows,
-                    )
                 except Exception as exc:
                     analyze_progress.empty()
                     analyze_status.empty()
@@ -7042,9 +6939,6 @@ def _render_ingles_por_niveles_excel_assignment_block(
                     st.session_state[
                         "clases_auto_group_ingles_excel_fetch_errors"
                     ] = list(catalog.get("errors") or [])
-                    st.session_state[
-                        "clases_auto_group_ingles_excel_debug_bytes"
-                    ] = debug_excel_bytes
                     total_ready = sum(
                         1
                         for row in preview_rows
@@ -7080,25 +6974,13 @@ def _render_ingles_por_niveles_excel_assignment_block(
                 f"Se registraron {len(fetch_errors_state)} error(es) de consulta."
             )
 
-        if debug_excel_bytes_state:
-            st.download_button(
-                "Descargar comparacion Excel vs BD",
-                data=debug_excel_bytes_state,
-                file_name="ingles_por_niveles_comparacion.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="clases_auto_group_ingles_excel_debug_download",
-                use_container_width=True,
-            )
-
         if preview_rows_state:
             visible_preview_rows = _filter_ingles_assignment_rows_by_selected_ingles_grades(
                 preview_rows_state,
                 selected_ingles_grade_keys,
             )
-            if selected_ingles_grade_keys:
-                st.caption(
-                    "Mostrando solo los grados de Ingles por niveles seleccionados arriba."
-                )
+            if not selected_ingles_grade_keys:
+                st.info("Selecciona uno o mas grados de ingles arriba.")
             reviewed_preview_rows = _render_ingles_assignment_reference_review(
                 preview_rows=visible_preview_rows,
                 students=reference_students_state,
@@ -7133,8 +7015,8 @@ def _render_ingles_por_niveles_excel_assignment_block(
             )
             total_errors = len(visible_preview_rows) - total_ready
             st.caption(
-                f"Vista previa: {len(visible_preview_rows)} de {len(preview_rows_state)} fila(s) | "
-                f"Listas={total_ready} | Observaciones={total_errors}"
+                f"Filas: {len(visible_preview_rows)}/{len(preview_rows_state)} | "
+                f"Listas {total_ready} | Obs {total_errors}"
             )
             if visible_preview_rows:
                 _show_dataframe(
@@ -11884,8 +11766,19 @@ with tab_crud_clases:
         token = _get_shared_token()
         empresa_id = DEFAULT_EMPRESA_ID
         timeout = 30
+        asignacion_job_id_for_fragment = str(
+            st.session_state.get("clases_auto_group_job_id") or ""
+        ).strip()
+        asignacion_job_for_fragment = _get_participantes_sync_job(
+            asignacion_job_id_for_fragment
+        )
+        asignacion_fragment_run_every = (
+            "2s"
+            if _is_participantes_sync_job_active(asignacion_job_for_fragment)
+            else None
+        )
 
-        @st.fragment(run_every="2s")
+        @st.fragment(run_every=asignacion_fragment_run_every)
         def _render_asignacion_clases_usuarios_section() -> None:
             colegio_id_int: Optional[int] = None
             colegio_error = ""

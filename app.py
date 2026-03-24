@@ -5771,6 +5771,7 @@ def _clear_ingles_por_niveles_assignment_state() -> None:
         "clases_auto_group_ingles_excel_reference_students",
         "clases_auto_group_ingles_excel_debug_bytes",
         "clases_auto_group_ingles_excel_result_notice",
+        "clases_auto_group_ingles_grade_filters",
     ):
         st.session_state.pop(state_key, None)
     for state_key in list(st.session_state.keys()):
@@ -5924,6 +5925,75 @@ def _sort_ingles_assignment_review_rows(
         )
     )
     return sorted_rows
+
+
+def _build_ingles_assignment_grade_filter_options(
+    rows: List[Dict[str, object]]
+) -> List[str]:
+    options: List[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        option = str(
+            row.get("_grado_filtro")
+            or _build_ingles_assignment_grade_filter_label(row)
+        ).strip()
+        if option and option not in options:
+            options.append(option)
+    options.sort(
+        key=lambda value: (
+            1 if value == "Sin grado/clase" else 0,
+            _normalize_compare_text(value),
+        )
+    )
+    return options
+
+
+def _filter_ingles_assignment_rows_by_grade(
+    rows: List[Dict[str, object]],
+    selected_grade_filters: Sequence[object],
+) -> List[Dict[str, object]]:
+    selected = {
+        str(value or "").strip()
+        for value in (selected_grade_filters or [])
+        if str(value or "").strip()
+    }
+    if not selected:
+        return []
+    return [
+        dict(row)
+        for row in rows
+        if isinstance(row, dict)
+        and str(
+            row.get("_grado_filtro")
+            or _build_ingles_assignment_grade_filter_label(row)
+        ).strip() in selected
+    ]
+
+
+def _merge_ingles_assignment_rows(
+    base_rows: List[Dict[str, object]],
+    updated_rows: List[Dict[str, object]],
+) -> List[Dict[str, object]]:
+    updated_by_fila: Dict[int, Dict[str, object]] = {}
+    for row in updated_rows:
+        if not isinstance(row, dict):
+            continue
+        fila = _safe_int(row.get("Fila"))
+        if fila is None:
+            continue
+        updated_by_fila[int(fila)] = dict(row)
+
+    merged_rows: List[Dict[str, object]] = []
+    for row in base_rows:
+        if not isinstance(row, dict):
+            continue
+        fila = _safe_int(row.get("Fila"))
+        if fila is not None and int(fila) in updated_by_fila:
+            merged_rows.append(dict(updated_by_fila[int(fila)]))
+        else:
+            merged_rows.append(dict(row))
+    return merged_rows
 
 
 def _prepare_ingles_assignment_review_rows(
@@ -6080,6 +6150,16 @@ def _build_ingles_assignment_excel_full_name(row: Dict[str, object]) -> str:
         str(row.get("Apellido Materno") or "").strip(),
     ]
     return " ".join(part for part in parts if part).strip() or "SIN NOMBRE"
+
+
+def _build_ingles_assignment_grade_filter_label(row: Dict[str, object]) -> str:
+    nivel = str(row.get("Nivel clase") or "").strip()
+    grado = str(row.get("Grado clase") or "").strip()
+    if nivel and grado:
+        return f"{nivel} | {grado}"
+    if grado:
+        return grado
+    return "Sin grado/clase"
 
 
 def _build_ingles_assignment_debug_excel_rows(
@@ -6252,6 +6332,7 @@ def _hydrate_ingles_assignment_preview_row(
     ap_mat = str(updated.get("Apellido Materno") or "").strip()
     clase = str(updated.get("Clase solicitada") or "").strip()
     has_student_reference = alumno_id is not None
+    updated["_grado_filtro"] = _build_ingles_assignment_grade_filter_label(updated)
 
     estado = "Listo"
     detalle = "Se asignara a la clase encontrada."
@@ -6449,18 +6530,10 @@ def _build_ingles_assignment_preview_display_rows(
     return [
         {
             "Fila": row.get("Fila", ""),
-            "Nombre": row.get("Nombre", ""),
-            "Apellido Paterno": row.get("Apellido Paterno", ""),
-            "Apellido Materno": row.get("Apellido Materno", ""),
+            "Alumno Excel": _build_ingles_assignment_excel_full_name(row),
             "Clase solicitada": row.get("Clase solicitada", ""),
             "Alumno encontrado": row.get("Alumno encontrado", ""),
-            "Alumno ID": row.get("Alumno ID", ""),
-            "DNI": row.get("DNI", ""),
-            "Activo": row.get("Activo", ""),
-            "Seccion actual": row.get("Seccion actual", ""),
             "Clase encontrada": row.get("Clase encontrada", ""),
-            "Clase ID": row.get("Clase ID", ""),
-            "Nivel clase": row.get("Nivel clase", ""),
             "Grado clase": row.get("Grado clase", ""),
             "Seccion clase": row.get("Seccion clase", ""),
             "Estado": row.get("Estado", ""),
@@ -6784,11 +6857,10 @@ def _build_ingles_assignment_apply_display_rows(
     return [
         {
             "Fila": row.get("Fila", ""),
+            "Alumno Excel": _build_ingles_assignment_excel_full_name(row),
             "Alumno encontrado": row.get("Alumno encontrado", ""),
-            "Alumno ID": row.get("Alumno ID", ""),
-            "DNI": row.get("DNI", ""),
             "Clase encontrada": row.get("Clase encontrada", ""),
-            "Clase ID": row.get("Clase ID", ""),
+            "Grado clase": row.get("Grado clase", ""),
             "Resultado aplicar": row.get("Resultado aplicar", ""),
             "Detalle aplicar": row.get("Detalle aplicar", ""),
         }
@@ -6876,6 +6948,9 @@ def _render_ingles_por_niveles_excel_assignment_block(
         result_notice_state = st.session_state.get(
             "clases_auto_group_ingles_excel_result_notice"
         ) or {}
+        grade_filters_state = st.session_state.get(
+            "clases_auto_group_ingles_grade_filters"
+        ) or []
 
         col_analyze, col_apply, col_clear = st.columns([1.4, 1.4, 1], gap="small")
         run_analyze = col_analyze.button(
@@ -6884,7 +6959,7 @@ def _render_ingles_por_niveles_excel_assignment_block(
             use_container_width=True,
         )
         run_apply = col_apply.button(
-            "Aplicar asignacion",
+            "Aplicar grados seleccionados",
             key="clases_auto_group_ingles_excel_apply_btn",
             use_container_width=True,
             disabled=not bool(preview_rows_state),
@@ -6972,6 +7047,9 @@ def _render_ingles_por_niveles_excel_assignment_block(
                     st.session_state[
                         "clases_auto_group_ingles_excel_debug_bytes"
                     ] = debug_excel_bytes
+                    st.session_state[
+                        "clases_auto_group_ingles_grade_filters"
+                    ] = _build_ingles_assignment_grade_filter_options(preview_rows)
                     total_ready = sum(
                         1
                         for row in preview_rows
@@ -7018,37 +7096,75 @@ def _render_ingles_por_niveles_excel_assignment_block(
             )
 
         if preview_rows_state:
+            grade_options = _build_ingles_assignment_grade_filter_options(
+                preview_rows_state
+            )
+            normalized_grade_filters = [
+                value
+                for value in grade_filters_state
+                if str(value or "").strip() in grade_options
+            ]
+            if grade_options and not normalized_grade_filters:
+                normalized_grade_filters = list(grade_options)
+                st.session_state[
+                    "clases_auto_group_ingles_grade_filters"
+                ] = normalized_grade_filters
+            selected_grade_filters = st.multiselect(
+                "Grados a mostrar y aplicar",
+                options=grade_options,
+                key="clases_auto_group_ingles_grade_filters",
+                help=(
+                    "La asignacion se aplicara solo a las filas de los grados seleccionados."
+                ),
+            )
+            visible_preview_rows = _filter_ingles_assignment_rows_by_grade(
+                preview_rows_state,
+                selected_grade_filters,
+            )
             reviewed_preview_rows = _render_ingles_assignment_reference_review(
-                preview_rows=preview_rows_state,
+                preview_rows=visible_preview_rows,
                 students=reference_students_state,
             )
             reviewed_preview_rows = _sort_ingles_assignment_review_rows(
                 reviewed_preview_rows
             )
-            if reviewed_preview_rows != preview_rows_state:
+            merged_preview_rows = _sort_ingles_assignment_review_rows(
+                _merge_ingles_assignment_rows(
+                    preview_rows_state,
+                    reviewed_preview_rows,
+                )
+            )
+            if merged_preview_rows != preview_rows_state:
                 st.session_state[
                     "clases_auto_group_ingles_excel_preview_rows"
-                ] = reviewed_preview_rows
+                ] = merged_preview_rows
                 st.session_state.pop(
                     "clases_auto_group_ingles_excel_apply_rows",
                     None,
                 )
-                preview_rows_state = reviewed_preview_rows
+                preview_rows_state = merged_preview_rows
                 apply_rows_state = []
+            visible_preview_rows = _filter_ingles_assignment_rows_by_grade(
+                preview_rows_state,
+                selected_grade_filters,
+            )
             total_ready = sum(
                 1
-                for row in preview_rows_state
+                for row in visible_preview_rows
                 if str(row.get("Estado") or "").strip() == "Listo"
             )
-            total_errors = len(preview_rows_state) - total_ready
+            total_errors = len(visible_preview_rows) - total_ready
             st.caption(
-                f"Vista previa: {len(preview_rows_state)} fila(s) | "
+                f"Vista previa: {len(visible_preview_rows)} de {len(preview_rows_state)} fila(s) | "
                 f"Listas={total_ready} | Observaciones={total_errors}"
             )
-            _show_dataframe(
-                _build_ingles_assignment_preview_display_rows(preview_rows_state),
-                use_container_width=True,
-            )
+            if visible_preview_rows:
+                _show_dataframe(
+                    _build_ingles_assignment_preview_display_rows(visible_preview_rows),
+                    use_container_width=True,
+                )
+            else:
+                st.info("No hay filas para los grados seleccionados.")
 
         if run_apply:
             if not token:
@@ -7056,52 +7172,59 @@ def _render_ingles_por_niveles_excel_assignment_block(
             elif not preview_rows_state:
                 st.error("Primero analiza el Excel para generar la vista previa.")
             else:
-                status_placeholder = st.empty()
-                try:
-                    with st.spinner("Aplicando asignacion de ingles..."):
-                        apply_rows = _apply_ingles_assignment_preview_rows(
-                            token=token,
-                            colegio_id=int(colegio_id),
-                            empresa_id=int(empresa_id),
-                            ciclo_id=int(ciclo_id),
-                            timeout=int(timeout),
-                            preview_rows=preview_rows_state,
-                            on_status=lambda message: status_placeholder.write(message),
-                        )
-                except Exception as exc:
-                    status_placeholder.empty()
-                    st.error(f"No se pudo aplicar la asignacion: {exc}")
+                rows_to_apply = _filter_ingles_assignment_rows_by_grade(
+                    preview_rows_state,
+                    st.session_state.get("clases_auto_group_ingles_grade_filters") or [],
+                )
+                if not rows_to_apply:
+                    st.error("Selecciona al menos un grado con filas para aplicar.")
                 else:
-                    status_placeholder.empty()
-                    st.session_state[
-                        "clases_auto_group_ingles_excel_apply_rows"
-                    ] = apply_rows
-                    ok_count = sum(
-                        1
-                        for row in apply_rows
-                        if str(row.get("Resultado aplicar") or "").strip() == "OK"
-                    )
-                    same_count = sum(
-                        1
-                        for row in apply_rows
-                        if str(row.get("Resultado aplicar") or "").strip()
-                        == "Sin cambios"
-                    )
-                    err_count = sum(
-                        1
-                        for row in apply_rows
-                        if str(row.get("Resultado aplicar") or "").strip() == "Error"
-                    )
-                    if err_count:
-                        st.warning(
-                            f"Asignacion aplicada con observaciones. "
-                            f"OK={ok_count} | Sin cambios={same_count} | Error={err_count}"
-                        )
+                    status_placeholder = st.empty()
+                    try:
+                        with st.spinner("Aplicando asignacion de ingles..."):
+                            apply_rows = _apply_ingles_assignment_preview_rows(
+                                token=token,
+                                colegio_id=int(colegio_id),
+                                empresa_id=int(empresa_id),
+                                ciclo_id=int(ciclo_id),
+                                timeout=int(timeout),
+                                preview_rows=rows_to_apply,
+                                on_status=lambda message: status_placeholder.write(message),
+                            )
+                    except Exception as exc:
+                        status_placeholder.empty()
+                        st.error(f"No se pudo aplicar la asignacion: {exc}")
                     else:
-                        st.success(
-                            f"Asignacion aplicada. OK={ok_count} | Sin cambios={same_count}"
+                        status_placeholder.empty()
+                        st.session_state[
+                            "clases_auto_group_ingles_excel_apply_rows"
+                        ] = apply_rows
+                        ok_count = sum(
+                            1
+                            for row in apply_rows
+                            if str(row.get("Resultado aplicar") or "").strip() == "OK"
                         )
-                    apply_rows_state = apply_rows
+                        same_count = sum(
+                            1
+                            for row in apply_rows
+                            if str(row.get("Resultado aplicar") or "").strip()
+                            == "Sin cambios"
+                        )
+                        err_count = sum(
+                            1
+                            for row in apply_rows
+                            if str(row.get("Resultado aplicar") or "").strip() == "Error"
+                        )
+                        if err_count:
+                            st.warning(
+                                f"Asignacion aplicada con observaciones. "
+                                f"OK={ok_count} | Sin cambios={same_count} | Error={err_count}"
+                            )
+                        else:
+                            st.success(
+                                f"Asignacion aplicada. OK={ok_count} | Sin cambios={same_count}"
+                            )
+                        apply_rows_state = apply_rows
 
         if apply_rows_state:
             st.caption(f"Resultado de aplicacion: {len(apply_rows_state)} fila(s)")

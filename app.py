@@ -5769,6 +5769,8 @@ def _clear_ingles_por_niveles_assignment_state() -> None:
         "clases_auto_group_ingles_excel_apply_rows",
         "clases_auto_group_ingles_excel_fetch_errors",
         "clases_auto_group_ingles_excel_reference_students",
+        "clases_auto_group_ingles_excel_debug_bytes",
+        "clases_auto_group_ingles_excel_result_notice",
     ):
         st.session_state.pop(state_key, None)
     for state_key in list(st.session_state.keys()):
@@ -6868,6 +6870,12 @@ def _render_ingles_por_niveles_excel_assignment_block(
         fetch_errors_state = st.session_state.get(
             "clases_auto_group_ingles_excel_fetch_errors"
         ) or []
+        debug_excel_bytes_state = st.session_state.get(
+            "clases_auto_group_ingles_excel_debug_bytes"
+        ) or b""
+        result_notice_state = st.session_state.get(
+            "clases_auto_group_ingles_excel_result_notice"
+        ) or {}
 
         col_analyze, col_apply, col_clear = st.columns([1.4, 1.4, 1], gap="small")
         run_analyze = col_analyze.button(
@@ -6937,6 +6945,13 @@ def _render_ingles_por_niveles_excel_assignment_block(
                         preview_rows=preview_rows,
                         students=list(catalog.get("students") or []),
                     )
+                    analyze_progress.progress(96)
+                    analyze_status.write("Generando archivo de comparacion...")
+                    debug_excel_bytes = _export_ingles_assignment_debug_excel(
+                        uploaded_rows=uploaded_rows,
+                        students=list(catalog.get("students") or []),
+                        preview_rows=preview_rows,
+                    )
                 except Exception as exc:
                     analyze_progress.empty()
                     analyze_status.empty()
@@ -6954,22 +6969,37 @@ def _render_ingles_por_niveles_excel_assignment_block(
                     st.session_state[
                         "clases_auto_group_ingles_excel_fetch_errors"
                     ] = list(catalog.get("errors") or [])
+                    st.session_state[
+                        "clases_auto_group_ingles_excel_debug_bytes"
+                    ] = debug_excel_bytes
                     total_ready = sum(
                         1
                         for row in preview_rows
                         if str(row.get("Estado") or "").strip() == "Listo"
                     )
                     total_errors = len(preview_rows) - total_ready
-                    if total_errors:
-                        st.warning(
+                    st.session_state[
+                        "clases_auto_group_ingles_excel_result_notice"
+                    ] = {
+                        "kind": "warning" if total_errors else "success",
+                        "message": (
                             f"Analisis listo. Filas validas: {total_ready} | Observaciones: {total_errors}."
-                        )
-                    else:
-                        st.success(f"Analisis listo. Filas validas: {total_ready}.")
-                    preview_rows_state = preview_rows
-                    reference_students_state = list(catalog.get("students") or [])
-                    apply_rows_state = []
-                    fetch_errors_state = list(catalog.get("errors") or [])
+                            if total_errors
+                            else f"Analisis listo. Filas validas: {total_ready}."
+                        ),
+                    }
+                    st.rerun()
+
+        if isinstance(result_notice_state, dict) and result_notice_state.get("message"):
+            notice_kind = str(result_notice_state.get("kind") or "success").strip().lower()
+            notice_message = str(result_notice_state.get("message") or "").strip()
+            if notice_kind == "warning":
+                st.warning(notice_message)
+            elif notice_kind == "error":
+                st.error(notice_message)
+            else:
+                st.success(notice_message)
+            st.session_state.pop("clases_auto_group_ingles_excel_result_notice", None)
 
         if fetch_errors_state:
             st.warning(
@@ -6977,15 +7007,10 @@ def _render_ingles_por_niveles_excel_assignment_block(
                 f"Se registraron {len(fetch_errors_state)} error(es) de consulta."
             )
 
-        if uploaded_rows and reference_students_state:
-            debug_excel_bytes = _export_ingles_assignment_debug_excel(
-                uploaded_rows=uploaded_rows,
-                students=reference_students_state,
-                preview_rows=preview_rows_state,
-            )
+        if debug_excel_bytes_state:
             st.download_button(
                 "Descargar comparacion Excel vs BD",
-                data=debug_excel_bytes,
+                data=debug_excel_bytes_state,
                 file_name="ingles_por_niveles_comparacion.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 key="clases_auto_group_ingles_excel_debug_download",

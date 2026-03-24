@@ -5860,6 +5860,20 @@ def _build_ingles_assignment_students_lookup(
     return lookup
 
 
+def _build_ingles_assignment_students_full_name_lookup(
+    students: List[Dict[str, object]]
+) -> Dict[str, List[Dict[str, object]]]:
+    lookup: Dict[str, List[Dict[str, object]]] = {}
+    for row in students:
+        if not isinstance(row, dict):
+            continue
+        key = _normalize_compare_text(row.get("nombre_completo"))
+        if not key:
+            continue
+        lookup.setdefault(key, []).append(row)
+    return lookup
+
+
 def _build_ingles_assignment_name_tokens(value: object) -> List[str]:
     return [token for token in _normalize_compare_text(value).split() if token]
 
@@ -5891,6 +5905,7 @@ def _find_ingles_assignment_student_matches(
     apellido_paterno: object,
     apellido_materno: object,
     students_lookup: Dict[Tuple[str, str], List[Dict[str, object]]],
+    students_full_name_lookup: Dict[str, List[Dict[str, object]]],
 ) -> Tuple[List[Dict[str, object]], str]:
     surname_key = (
         _normalize_compare_apellido(apellido_paterno),
@@ -5919,6 +5934,21 @@ def _find_ingles_assignment_student_matches(
         matches = matched_by_score.get(score) or []
         if matches:
             return matches, mode
+    requested_full_name = _normalize_compare_text(
+        " ".join(
+            part
+            for part in (
+                str(nombre or "").strip(),
+                str(apellido_paterno or "").strip(),
+                str(apellido_materno or "").strip(),
+            )
+            if part
+        )
+    )
+    if requested_full_name:
+        full_name_matches = list(students_full_name_lookup.get(requested_full_name) or [])
+        if full_name_matches:
+            return full_name_matches, "nombre_completo"
     return [], ""
 
 
@@ -6082,6 +6112,10 @@ def _hydrate_ingles_assignment_preview_row(
             detail_parts.append(
                 "Alumno encontrado por coincidencia parcial en nombres."
             )
+        elif student_match_mode == "nombre_completo":
+            detail_parts.append(
+                "Alumno encontrado por coincidencia exacta de nombre completo."
+            )
         if isinstance(student_row, dict) and not _to_bool(student_row.get("activo")):
             detail_parts.append("Alumno inactivo: se activara antes de asignar.")
         detail_parts.append("Se asignara a la clase encontrada.")
@@ -6098,6 +6132,7 @@ def _build_ingles_assignment_preview_rows(
     clases: List[Dict[str, object]],
 ) -> List[Dict[str, object]]:
     students_lookup = _build_ingles_assignment_students_lookup(students)
+    students_full_name_lookup = _build_ingles_assignment_students_full_name_lookup(students)
     classes_lookup = _build_ingles_assignment_classes_lookup(clases)
     preview_rows: List[Dict[str, object]] = []
 
@@ -6115,6 +6150,7 @@ def _build_ingles_assignment_preview_rows(
             ap_pat,
             ap_mat,
             students_lookup,
+            students_full_name_lookup,
         )
         matched_classes = classes_lookup.get(
             _build_ingles_assignment_class_key(clase),
@@ -6155,6 +6191,10 @@ def _build_ingles_assignment_preview_rows(
             elif student_match_mode == "parcial":
                 detail_parts.append(
                     "Alumno encontrado por coincidencia parcial en nombres."
+                )
+            elif student_match_mode == "nombre_completo":
+                detail_parts.append(
+                    "Alumno encontrado por coincidencia exacta de nombre completo."
                 )
             if not _to_bool(student_row.get("activo")):
                 detail_parts.append("Alumno inactivo: se activara antes de asignar.")

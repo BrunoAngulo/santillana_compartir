@@ -11779,9 +11779,26 @@ with tab_crud_clases:
         token = _get_shared_token()
         empresa_id = DEFAULT_EMPRESA_ID
         timeout = 30
-        asignacion_job_id_for_fragment = str(
-            st.session_state.get("clases_auto_group_job_id") or ""
-        ).strip()
+        colegio_id_for_fragment: Optional[int] = None
+        if colegio_id_raw:
+            try:
+                colegio_id_for_fragment = _parse_colegio_id(colegio_id_raw)
+            except ValueError:
+                colegio_id_for_fragment = None
+        asignacion_job_id_for_fragment = ""
+        if colegio_id_for_fragment is not None:
+            asignacion_job_id_for_fragment = str(
+                _get_participantes_sync_job_id_for_scope(
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    colegio_id=int(colegio_id_for_fragment),
+                )
+                or ""
+            ).strip()
+        if not asignacion_job_id_for_fragment:
+            asignacion_job_id_for_fragment = str(
+                st.session_state.get("clases_auto_group_job_id") or ""
+            ).strip()
         asignacion_job_for_fragment = _get_participantes_sync_job(
             asignacion_job_id_for_fragment
         )
@@ -11790,6 +11807,10 @@ with tab_crud_clases:
             if _is_participantes_sync_job_active(asignacion_job_for_fragment)
             else None
         )
+        if asignacion_fragment_run_every and asignacion_job_id_for_fragment:
+            st.session_state["clases_auto_group_polling_job_id"] = (
+                asignacion_job_id_for_fragment
+            )
 
         @st.fragment(run_every=asignacion_fragment_run_every)
         def _render_asignacion_clases_usuarios_section() -> None:
@@ -11843,6 +11864,9 @@ with tab_crud_clases:
 
             current_job = _get_participantes_sync_job(current_job_id)
             is_running = _is_participantes_sync_job_active(current_job)
+            polling_job_id = str(
+                st.session_state.get("clases_auto_group_polling_job_id") or ""
+            ).strip()
 
             with st.container(border=True):
                 st.markdown("**Asignacion**")
@@ -12018,15 +12042,18 @@ with tab_crud_clases:
                             ingles_grade_keys=selected_ingles_grade_keys,
                         )
                         st.session_state["clases_auto_group_job_id"] = current_job_id
-                        current_job = _get_participantes_sync_job(current_job_id)
-                        is_running = _is_participantes_sync_job_active(current_job)
-                        st.success("Asignacion iniciada en segundo plano.")
+                        st.session_state["clases_auto_group_polling_job_id"] = (
+                            current_job_id
+                        )
+                        st.rerun()
 
                 if run_cancelar_participantes_auto:
                     if _request_cancel_participantes_sync_job(current_job_id):
-                        current_job = _get_participantes_sync_job(current_job_id)
-                        is_running = _is_participantes_sync_job_active(current_job)
-                        st.warning("Cancelacion solicitada.")
+                        if current_job_id:
+                            st.session_state["clases_auto_group_polling_job_id"] = (
+                                current_job_id
+                            )
+                        st.rerun()
                     else:
                         st.info("No hay un proceso activo para cancelar.")
 
@@ -12063,6 +12090,14 @@ with tab_crud_clases:
                 ]
                 cancel_requested = bool(current_job.get("cancel_requested"))
                 error_text = str(current_job.get("error") or "").strip()
+
+                if (
+                    current_job_id
+                    and polling_job_id == current_job_id
+                    and state in {"done", "cancelled", "error"}
+                ):
+                    st.session_state.pop("clases_auto_group_polling_job_id", None)
+                    st.rerun()
 
                 if state in {"starting", "running"}:
                     if cancel_requested:

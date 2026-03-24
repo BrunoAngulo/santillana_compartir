@@ -6502,17 +6502,12 @@ def _render_ingles_assignment_reference_review(
             padding-top: 0;
             padding-bottom: 0;
         }
-        .ingles-ref-card-meta {
-            font-size: 0.72rem;
-            color: rgba(49, 51, 63, 0.62);
-            margin-bottom: 0.1rem;
-        }
-        .ingles-ref-card-name {
-            font-size: 0.92rem;
+        .ingles-ref-name {
+            font-size: 0.95rem;
             font-weight: 600;
-            line-height: 1.15;
-            min-height: 2.1rem;
-            margin-bottom: 0.3rem;
+            line-height: 1.2;
+            margin-top: 0.2rem;
+            margin-bottom: 0.35rem;
             overflow-wrap: anywhere;
         }
         </style>
@@ -6548,25 +6543,23 @@ def _render_ingles_assignment_reference_review(
             )
 
             with review_cols[col_idx]:
-                with st.container(border=True):
-                    st.markdown(
-                        (
-                            f"<div class='ingles-ref-card-meta'>Fila {fila}</div>"
-                            f"<div class='ingles-ref-card-name'>"
-                            f"{escape(_build_ingles_assignment_excel_full_name(row))}"
-                            f"</div>"
-                        ),
-                        unsafe_allow_html=True,
-                    )
-                    selected_option = st.selectbox(
-                        f"Referencia del alumno fila {fila}",
-                        options=option_values,
-                        index=int(selected_index),
-                        key=row_key,
-                        format_func=lambda value: option_labels.get(str(value), str(value)),
-                        label_visibility="collapsed",
-                    )
-                    selected_student_ids_by_fila[fila] = _safe_int(selected_option)
+                st.markdown(
+                    (
+                        f"<div class='ingles-ref-name'>"
+                        f"{escape(_build_ingles_assignment_excel_full_name(row))}"
+                        f"</div>"
+                    ),
+                    unsafe_allow_html=True,
+                )
+                selected_option = st.selectbox(
+                    f"Referencia del alumno fila {fila}",
+                    options=option_values,
+                    index=int(selected_index),
+                    key=row_key,
+                    format_func=lambda value: option_labels.get(str(value), str(value)),
+                    label_visibility="collapsed",
+                )
+                selected_student_ids_by_fila[fila] = _safe_int(selected_option)
 
     reviewed_rows = _build_ingles_assignment_review_rows_from_selection(
         preview_rows=preview_rows,

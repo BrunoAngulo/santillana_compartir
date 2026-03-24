@@ -1193,6 +1193,23 @@
       white-space: nowrap;
     }
 
+    .comment-action-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--spacing-xs);
+      margin-top: 8px;
+      flex-wrap: wrap;
+    }
+
+    .comment-action-row .comment-ref {
+      margin-top: 0;
+      flex: 1 1 260px;
+      white-space: normal;
+      overflow: visible;
+      text-overflow: clip;
+    }
+
     .comment-ref-dot {
       width: 8px;
       height: 8px;
@@ -2050,7 +2067,7 @@
       display: none;
       align-items: center;
       justify-content: center;
-      padding: 12px;
+      padding: clamp(12px, 3vh, 28px);
       z-index: 9999;
     }
 
@@ -2059,17 +2076,19 @@
     }
 
     .modal-card {
-      width: min(560px, 100%);
+      width: min(560px, calc(100vw - 24px));
       background: #fff;
       border: 1px solid var(--line);
       border-radius: 12px;
       padding: 12px;
-      max-height: calc(100vh - 36px);
-      overflow: auto;
+      max-height: calc(100vh - 24px);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
     }
 
     .my-comments-modal-card {
-      width: min(760px, 100%);
+      width: min(1180px, calc(100vw - 24px));
     }
 
     .my-comments-modal-head {
@@ -2087,11 +2106,14 @@
 
     .my-comments-modal-list {
       display: block;
+      flex: 1 1 auto;
+      min-height: 0;
     }
 
     .my-comments-modal-list .tbl-wrap {
       overflow: auto;
-      max-height: 58vh;
+      max-height: none;
+      height: 100%;
     }
 
     .my-comments-modal-foot {
@@ -2403,7 +2425,7 @@
             <button class="btn danger" id="deleteAllWorklogsBtn" type="button" disabled>Eliminar todo</button>
           </div>
           <div id="regInlineBox" class="edit-inline hide">
-            <div class="edit-inline-title">Registrar actividad</div>
+            <div class="edit-inline-title">Tipo y tiempo</div>
             <div class="muted" id="regInlineMeta"></div>
             <div class="grid3" style="margin-top:8px;">
               <div>
@@ -2415,8 +2437,8 @@
                   placeholder="2w 4d 6h 45m"></div>
             </div>
             <div class="row" style="margin-top:10px;">
-              <button class="btn primary" id="regInlineOkBtn" type="button">Registrar</button>
-              <button class="btn" id="regInlineCancelBtn" type="button">Cancelar</button>
+              <button class="btn primary" id="regInlineOkBtn" type="button">Guardar</button>
+              <button class="btn" id="regInlineCancelBtn" type="button">Cerrar</button>
             </div>
           </div>
           <div class="tbl-wrap">
@@ -2734,12 +2756,17 @@
       let lastFrameHeight = 0;
       let autoFrameHeightStarted = false;
       let commentsLayoutRaf = 0;
+      let modalFrameRestore = null;
 
       function frameRootElement() {
         return document.getElementById('jiraFocusWebRoot') || document.body || document.documentElement;
       }
 
       function postFrameHeight() {
+        if (modalIsOpen()) {
+          setModalFrameMode(true);
+          return;
+        }
         const rootEl = frameRootElement();
         const root = document.documentElement;
         const body = document.body;
@@ -2778,6 +2805,93 @@
           frameHeightRaf = 0;
           postFrameHeight();
         });
+      }
+
+      function modalIsOpen() {
+        return !!(el.myCommentsTodayModal && el.myCommentsTodayModal.classList.contains('show'));
+      }
+
+      function setModalFrameMode(enabled) {
+        let frame = null;
+        try {
+          frame = window.frameElement || null;
+        } catch (_e) {
+          frame = null;
+        }
+        if (!frame || !frame.style) return;
+        if (enabled) {
+          if (!modalFrameRestore) {
+            modalFrameRestore = {
+              position: frame.style.position || '',
+              inset: frame.style.inset || '',
+              left: frame.style.left || '',
+              top: frame.style.top || '',
+              right: frame.style.right || '',
+              bottom: frame.style.bottom || '',
+              width: frame.style.width || '',
+              height: frame.style.height || '',
+              minHeight: frame.style.minHeight || '',
+              maxHeight: frame.style.maxHeight || '',
+              zIndex: frame.style.zIndex || '',
+              overflow: frame.style.overflow || '',
+              background: frame.style.background || '',
+              border: frame.style.border || '',
+              boxShadow: frame.style.boxShadow || ''
+            };
+          }
+          const viewport = window.visualViewport;
+          const viewportHeight = Math.max(
+            320,
+            Math.floor((viewport && viewport.height) || window.innerHeight || document.documentElement.clientHeight || 0)
+          );
+          frame.style.position = 'fixed';
+          frame.style.inset = '0';
+          frame.style.left = '0';
+          frame.style.top = '0';
+          frame.style.right = '0';
+          frame.style.bottom = '0';
+          frame.style.width = '100vw';
+          frame.style.height = `${viewportHeight}px`;
+          frame.style.minHeight = `${viewportHeight}px`;
+          frame.style.maxHeight = `${viewportHeight}px`;
+          frame.style.zIndex = '2147483000';
+          frame.style.overflow = 'visible';
+          frame.style.background = 'transparent';
+          frame.style.border = '0';
+          frame.style.boxShadow = 'none';
+          if (document.documentElement) {
+            document.documentElement.style.overflow = 'hidden';
+          }
+          if (document.body) {
+            document.body.style.overflow = 'hidden';
+          }
+          return;
+        }
+        if (modalFrameRestore) {
+          frame.style.position = modalFrameRestore.position;
+          frame.style.inset = modalFrameRestore.inset;
+          frame.style.left = modalFrameRestore.left;
+          frame.style.top = modalFrameRestore.top;
+          frame.style.right = modalFrameRestore.right;
+          frame.style.bottom = modalFrameRestore.bottom;
+          frame.style.width = modalFrameRestore.width;
+          frame.style.height = modalFrameRestore.height;
+          frame.style.minHeight = modalFrameRestore.minHeight;
+          frame.style.maxHeight = modalFrameRestore.maxHeight;
+          frame.style.zIndex = modalFrameRestore.zIndex;
+          frame.style.overflow = modalFrameRestore.overflow;
+          frame.style.background = modalFrameRestore.background;
+          frame.style.border = modalFrameRestore.border;
+          frame.style.boxShadow = modalFrameRestore.boxShadow;
+        }
+        modalFrameRestore = null;
+        if (document.documentElement) {
+          document.documentElement.style.overflow = '';
+        }
+        if (document.body) {
+          document.body.style.overflow = '';
+        }
+        scheduleFrameHeight();
       }
 
       function syncCommentsPanelLayout() {
@@ -2839,6 +2953,9 @@
           scheduleFrameHeight();
         });
         window.addEventListener('resize', () => {
+          if (modalIsOpen()) {
+            setModalFrameMode(true);
+          }
           scheduleCommentsPanelLayout();
           scheduleFrameHeight();
         });
@@ -4234,12 +4351,14 @@
         if (!el.myCommentsTodayModal) return;
         el.myCommentsTodayModal.classList.add('show');
         el.myCommentsTodayModal.setAttribute('aria-hidden', 'false');
+        setModalFrameMode(true);
       }
 
       function closeMyCommentsTodayModal() {
         if (!el.myCommentsTodayModal) return;
         el.myCommentsTodayModal.classList.remove('show');
         el.myCommentsTodayModal.setAttribute('aria-hidden', 'true');
+        setModalFrameMode(false);
       }
 
       function renderMyCommentsTodayModal() {
@@ -4279,7 +4398,8 @@
                   <th>Agente (Yo)</th>
                   <th>Fecha y Hora Inicio</th>
                   <th>Fecha y Hora Fin</th>
-                  <th>Cierre WL</th>
+                  <th>Tipo</th>
+                  <th>Tiempo</th>
                   <th>Accion</th>
                 </tr>
               </thead>
@@ -4292,10 +4412,11 @@
                     <td>${escapeHtml(item.agent || 'Yo')}</td>
                     <td>${escapeHtml(TimeService.dtLabel(item.startCreated || new Date()))}</td>
                     <td>${escapeHtml(TimeService.dtLabel(item.endCreated || new Date()))}</td>
-                    <td title="${escapeHtml(item.endingWorklogLabel || '')}">${item.hasEndingWorklog ? '<span class="pill ok">Si</span>' : '<span class="pill">No</span>'}</td>
-                    <td>${item.hasEndingWorklog || !item.lastCommentId
+                    <td title="${escapeHtml(item.endingWorklogLabel || '')}">${escapeHtml(item.endingWorklogType || '-')}</td>
+                    <td>${escapeHtml(item.endingWorklogTime || '-')}</td>
+                    <td>${!item.lastCommentId
             ? ''
-            : `<button class="btn" type="button" data-act="open-comment-worklog" data-issue-key="${escapeHtml(item.issueKey)}" data-comment-id="${escapeHtml(item.lastCommentId)}">Tipo/tiempo</button>`}</td>
+            : `<button class="btn" type="button" data-act="open-comment-worklog" data-issue-key="${escapeHtml(item.issueKey)}" data-comment-id="${escapeHtml(item.lastCommentId)}">${item.hasEndingWorklog ? 'Editar tipo/tiempo' : 'Tipo/tiempo'}</button>`}</td>
                   </tr>
                 `).join('')}
               </tbody>
@@ -4360,6 +4481,8 @@
                 startCreated: Number.isFinite(minStartTs) ? new Date(minStartTs) : (Number.isFinite(firstCommentTs) ? new Date(firstCommentTs) : ''),
                 endCreated: Number.isFinite(maxEndTs) ? new Date(maxEndTs) : (Number.isFinite(lastCommentTs) ? new Date(lastCommentTs) : ''),
                 hasEndingWorklog: !!endWorklog,
+                endingWorklogType: endWorklog ? activityOf(endWorklog) : '',
+                endingWorklogTime: endWorklog ? TimeService.jiraDuration(minutesOf(endWorklog)) : '',
                 endingWorklogLabel: endWorklog
                   ? `${activityOf(endWorklog)} | ${TimeService.jiraDuration(minutesOf(endWorklog))}`
                   : '',
@@ -6008,6 +6131,7 @@
           const existingWorklog = findExistingWorklogForComment(issueKey, c);
           const existingWorklogId = existingWorklog ? String(existingWorklog.id || '').trim() : '';
           const linkedActivity = existingWorklog ? activityOf(existingWorklog) : '';
+          const linkedDuration = existingWorklog ? TimeService.jiraDuration(minutesOf(existingWorklog)) : '';
           const xlsxNames = xlsxNamesFromComment(c, issueKey);
           const xlsxTitle = xlsxNames.join('\n');
           const xlsxPrimary = xlsxNames.length ? String(xlsxNames[0] || '').trim() : '';
@@ -6020,10 +6144,13 @@
           const linkedClass = accent ? ' linked' : '';
           const accentAttr = accent ? ` style="--comment-accent:${escapeHtml(accent)}"` : '';
           const actionClass = existingWorklogId ? 'btn edit' : 'btn';
-          const actionLabel = existingWorklogId ? 'Editar' : 'Registrar actividad';
+          const actionLabel = existingWorklogId ? 'Editar tipo/tiempo' : 'Tipo/tiempo';
+          const linkedSummary = linkedActivity
+            ? `${linkedActivity}${linkedDuration ? ` | ${linkedDuration}` : ''}`
+            : 'Sin tipo/tiempo';
           const linkedBadge = accent
-            ? `<div class="comment-ref"><span class="comment-ref-dot" style="background:${escapeHtml(accent)};"></span><span>${escapeHtml(linkedActivity)}</span></div>`
-            : '';
+            ? `<div class="comment-ref"><span class="comment-ref-dot" style="background:${escapeHtml(accent)};"></span><span>${escapeHtml(linkedSummary)}</span></div>`
+            : `<div class="comment-ref"><span>${escapeHtml(linkedSummary)}</span></div>`;
           return {
             id,
             selectedClass,
@@ -6052,8 +6179,7 @@
               <div class="meta"><span>${escapeHtml(item.author)}</span><span>${escapeHtml(TimeService.dtLabel(item.c.created))}</span></div>
               <div class="body">${escapeHtml(item.txt)}</div>
               ${item.xlsxChip}
-              ${item.linkedBadge}
-              <div class="row" style="margin-top:8px;"><button class="${item.actionClass}" data-act="reg-from-comment" data-id="${escapeHtml(item.id)}" data-worklog-id="${escapeHtml(item.existingWorklogId)}">${item.actionLabel}</button></div>
+              <div class="comment-action-row">${item.linkedBadge}<button class="${item.actionClass}" data-act="reg-from-comment" data-id="${escapeHtml(item.id)}" data-worklog-id="${escapeHtml(item.existingWorklogId)}">${item.actionLabel}</button></div>
             </div>
           `;
         }).join('');

@@ -3159,6 +3159,16 @@ def _export_simple_excel(rows: List[Dict[str, object]], sheet_name: str = "data"
     return output.getvalue()
 
 
+def _export_multi_sheet_excel(sheets: Dict[str, List[Dict[str, object]]]) -> bytes:
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        for sheet_name, rows in sheets.items():
+            safe_sheet_name = str(sheet_name or "data").strip()[:31] or "data"
+            pd.DataFrame(rows or []).to_excel(writer, index=False, sheet_name=safe_sheet_name)
+    output.seek(0)
+    return output.getvalue()
+
+
 def _show_dataframe(data: object, use_container_width: bool = True) -> None:
     if isinstance(data, pd.DataFrame):
         df_view = data.copy()
@@ -6030,6 +6040,119 @@ def _build_ingles_assignment_excel_full_name(row: Dict[str, object]) -> str:
     return " ".join(part for part in parts if part).strip() or "SIN NOMBRE"
 
 
+def _build_ingles_assignment_debug_excel_rows(
+    rows: List[Dict[str, object]]
+) -> List[Dict[str, object]]:
+    debug_rows: List[Dict[str, object]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        excel_full_name = _build_ingles_assignment_excel_full_name(row)
+        debug_rows.append(
+            {
+                "Fila": _safe_int(row.get("_row_number")) or _safe_int(row.get("Fila")) or "",
+                "Nombre": str(row.get("Nombre") or "").strip(),
+                "Apellido Paterno": str(row.get("Apellido Paterno") or "").strip(),
+                "Apellido Materno": str(row.get("Apellido Materno") or "").strip(),
+                "Nombre completo Excel": excel_full_name,
+                "Clase": str(row.get("Clase") or row.get("Clase solicitada") or "").strip(),
+                "Nombre normalizado": _normalize_compare_text(row.get("Nombre")),
+                "Apellido Paterno normalizado": _normalize_compare_apellido(
+                    row.get("Apellido Paterno")
+                ),
+                "Apellido Materno normalizado": _normalize_compare_apellido(
+                    row.get("Apellido Materno")
+                ),
+                "Nombre completo normalizado": _normalize_compare_text(excel_full_name),
+            }
+        )
+    return debug_rows
+
+
+def _build_ingles_assignment_debug_bd_rows(
+    students: List[Dict[str, object]]
+) -> List[Dict[str, object]]:
+    debug_rows: List[Dict[str, object]] = []
+    for row in students:
+        if not isinstance(row, dict):
+            continue
+        nombre_completo = str(row.get("nombre_completo") or "").strip()
+        debug_rows.append(
+            {
+                "Alumno ID": _safe_int(row.get("alumno_id")) or "",
+                "Persona ID": _safe_int(row.get("persona_id")) or "",
+                "Nombre": str(row.get("nombre") or "").strip(),
+                "Apellido Paterno": str(row.get("apellido_paterno") or "").strip(),
+                "Apellido Materno": str(row.get("apellido_materno") or "").strip(),
+                "Nombre completo BD": nombre_completo,
+                "DNI": str(row.get("id_oficial") or "").strip(),
+                "Activo": "Si" if _to_bool(row.get("activo")) else "No",
+                "Nivel": str(row.get("nivel") or "").strip(),
+                "Grado": str(row.get("grado") or "").strip(),
+                "Seccion": str(row.get("seccion_norm") or row.get("seccion") or "").strip(),
+                "Nombre normalizado": _normalize_compare_text(row.get("nombre")),
+                "Apellido Paterno normalizado": _normalize_compare_apellido(
+                    row.get("apellido_paterno")
+                ),
+                "Apellido Materno normalizado": _normalize_compare_apellido(
+                    row.get("apellido_materno")
+                ),
+                "Nombre completo normalizado": _normalize_compare_text(nombre_completo),
+            }
+        )
+    debug_rows.sort(
+        key=lambda item: (
+            str(item.get("Nombre completo BD") or "").upper(),
+            int(_safe_int(item.get("Alumno ID")) or 0),
+        )
+    )
+    return debug_rows
+
+
+def _build_ingles_assignment_debug_comparison_rows(
+    preview_rows: List[Dict[str, object]]
+) -> List[Dict[str, object]]:
+    debug_rows: List[Dict[str, object]] = []
+    for row in preview_rows:
+        if not isinstance(row, dict):
+            continue
+        excel_full_name = _build_ingles_assignment_excel_full_name(row)
+        debug_rows.append(
+            {
+                "Fila": _safe_int(row.get("Fila")) or "",
+                "Nombre completo Excel": excel_full_name,
+                "Clase solicitada": str(row.get("Clase solicitada") or row.get("Clase") or "").strip(),
+                "Alumno encontrado": str(row.get("Alumno encontrado") or "").strip(),
+                "Alumno ID": _safe_int(row.get("Alumno ID")) or _safe_int(row.get("_alumno_id")) or "",
+                "DNI": str(row.get("DNI") or "").strip(),
+                "Estado": str(row.get("Estado") or "").strip(),
+                "Detalle": str(row.get("Detalle") or "").strip(),
+                "Modo match": str(row.get("_student_match_mode") or "").strip(),
+                "Coincidencias alumno": _safe_int(row.get("_student_match_count")) or "",
+                "Coincidencias clase": _safe_int(row.get("_class_match_count")) or "",
+                "Nombre completo Excel normalizado": _normalize_compare_text(excel_full_name),
+                "Alumno encontrado normalizado": _normalize_compare_text(
+                    str(row.get("Alumno encontrado") or "").split("|", 1)[0]
+                ),
+            }
+        )
+    return debug_rows
+
+
+def _export_ingles_assignment_debug_excel(
+    uploaded_rows: List[Dict[str, object]],
+    students: List[Dict[str, object]],
+    preview_rows: List[Dict[str, object]],
+) -> bytes:
+    return _export_multi_sheet_excel(
+        {
+            "excel": _build_ingles_assignment_debug_excel_rows(uploaded_rows),
+            "bd": _build_ingles_assignment_debug_bd_rows(students),
+            "comparacion": _build_ingles_assignment_debug_comparison_rows(preview_rows),
+        }
+    )
+
+
 def _hydrate_ingles_assignment_preview_row(
     row: Dict[str, object],
     student_row: Optional[Dict[str, object]],
@@ -6786,6 +6909,21 @@ def _render_ingles_por_niveles_excel_assignment_block(
             st.warning(
                 "Hubo observaciones al cargar alumnos del colegio. "
                 f"Se registraron {len(fetch_errors_state)} error(es) de consulta."
+            )
+
+        if uploaded_rows and reference_students_state:
+            debug_excel_bytes = _export_ingles_assignment_debug_excel(
+                uploaded_rows=uploaded_rows,
+                students=reference_students_state,
+                preview_rows=preview_rows_state,
+            )
+            st.download_button(
+                "Descargar comparacion Excel vs BD",
+                data=debug_excel_bytes,
+                file_name="ingles_por_niveles_comparacion.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="clases_auto_group_ingles_excel_debug_download",
+                use_container_width=True,
             )
 
         if preview_rows_state:

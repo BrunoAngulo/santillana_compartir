@@ -6064,12 +6064,19 @@ def _hydrate_ingles_assignment_preview_row(
     ap_pat = str(updated.get("Apellido Paterno") or "").strip()
     ap_mat = str(updated.get("Apellido Materno") or "").strip()
     clase = str(updated.get("Clase solicitada") or "").strip()
+    has_student_reference = alumno_id is not None
 
     estado = "Listo"
     detalle = "Se asignara a la clase encontrada."
-    if not all([nombre, ap_pat, ap_mat, clase]):
+    if not clase:
         estado = "Error"
-        detalle = "Faltan Nombre, Apellido Paterno, Apellido Materno o Clase."
+        detalle = "Falta Clase."
+    elif not has_student_reference and not all([nombre, ap_pat, ap_mat]):
+        estado = "Error"
+        detalle = (
+            "Faltan Nombre, Apellido Paterno o Apellido Materno. "
+            "Tambien puedes seleccionar el alumno manualmente en Referencia del alumno."
+        )
     elif alumno_id is None:
         if student_match_count > 1:
             estado = "Revisar"

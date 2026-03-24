@@ -5874,6 +5874,31 @@ def _build_ingles_assignment_students_full_name_lookup(
     return lookup
 
 
+def _build_ingles_assignment_default_reference_option(
+    row: Dict[str, object],
+    students_full_name_lookup: Dict[str, List[Dict[str, object]]],
+) -> str:
+    alumno_id = _safe_int(row.get("_alumno_id"))
+    if alumno_id is not None:
+        return str(int(alumno_id))
+    excel_full_name_key = _normalize_compare_text(
+        _build_ingles_assignment_excel_full_name(row)
+    )
+    if not excel_full_name_key:
+        return ""
+    matched_ids = sorted(
+        {
+            int(candidate_id)
+            for candidate in (students_full_name_lookup.get(excel_full_name_key) or [])
+            for candidate_id in [_safe_int(candidate.get("alumno_id"))]
+            if candidate_id is not None
+        }
+    )
+    if len(matched_ids) == 1:
+        return str(int(matched_ids[0]))
+    return ""
+
+
 def _build_ingles_assignment_name_tokens(value: object) -> List[str]:
     return [token for token in _normalize_compare_text(value).split() if token]
 
@@ -6333,6 +6358,7 @@ def _render_ingles_assignment_reference_review(
     if not preview_rows:
         return []
     students_by_id = _build_ingles_assignment_students_by_id(students)
+    students_full_name_lookup = _build_ingles_assignment_students_full_name_lookup(students)
     if not students_by_id:
         st.warning(
             "No hay catalogo de alumnos para revisar referencias. "
@@ -6370,8 +6396,11 @@ def _render_ingles_assignment_reference_review(
             continue
         fila = int(_safe_int(row.get("Fila")) or 0)
         row_key = f"clases_auto_group_ingles_ref_select_{fila}"
-        default_option = str(_safe_int(row.get("_alumno_id")) or "")
-        if st.session_state.get(row_key) not in option_values:
+        default_option = _build_ingles_assignment_default_reference_option(
+            row=row,
+            students_full_name_lookup=students_full_name_lookup,
+        )
+        if row_key not in st.session_state or st.session_state.get(row_key) not in option_values:
             st.session_state[row_key] = default_option if default_option in option_values else ""
 
         cols = st.columns([2.2, 3.0], gap="small")

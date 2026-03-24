@@ -4435,6 +4435,10 @@ def _pick_default_group_id(
 ) -> Optional[int]:
     if not options:
         return None
+    if grupo_id_actual is not None:
+        for option in options:
+            if int(option["grupo_id"]) == int(grupo_id_actual):
+                return int(option["grupo_id"])
     hint = _extract_group_hint_from_class_name(clase_nombre)
     if hint:
         for option in options:
@@ -4445,24 +4449,7 @@ def _pick_default_group_id(
             match_nombre = re.search(r"GRUPO\s+([A-Z])\b", nombre)
             if match_nombre and match_nombre.group(1) == hint:
                 return int(option["grupo_id"])
-        # Fallback consecutivo: A->1er grupo, B->2do, ... Z->26vo.
-        # Se usa solo si no hubo match directo por clave/nombre.
-        if len(hint) == 1 and "A" <= hint <= "Z":
-            sorted_options = sorted(
-                options,
-                key=lambda row: _grupo_sort_key(
-                    str(row.get("grupo_clave") or ""),
-                    str(row.get("grupo_nombre") or ""),
-                ),
-            )
-            idx = ord(hint) - ord("A")
-            if 0 <= idx < len(sorted_options):
-                return int(sorted_options[idx]["grupo_id"])
-    if grupo_id_actual is not None:
-        for option in options:
-            if int(option["grupo_id"]) == int(grupo_id_actual):
-                return int(option["grupo_id"])
-    return int(options[0]["grupo_id"])
+    return None
 
 
 def _fetch_grupo_alumnos_count(
@@ -4680,6 +4667,35 @@ def _flatten_censo_alumno_for_auto_plan(
     }
 
 
+def _censo_alumno_matches_context(
+    item: Dict[str, object],
+    context: Dict[str, object],
+) -> bool:
+    nivel = item.get("nivel") if isinstance(item.get("nivel"), dict) else {}
+    grado = item.get("grado") if isinstance(item.get("grado"), dict) else {}
+    grupo = item.get("grupo") if isinstance(item.get("grupo"), dict) else {}
+
+    expected_nivel_id = _safe_int(context.get("nivel_id"))
+    expected_grado_id = _safe_int(context.get("grado_id"))
+    expected_grupo_id = _safe_int(context.get("grupo_id"))
+    expected_seccion = _normalize_seccion_key(context.get("seccion_norm") or context.get("seccion") or "")
+
+    raw_nivel_id = _safe_int(nivel.get("nivelId"))
+    raw_grado_id = _safe_int(grado.get("gradoId"))
+    raw_grupo_id = _safe_int(grupo.get("grupoId"))
+    raw_seccion = _normalize_seccion_key(grupo.get("grupoClave") or grupo.get("grupo") or "")
+
+    if raw_nivel_id is not None and expected_nivel_id is not None and raw_nivel_id != expected_nivel_id:
+        return False
+    if raw_grado_id is not None and expected_grado_id is not None and raw_grado_id != expected_grado_id:
+        return False
+    if raw_grupo_id is not None and expected_grupo_id is not None:
+        return raw_grupo_id == expected_grupo_id
+    if raw_seccion and expected_seccion:
+        return raw_seccion == expected_seccion
+    return False
+
+
 def _participantes_nivel_sort_rank(nivel_nombre: object) -> int:
     text = _normalize_plain_text(nivel_nombre)
     if any(tag in text for tag in ("INICIAL", "PREESCOLAR", "PRESCHOOL", "PREPRIMARY", "PRE PRIMARY")):
@@ -4865,7 +4881,7 @@ def _resolve_auto_group_selection(
         return int(auto_group_id)
     if selected_default is not None and int(selected_default) in option_ids:
         return int(selected_default)
-    return int(option_ids[0])
+    return None
 
 
 def _extract_alumno_ids_from_clase_data(clase_data: Dict[str, object]) -> Set[int]:
@@ -5574,8 +5590,12 @@ def _sync_participantes_por_grado_seccion(
                 group_errors[context_key] = str(exc)
             else:
                 activos_tmp: Dict[int, Dict[str, object]] = {}
+                omitted_outside_context = 0
                 for item in alumnos_ctx:
                     if not isinstance(item, dict):
+                        continue
+                    if not _censo_alumno_matches_context(item=item, context=ctx):
+                        omitted_outside_context += 1
                         continue
                     flat = _flatten_censo_alumno_for_auto_plan(item=item, fallback=ctx)
                     if not _to_bool(flat.get("activo")):
@@ -5584,6 +5604,15 @@ def _sync_participantes_por_grado_seccion(
                     if alumno_id is None:
                         continue
                     activos_tmp[int(alumno_id)] = flat
+                if omitted_outside_context:
+                    _status(
+                        "Omitidos {count} alumno(s) fuera del grupo consultado: nivel={nivel} grado={grado} grupo={grupo}".format(
+                            count=omitted_outside_context,
+                            nivel=int(nivel_id),
+                            grado=int(grado_id),
+                            grupo=int(selected_group_id),
+                        )
+                    )
                 activos_by_group[context_key] = activos_tmp
                 summary["grupos_consultados"] += 1
 

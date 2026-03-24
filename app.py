@@ -4936,6 +4936,36 @@ def _copy_participantes_sync_job(job: Dict[str, object]) -> Dict[str, object]:
     return snapshot
 
 
+def _reconcile_participantes_sync_job(job_id: object) -> None:
+    job_key = str(job_id or "").strip()
+    if not job_key:
+        return
+    with _PARTICIPANTES_SYNC_LOCK:
+        job = _PARTICIPANTES_SYNC_JOBS.get(job_key)
+        if not isinstance(job, dict):
+            return
+        state = str(job.get("state") or "").strip()
+        if state not in {"starting", "running"}:
+            return
+        worker = job.get("thread")
+        if isinstance(worker, threading.Thread) and worker.is_alive():
+            return
+        if worker is None:
+            error_detail = "Proceso sin hilo activo asociado."
+        else:
+            error_detail = (
+                "El hilo en segundo plano termino antes de reportar el estado final."
+            )
+        messages = list(job.get("status_messages") or [])
+        message = f"Proceso interrumpido: {error_detail}"
+        if not messages or messages[-1] != message:
+            messages.append(message)
+        job["status_messages"] = messages[-_PARTICIPANTES_SYNC_STATUS_LIMIT:]
+        if not str(job.get("error") or "").strip():
+            job["error"] = error_detail
+        job["state"] = "error"
+
+
 def _set_participantes_sync_job(job_id: str, **fields: object) -> None:
     if not str(job_id or "").strip():
         return
@@ -4970,6 +5000,7 @@ def _get_participantes_sync_job(job_id: object) -> Optional[Dict[str, object]]:
     job_key = str(job_id or "").strip()
     if not job_key:
         return None
+    _reconcile_participantes_sync_job(job_key)
     with _PARTICIPANTES_SYNC_LOCK:
         job = _PARTICIPANTES_SYNC_JOBS.get(job_key)
         if not isinstance(job, dict):
@@ -4989,7 +5020,9 @@ def _get_participantes_sync_job_id_for_scope(
             return None
         if not isinstance(_PARTICIPANTES_SYNC_JOBS.get(str(job_id)), dict):
             return None
-        return str(job_id)
+        resolved_job_id = str(job_id)
+    _reconcile_participantes_sync_job(resolved_job_id)
+    return resolved_job_id
 
 
 def _is_participantes_sync_job_active(job: Optional[Dict[str, object]]) -> bool:
@@ -5163,9 +5196,16 @@ def _start_participantes_sync_job(
         for item in (ingles_grade_keys or [])
         if str(item).strip()
     )
+    existing_id = ""
+    existing_job: Optional[Dict[str, object]] = None
     with _PARTICIPANTES_SYNC_LOCK:
-        existing_id = _PARTICIPANTES_SYNC_SCOPE_TO_JOB.get(scope)
-        existing_job = _PARTICIPANTES_SYNC_JOBS.get(str(existing_id)) if existing_id else None
+        existing_id = str(_PARTICIPANTES_SYNC_SCOPE_TO_JOB.get(scope) or "").strip()
+        existing_job = _PARTICIPANTES_SYNC_JOBS.get(existing_id) if existing_id else None
+    if existing_id:
+        _reconcile_participantes_sync_job(existing_id)
+        with _PARTICIPANTES_SYNC_LOCK:
+            existing_job = _PARTICIPANTES_SYNC_JOBS.get(existing_id)
+    with _PARTICIPANTES_SYNC_LOCK:
         if isinstance(existing_job, dict) and str(existing_job.get("state") or "").strip() in {
             "starting",
             "running",
@@ -12075,6 +12115,7 @@ with tab_crud_clases:
                 )
                 warnings_auto = list(current_job.get("warnings") or [])
                 group_error_lines = list(current_job.get("group_error_lines") or [])
+                detail_rows = list(current_job.get("detail_rows") or [])
                 exclude_ingles_job = bool(
                     current_job.get("exclude_ingles_por_niveles", False)
                 )
@@ -12126,17 +12167,37 @@ with tab_crud_clases:
 
                 st.caption(
                     "Resumen: "
+                    f"Alumnos objetivo={summary_auto.get('alumnos_objetivo', 0)} | "
+                    f"Ya estaban={summary_auto.get('alumnos_sin_cambios', 0)} | "
                     f"Alumnos asignados={summary_auto.get('agregados_ok', 0)} | "
+                    f"Error asignar={summary_auto.get('agregados_error', 0)} | "
                     f"Alumnos eliminados={summary_auto.get('eliminados_ok', 0)} | "
+                    f"Error eliminar={summary_auto.get('eliminados_error', 0)} | "
                     f"Clases sin cambios={summary_auto.get('clases_skip', 0)} | "
                     f"Clases con error={summary_auto.get('clases_error', 0)} | "
                     f"Ingles por niveles={'Si' if exclude_ingles_job else 'No'} | "
                     f"Grados ingles={len(ingles_grade_keys_job)}"
                 )
+                if detail_rows:
+                    with st.expander(
+                        f"Detalle por clase ({len(detail_rows)})",
+                        expanded=state in {"done", "error"},
+                    ):
+                        _show_dataframe(detail_rows[:200], use_container_width=True)
+                        if len(detail_rows) > 200:
+                            st.caption(
+                                f"Mostrando 200 de {len(detail_rows)} fila(s)."
+                            )
                 if warnings_auto:
-                    st.caption(f"Advertencias de mapeo de clases: {len(warnings_auto)}")
+                    with st.expander(
+                        f"Advertencias de mapeo de clases ({len(warnings_auto)})"
+                    ):
+                        st.write("\n".join(f"- {item}" for item in warnings_auto))
                 if group_error_lines:
-                    st.caption(f"Errores al consultar secciones: {len(group_error_lines)}")
+                    with st.expander(
+                        f"Errores al consultar secciones ({len(group_error_lines)})"
+                    ):
+                        st.write("\n".join(f"- {item}" for item in group_error_lines))
 
         @st.fragment
         def _render_clases_gestion_section() -> None:

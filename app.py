@@ -705,7 +705,7 @@ def _sync_shared_token_from_input() -> None:
         _clear_shared_colegios_cache(clear_selection=not bool(token_input))
 
 
-st.set_page_config(page_title="Generador de Plantilla", layout="wide")
+st.set_page_config(page_title="santed", layout="wide")
 _inject_professional_theme()
 st.markdown("**Menu principal**")
 menu_option = st.radio(
@@ -5758,8 +5758,12 @@ def _clear_ingles_por_niveles_assignment_state() -> None:
         "clases_auto_group_ingles_excel_preview_rows",
         "clases_auto_group_ingles_excel_apply_rows",
         "clases_auto_group_ingles_excel_fetch_errors",
+        "clases_auto_group_ingles_excel_reference_students",
     ):
         st.session_state.pop(state_key, None)
+    for state_key in list(st.session_state.keys()):
+        if str(state_key).startswith("clases_auto_group_ingles_ref_select_"):
+            st.session_state.pop(state_key, None)
 
 
 def _load_ingles_assignment_rows_from_excel(excel_bytes: bytes) -> List[Dict[str, object]]:
@@ -5947,6 +5951,146 @@ def _build_ingles_assignment_classes_lookup(
     return lookup
 
 
+def _build_ingles_assignment_students_by_id(
+    students: List[Dict[str, object]]
+) -> Dict[int, Dict[str, object]]:
+    mapping: Dict[int, Dict[str, object]] = {}
+    for row in students:
+        if not isinstance(row, dict):
+            continue
+        alumno_id = _safe_int(row.get("alumno_id"))
+        if alumno_id is None or int(alumno_id) in mapping:
+            continue
+        mapping[int(alumno_id)] = row
+    return mapping
+
+
+def _build_ingles_assignment_reference_option_label(row: Dict[str, object]) -> str:
+    nombre = str(row.get("nombre_completo") or "").strip() or "SIN NOMBRE"
+    dni = str(row.get("id_oficial") or "").strip() or "-"
+    alumno_id = _safe_int(row.get("alumno_id"))
+    seccion = str(row.get("seccion_norm") or row.get("seccion") or "").strip() or "-"
+    activo_label = "Activo" if _to_bool(row.get("activo")) else "Inactivo"
+    return (
+        f"{nombre} | DNI {dni} | Alumno ID {alumno_id or '-'} | "
+        f"Seccion {seccion} | {activo_label}"
+    )
+
+
+def _hydrate_ingles_assignment_preview_row(
+    row: Dict[str, object],
+    student_row: Optional[Dict[str, object]],
+    duplicate_filas: Optional[List[int]] = None,
+) -> Dict[str, object]:
+    updated = dict(row) if isinstance(row, dict) else {}
+    alumno_id = _safe_int(student_row.get("alumno_id")) if isinstance(student_row, dict) else None
+    auto_alumno_id = _safe_int(updated.get("_auto_alumno_id"))
+    student_match_count = int(
+        _safe_int(updated.get("_student_match_count"))
+        or (1 if auto_alumno_id is not None else 0)
+    )
+    class_match_count = int(
+        _safe_int(updated.get("_class_match_count"))
+        or (1 if _safe_int(updated.get("_clase_id")) is not None else 0)
+    )
+    student_match_mode = str(updated.get("_student_match_mode") or "").strip()
+    fila = int(_safe_int(updated.get("Fila")) or 0)
+    duplicate_filas_clean = sorted(
+        {
+            int(_safe_int(item) or 0)
+            for item in (duplicate_filas or [])
+            if _safe_int(item) is not None and int(_safe_int(item) or 0) != fila
+        }
+    )
+    manual_selected = alumno_id is not None and alumno_id != auto_alumno_id
+
+    updated["Alumno encontrado"] = _format_alumno_label(student_row) if student_row else ""
+    updated["Alumno ID"] = alumno_id if alumno_id is not None else ""
+    updated["DNI"] = (
+        str(student_row.get("id_oficial") or "").strip()
+        if isinstance(student_row, dict)
+        else ""
+    )
+    if isinstance(student_row, dict):
+        updated["Activo"] = "Si" if _to_bool(student_row.get("activo")) else "No"
+        updated["Seccion actual"] = str(
+            student_row.get("seccion_norm") or student_row.get("seccion") or ""
+        ).strip()
+        updated["_nivel_id"] = _safe_int(student_row.get("nivel_id"))
+        updated["_grado_id"] = _safe_int(student_row.get("grado_id"))
+        updated["_grupo_id"] = _safe_int(student_row.get("grupo_id"))
+        updated["_activo"] = bool(_to_bool(student_row.get("activo")))
+    else:
+        updated["Activo"] = ""
+        updated["Seccion actual"] = ""
+        updated["_nivel_id"] = None
+        updated["_grado_id"] = None
+        updated["_grupo_id"] = None
+        updated["_activo"] = False
+    updated["_alumno_id"] = alumno_id
+
+    nombre = str(updated.get("Nombre") or "").strip()
+    ap_pat = str(updated.get("Apellido Paterno") or "").strip()
+    ap_mat = str(updated.get("Apellido Materno") or "").strip()
+    clase = str(updated.get("Clase solicitada") or "").strip()
+
+    estado = "Listo"
+    detalle = "Se asignara a la clase encontrada."
+    if not all([nombre, ap_pat, ap_mat, clase]):
+        estado = "Error"
+        detalle = "Faltan Nombre, Apellido Paterno, Apellido Materno o Clase."
+    elif alumno_id is None:
+        if student_match_count > 1:
+            estado = "Revisar"
+            detalle = (
+                "Alumno ambiguo: {total} coincidencias por nombre {mode}. "
+                "Selecciona el correcto en Referencia del alumno."
+            ).format(
+                total=student_match_count,
+                mode=student_match_mode or "compatible",
+            )
+        else:
+            estado = "Error"
+            detalle = "Alumno no encontrado. Selecciona el correcto en Referencia del alumno."
+    elif class_match_count <= 0:
+        estado = "Error"
+        detalle = "Clase no encontrada."
+    elif class_match_count > 1:
+        estado = "Error"
+        detalle = f"Clase ambigua: {class_match_count} coincidencias exactas."
+    elif duplicate_filas_clean:
+        estado = "Revisar"
+        duplicate_txt = ", ".join(str(item) for item in duplicate_filas_clean)
+        detail_parts: List[str] = []
+        if manual_selected:
+            detail_parts.append("Alumno seleccionado manualmente desde Referencia del alumno.")
+        detail_parts.append(
+            f"El mismo alumno ya esta referenciado en la(s) fila(s) {duplicate_txt}."
+        )
+        detail_parts.append("Corrige la referencia antes de aplicar.")
+        detalle = " ".join(detail_parts)
+    else:
+        detail_parts = []
+        if manual_selected:
+            detail_parts.append("Alumno seleccionado manualmente desde Referencia del alumno.")
+        elif student_match_mode == "prefijo":
+            detail_parts.append(
+                "Alumno encontrado por coincidencia de prefijo en nombres."
+            )
+        elif student_match_mode == "parcial":
+            detail_parts.append(
+                "Alumno encontrado por coincidencia parcial en nombres."
+            )
+        if isinstance(student_row, dict) and not _to_bool(student_row.get("activo")):
+            detail_parts.append("Alumno inactivo: se activara antes de asignar.")
+        detail_parts.append("Se asignara a la clase encontrada.")
+        detalle = " ".join(detail_parts)
+
+    updated["Estado"] = estado
+    updated["Detalle"] = detalle
+    return updated
+
+
 def _build_ingles_assignment_preview_rows(
     excel_rows: List[Dict[str, object]],
     students: List[Dict[str, object]],
@@ -6017,33 +6161,40 @@ def _build_ingles_assignment_preview_rows(
             detalle = " ".join(detail_parts)
 
         preview_rows.append(
-            {
-                "Fila": int(row_number),
-                "Nombre": nombre,
-                "Apellido Paterno": ap_pat,
-                "Apellido Materno": ap_mat,
-                "Clase solicitada": clase,
-                "Alumno encontrado": _format_alumno_label(student_row) if student_row else "",
-                "Alumno ID": _safe_int(student_row.get("alumno_id")) if student_row else "",
-                "DNI": str(student_row.get("id_oficial") or "").strip() if student_row else "",
-                "Activo": "Si" if _to_bool(student_row.get("activo")) else "No" if student_row else "",
-                "Seccion actual": str(
-                    student_row.get("seccion_norm") or student_row.get("seccion") or ""
-                ).strip() if student_row else "",
-                "Clase encontrada": str(class_row.get("clase_nombre") or "").strip() if class_row else "",
-                "Clase ID": _safe_int(class_row.get("clase_id")) if class_row else "",
-                "Nivel clase": str(class_row.get("nivel_nombre") or "").strip() if class_row else "",
-                "Grado clase": str(class_row.get("grado_nombre") or "").strip() if class_row else "",
-                "Seccion clase": str(class_row.get("seccion") or "").strip() if class_row else "",
-                "Estado": estado,
-                "Detalle": detalle,
-                "_alumno_id": _safe_int(student_row.get("alumno_id")) if student_row else None,
-                "_clase_id": _safe_int(class_row.get("clase_id")) if class_row else None,
-                "_nivel_id": _safe_int(student_row.get("nivel_id")) if student_row else None,
-                "_grado_id": _safe_int(student_row.get("grado_id")) if student_row else None,
-                "_grupo_id": _safe_int(student_row.get("grupo_id")) if student_row else None,
-                "_activo": bool(_to_bool(student_row.get("activo"))) if student_row else False,
-            }
+            _hydrate_ingles_assignment_preview_row(
+                {
+                    "Fila": int(row_number),
+                    "Nombre": nombre,
+                    "Apellido Paterno": ap_pat,
+                    "Apellido Materno": ap_mat,
+                    "Clase solicitada": clase,
+                    "Alumno encontrado": _format_alumno_label(student_row) if student_row else "",
+                    "Alumno ID": _safe_int(student_row.get("alumno_id")) if student_row else "",
+                    "DNI": str(student_row.get("id_oficial") or "").strip() if student_row else "",
+                    "Activo": "Si" if _to_bool(student_row.get("activo")) else "No" if student_row else "",
+                    "Seccion actual": str(
+                        student_row.get("seccion_norm") or student_row.get("seccion") or ""
+                    ).strip() if student_row else "",
+                    "Clase encontrada": str(class_row.get("clase_nombre") or "").strip() if class_row else "",
+                    "Clase ID": _safe_int(class_row.get("clase_id")) if class_row else "",
+                    "Nivel clase": str(class_row.get("nivel_nombre") or "").strip() if class_row else "",
+                    "Grado clase": str(class_row.get("grado_nombre") or "").strip() if class_row else "",
+                    "Seccion clase": str(class_row.get("seccion") or "").strip() if class_row else "",
+                    "Estado": estado,
+                    "Detalle": detalle,
+                    "_alumno_id": _safe_int(student_row.get("alumno_id")) if student_row else None,
+                    "_auto_alumno_id": _safe_int(student_row.get("alumno_id")) if student_row else None,
+                    "_clase_id": _safe_int(class_row.get("clase_id")) if class_row else None,
+                    "_nivel_id": _safe_int(student_row.get("nivel_id")) if student_row else None,
+                    "_grado_id": _safe_int(student_row.get("grado_id")) if student_row else None,
+                    "_grupo_id": _safe_int(student_row.get("grupo_id")) if student_row else None,
+                    "_activo": bool(_to_bool(student_row.get("activo"))) if student_row else False,
+                    "_student_match_count": int(len(matched_students)),
+                    "_student_match_mode": student_match_mode,
+                    "_class_match_count": int(len(matched_classes)),
+                },
+                student_row if student_row else None,
+            )
         )
 
     preview_rows.sort(
@@ -6083,6 +6234,133 @@ def _build_ingles_assignment_preview_display_rows(
         for row in rows
         if isinstance(row, dict)
     ]
+
+
+def _build_ingles_assignment_review_rows_from_selection(
+    preview_rows: List[Dict[str, object]],
+    students: List[Dict[str, object]],
+    selected_student_ids_by_fila: Dict[int, Optional[int]],
+) -> List[Dict[str, object]]:
+    students_by_id = _build_ingles_assignment_students_by_id(students)
+    selected_filas_by_alumno: Dict[int, List[int]] = {}
+    selected_rows: List[Tuple[Dict[str, object], Optional[Dict[str, object]]]] = []
+
+    for row in preview_rows:
+        if not isinstance(row, dict):
+            continue
+        fila = int(_safe_int(row.get("Fila")) or 0)
+        selected_student_id = _safe_int(selected_student_ids_by_fila.get(fila))
+        student_row = (
+            students_by_id.get(int(selected_student_id))
+            if selected_student_id is not None
+            else None
+        )
+        selected_rows.append((row, student_row))
+        if fila > 0 and selected_student_id is not None:
+            selected_filas_by_alumno.setdefault(int(selected_student_id), []).append(fila)
+
+    duplicate_map: Dict[int, List[int]] = {}
+    for filas in selected_filas_by_alumno.values():
+        if len(filas) <= 1:
+            continue
+        for fila in filas:
+            duplicate_map[int(fila)] = sorted(
+                other_fila for other_fila in filas if int(other_fila) != int(fila)
+            )
+
+    reviewed_rows: List[Dict[str, object]] = []
+    for row, student_row in selected_rows:
+        fila = int(_safe_int(row.get("Fila")) or 0)
+        reviewed_rows.append(
+            _hydrate_ingles_assignment_preview_row(
+                row=row,
+                student_row=student_row,
+                duplicate_filas=duplicate_map.get(fila) or [],
+            )
+        )
+    return reviewed_rows
+
+
+def _render_ingles_assignment_reference_review(
+    preview_rows: List[Dict[str, object]],
+    students: List[Dict[str, object]],
+) -> List[Dict[str, object]]:
+    if not preview_rows:
+        return []
+    students_by_id = _build_ingles_assignment_students_by_id(students)
+    if not students_by_id:
+        st.warning(
+            "No hay catalogo de alumnos para revisar referencias. "
+            "Vuelve a buscar alumnos y clases."
+        )
+        return preview_rows
+
+    option_values: List[str] = [""]
+    option_labels: Dict[str, str] = {"": "Selecciona un alumno"}
+    for alumno_id, row in students_by_id.items():
+        option_key = str(int(alumno_id))
+        option_values.append(option_key)
+        option_labels[option_key] = _build_ingles_assignment_reference_option_label(row)
+
+    st.markdown("**Revision de referencias**")
+    st.caption(
+        "Usa Referencia del alumno para corregir coincidencias. "
+        "Si el mismo alumno queda referenciado en mas de una fila, quedara en Revisar."
+    )
+
+    header_cols = st.columns([0.7, 1.8, 1.5, 2.6], gap="small")
+    header_cols[0].markdown("**Fila**")
+    header_cols[1].markdown("**Alumno Excel**")
+    header_cols[2].markdown("**Clase destino**")
+    header_cols[3].markdown("**Referencia del alumno**")
+
+    selected_student_ids_by_fila: Dict[int, Optional[int]] = {}
+    for row in preview_rows:
+        if not isinstance(row, dict):
+            continue
+        fila = int(_safe_int(row.get("Fila")) or 0)
+        row_key = f"clases_auto_group_ingles_ref_select_{fila}"
+        default_option = str(_safe_int(row.get("_alumno_id")) or "")
+        if st.session_state.get(row_key) not in option_values:
+            st.session_state[row_key] = default_option if default_option in option_values else ""
+
+        cols = st.columns([0.7, 1.8, 1.5, 2.6], gap="small")
+        cols[0].markdown(str(fila or "-"))
+        cols[1].markdown(
+            "{nombre} {ap_pat} {ap_mat}".format(
+                nombre=str(row.get("Nombre") or "").strip(),
+                ap_pat=str(row.get("Apellido Paterno") or "").strip(),
+                ap_mat=str(row.get("Apellido Materno") or "").strip(),
+            ).strip()
+            or "-"
+        )
+        cols[2].markdown(str(row.get("Clase solicitada") or "").strip() or "-")
+        selected_option = cols[3].selectbox(
+            f"Referencia del alumno fila {fila}",
+            options=option_values,
+            key=row_key,
+            format_func=lambda value: option_labels.get(str(value), str(value)),
+            label_visibility="collapsed",
+        )
+        selected_student_ids_by_fila[fila] = _safe_int(selected_option)
+
+    reviewed_rows = _build_ingles_assignment_review_rows_from_selection(
+        preview_rows=preview_rows,
+        students=students,
+        selected_student_ids_by_fila=selected_student_ids_by_fila,
+    )
+    duplicate_rows = [
+        row
+        for row in reviewed_rows
+        if str(row.get("Estado") or "").strip() == "Revisar"
+        and "referenciado" in str(row.get("Detalle") or "").lower()
+    ]
+    if duplicate_rows:
+        st.warning(
+            "Hay referencias duplicadas en {total} fila(s). "
+            "Corrigelas antes de aplicar.".format(total=len(duplicate_rows))
+        )
+    return reviewed_rows
 
 
 def _apply_ingles_assignment_preview_rows(
@@ -6331,6 +6609,9 @@ def _render_ingles_por_niveles_excel_assignment_block(
         preview_rows_state = st.session_state.get(
             "clases_auto_group_ingles_excel_preview_rows"
         ) or []
+        reference_students_state = st.session_state.get(
+            "clases_auto_group_ingles_excel_reference_students"
+        ) or []
         apply_rows_state = st.session_state.get(
             "clases_auto_group_ingles_excel_apply_rows"
         ) or []
@@ -6393,16 +6674,16 @@ def _render_ingles_por_niveles_excel_assignment_block(
                 except Exception as exc:
                     st.error(f"No se pudo analizar la asignacion: {exc}")
                 else:
+                    _clear_ingles_por_niveles_assignment_state()
                     st.session_state[
                         "clases_auto_group_ingles_excel_preview_rows"
                     ] = preview_rows
                     st.session_state[
+                        "clases_auto_group_ingles_excel_reference_students"
+                    ] = list(catalog.get("students") or [])
+                    st.session_state[
                         "clases_auto_group_ingles_excel_fetch_errors"
                     ] = list(catalog.get("errors") or [])
-                    st.session_state.pop(
-                        "clases_auto_group_ingles_excel_apply_rows",
-                        None,
-                    )
                     total_ready = sum(
                         1
                         for row in preview_rows
@@ -6416,6 +6697,7 @@ def _render_ingles_por_niveles_excel_assignment_block(
                     else:
                         st.success(f"Analisis listo. Filas validas: {total_ready}.")
                     preview_rows_state = preview_rows
+                    reference_students_state = list(catalog.get("students") or [])
                     apply_rows_state = []
                     fetch_errors_state = list(catalog.get("errors") or [])
 
@@ -6426,6 +6708,20 @@ def _render_ingles_por_niveles_excel_assignment_block(
             )
 
         if preview_rows_state:
+            reviewed_preview_rows = _render_ingles_assignment_reference_review(
+                preview_rows=preview_rows_state,
+                students=reference_students_state,
+            )
+            if reviewed_preview_rows != preview_rows_state:
+                st.session_state[
+                    "clases_auto_group_ingles_excel_preview_rows"
+                ] = reviewed_preview_rows
+                st.session_state.pop(
+                    "clases_auto_group_ingles_excel_apply_rows",
+                    None,
+                )
+                preview_rows_state = reviewed_preview_rows
+                apply_rows_state = []
             total_ready = sum(
                 1
                 for row in preview_rows_state

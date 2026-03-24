@@ -6524,7 +6524,9 @@ def _render_ingles_assignment_reference_review(
             students_full_name_lookup=students_full_name_lookup,
         )
         current_option = str(st.session_state.get(row_key) or "").strip()
-        if current_option not in option_values:
+        if current_option not in option_values or (
+            not current_option and default_option in option_values and default_option
+        ):
             current_option = default_option if default_option in option_values else ""
             st.session_state[row_key] = current_option
         selected_index = option_values.index(current_option) if current_option in option_values else 0

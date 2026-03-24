@@ -716,34 +716,10 @@ menu_option = st.radio(
     key="main_top_menu",
 )
 if menu_option == "Jira Focus Web":
-    st.markdown(
-        """
-        <section class="bg-white border border-gray-200 rounded-lg px-4 py-3 mb-3 shadow-sm">
-          <div class="text-xs font-semibold uppercase tracking-wider text-blue-700 mb-1">Panel Operativo</div>
-          <h1 class="text-2xl font-bold text-gray-900 m-0">Jira Focus Web</h1>
-          <p class="text-sm text-gray-600 mt-1 mb-0">
-            Seguimiento operativo de tickets, subtareas, etiquetas y worklogs desde una sola vista.
-          </p>
-        </section>
-        """,
-        unsafe_allow_html=True,
-    )
     render_jira_focus_web()
     st.stop()
 
 if menu_option != "Richmond Studio":
-    st.markdown(
-        """
-        <section class="bg-white border border-gray-200 rounded-lg px-4 py-3 mb-3 shadow-sm">
-          <div class="text-xs font-semibold uppercase tracking-wider text-blue-700 mb-1">Panel Operativo</div>
-          <h1 class="text-2xl font-bold text-gray-900 m-0">Procesos Pegasus</h1>
-          <p class="text-sm text-gray-600 mt-1 mb-0">
-            Gestion integrada de clases, profesores y alumnos con ejecucion directa desde web.
-          </p>
-        </section>
-        """,
-        unsafe_allow_html=True,
-    )
     bridge_mode = str(
         st.session_state.get("shared_pegasus_token_bridge_mode") or "read"
     ).strip().lower() or "read"
@@ -5771,7 +5747,6 @@ def _clear_ingles_por_niveles_assignment_state() -> None:
         "clases_auto_group_ingles_excel_reference_students",
         "clases_auto_group_ingles_excel_debug_bytes",
         "clases_auto_group_ingles_excel_result_notice",
-        "clases_auto_group_ingles_grade_filters",
     ):
         st.session_state.pop(state_key, None)
     for state_key in list(st.session_state.keys()):
@@ -5996,6 +5971,25 @@ def _merge_ingles_assignment_rows(
     return merged_rows
 
 
+def _filter_ingles_assignment_rows_by_selected_ingles_grades(
+    rows: List[Dict[str, object]],
+    selected_ingles_grade_keys: Sequence[object],
+) -> List[Dict[str, object]]:
+    selected_keys = {
+        str(value or "").strip()
+        for value in (selected_ingles_grade_keys or [])
+        if str(value or "").strip()
+    }
+    if not selected_keys:
+        return [dict(row) for row in rows if isinstance(row, dict)]
+    return [
+        dict(row)
+        for row in rows
+        if isinstance(row, dict)
+        and str(row.get("_ingles_grade_key") or "").strip() in selected_keys
+    ]
+
+
 def _prepare_ingles_assignment_review_rows(
     preview_rows: List[Dict[str, object]],
     students: List[Dict[str, object]],
@@ -6117,9 +6111,12 @@ def _build_ingles_assignment_classes_lookup(
             {
                 "clase_id": int(clase_id),
                 "clase_nombre": class_name,
+                "nivel_id": _safe_int(meta.get("nivel_id")),
                 "nivel_nombre": str(meta.get("nivel_nombre") or "").strip(),
+                "grado_id": _safe_int(meta.get("grado_id")),
                 "grado_nombre": str(meta.get("grado_nombre") or "").strip(),
                 "seccion": str(meta.get("grupo_clave_actual") or "").strip(),
+                "ingles_grade_key": _participantes_ingles_option_key_from_meta(meta),
             }
         )
     return lookup
@@ -6501,6 +6498,9 @@ def _build_ingles_assignment_preview_rows(
                     "_alumno_id": _safe_int(student_row.get("alumno_id")) if student_row else None,
                     "_auto_alumno_id": _safe_int(student_row.get("alumno_id")) if student_row else None,
                     "_clase_id": _safe_int(class_row.get("clase_id")) if class_row else None,
+                    "_clase_nivel_id": _safe_int(class_row.get("nivel_id")) if class_row else None,
+                    "_clase_grado_id": _safe_int(class_row.get("grado_id")) if class_row else None,
+                    "_ingles_grade_key": str(class_row.get("ingles_grade_key") or "").strip() if class_row else "",
                     "_nivel_id": _safe_int(student_row.get("nivel_id")) if student_row else None,
                     "_grado_id": _safe_int(student_row.get("grado_id")) if student_row else None,
                     "_grupo_id": _safe_int(student_row.get("grupo_id")) if student_row else None,
@@ -6875,6 +6875,7 @@ def _render_ingles_por_niveles_excel_assignment_block(
     empresa_id: int,
     ciclo_id: int,
     timeout: int,
+    selected_ingles_grade_keys: Optional[Sequence[object]] = None,
 ) -> None:
     with st.container(border=True):
         st.markdown("**Asignacion de ingles por niveles**")
@@ -6948,9 +6949,6 @@ def _render_ingles_por_niveles_excel_assignment_block(
         result_notice_state = st.session_state.get(
             "clases_auto_group_ingles_excel_result_notice"
         ) or {}
-        grade_filters_state = st.session_state.get(
-            "clases_auto_group_ingles_grade_filters"
-        ) or []
 
         col_analyze, col_apply, col_clear = st.columns([1.4, 1.4, 1], gap="small")
         run_analyze = col_analyze.button(
@@ -7047,9 +7045,6 @@ def _render_ingles_por_niveles_excel_assignment_block(
                     st.session_state[
                         "clases_auto_group_ingles_excel_debug_bytes"
                     ] = debug_excel_bytes
-                    st.session_state[
-                        "clases_auto_group_ingles_grade_filters"
-                    ] = _build_ingles_assignment_grade_filter_options(preview_rows)
                     total_ready = sum(
                         1
                         for row in preview_rows
@@ -7096,31 +7091,14 @@ def _render_ingles_por_niveles_excel_assignment_block(
             )
 
         if preview_rows_state:
-            grade_options = _build_ingles_assignment_grade_filter_options(
-                preview_rows_state
-            )
-            normalized_grade_filters = [
-                value
-                for value in grade_filters_state
-                if str(value or "").strip() in grade_options
-            ]
-            if grade_options and not normalized_grade_filters:
-                normalized_grade_filters = list(grade_options)
-                st.session_state[
-                    "clases_auto_group_ingles_grade_filters"
-                ] = normalized_grade_filters
-            selected_grade_filters = st.multiselect(
-                "Grados a mostrar y aplicar",
-                options=grade_options,
-                key="clases_auto_group_ingles_grade_filters",
-                help=(
-                    "La asignacion se aplicara solo a las filas de los grados seleccionados."
-                ),
-            )
-            visible_preview_rows = _filter_ingles_assignment_rows_by_grade(
+            visible_preview_rows = _filter_ingles_assignment_rows_by_selected_ingles_grades(
                 preview_rows_state,
-                selected_grade_filters,
+                selected_ingles_grade_keys,
             )
+            if selected_ingles_grade_keys:
+                st.caption(
+                    "Mostrando solo los grados de Ingles por niveles seleccionados arriba."
+                )
             reviewed_preview_rows = _render_ingles_assignment_reference_review(
                 preview_rows=visible_preview_rows,
                 students=reference_students_state,
@@ -7144,9 +7122,9 @@ def _render_ingles_por_niveles_excel_assignment_block(
                 )
                 preview_rows_state = merged_preview_rows
                 apply_rows_state = []
-            visible_preview_rows = _filter_ingles_assignment_rows_by_grade(
+            visible_preview_rows = _filter_ingles_assignment_rows_by_selected_ingles_grades(
                 preview_rows_state,
-                selected_grade_filters,
+                selected_ingles_grade_keys,
             )
             total_ready = sum(
                 1
@@ -7172,12 +7150,14 @@ def _render_ingles_por_niveles_excel_assignment_block(
             elif not preview_rows_state:
                 st.error("Primero analiza el Excel para generar la vista previa.")
             else:
-                rows_to_apply = _filter_ingles_assignment_rows_by_grade(
+                rows_to_apply = _filter_ingles_assignment_rows_by_selected_ingles_grades(
                     preview_rows_state,
-                    st.session_state.get("clases_auto_group_ingles_grade_filters") or [],
+                    selected_ingles_grade_keys,
                 )
                 if not rows_to_apply:
-                    st.error("Selecciona al menos un grado con filas para aplicar.")
+                    st.error(
+                        "No hay filas de Ingles por niveles para los grados seleccionados arriba."
+                    )
                 else:
                     status_placeholder = st.empty()
                     try:
@@ -10083,19 +10063,6 @@ def _apply_single_alumno_move_and_reassign(
 
 
 def render_richmond_studio_view() -> None:
-    st.markdown(
-        """
-        <section class="bg-white border border-gray-200 rounded-lg px-4 py-3 mb-3 shadow-sm">
-          <div class="text-xs font-semibold uppercase tracking-wider text-blue-700 mb-1">Panel Operativo</div>
-          <h1 class="text-2xl font-bold text-gray-900 m-0">Richmond Studio</h1>
-          <p class="text-sm text-gray-600 mt-1 mb-0">
-            Gestion de clases y exportes de RS en una vista separada de Pegasus.
-          </p>
-        </section>
-        """,
-        unsafe_allow_html=True,
-    )
-
     timeout = 30
     rs_token_default = _get_richmondstudio_token()
     if "rs_groups_bearer_token" not in st.session_state:
@@ -11972,23 +11939,13 @@ with tab_crud_clases:
             is_running = _is_participantes_sync_job_active(current_job)
 
             with st.container(border=True):
-                st.markdown("**Asignacion de clases a usuarios**")
-                st.caption(
-                    "Sincroniza automaticamente alumnos activos por grado y seccion: "
-                    "agrega faltantes y elimina sobrantes en cada clase. El proceso "
-                    "sigue corriendo en segundo plano aunque cambies de ventana."
-                )
-                st.caption(
-                    "Excluye automaticamente clases cuyo geClase o geClaseClave contenga "
-                    "'Santillana inclusiva'."
-                )
+                st.markdown("**Asignacion**")
+                st.caption("Sincronizacion por grado y seccion.")
                 exclude_ingles_por_niveles = st.checkbox(
                     "Ingles por niveles",
                     key="clases_auto_group_exclude_ingles_checkbox",
                     help=(
-                        "Si esta activo, las clases cuyo geClase o geClaseClave "
-                        "contenga 'Ingles' se vaciaran y no recibiran asignacion "
-                        "automatica por grado y seccion."
+                        "Solo afecta las clases de ingles de los grados seleccionados."
                     ),
                 )
                 ingles_grade_options = (
@@ -12042,10 +11999,7 @@ with tab_crud_clases:
                                 "clases_auto_group_ingles_grade_selected_keys"
                             ] = []
 
-                    st.caption(
-                        "Las clases cuyo geClase o geClaseClave contenga 'Ingles' "
-                        "se vaciaran de alumnos solo en los grados que selecciones."
-                    )
+                    st.caption("Selecciona los grados de ingles.")
                     if ingles_grade_error:
                         st.error(
                             f"No se pudieron cargar los grados de Ingles: {ingles_grade_error}"
@@ -12069,7 +12023,7 @@ with tab_crud_clases:
                             )
                             if str(item).strip() in valid_ingles_option_keys
                         ]
-                        st.markdown("**Grados con Ingles por niveles**")
+                        st.markdown("**Grados de ingles**")
                         checkbox_cols = st.columns(2, gap="small")
                         selected_ingles_grade_keys = []
                         for idx_option, option_key in enumerate(valid_ingles_option_keys):
@@ -12101,29 +12055,13 @@ with tab_crud_clases:
                                     checkbox_label,
                                     key=checkbox_key,
                                 )
-                                if class_names:
-                                    st.caption(
-                                        "Clases: " + " | ".join(class_names[:6])
-                                    )
-                                    pending_class_names = len(class_names) - 6
-                                    if pending_class_names > 0:
-                                        st.caption(
-                                            f"... y {pending_class_names} clase(s) mas."
-                                        )
                             if is_selected:
                                 selected_ingles_grade_keys.append(str(option_key))
                         st.session_state[
                             "clases_auto_group_ingles_grade_selected_keys"
                         ] = list(selected_ingles_grade_keys)
-                        st.caption(
-                            "Si el checkbox de un grado esta marcado, se borran los "
-                            "alumnos de sus clases de Ingles. Si no esta marcado, ese "
-                            "grado se asigna normal."
-                        )
                     else:
-                        st.caption(
-                            "No se detectaron clases de Ingles para seleccionar por grado."
-                        )
+                        st.caption("No se detectaron grados de ingles.")
                     if colegio_id_int is not None:
                         _render_ingles_por_niveles_excel_assignment_block(
                             token=token,
@@ -12131,6 +12069,7 @@ with tab_crud_clases:
                             empresa_id=int(empresa_id),
                             ciclo_id=int(ciclo_id),
                             timeout=int(timeout),
+                            selected_ingles_grade_keys=selected_ingles_grade_keys,
                         )
                     else:
                         st.caption(

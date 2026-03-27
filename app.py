@@ -4784,8 +4784,20 @@ def _build_auto_group_rows_for_participantes(
         if not isinstance(item, dict):
             continue
         if _is_santillana_inclusiva_class(item):
-            warnings_auto.append(
-                f"Clase omitida por exclusion Santillana inclusiva: {item.get('geClaseId')}"
+            base_meta = _extract_clase_base_meta(item)
+            if not base_meta:
+                warnings_auto.append(
+                    f"Clase omitida por metadata incompleta: {item.get('geClaseId')}"
+                )
+                continue
+            rows_auto.append(
+                {
+                    **base_meta,
+                    "options": [],
+                    "selected_group_id": base_meta.get("grupo_id_actual"),
+                    "clear_current_students": True,
+                    "clear_reason": "Santillana Inclusiva",
+                }
             )
             continue
         base_meta = _extract_clase_base_meta(item)
@@ -4807,6 +4819,7 @@ def _build_auto_group_rows_for_participantes(
                     "options": [],
                     "selected_group_id": base_meta.get("grupo_id_actual"),
                     "clear_current_students": True,
+                    "clear_reason": "Ingles por niveles",
                 }
             )
             continue
@@ -4840,6 +4853,7 @@ def _build_auto_group_rows_for_participantes(
                 "options": options,
                 "selected_group_id": int(default_group_id),
                 "clear_current_students": False,
+                "clear_reason": "",
             }
         )
 
@@ -5368,6 +5382,7 @@ def _sync_participantes_por_grado_seccion(
         nivel_id = _safe_int(row.get("nivel_id"))
         grado_id = _safe_int(row.get("grado_id"))
         clear_current_students = bool(row.get("clear_current_students"))
+        clear_reason = str(row.get("clear_reason") or "").strip() or "Clase especial"
         clase_nombre = str(row.get("clase_nombre") or "").strip()
         if clase_id is None:
             summary["clases_error"] += 1
@@ -5391,7 +5406,8 @@ def _sync_participantes_por_grado_seccion(
 
         if clear_current_students:
             _status(
-                "Vaciando clase de Ingles {idx}/{total}: {clase_id} | {clase}".format(
+                "Vaciando clase ({reason}) {idx}/{total}: {clase_id} | {clase}".format(
+                    reason=clear_reason,
                     idx=idx,
                     total=total_clases,
                     clase_id=int(clase_id),
@@ -5421,7 +5437,10 @@ def _sync_participantes_por_grado_seccion(
                         "Agregar": 0,
                         "Eliminar": 0,
                         "Resultado": "Error",
-                        "Detalle": f"No se pudo listar alumnos actuales: {exc}",
+                        "Detalle": (
+                            f"No se pudo listar alumnos actuales para vaciado "
+                            f"({clear_reason}): {exc}"
+                        ),
                     }
                 )
                 _emit_summary()
@@ -5449,17 +5468,15 @@ def _sync_participantes_por_grado_seccion(
             if remove_errors:
                 summary["clases_error"] += 1
                 resultado = "Parcial" if to_remove else "Error"
-                detalle_txt = (
-                    f"Vaciado de clase de Ingles con errores al eliminar={len(remove_errors)}"
-                )
+                detalle_txt = f"Vaciado ({clear_reason}) con errores al eliminar={len(remove_errors)}"
             elif not to_remove:
                 summary["clases_skip"] += 1
                 resultado = "Sin cambios"
-                detalle_txt = "La clase de Ingles ya no tenia alumnos."
+                detalle_txt = f"La clase ({clear_reason}) ya no tenia alumnos."
             else:
                 summary["clases_ok"] += 1
                 resultado = "OK"
-                detalle_txt = "Se quitaron todos los alumnos de la clase de Ingles."
+                detalle_txt = f"Se quitaron todos los alumnos de la clase ({clear_reason})."
 
             detail_rows.append(
                 {
@@ -7409,23 +7426,10 @@ def _build_auto_move_simulation(
         key = (int(nivel_id_row), int(grado_id_row), apellido_paterno, apellido_materno)
         no_pagados_index.setdefault(key, []).append(row)
 
-    pagados_y = [
-        row
-        for row in alumnos_all
-        if _to_bool(row.get("con_pago"))
-        and _normalize_seccion_key(row.get("seccion_norm") or row.get("seccion")) == AUTO_MOVE_SECCION_ORIGEN
-        and (
-            _safe_int(row.get("nivel_id")),
-            _safe_int(row.get("grado_id")),
-        )
-        in grade_keys_with_y
-    ]
-    pagados_y.sort(
-        key=lambda row: (
-            int(_safe_int(row.get("nivel_id")) or 0),
-            int(_safe_int(row.get("grado_id")) or 0),
-            str(row.get("nombre_completo") or "").upper(),
-        )
+    pagados_y = _filter_users_payments_paid_students(
+        students=alumnos_all,
+        only_origin_section=True,
+        allowed_grade_keys=grade_keys_with_y,
     )
     _status(
         "Paso 4/5: comparando alumnos pagados de seccion Y con no pagados "
@@ -7524,26 +7528,7 @@ def _build_auto_move_simulation(
             }
         )
 
-    alumnos_grid: List[Dict[str, object]] = []
-    for row in alumnos_all:
-        alumnos_grid.append(
-            {
-                "ColegioId": int(colegio_id),
-                "NivelId": row.get("nivel_id"),
-                "GradoId": row.get("grado_id"),
-                "AlumnoId": row.get("alumno_id"),
-                "PersonaId": row.get("persona_id"),
-                "Apellido Paterno": row.get("apellido_paterno"),
-                "Apellido Materno": row.get("apellido_materno"),
-                "Nombre": row.get("nombre"),
-                "DNI": row.get("id_oficial"),
-                "Seccion": row.get("seccion_norm") or row.get("seccion"),
-                "GrupoId": row.get("grupo_id"),
-                "Activo": "SI" if _to_bool(row.get("activo")) else "NO",
-                "ConPago": "SI" if _to_bool(row.get("con_pago")) else "NO",
-                "Fecha Desde": row.get("fecha_desde"),
-            }
-        )
+    alumnos_grid = _build_users_payments_students_grid(alumnos_all)
 
     editor_rows: List[Dict[str, object]] = []
     for plan in plan_rows:
@@ -7570,6 +7555,9 @@ def _build_auto_move_simulation(
         "contexts": contexts,
         "errors": errores_fetch,
         "alumnos_all_grid": alumnos_grid,
+        "paid_students_grid": _build_users_payments_students_grid(
+            _filter_users_payments_paid_students(students=alumnos_all)
+        ),
         "plan_rows": plan_rows,
         "editor_rows": editor_rows,
         "grupo_id_by_seccion_by_grade": grupo_id_by_seccion_by_grade,
@@ -9732,6 +9720,85 @@ def _dedupe_and_sort_censo_students(
     )
 
 
+def _build_users_payments_students_grid(
+    rows: List[Dict[str, object]],
+) -> List[Dict[str, object]]:
+    grid: List[Dict[str, object]] = []
+    for row in rows:
+        grid.append(
+            {
+                "NivelId": row.get("nivel_id"),
+                "GradoId": row.get("grado_id"),
+                "AlumnoId": row.get("alumno_id"),
+                "PersonaId": row.get("persona_id"),
+                "Apellido Paterno": row.get("apellido_paterno"),
+                "Apellido Materno": row.get("apellido_materno"),
+                "Nombre": row.get("nombre"),
+                "Nombre Completo": row.get("nombre_completo"),
+                "DNI": row.get("id_oficial"),
+                "Seccion": row.get("seccion_norm") or row.get("seccion"),
+                "GrupoId": row.get("grupo_id"),
+                "Activo": "SI" if _to_bool(row.get("activo")) else "NO",
+                "ConPago": "SI" if _to_bool(row.get("con_pago")) else "NO",
+                "Fecha Desde": row.get("fecha_desde"),
+                "Login": row.get("login"),
+            }
+        )
+    return grid
+
+
+def _filter_users_payments_paid_students(
+    students: List[Dict[str, object]],
+    only_origin_section: bool = False,
+    allowed_grade_keys: Optional[Sequence[Tuple[int, int]]] = None,
+) -> List[Dict[str, object]]:
+    allowed_keys: Set[Tuple[int, int]] = set()
+    if allowed_grade_keys:
+        for item in allowed_grade_keys:
+            if not isinstance(item, (list, tuple)) or len(item) != 2:
+                continue
+            nivel_id = _safe_int(item[0])
+            grado_id = _safe_int(item[1])
+            if nivel_id is None or grado_id is None:
+                continue
+            allowed_keys.add((int(nivel_id), int(grado_id)))
+
+    filtered: List[Dict[str, object]] = []
+    for row in students:
+        if not _to_bool(row.get("con_pago")):
+            continue
+        nivel_id = _safe_int(row.get("nivel_id"))
+        grado_id = _safe_int(row.get("grado_id"))
+        if allowed_keys and (
+            nivel_id is None
+            or grado_id is None
+            or (int(nivel_id), int(grado_id)) not in allowed_keys
+        ):
+            continue
+        if only_origin_section:
+            seccion = _normalize_seccion_key(
+                row.get("seccion_norm") or row.get("seccion") or ""
+            )
+            if seccion != AUTO_MOVE_SECCION_ORIGEN:
+                continue
+        filtered.append(row)
+
+    return sorted(
+        filtered,
+        key=lambda row: (
+            int(_safe_int(row.get("nivel_id")) or 0),
+            int(_safe_int(row.get("grado_id")) or 0),
+            _grupo_sort_key(
+                str(row.get("seccion_norm") or ""),
+                str(row.get("seccion") or ""),
+            ),
+            str(row.get("apellido_paterno") or "").upper(),
+            str(row.get("apellido_materno") or "").upper(),
+            str(row.get("nombre") or "").upper(),
+        ),
+    )
+
+
 def _fetch_alumnos_catalog_for_manual_move(
     token: str,
     colegio_id: int,
@@ -9852,6 +9919,36 @@ def _fetch_alumnos_catalog_for_manual_move(
         "niveles": niveles,
         "students": students,
         "errors": errors,
+    }
+
+
+def _fetch_alumnos_con_pago_for_users_payments(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+    only_origin_section: bool = False,
+    on_status: Optional[Callable[[str], None]] = None,
+) -> Dict[str, object]:
+    catalog = _fetch_alumnos_catalog_for_manual_move(
+        token=token,
+        colegio_id=int(colegio_id),
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        timeout=int(timeout),
+        on_status=on_status,
+    )
+    students = list(catalog.get("students") or [])
+    paid_students = _filter_users_payments_paid_students(
+        students=students,
+        only_origin_section=only_origin_section,
+    )
+    return {
+        "niveles": catalog.get("niveles") or [],
+        "students": paid_students,
+        "students_grid": _build_users_payments_students_grid(paid_students),
+        "errors": catalog.get("errors") or [],
     }
 
 
@@ -12553,11 +12650,16 @@ with tab_crud_clases:
                         )
                         st.stop()
 
-                    col_prepare, col_clear = st.columns([2, 1], gap="small")
+                    col_prepare, col_paid, col_clear = st.columns([2, 2, 1], gap="small")
                     run_prepare_auto_plan = col_prepare.button(
                         "Analizar y preparar lista de cambios",
                         type="primary",
                         key="auto_move_prepare_btn",
+                        use_container_width=True,
+                    )
+                    run_paid_students = col_paid.button(
+                        "Traer alumnos con pago",
+                        key="auto_move_paid_students_btn",
                         use_container_width=True,
                     )
                     clear_auto_plan = col_clear.button(
@@ -12576,9 +12678,57 @@ with tab_crud_clases:
                             "auto_move_removed_ref_ids",
                             "auto_move_group_map_by_grade",
                             "auto_move_status_messages",
+                            "auto_move_paid_students_grid",
+                            "auto_move_paid_students_errors",
                         ):
                             st.session_state.pop(state_key, None)
                         st.rerun()
+
+                    if run_paid_students:
+                        token = _get_shared_token()
+                        if not token:
+                            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                            st.stop()
+                        try:
+                            colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                        except ValueError as exc:
+                            st.error(f"Error: {exc}")
+                            st.stop()
+
+                        try:
+                            paid_status_box = st.empty()
+
+                            def _on_paid_status(message: str) -> None:
+                                msg = str(message or "").strip()
+                                if not msg:
+                                    return
+                                paid_status_box.info(msg)
+
+                            with st.spinner("Consultando alumnos con pago..."):
+                                paid_catalog = _fetch_alumnos_con_pago_for_users_payments(
+                                    token=token,
+                                    colegio_id=int(colegio_id_int),
+                                    empresa_id=int(empresa_id),
+                                    ciclo_id=int(ciclo_id),
+                                    timeout=int(timeout),
+                                    only_origin_section=False,
+                                    on_status=_on_paid_status,
+                                )
+                            paid_status_box.empty()
+                        except Exception as exc:  # pragma: no cover - UI
+                            st.error(f"Error: {exc}")
+                            st.stop()
+
+                        st.session_state["auto_move_paid_students_grid"] = (
+                            paid_catalog.get("students_grid") or []
+                        )
+                        st.session_state["auto_move_paid_students_errors"] = (
+                            paid_catalog.get("errors") or []
+                        )
+                        st.success(
+                            "Alumnos con pago detectados: "
+                            f"{len(st.session_state['auto_move_paid_students_grid'])}"
+                        )
 
                     if run_prepare_auto_plan:
                         token = _get_shared_token()
@@ -12622,10 +12772,41 @@ with tab_crud_clases:
                         st.session_state["auto_move_group_map_by_grade"] = (
                             simulation.get("grupo_id_by_seccion_by_grade") or {}
                         )
+                        st.session_state["auto_move_paid_students_grid"] = (
+                            simulation.get("paid_students_grid") or []
+                        )
+                        st.session_state["auto_move_paid_students_errors"] = (
+                            simulation.get("errors") or []
+                        )
                         st.session_state["auto_move_removed_ref_ids"] = []
 
                         total_plan = len(st.session_state["auto_move_plan_rows"])
                         st.success(f"Simulacion lista. Alumnos candidatos a modificar: {total_plan}")
+
+                    paid_students_errors_cached = (
+                        st.session_state.get("auto_move_paid_students_errors") or []
+                    )
+                    if paid_students_errors_cached:
+                        st.warning("Hubo errores consultando alumnos con pago.")
+                        st.write("\n".join(f"- {item}" for item in paid_students_errors_cached[:20]))
+                        pending_paid = len(paid_students_errors_cached) - 20
+                        if pending_paid > 0:
+                            st.caption(f"... y {pending_paid} errores mas.")
+
+                    if "auto_move_paid_students_grid" in st.session_state:
+                        paid_students_grid_cached = (
+                            st.session_state.get("auto_move_paid_students_grid") or []
+                        )
+                        if paid_students_grid_cached:
+                            st.markdown("**Alumnos con pago detectados**")
+                            st.dataframe(
+                                pd.DataFrame(paid_students_grid_cached),
+                                use_container_width=True,
+                                hide_index=True,
+                                height=320,
+                            )
+                        else:
+                            st.info("No se encontraron alumnos con pago para el colegio actual.")
 
                     errors_cached = st.session_state.get("auto_move_errors") or []
                     if errors_cached:

@@ -9,66 +9,33 @@
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap');
 
     :root {
-      --bg: #eff4f9;
-      --bg-soft: #f6f9fc;
-      --card: rgba(255, 255, 255, 0.92);
-      --card-strong: #ffffff;
-      --line: rgba(203, 213, 225, 0.86);
-      --line-strong: rgba(148, 163, 184, 0.96);
-      --text: #132238;
-      --muted: #5f6f84;
+      --bg: #fafbfc;
+      --bg-soft: #f5f7f9;
+      --card: #ffffff;
+      --line: #e5e8eb;
+      --line-strong: #d1d5db;
+      --text: #1a1d21;
+      --muted: #6b7280;
       --primary: #2563eb;
       --primary-dark: #1d4ed8;
       --warn: #d97706;
       --danger: #dc2626;
       --ok: #059669;
-      --shadow-sm: 0 12px 28px rgba(15, 23, 42, 0.07);
-      --shadow-md: 0 18px 42px rgba(15, 23, 42, 0.1);
-      --shadow-lg: 0 28px 60px rgba(15, 23, 42, 0.14);
-      --shadow: var(--shadow-md);
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+      --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.06);
       --radius-sm: 6px;
       --radius-md: 10px;
-      --radius-lg: 18px;
+      --radius-lg: 14px;
       --spacing-xs: 8px;
       --spacing-sm: 12px;
       --spacing-md: 16px;
       --spacing-lg: 24px;
       --spacing-xl: 32px;
-      --surface-glass: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(247, 250, 253, 0.92));
     }
 
     * {
       box-sizing: border-box;
       min-width: 0;
-    }
-
-    html,
-    body {
-      margin: 0;
-      min-height: 100%;
-      width: 100%;
-      overflow-x: hidden;
-    }
-
-    body {
-      position: relative;
-      background:
-        radial-gradient(circle at top left, rgba(37, 99, 235, 0.18), transparent 28%),
-        radial-gradient(circle at top right, rgba(14, 165, 233, 0.16), transparent 26%),
-        linear-gradient(180deg, #f4f8fc 0%, #eef3f8 100%);
-      color: var(--text);
-    }
-
-    body::before {
-      content: "";
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      background-image:
-        linear-gradient(rgba(148, 163, 184, 0.08) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(148, 163, 184, 0.08) 1px, transparent 1px);
-      background-size: 28px 28px;
-      mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.14), transparent 72%);
     }
 
     .jira-focus-web-root {
@@ -78,10 +45,9 @@
 
     .jira-focus-web-root {
       margin: 0;
-      min-height: 100vh;
-      padding: clamp(14px, 2vw, 24px);
+      padding: var(--spacing-md);
       display: grid;
-      gap: clamp(14px, 1.8vw, 22px);
+      gap: var(--spacing-md);
       width: 100%;
       max-width: 100%;
       font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -92,116 +58,68 @@
     }
 
     .card {
-      background: var(--surface-glass);
+      background: var(--card);
       border: 1px solid var(--line);
       border-radius: var(--radius-lg);
-      padding: clamp(18px, 1.8vw, 26px);
+      padding: var(--spacing-lg);
       box-shadow: var(--shadow-sm);
       overflow: hidden;
-      backdrop-filter: blur(14px);
-      transition: border-color 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+      transition: border-color 0.15s ease;
     }
 
     .card:hover {
       border-color: var(--line-strong);
-      box-shadow: var(--shadow-md);
     }
 
     .topbar {
-      position: sticky;
-      top: 0;
-      z-index: 30;
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: var(--spacing-lg);
-      background: linear-gradient(135deg, rgba(10, 17, 36, 0.96) 0%, rgba(15, 45, 82, 0.95) 52%, rgba(20, 103, 166, 0.92) 100%);
-      color: #fff;
-      border: 1px solid rgba(191, 219, 254, 0.16);
-      box-shadow: var(--shadow-lg);
-      overflow: hidden;
-    }
-
-    .topbar::before {
-      content: "";
-      position: absolute;
-      inset: auto -12% -42% auto;
-      width: 320px;
-      height: 320px;
-      border-radius: 50%;
-      background: radial-gradient(circle, rgba(255, 255, 255, 0.22), transparent 68%);
-      pointer-events: none;
-    }
-
-    .topbar-brand {
-      display: grid;
-      gap: 8px;
-      position: relative;
-      z-index: 1;
-    }
-
-    .topbar-eyebrow {
-      display: inline-flex;
-      align-items: center;
-      width: fit-content;
-      padding: 6px 12px;
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.1);
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: rgba(239, 246, 255, 0.92);
-    }
-
-    .topbar-status {
-      justify-content: flex-end;
-      align-items: center;
-      position: relative;
-      z-index: 1;
+      position: static;
+      top: auto;
+      z-index: auto;
+      background: var(--card);
+      color: var(--text);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow-sm);
     }
 
     .topbar h2 {
-      color: #fff;
+      color: var(--text);
       font-family: "Inter", "Segoe UI", sans-serif;
       letter-spacing: -0.02em;
-      font-weight: 700;
-      font-size: clamp(24px, 2.4vw, 32px);
-      margin: 0;
+      font-weight: 600;
     }
 
     .topbar .muted {
-      color: rgba(226, 232, 240, 0.8);
+      color: var(--muted);
     }
 
     .topbar .pill {
-      color: #f8fafc;
-      border-color: rgba(255, 255, 255, 0.15);
-      background: rgba(255, 255, 255, 0.1);
-      backdrop-filter: blur(12px);
+      color: var(--text);
+      border-color: var(--line);
+      background: var(--bg-soft);
+      backdrop-filter: none;
     }
 
     .topbar .pill.ok {
-      color: #d1fae5;
-      border-color: rgba(167, 243, 208, 0.34);
-      background: rgba(6, 95, 70, 0.42);
+      color: var(--ok);
+      border-color: #a7f3d0;
+      background: #ecfdf5;
     }
 
     .topbar .btn {
-      color: #fff;
-      border-color: rgba(255, 255, 255, 0.16);
-      background: rgba(255, 255, 255, 0.1);
+      color: var(--text);
+      border-color: var(--line);
+      background: var(--card);
     }
 
     .topbar .btn:hover:not(:disabled) {
-      border-color: rgba(255, 255, 255, 0.28);
-      background: rgba(255, 255, 255, 0.18);
+      border-color: var(--line-strong);
+      background: var(--bg-soft);
     }
 
     .topbar .btn.danger {
-      color: #fee2e2;
-      border-color: rgba(248, 113, 113, 0.4);
-      background: rgba(127, 29, 29, 0.18);
+      color: var(--danger);
+      border-color: #fecaca;
+      background: #fef2f2;
     }
 
     .pill.busy {
@@ -248,57 +166,16 @@
     }
 
     .board-head {
-      display: grid;
-      grid-template-columns: minmax(0, 1.4fr) auto;
-      gap: var(--spacing-lg);
-      align-items: end;
-      padding: clamp(22px, 2.2vw, 30px);
-      background: linear-gradient(145deg, rgba(15, 23, 42, 0.98) 0%, rgba(16, 51, 84, 0.97) 54%, rgba(28, 129, 207, 0.94) 100%);
-      border: 1px solid rgba(186, 230, 253, 0.14);
-      box-shadow: var(--shadow-lg);
-    }
-
-    .board-intro {
-      display: grid;
-      gap: 14px;
-    }
-
-    .board-kicker {
-      display: inline-flex;
-      align-items: center;
-      width: fit-content;
-      padding: 6px 12px;
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.12);
-      border: 1px solid rgba(255, 255, 255, 0.14);
-      color: rgba(239, 246, 255, 0.92);
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-    }
-
-    .board-title {
-      margin: 0;
-      font-size: clamp(24px, 2.8vw, 34px);
-      font-weight: 700;
-      letter-spacing: -0.03em;
-      color: #fff;
-    }
-
-    .board-copy {
-      max-width: 760px;
-      font-size: 14px;
-      color: rgba(226, 232, 240, 0.82);
+      padding-top: var(--spacing-sm);
+      padding-bottom: var(--spacing-sm);
     }
 
     .board-actions {
       display: flex;
-      justify-content: flex-start;
-      align-items: flex-end;
+      justify-content: flex-end;
+      margin-top: var(--spacing-sm);
       flex-wrap: wrap;
       gap: var(--spacing-sm);
-      margin-top: 0;
     }
 
     .board-ticket-picker {
@@ -306,52 +183,20 @@
       max-width: 100%;
     }
 
-    .board-ticket-picker label {
-      color: rgba(226, 232, 240, 0.78);
-    }
-
-    .board-ticket-picker .sel {
-      min-height: 54px;
-      font-size: 15px;
-      border-color: rgba(148, 163, 184, 0.38);
-      background: rgba(255, 255, 255, 0.94);
-      box-shadow: 0 14px 34px rgba(2, 6, 23, 0.18);
-    }
-
-    .board-actions .btn {
-      background: rgba(255, 255, 255, 0.12);
-      border-color: rgba(255, 255, 255, 0.16);
-      color: #fff;
-    }
-
-    .board-actions .btn:hover:not(:disabled) {
-      background: rgba(255, 255, 255, 0.18);
-      border-color: rgba(255, 255, 255, 0.24);
-    }
-
-    .board-actions .btn.primary {
-      background: linear-gradient(135deg, #ffffff 0%, #dbeafe 100%);
-      border-color: transparent;
-      color: #0f4b8e;
-    }
-
     .issue-insight {
-      grid-column: 1 / -1;
-      margin-top: 0;
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      border-radius: calc(var(--radius-md) + 2px);
-      padding: 14px;
+      margin-top: var(--spacing-sm);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      padding: var(--spacing-sm);
       background: var(--bg-soft);
       display: flex;
       flex-wrap: wrap;
       gap: var(--spacing-xs);
       align-items: center;
-      background: rgba(255, 255, 255, 0.12);
-      backdrop-filter: blur(8px);
     }
 
     .issue-insight.empty {
-      color: rgba(226, 232, 240, 0.82);
+      color: var(--muted);
       font-size: 13px;
     }
 
@@ -411,31 +256,6 @@
       background: var(--bg-soft);
     }
 
-    .board-head .issue-chip {
-      background: rgba(255, 255, 255, 0.92);
-      border-color: rgba(255, 255, 255, 0.18);
-    }
-
-    .board-head .issue-chip.metric {
-      background: rgba(255, 255, 255, 0.97);
-    }
-
-    .board-head .issue-chip.section,
-    .board-head .issue-chip.extra {
-      background: rgba(255, 255, 255, 0.12);
-      border-color: rgba(255, 255, 255, 0.18);
-      color: #fff;
-    }
-
-    .board-head .issue-chip.section b,
-    .board-head .issue-chip.extra b {
-      color: #fff;
-    }
-
-    .board-head .issue-divider {
-      border-top-color: rgba(255, 255, 255, 0.18);
-    }
-
     .issue-phase-panel {
       width: 100%;
       border: 1px dashed var(--line);
@@ -446,29 +266,6 @@
       flex-wrap: wrap;
       align-items: center;
       gap: var(--spacing-xs);
-    }
-
-    .board-head .issue-phase-panel {
-      border-color: rgba(255, 255, 255, 0.18);
-      background: rgba(255, 255, 255, 0.12);
-    }
-
-    .board-head .issue-phase-title,
-    .board-head .issue-phase-item label,
-    .board-head .issue-phase-hint,
-    .board-head .issue-phase-subtask-meta,
-    .board-head .issue-phase-labels label,
-    .board-head .issue-phase-labels-help {
-      color: rgba(226, 232, 240, 0.82);
-    }
-
-    .board-head .issue-phase-subtask-block {
-      background: rgba(15, 23, 42, 0.22);
-      border-color: rgba(255, 255, 255, 0.1);
-    }
-
-    .board-head .issue-phase-subtask-title {
-      color: #fff;
     }
 
     .issue-phase-title {
@@ -638,20 +435,19 @@
 
     .dashboard-grid {
       display: grid;
-      grid-template-columns: repeat(12, minmax(0, 1fr));
-      gap: clamp(16px, 1.6vw, 22px);
+      grid-template-columns: minmax(0, 1.35fr) minmax(320px, 1fr);
+      gap: var(--spacing-md);
       align-items: start;
-      margin-top: 0;
+      margin-top: var(--spacing-md);
     }
 
     .dashboard-grid>.card {
-      min-height: 280px;
+      min-height: 270px;
     }
 
     .panel-timeline {
-      grid-column: span 8;
+      grid-column: 1;
       grid-row: 1;
-      min-height: clamp(460px, 54vh, 820px);
       --tl-shell-border: #d8e5f3;
       --tl-shell-bg: linear-gradient(180deg, #fbfdff 0%, #f4f9ff 100%);
       --tl-stat-bg: #ffffff;
@@ -1021,23 +817,21 @@
     }
 
     .panel-comments {
-      grid-column: 9 / span 4;
+      grid-column: 2;
       grid-row: 1 / span 2;
       display: flex;
       flex-direction: column;
       align-self: start;
-      min-height: clamp(780px, 86vh, 1280px);
+      min-height: 0;
       overflow: hidden;
     }
 
     .panel-worklogs {
-      grid-column: span 8;
+      grid-column: 1;
       grid-row: 2;
       display: flex;
       flex-direction: column;
       align-self: start;
-      height: clamp(340px, 32vh, 560px);
-      overflow: hidden;
     }
 
     .panel-head {
@@ -1047,20 +841,6 @@
       gap: var(--spacing-md);
       flex-wrap: wrap;
       margin-bottom: var(--spacing-md);
-      padding-bottom: 14px;
-      border-bottom: 1px solid rgba(203, 213, 225, 0.72);
-      position: relative;
-    }
-
-    .panel-head::after {
-      content: "";
-      position: absolute;
-      left: 0;
-      bottom: -1px;
-      width: 72px;
-      height: 3px;
-      border-radius: 999px;
-      background: linear-gradient(90deg, var(--primary), #38bdf8);
     }
 
     .panel-meta {
@@ -1093,97 +873,8 @@
 
     .panel-worklogs .tbl-wrap {
       flex: 1 1 auto;
-      overflow: auto;
       max-height: none;
       min-height: 0;
-    }
-
-    .section-head {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      gap: var(--spacing-md);
-      flex-wrap: wrap;
-      margin-bottom: var(--spacing-md);
-    }
-
-    .section-copy {
-      margin-top: 4px;
-      font-size: 13px;
-      color: var(--muted);
-      max-width: 760px;
-    }
-
-    .section-actions {
-      justify-content: flex-end;
-      align-items: center;
-    }
-
-    .metric-grid {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: var(--spacing-md);
-    }
-
-    .metric-card {
-      border: 1px solid var(--line);
-      border-radius: calc(var(--radius-md) + 4px);
-      padding: 16px 18px;
-      background: linear-gradient(180deg, #ffffff 0%, #f4f8fe 100%);
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
-    }
-
-    .metric-label {
-      font-size: 12px;
-      font-weight: 700;
-      color: var(--muted);
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-    }
-
-    .metric-value {
-      margin-top: 6px;
-      font-size: clamp(24px, 2.4vw, 34px);
-      font-weight: 700;
-      line-height: 1.05;
-      letter-spacing: -0.03em;
-      color: var(--text);
-    }
-
-    #dashboardCard,
-    #reportCard {
-      margin-top: 0 !important;
-    }
-
-    #recentBox {
-      margin-top: 14px !important;
-    }
-
-    #mainView {
-      display: grid;
-      gap: clamp(16px, 1.8vw, 22px);
-      align-content: start;
-    }
-
-    #mainView.hide {
-      display: none !important;
-    }
-
-    #loginView {
-      min-height: min(42vh, 360px);
-      display: grid;
-      place-items: center;
-    }
-
-    #loginView .row {
-      justify-content: center;
-      width: 100%;
-    }
-
-    #loginView .btn {
-      min-width: min(320px, 100%);
-      min-height: 54px;
-      font-size: 15px;
     }
 
     .edit-inline {
@@ -1438,9 +1129,6 @@
       background: var(--bg-soft);
       font-weight: 600;
       color: var(--text);
-      position: sticky;
-      top: 0;
-      z-index: 1;
     }
 
     .comments {
@@ -2631,18 +2319,6 @@
       }
     }
 
-    @media (max-width: 980px) {
-      .topbar,
-      .board-head {
-        grid-template-columns: 1fr;
-      }
-
-      .topbar-status,
-      .board-actions {
-        justify-content: flex-start;
-      }
-    }
-
     @media (max-width: 700px) {
 
       .grid2,
@@ -2655,10 +2331,6 @@
       }
 
       .dashboard-grid {
-        grid-template-columns: 1fr;
-      }
-
-      .metric-grid {
         grid-template-columns: 1fr;
       }
 
@@ -2791,10 +2463,6 @@
         gap: 10px;
       }
 
-      .board-title {
-        font-size: 24px;
-      }
-
       #userPill {
         max-width: 100%;
       }
@@ -2833,15 +2501,11 @@
 
 <body>
   <div class="jira-focus-web-root" id="jiraFocusWebRoot">
-  <div class="card topbar">
-    <div class="topbar-brand">
-      <div class="topbar-eyebrow">Jira Focus Workspace</div>
-      <div>
-        <h2>Panel operativo de onboarding</h2>
-        <div class="muted">Vista amplia para trabajar tickets, comentarios y worklogs en una sola pantalla.</div>
-      </div>
+  <div class="card row topbar">
+    <div>
+      <div class="muted" style="font-weight:600;">Sesion Jira</div>
     </div>
-    <div class="row topbar-status">
+    <div class="row" style="margin-left:auto;">
       <span class="pill" id="connPill">Sin conexion</span>
       <span class="pill" id="syncPill">Listo</span>
       <span class="pill" id="userPill">Usuario: -</span>
@@ -2860,16 +2524,9 @@
 
   <section id="mainView" class="hide">
       <div class="card board-head">
-        <div class="board-intro">
-          <span class="board-kicker">Dashboard</span>
-          <div>
-            <h3 class="board-title">Explora un ticket con contexto completo</h3>
-            <div class="board-copy">Selecciona un ticket para revisar su timeline continuo, los comentarios del caso y el historial editable sin cambiar de pantalla.</div>
-          </div>
-          <div class="board-ticket-picker">
-            <label for="issueSel">Ticket actual</label>
-            <select class="sel" id="issueSel"></select>
-          </div>
+        <div class="board-ticket-picker">
+          <label for="issueSel">Ticket actual</label>
+          <select class="sel" id="issueSel"></select>
         </div>
         <div class="board-actions">
           <button class="btn primary" id="myCommentsTodayBtn" type="button" disabled>Comentarios por fecha</button>
@@ -3019,47 +2676,39 @@
         <button id="registerSugBtn" type="button"></button>
       </div>
 
-      <div id="dashboardCard" class="card hide">
-        <div class="section-head">
-          <div>
-            <h3>Dashboard global</h3>
-            <div class="section-copy">Resumen de actividad reciente para revisar carga operativa y tickets con trabajo registrado.</div>
+      <div id="dashboardCard" class="card hide" style="margin-top:10px;">
+        <h3>Dashboard global</h3>
+        <div class="grid3">
+          <div class="card" style="padding:8px;">
+            <div class="muted">Total hoy</div>
+            <div id="todayTotal" style="font-weight:700;font-size:18px;">0m</div>
           </div>
-          <div class="row section-actions">
-            <button class="btn" id="refreshDashBtn" type="button">Actualizar dashboard</button>
-            <span class="muted" id="dashMeta">Sin datos.</span>
+          <div class="card" style="padding:8px;">
+            <div class="muted">Total semana</div>
+            <div id="weekTotal" style="font-weight:700;font-size:18px;">0m</div>
           </div>
-        </div>
-        <div class="metric-grid">
-          <div class="metric-card">
-            <div class="metric-label">Total hoy</div>
-            <div class="metric-value" id="todayTotal">0m</div>
-          </div>
-          <div class="metric-card">
-            <div class="metric-label">Total semana</div>
-            <div class="metric-value" id="weekTotal">0m</div>
-          </div>
-          <div class="metric-card">
-            <div class="metric-label">Tickets con registros</div>
-            <div class="metric-value" id="issueCount">0</div>
+          <div class="card" style="padding:8px;">
+            <div class="muted">Tickets con registros</div>
+            <div id="issueCount" style="font-weight:700;font-size:18px;">0</div>
           </div>
         </div>
-        <div id="recentBox" class="empty">Sin historial reciente.</div>
+        <div class="row" style="margin-top:8px;">
+          <button class="btn" id="refreshDashBtn" type="button">Actualizar dashboard</button>
+          <span class="muted" id="dashMeta">Sin datos.</span>
+        </div>
+        <div id="recentBox" class="empty" style="margin-top:8px;">Sin historial reciente.</div>
       </div>
 
-      <div id="reportCard" class="card hide">
-        <div class="section-head">
-          <div>
-            <h3>Reporte plantilla + .xlsx</h3>
-            <div class="section-copy">Detecta comentarios con "plantilla" y adjuntos o links .xlsx, agrupados por colegio según el resumen normalizado.</div>
-          </div>
-          <div class="row section-actions">
-            <button class="btn primary" id="genReportBtn" type="button">Generar reporte</button>
-            <button class="btn" id="exportReportBtn" type="button" disabled>Exportar Excel</button>
-          </div>
+      <div id="reportCard" class="card hide" style="margin-top:10px;">
+        <h3>Reporte plantilla + .xlsx</h3>
+        <div class="muted">Detecta comentarios con "plantilla" y adjuntos/links .xlsx. Agrupa por colegio segun resumen
+          normalizado.</div>
+        <div class="row" style="margin-top:10px;">
+          <button class="btn primary" id="genReportBtn" type="button">Generar reporte</button>
+          <button class="btn" id="exportReportBtn" type="button" disabled>Exportar Excel</button>
         </div>
-        <div class="muted" id="reportMeta">Sin reporte.</div>
-        <div class="tbl-wrap" style="margin-top:12px;">
+        <div class="muted" id="reportMeta" style="margin-top:8px;">Sin reporte.</div>
+        <div class="tbl-wrap" style="margin-top:8px;">
           <table>
             <thead>
               <tr>

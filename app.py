@@ -492,10 +492,694 @@ if _restricted_sections_unlocked():
 def _inject_professional_theme() -> None:
     st.markdown(
         """
-        <link
-          rel="stylesheet"
-          href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css"
-        />
+        <style>
+        @import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap");
+
+        :root {
+            --app-bg: #edf2f7;
+            --app-bg-soft: rgba(255, 255, 255, 0.78);
+            --app-surface: rgba(255, 255, 255, 0.9);
+            --app-surface-strong: #ffffff;
+            --app-ink: #0f172a;
+            --app-ink-soft: #405066;
+            --app-muted: #6b7a90;
+            --app-line: rgba(148, 163, 184, 0.24);
+            --app-line-strong: rgba(100, 116, 139, 0.34);
+            --app-accent: #2563eb;
+            --app-accent-soft: rgba(37, 99, 235, 0.12);
+            --app-success: #059669;
+            --app-shadow: 0 24px 60px rgba(15, 23, 42, 0.08);
+            --app-shadow-soft: 0 10px 30px rgba(15, 23, 42, 0.05);
+            --app-radius-lg: 28px;
+            --app-radius-md: 20px;
+            --app-radius-sm: 14px;
+        }
+
+        html,
+        body,
+        [data-testid="stAppViewContainer"],
+        [data-testid="stMain"] {
+            background:
+                radial-gradient(circle at top left, rgba(37, 99, 235, 0.14), transparent 24%),
+                radial-gradient(circle at top right, rgba(56, 189, 248, 0.12), transparent 22%),
+                linear-gradient(180deg, #f5f8fb 0%, #edf2f7 100%) !important;
+            color: var(--app-ink);
+            font-family: "Manrope", "Segoe UI", sans-serif !important;
+        }
+
+        [data-testid="stDecoration"],
+        [data-testid="stToolbar"],
+        [data-testid="stHeader"],
+        [data-testid="stStatusWidget"],
+        #MainMenu,
+        footer {
+            display: none !important;
+        }
+
+        [data-testid="stAppViewContainer"] > .main {
+            background: transparent !important;
+        }
+
+        div[data-testid="stMainBlockContainer"] {
+            max-width: 100% !important;
+            padding-top: 0.25rem !important;
+            padding-right: 0 !important;
+            padding-bottom: 1.5rem !important;
+            padding-left: 0 !important;
+        }
+
+        div[data-testid="stMainBlockContainer"] > div {
+            gap: 1rem;
+        }
+
+        div[data-testid="stMainBlockContainer"] iframe {
+            width: 100% !important;
+            border: 0 !important;
+            border-radius: var(--app-radius-lg);
+            overflow: hidden;
+            box-shadow: var(--app-shadow);
+        }
+
+        .stApp a {
+            color: var(--app-accent);
+        }
+
+        .stMarkdown,
+        .stText,
+        p,
+        li,
+        label,
+        div[data-testid="stCaptionContainer"] {
+            color: var(--app-ink);
+        }
+
+        .stMarkdown p {
+            line-height: 1.55;
+        }
+
+        h1,
+        h2,
+        h3,
+        h4,
+        h5,
+        h6 {
+            color: var(--app-ink) !important;
+            font-family: "Manrope", "Segoe UI", sans-serif !important;
+            letter-spacing: -0.03em;
+        }
+
+        label[data-testid="stWidgetLabel"] p {
+            color: var(--app-muted) !important;
+            font-size: 0.82rem !important;
+            font-weight: 700 !important;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"] {
+            border: 1px solid var(--app-line) !important;
+            border-radius: var(--app-radius-lg) !important;
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(247, 250, 252, 0.88)) !important;
+            box-shadow: var(--app-shadow-soft);
+            backdrop-filter: blur(14px);
+            padding: 0.35rem;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"] > div {
+            padding: 0.2rem 0.35rem 0.35rem;
+        }
+
+        div[data-testid="stHorizontalBlock"] {
+            gap: 0.9rem;
+        }
+
+        div[data-testid="stRadio"] > div[role="radiogroup"] {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.8rem;
+            padding: 0.45rem;
+            border: 1px solid var(--app-line);
+            border-radius: 22px;
+            background: rgba(255, 255, 255, 0.82);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+        }
+
+        div[data-testid="stRadio"] label[data-baseweb="radio"] {
+            margin: 0 !important;
+            min-height: 86px;
+            align-items: stretch !important;
+            border: 1px solid transparent;
+            border-radius: 18px;
+            background: transparent;
+            transition: background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+        }
+
+        div[data-testid="stRadio"] label[data-baseweb="radio"] > div:first-child {
+            display: none !important;
+        }
+
+        div[data-testid="stRadio"] label[data-baseweb="radio"] > div:last-child {
+            width: 100%;
+            padding: 0.95rem 1rem !important;
+            display: flex;
+            align-items: center;
+        }
+
+        div[data-testid="stRadio"] label[data-baseweb="radio"] p {
+            margin: 0 !important;
+            width: 100%;
+            color: var(--app-muted) !important;
+            font-size: 0.98rem !important;
+            font-weight: 800 !important;
+            line-height: 1.2;
+            letter-spacing: -0.02em;
+        }
+
+        div[data-testid="stRadio"] label[data-baseweb="radio"]:hover {
+            border-color: var(--app-line-strong);
+            background: rgba(248, 250, 252, 0.9);
+        }
+
+        div[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) {
+            border-color: rgba(37, 99, 235, 0.18);
+            background: linear-gradient(135deg, #0f172a 0%, #1d4ed8 100%);
+            box-shadow: 0 16px 32px rgba(37, 99, 235, 0.18);
+        }
+
+        div[data-testid="stRadio"] label[data-baseweb="radio"]:has(input:checked) p {
+            color: #ffffff !important;
+        }
+
+        div[data-baseweb="tab-list"] {
+            gap: 0.55rem;
+            padding: 0.4rem;
+            border: 1px solid var(--app-line);
+            border-radius: 20px;
+            background: rgba(255, 255, 255, 0.82);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+        }
+
+        div[data-baseweb="tab-list"] button {
+            border-radius: 14px !important;
+            border: 1px solid transparent !important;
+            height: 46px !important;
+            padding: 0 1rem !important;
+            color: var(--app-muted) !important;
+            font-weight: 800 !important;
+            background: transparent !important;
+            transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+        }
+
+        div[data-baseweb="tab-list"] button[aria-selected="true"] {
+            color: #ffffff !important;
+            background: linear-gradient(135deg, #0f172a 0%, #1d4ed8 100%) !important;
+            box-shadow: 0 14px 30px rgba(37, 99, 235, 0.18);
+        }
+
+        div[data-baseweb="tab-panel"] {
+            padding-top: 1rem !important;
+        }
+
+        .stButton > button,
+        .stDownloadButton > button {
+            min-height: 44px;
+            border-radius: var(--app-radius-sm);
+            border: 1px solid rgba(15, 23, 42, 0.08);
+            background: linear-gradient(135deg, #0f172a 0%, #1d4ed8 100%);
+            color: #ffffff;
+            font-weight: 800;
+            letter-spacing: -0.01em;
+            box-shadow: 0 12px 28px rgba(29, 78, 216, 0.16);
+        }
+
+        .stButton > button:hover,
+        .stDownloadButton > button:hover {
+            border-color: rgba(37, 99, 235, 0.3);
+            filter: brightness(1.03);
+        }
+
+        .stButton > button[kind="secondary"],
+        .stDownloadButton > button[kind="secondary"] {
+            background: rgba(255, 255, 255, 0.88);
+            color: var(--app-ink);
+            box-shadow: none;
+        }
+
+        .stButton > button:disabled,
+        .stDownloadButton > button:disabled {
+            opacity: 0.5;
+            box-shadow: none;
+        }
+
+        div[data-baseweb="input"] > div,
+        div[data-baseweb="select"] > div,
+        div[data-baseweb="input"] input,
+        div[data-baseweb="select"] input,
+        textarea {
+            border-radius: var(--app-radius-sm) !important;
+            border-color: var(--app-line) !important;
+            background: rgba(255, 255, 255, 0.9) !important;
+            box-shadow: none !important;
+            font-family: "Manrope", "Segoe UI", sans-serif !important;
+        }
+
+        div[data-baseweb="input"] > div:focus-within,
+        div[data-baseweb="select"] > div:focus-within,
+        textarea:focus {
+            border-color: rgba(37, 99, 235, 0.34) !important;
+            box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1) !important;
+        }
+
+        div[data-testid="stFileUploaderDropzone"] {
+            border-radius: 22px !important;
+            border: 1.5px dashed rgba(37, 99, 235, 0.24) !important;
+            background: rgba(255, 255, 255, 0.74) !important;
+        }
+
+        details[data-testid="stExpander"] {
+            border: 1px solid var(--app-line) !important;
+            border-radius: 20px !important;
+            background: rgba(255, 255, 255, 0.82) !important;
+            overflow: hidden;
+            box-shadow: var(--app-shadow-soft);
+        }
+
+        details[data-testid="stExpander"] summary {
+            padding: 0.4rem 0.85rem !important;
+        }
+
+        div[data-testid="stAlert"] {
+            border-radius: 18px !important;
+            border: 1px solid var(--app-line) !important;
+            background: rgba(255, 255, 255, 0.86) !important;
+            color: var(--app-ink);
+        }
+
+        div[data-testid="stMetric"] {
+            border: 1px solid var(--app-line);
+            border-radius: 20px;
+            background: rgba(255, 255, 255, 0.86);
+            padding: 1rem 1.1rem;
+            box-shadow: var(--app-shadow-soft);
+        }
+
+        div[data-testid="stDataFrame"],
+        div[data-testid="stTable"] {
+            border-radius: 20px !important;
+            overflow: hidden !important;
+            border: 1px solid var(--app-line) !important;
+            box-shadow: var(--app-shadow-soft);
+        }
+
+        .workspace-shell {
+            position: relative;
+            overflow: hidden;
+            border-radius: 34px;
+            background:
+                radial-gradient(circle at top right, rgba(96, 165, 250, 0.2), transparent 28%),
+                linear-gradient(135deg, #0f172a 0%, #12263f 46%, #1d4ed8 100%);
+            color: #ffffff;
+            padding: 1.35rem 1.4rem;
+            box-shadow: 0 28px 60px rgba(15, 23, 42, 0.14);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .workspace-shell::before {
+            content: "";
+            position: absolute;
+            right: -6rem;
+            top: -6rem;
+            width: 18rem;
+            height: 18rem;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(255, 255, 255, 0.16), transparent 68%);
+            pointer-events: none;
+        }
+
+        .workspace-shell-grid {
+            display: grid;
+            grid-template-columns: minmax(0, 1.3fr) minmax(320px, 0.9fr);
+            gap: 1rem;
+            align-items: stretch;
+        }
+
+        .workspace-shell-copy {
+            position: relative;
+            z-index: 1;
+            display: grid;
+            gap: 0.9rem;
+        }
+
+        .workspace-kicker {
+            display: inline-flex;
+            width: fit-content;
+            align-items: center;
+            padding: 0.45rem 0.8rem;
+            border-radius: 999px;
+            font-size: 0.74rem;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: rgba(255, 255, 255, 0.92);
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+        }
+
+        .workspace-shell h1 {
+            margin: 0;
+            color: #ffffff !important;
+            font-size: clamp(2rem, 4vw, 3.4rem);
+            line-height: 0.98;
+            font-weight: 800;
+            letter-spacing: -0.05em;
+        }
+
+        .workspace-subtitle {
+            max-width: 54rem;
+            margin: 0;
+            color: rgba(226, 232, 240, 0.82);
+            font-size: 1rem;
+            line-height: 1.6;
+        }
+
+        .workspace-pill-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.55rem;
+        }
+
+        .workspace-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+            padding: 0.5rem 0.8rem;
+            border-radius: 999px;
+            border: 1px solid rgba(255, 255, 255, 0.14);
+            background: rgba(255, 255, 255, 0.08);
+            color: rgba(248, 250, 252, 0.94);
+            font-size: 0.84rem;
+            font-weight: 700;
+        }
+
+        .workspace-pill b {
+            font-family: "JetBrains Mono", monospace;
+            font-size: 0.78rem;
+            color: rgba(191, 219, 254, 0.96);
+        }
+
+        .workspace-stats {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0.8rem;
+        }
+
+        .workspace-stat {
+            padding: 1rem 1rem 1.05rem;
+            border-radius: 22px;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(12px);
+        }
+
+        .workspace-stat-label {
+            font-size: 0.76rem;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: rgba(191, 219, 254, 0.82);
+        }
+
+        .workspace-stat-value {
+            margin-top: 0.45rem;
+            font-size: 1.55rem;
+            font-weight: 800;
+            letter-spacing: -0.05em;
+            color: #ffffff;
+        }
+
+        .workspace-chart-card {
+            position: relative;
+            z-index: 1;
+            border-radius: 28px;
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.06));
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            padding: 1rem;
+            display: grid;
+            gap: 0.9rem;
+            align-content: space-between;
+            min-height: 100%;
+            backdrop-filter: blur(14px);
+        }
+
+        .workspace-chart-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 0.8rem;
+        }
+
+        .workspace-chart-title {
+            margin: 0;
+            color: #ffffff;
+            font-size: 0.92rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+        }
+
+        .workspace-chart-meta {
+            color: rgba(191, 219, 254, 0.84);
+            font-size: 0.8rem;
+            font-weight: 700;
+        }
+
+        .workspace-chart {
+            display: flex;
+            align-items: flex-end;
+            gap: 0.5rem;
+            min-height: 11rem;
+            padding-top: 0.6rem;
+        }
+
+        .workspace-bar {
+            flex: 1 1 0;
+            min-width: 0;
+            height: var(--bar);
+            border-radius: 999px 999px 14px 14px;
+            background: linear-gradient(180deg, rgba(191, 219, 254, 0.24), rgba(59, 130, 246, 0.95));
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.26);
+        }
+
+        .workspace-chart-foot {
+            display: flex;
+            justify-content: space-between;
+            gap: 0.75rem;
+            flex-wrap: wrap;
+            color: rgba(226, 232, 240, 0.82);
+            font-size: 0.84rem;
+        }
+
+        .workspace-section-head {
+            display: flex;
+            justify-content: space-between;
+            gap: 1rem;
+            align-items: flex-start;
+            flex-wrap: wrap;
+            padding: 0.2rem 0 0.8rem;
+        }
+
+        .workspace-section-kicker {
+            margin: 0 0 0.35rem 0;
+            color: var(--app-accent);
+            font-size: 0.76rem;
+            font-weight: 800;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        .workspace-section-title {
+            margin: 0;
+            color: var(--app-ink);
+            font-size: 1.5rem;
+            font-weight: 800;
+            letter-spacing: -0.04em;
+        }
+
+        .workspace-section-subtitle {
+            margin: 0.35rem 0 0;
+            color: var(--app-muted);
+            max-width: 42rem;
+            font-size: 0.95rem;
+        }
+
+        .workspace-section-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.55rem;
+            justify-content: flex-end;
+        }
+
+        .workspace-chip {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.45rem;
+            padding: 0.5rem 0.8rem;
+            border-radius: 999px;
+            border: 1px solid var(--app-line);
+            background: rgba(248, 250, 252, 0.9);
+            color: var(--app-ink-soft);
+            font-size: 0.8rem;
+            font-weight: 700;
+        }
+
+        .workspace-chip b {
+            color: var(--app-ink);
+            font-family: "JetBrains Mono", monospace;
+            font-size: 0.74rem;
+        }
+
+        @media (max-width: 980px) {
+            .workspace-shell-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .workspace-stats {
+                grid-template-columns: 1fr;
+            }
+
+            div[data-testid="stRadio"] > div[role="radiogroup"] {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 640px) {
+            .workspace-shell {
+                border-radius: 26px;
+                padding: 1rem;
+            }
+
+            div[data-testid="stVerticalBlockBorderWrapper"] {
+                border-radius: 22px !important;
+            }
+
+            .workspace-chart {
+                min-height: 8rem;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+MAIN_MENU_OPTIONS = ["Procesos Pegasus", "Richmond Studio", "Jira Focus Web"]
+
+
+def _workspace_chart_bars(active_view: str, token_ready: bool) -> List[int]:
+    presets = {
+        "Procesos Pegasus": [28, 36, 34, 48, 44, 58, 62, 74],
+        "Richmond Studio": [18, 26, 32, 38, 46, 54, 60, 68],
+        "Jira Focus Web": [16, 22, 30, 40, 52, 61, 72, 82],
+    }
+    bars = list(presets.get(active_view, presets["Procesos Pegasus"]))
+    if token_ready:
+        bars[-1] = min(96, bars[-1] + 8)
+        bars[-2] = min(92, bars[-2] + 4)
+    return bars
+
+
+def _render_workspace_shell(active_view: str) -> None:
+    token_ready = bool(_clean_token_value(st.session_state.get("shared_pegasus_token", "")))
+    colegio_label = str(st.session_state.get("shared_colegio_label") or "").strip()
+    colegios_count = len(st.session_state.get("shared_colegios_rows") or [])
+    active_title = str(active_view or "Procesos Pegasus")
+    active_short = {
+        "Procesos Pegasus": "Pegasus",
+        "Richmond Studio": "Studio",
+        "Jira Focus Web": "Jira",
+    }.get(active_title, active_title)
+    active_subtitle = {
+        "Procesos Pegasus": "Operaciones masivas de clases, docentes y alumnos con foco en ejecución rápida.",
+        "Richmond Studio": "Gestión operativa de Richmond Studio con procesos consolidados y navegación limpia.",
+        "Jira Focus Web": "Seguimiento de tickets, tiempos y actividad con una vista operativa unificada.",
+    }.get(active_title, "Operaciones centralizadas en una sola interfaz.")
+    token_label = "Activo" if token_ready else "Pendiente"
+    colegio_value = colegio_label or "Sin colegio"
+    bars_html = "".join(
+        f'<span class="workspace-bar" style="--bar:{int(value)}%;"></span>'
+        for value in _workspace_chart_bars(active_title, token_ready)
+    )
+    st.markdown(
+        f"""
+        <section class="workspace-shell">
+          <div class="workspace-shell-grid">
+            <div class="workspace-shell-copy">
+              <span class="workspace-kicker">Santillana Workspace</span>
+              <div>
+                <h1>Dashboard operativo sin bordes laterales.</h1>
+                <p class="workspace-subtitle">
+                  Unifica Pegasus, Richmond Studio y Jira en una misma superficie de trabajo, con
+                  navegación simple, paneles limpios y una jerarquía visual de dashboard.
+                </p>
+              </div>
+              <div class="workspace-pill-row">
+                <span class="workspace-pill">Vista actual <b>{escape(active_short)}</b></span>
+                <span class="workspace-pill">Token <b>{escape(token_label)}</b></span>
+                <span class="workspace-pill">Colegio <b>{escape(colegio_value)}</b></span>
+              </div>
+              <div class="workspace-stats">
+                <div class="workspace-stat">
+                  <div class="workspace-stat-label">Modulos</div>
+                  <div class="workspace-stat-value">3</div>
+                </div>
+                <div class="workspace-stat">
+                  <div class="workspace-stat-label">Colegios cargados</div>
+                  <div class="workspace-stat-value">{colegios_count}</div>
+                </div>
+                <div class="workspace-stat">
+                  <div class="workspace-stat-label">Estado</div>
+                  <div class="workspace-stat-value">{escape(active_short)}</div>
+                </div>
+              </div>
+            </div>
+            <div class="workspace-chart-card">
+              <div class="workspace-chart-head">
+                <div>
+                  <div class="workspace-chart-title">Ritmo del workspace</div>
+                  <div class="workspace-chart-meta">{escape(active_subtitle)}</div>
+                </div>
+              </div>
+              <div class="workspace-chart">{bars_html}</div>
+              <div class="workspace-chart-foot">
+                <span>Vista minimalista tipo dashboard</span>
+                <span>Full width</span>
+              </div>
+            </div>
+          </div>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_workspace_section_head(
+    kicker: str,
+    title: str,
+    subtitle: str,
+    chips: Optional[Sequence[str]] = None,
+) -> None:
+    chips_html = "".join(
+        f'<span class="workspace-chip">{chip}</span>' for chip in (chips or [])
+    )
+    st.markdown(
+        f"""
+        <div class="workspace-section-head">
+          <div>
+            <div class="workspace-section-kicker">{escape(kicker)}</div>
+            <h2 class="workspace-section-title">{escape(title)}</h2>
+            <p class="workspace-section-subtitle">{escape(subtitle)}</p>
+          </div>
+          <div class="workspace-section-meta">{chips_html}</div>
+        </div>
         """,
         unsafe_allow_html=True,
     )
@@ -714,14 +1398,29 @@ def _sync_shared_token_from_input() -> None:
 
 st.set_page_config(page_title="santed", layout="wide")
 _inject_professional_theme()
-st.markdown("**Menu principal**")
-menu_option = st.radio(
-    "Menu",
-    ["Procesos Pegasus", "Richmond Studio", "Jira Focus Web"],
-    horizontal=True,
-    label_visibility="collapsed",
-    key="main_top_menu",
-)
+current_menu_option = str(st.session_state.get("main_top_menu") or MAIN_MENU_OPTIONS[0])
+if current_menu_option not in MAIN_MENU_OPTIONS:
+    current_menu_option = MAIN_MENU_OPTIONS[0]
+
+_render_workspace_shell(current_menu_option)
+
+with st.container(border=True):
+    _render_workspace_section_head(
+        kicker="Navegacion",
+        title="Menu principal",
+        subtitle="Cambia de modulo desde una barra compacta de trabajo, sin salir del dashboard.",
+        chips=(
+            "<b>3</b> vistas",
+            f"Activa <b>{escape(current_menu_option)}</b>",
+        ),
+    )
+    menu_option = st.radio(
+        "Menu",
+        MAIN_MENU_OPTIONS,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="main_top_menu",
+    )
 if menu_option == "Jira Focus Web":
     render_jira_focus_web()
     st.stop()
@@ -766,95 +1465,103 @@ if menu_option != "Richmond Studio":
     ):
         st.session_state["shared_pegasus_token_input"] = browser_pegasus_token
 
-    st.markdown("**Configuracion global**")
-    global_col_token, global_col_colegio = st.columns([2.7, 1.1])
-    with global_col_token:
-        token_col_input, token_col_save = st.columns([5.1, 1], gap="small")
-        with token_col_input:
-            st.text_input(
-                "Token",
-                key="shared_pegasus_token_input",
-                help="Acepta token solo o con prefijo Bearer. Guarda primero para cargar la lista de colegios.",
-            )
-        with token_col_save:
-            if st.button("Guardar", key="shared_token_save_btn", use_container_width=True):
-                _sync_shared_token_from_input()
-                st.session_state["shared_pegasus_token_bridge_mode"] = "write"
-                st.session_state["shared_pegasus_token_bridge_value"] = str(
-                    st.session_state.get("shared_pegasus_token", "")
-                )
-                st.rerun()
-        if st.session_state.get("shared_pegasus_token"):
-            st.caption("Token guardado en sesion y navegador.")
-    with global_col_colegio:
-        shared_token_current = _clean_token_value(
-            str(st.session_state.get("shared_pegasus_token", ""))
+    with st.container(border=True):
+        _render_workspace_section_head(
+            kicker="Shared context",
+            title="Configuracion global",
+            subtitle="Manten token y colegio listos para reutilizarlos en todos los procesos de Pegasus.",
+            chips=(
+                f"Token <b>{'activo' if st.session_state.get('shared_pegasus_token') else 'pendiente'}</b>",
+            ),
         )
-        if shared_token_current:
-            _ensure_shared_colegios_loaded(
-                token=shared_token_current,
-                empresa_id=int(DEFAULT_EMPRESA_ID),
-                ciclo_id=int(PROFESORES_CICLO_ID_DEFAULT),
-                timeout=30,
+        global_col_token, global_col_colegio = st.columns([2.7, 1.1])
+        with global_col_token:
+            token_col_input, token_col_save = st.columns([5.1, 1], gap="small")
+            with token_col_input:
+                st.text_input(
+                    "Token",
+                    key="shared_pegasus_token_input",
+                    help="Acepta token solo o con prefijo Bearer. Guarda primero para cargar la lista de colegios.",
+                )
+            with token_col_save:
+                if st.button("Guardar", key="shared_token_save_btn", use_container_width=True):
+                    _sync_shared_token_from_input()
+                    st.session_state["shared_pegasus_token_bridge_mode"] = "write"
+                    st.session_state["shared_pegasus_token_bridge_value"] = str(
+                        st.session_state.get("shared_pegasus_token", "")
+                    )
+                    st.rerun()
+            if st.session_state.get("shared_pegasus_token"):
+                st.caption("Token guardado en sesion y navegador.")
+        with global_col_colegio:
+            shared_token_current = _clean_token_value(
+                str(st.session_state.get("shared_pegasus_token", ""))
             )
+            if shared_token_current:
+                _ensure_shared_colegios_loaded(
+                    token=shared_token_current,
+                    empresa_id=int(DEFAULT_EMPRESA_ID),
+                    ciclo_id=int(PROFESORES_CICLO_ID_DEFAULT),
+                    timeout=30,
+                )
 
-        colegio_rows_global = st.session_state.get("shared_colegios_rows") or []
-        colegio_error_global = str(st.session_state.get("shared_colegios_error") or "").strip()
-        row_by_id_global = {
-            int(row["colegio_id"]): row
-            for row in colegio_rows_global
-            if row.get("colegio_id") is not None
-        }
-        selected_colegio_current = st.session_state.get("shared_colegio_selected_id")
-        select_options_global: List[Optional[int]] = [None]
-        if selected_colegio_current is not None:
-            try:
-                selected_colegio_current = int(selected_colegio_current)
-            except (TypeError, ValueError):
-                selected_colegio_current = None
-        if (
-            selected_colegio_current is not None
-            and selected_colegio_current in row_by_id_global
-            and selected_colegio_current
-            not in [int(row["colegio_id"]) for row in colegio_rows_global if row.get("colegio_id") is not None]
-        ):
-            select_options_global.append(int(selected_colegio_current))
-        select_options_global.extend(
-            [
-                int(row["colegio_id"])
+            colegio_rows_global = st.session_state.get("shared_colegios_rows") or []
+            colegio_error_global = str(st.session_state.get("shared_colegios_error") or "").strip()
+            row_by_id_global = {
+                int(row["colegio_id"]): row
                 for row in colegio_rows_global
                 if row.get("colegio_id") is not None
-                and int(row["colegio_id"]) not in select_options_global
-            ]
-        )
-        if selected_colegio_current not in select_options_global:
-            st.session_state["shared_colegio_selected_id"] = None
-        st.selectbox(
-            "Colegio (global)",
-            options=select_options_global,
-            key="shared_colegio_selected_id",
-            on_change=_sync_shared_colegio_from_select,
-            format_func=lambda value: (
-                "Selecciona un colegio"
-                if value in (None, "", "None")
-                else str((row_by_id_global.get(int(value)) or {}).get("label") or f"Colegio {value}")
-            ),
-            disabled=not bool(colegio_rows_global),
-            help="Se reutiliza en las funciones que requieren colegio.",
-        )
-
-        if colegio_error_global:
-            st.caption(f"No se pudo cargar la lista de colegios: {colegio_error_global}")
-        elif not shared_token_current:
-            st.caption("Guarda un token para cargar tu lista de colegios.")
-        elif colegio_rows_global:
-            if st.session_state.get("shared_colegio_label"):
-                st.caption(str(st.session_state.get("shared_colegio_label")))
-            st.caption(
-                f"Colegios disponibles: {len(colegio_rows_global)}"
+            }
+            selected_colegio_current = st.session_state.get("shared_colegio_selected_id")
+            select_options_global: List[Optional[int]] = [None]
+            if selected_colegio_current is not None:
+                try:
+                    selected_colegio_current = int(selected_colegio_current)
+                except (TypeError, ValueError):
+                    selected_colegio_current = None
+            if (
+                selected_colegio_current is not None
+                and selected_colegio_current in row_by_id_global
+                and selected_colegio_current
+                not in [int(row["colegio_id"]) for row in colegio_rows_global if row.get("colegio_id") is not None]
+            ):
+                select_options_global.append(int(selected_colegio_current))
+            select_options_global.extend(
+                [
+                    int(row["colegio_id"])
+                    for row in colegio_rows_global
+                    if row.get("colegio_id") is not None
+                    and int(row["colegio_id"]) not in select_options_global
+                ]
             )
-        else:
-            st.caption("No se encontraron colegios para este token.")
+            if selected_colegio_current not in select_options_global:
+                st.session_state["shared_colegio_selected_id"] = None
+            st.selectbox(
+                "Colegio (global)",
+                options=select_options_global,
+                key="shared_colegio_selected_id",
+                on_change=_sync_shared_colegio_from_select,
+                format_func=lambda value: (
+                    "Selecciona un colegio"
+                    if value in (None, "", "None")
+                    else str((row_by_id_global.get(int(value)) or {}).get("label") or f"Colegio {value}")
+                ),
+                disabled=not bool(colegio_rows_global),
+                help="Se reutiliza en las funciones que requieren colegio.",
+            )
+
+            if colegio_error_global:
+                st.caption(f"No se pudo cargar la lista de colegios: {colegio_error_global}")
+            elif not shared_token_current:
+                st.caption("Guarda un token para cargar tu lista de colegios.")
+            elif colegio_rows_global:
+                if st.session_state.get("shared_colegio_label"):
+                    st.caption(str(st.session_state.get("shared_colegio_label")))
+                st.caption(
+                    f"Colegios disponibles: {len(colegio_rows_global)}"
+                )
+            else:
+                st.caption("No se encontraron colegios para este token.")
     tab_crud_clases, tab_crud_profesores, tab_crud_alumnos = st.tabs(
         [
             "CRUD Clases",

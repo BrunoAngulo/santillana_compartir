@@ -9,25 +9,7 @@ import streamlit.components.v1 as components
 
 
 def render_jira_focus_web() -> None:
-    st.markdown(
-        """
-        <style>
-        div[data-testid="stMainBlockContainer"] {
-            max-width: 100%;
-            padding-top: 0.75rem;
-            padding-bottom: 0.75rem;
-        }
-        div[data-testid="stMainBlockContainer"] iframe {
-            width: 100% !important;
-            border: 0;
-            border-radius: 22px;
-            background: transparent;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-    components.html(_load_html(), height=1280, scrolling=False)
+    components.html(_load_html(), height=240, scrolling=False)
 
 
 def _load_html() -> str:

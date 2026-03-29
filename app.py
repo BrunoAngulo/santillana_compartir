@@ -2518,43 +2518,34 @@ def _build_richmondstudio_password_update_template_rows(
             if len(class_code_parts) == 1:
                 normalized_class_code = class_code_parts[0]
 
-        class_name_raw = (
-            str(row.get("Class") or "").strip()
-            or str(row.get("Class name") or "").strip()
-            or str(row.get("CLASS NAME") or "").strip()
-            or str(row.get("CLASS NAMES") or "").strip()
-        )
+        last_name = str(
+            row.get("Last name")
+            or row.get("LAST NAME")
+            or row.get("Apellido")
+            or ""
+        ).strip()
+        first_name = str(
+            row.get("First name")
+            or row.get("FIRST NAME")
+            or row.get("Nombre")
+            or ""
+        ).strip()
         template_rows.append(
             {
-                "Username": username,
-                "New last name": str(
-                    row.get("Last name")
-                    or row.get("LAST NAME")
-                    or row.get("Apellido")
-                    or ""
-                ).strip(),
-                "New first name": str(
-                    row.get("First name")
-                    or row.get("FIRST NAME")
-                    or row.get("Nombre")
-                    or ""
-                ).strip(),
-                "New class code": normalized_class_code,
-                "New password": "",
-                "Keep in class": "yes",
-                "Current class name": class_name_raw,
-                "Current class codes": class_codes_raw,
-                "Identifier": str(row.get("IDENTIFIER") or "").strip(),
-                "Email": str(row.get("Email") or row.get("EMAIL") or "").strip(),
+                "Username(Email)": username,
+                "New last name(optional)": last_name,
+                "New first name(optional)": first_name,
+                "New class code(optional)": normalized_class_code,
+                "New password(optional)": "",
+                "Keep in classes(optional)": "yes",
             }
         )
 
     template_rows.sort(
         key=lambda item: (
-            _normalize_plain_text(item.get("Current class name")),
-            _normalize_plain_text(item.get("New last name")),
-            _normalize_plain_text(item.get("New first name")),
-            _normalize_plain_text(item.get("Username")),
+            _normalize_plain_text(item.get("New last name(optional)")),
+            _normalize_plain_text(item.get("New first name(optional)")),
+            _normalize_plain_text(item.get("Username(Email)")),
         )
     )
     return template_rows
@@ -2579,12 +2570,32 @@ def _build_richmondstudio_bulk_user_csv_bytes(
             continue
         writer.writerow(
             [
-                str(row.get("Username") or "").strip(),
-                str(row.get("New last name") or "").strip(),
-                str(row.get("New first name") or "").strip(),
-                str(row.get("New class code") or "").strip(),
-                str(row.get("New password") or "").strip(),
-                str(row.get("Keep in class") or "").strip(),
+                str(row.get("Username") or row.get("Username(Email)") or "").strip(),
+                str(
+                    row.get("New last name")
+                    or row.get("New last name(optional)")
+                    or ""
+                ).strip(),
+                str(
+                    row.get("New first name")
+                    or row.get("New first name(optional)")
+                    or ""
+                ).strip(),
+                str(
+                    row.get("New class code")
+                    or row.get("New class code(optional)")
+                    or ""
+                ).strip(),
+                str(
+                    row.get("New password")
+                    or row.get("New password(optional)")
+                    or ""
+                ).strip(),
+                str(
+                    row.get("Keep in class")
+                    or row.get("Keep in classes(optional)")
+                    or ""
+                ).strip(),
             ]
         )
     return output.getvalue().encode("utf-8")
@@ -2623,18 +2634,36 @@ def _load_richmondstudio_bulk_user_update_rows(
 
     header_aliases = {
         "USERNAME": "Username",
+        "USERNAME EMAIL": "Username",
+        "USERNAME(EMAIL)": "Username",
         "NEW LAST NAME": "New last name",
+        "NEW LAST NAME OPTIONAL": "New last name",
+        "NEW LAST NAME(OPTIONAL)": "New last name",
         "NEW FIRST NAME": "New first name",
+        "NEW FIRST NAME OPTIONAL": "New first name",
+        "NEW FIRST NAME(OPTIONAL)": "New first name",
         "NEW CLASS CODE": "New class code",
+        "NEW CLASS CODE OPTIONAL": "New class code",
+        "NEW CLASS CODE(OPTIONAL)": "New class code",
         "NEW PASSWORD": "New password",
+        "NEW PASSWORD OPTIONAL": "New password",
+        "NEW PASSWORD(OPTIONAL)": "New password",
         "KEEP IN CLASS": "Keep in class",
+        "KEEP IN CLASSES": "Keep in class",
+        "KEEP IN CLASS OPTIONAL": "Keep in class",
+        "KEEP IN CLASSES OPTIONAL": "Keep in class",
+        "KEEP IN CLASS(OPTIONAL)": "Keep in class",
+        "KEEP IN CLASSES(OPTIONAL)": "Keep in class",
     }
     renamed_columns: Dict[str, str] = {}
     used_columns: Set[str] = set()
     for column in df.columns:
         normalized = _normalize_plain_text(column)
         normalized = re.sub(r"\s+", " ", normalized).strip()
+        normalized_compact = re.sub(r"[^A-Z0-9]+", " ", normalized).strip()
         canonical = header_aliases.get(normalized)
+        if not canonical:
+            canonical = header_aliases.get(normalized_compact)
         if not canonical:
             if normalized.startswith("NEW LAST NAM"):
                 canonical = "New last name"
@@ -2644,8 +2673,14 @@ def _load_richmondstudio_bulk_user_update_rows(
                 canonical = "New class code"
             elif normalized.startswith("NEW PASSWOR"):
                 canonical = "New password"
-            elif normalized.startswith("KEEP IN CLASS"):
+            elif normalized.startswith("KEEP IN CLASS") or normalized.startswith(
+                "KEEP IN CLASSES"
+            ):
                 canonical = "Keep in class"
+            elif normalized.startswith("USERNAME(") or normalized.startswith(
+                "USERNAME EMAIL"
+            ):
+                canonical = "Username"
         if canonical and canonical not in used_columns:
             renamed_columns[str(column)] = canonical
             used_columns.add(canonical)
@@ -2688,12 +2723,20 @@ def _build_richmondstudio_bulk_user_update_preview_rows(
         password_txt = str(row.get("New password") or "").strip()
         preview_rows.append(
             {
-                "Username": str(row.get("Username") or "").strip(),
-                "New last name": str(row.get("New last name") or "").strip(),
-                "New first name": str(row.get("New first name") or "").strip(),
-                "New class code": str(row.get("New class code") or "").strip(),
-                "New password": "********" if password_txt else "",
-                "Keep in class": str(row.get("Keep in class") or "").strip(),
+                "Username(Email)": str(row.get("Username") or "").strip(),
+                "New last name(optional)": str(
+                    row.get("New last name") or ""
+                ).strip(),
+                "New first name(optional)": str(
+                    row.get("New first name") or ""
+                ).strip(),
+                "New class code(optional)": str(
+                    row.get("New class code") or ""
+                ).strip(),
+                "New password(optional)": "********" if password_txt else "",
+                "Keep in classes(optional)": str(
+                    row.get("Keep in class") or ""
+                ).strip(),
                 "Aplicar": "Si"
                 if str(row.get("Username") or "").strip() and password_txt
                 else "No",
@@ -11499,7 +11542,7 @@ def render_richmond_studio_view() -> None:
                 )
                 if st.session_state.get("rs_users_password_template_bytes"):
                     col_rs_users_download_b.download_button(
-                        label="Descargar plantilla password RS",
+                        label="Descargar plantilla password RS (creados)",
                         data=st.session_state["rs_users_password_template_bytes"],
                         file_name=str(
                             st.session_state.get(
@@ -12391,7 +12434,7 @@ def render_richmond_studio_view() -> None:
                     )
                 if st.session_state.get("rs_password_update_template_bytes"):
                     col_rs_download_c.download_button(
-                        label="Descargar plantilla password RS",
+                        label="Descargar todos los usuarios para actualizar",
                         data=st.session_state["rs_password_update_template_bytes"],
                         file_name=str(
                             st.session_state.get(
@@ -12407,16 +12450,17 @@ def render_richmond_studio_view() -> None:
 
             st.markdown("**Actualizar password usuarios RS**")
             st.caption(
-                "Descarga la plantilla, completa New password y vuelve a subir el archivo. "
-                "La app lo convierte a CSV y lo envia al endpoint bulk de RS."
+                "Descarga el Excel de todos los usuarios registrados, completa New password(optional) "
+                "y vuelve a subirlo. La app lo convierte a CSV y lo envia al endpoint bulk de RS."
             )
             uploaded_rs_password_update = st.file_uploader(
                 "Plantilla de actualizacion password RS",
                 type=["xlsx", "csv", "txt"],
                 key="rs_password_update_upload_file",
                 help=(
-                    "Columnas esperadas: Username, New last name, New first name, "
-                    "New class code, New password, Keep in class."
+                    "Columnas esperadas: Username(Email), New last name(optional), "
+                    "New first name(optional), New class code(optional), "
+                    "New password(optional), Keep in classes(optional)."
                 ),
             )
             rs_password_update_bytes = b""

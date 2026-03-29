@@ -254,6 +254,13 @@ PEGASUS_TOKEN_BRIDGE_COMPONENT = components.declare_component(
     "pegasus_token_bridge",
     path=str(Path(__file__).resolve().parent / "components" / "pegasus_token_bridge"),
 )
+RICHMONDSTUDIO_TOKEN_BRIDGE_PENDING = "__pending__"
+RICHMONDSTUDIO_TOKEN_BRIDGE_COMPONENT = components.declare_component(
+    "richmondstudio_token_bridge",
+    path=str(
+        Path(__file__).resolve().parent / "components" / "richmondstudio_token_bridge"
+    ),
+)
 RICHMONDSTUDIO_TEST_LEVEL_OPTIONS: List[Tuple[str, str]] = [
     ("lower primary", "lower_primary"),
     ("upper primary", "upper_primary"),
@@ -380,6 +387,21 @@ def _read_browser_pegasus_token(mode: str = "read", value: object = "") -> str:
     return _clean_token_value(browser_value)
 
 
+def _read_browser_richmondstudio_token(mode: str = "read", value: object = "") -> str:
+    try:
+        browser_value = RICHMONDSTUDIO_TOKEN_BRIDGE_COMPONENT(
+            key="richmondstudio_token_bridge_component",
+            default=RICHMONDSTUDIO_TOKEN_BRIDGE_PENDING,
+            mode=str(mode or "read").strip().lower() or "read",
+            value=_clean_token_value(value),
+        )
+    except Exception:
+        return ""
+    if str(browser_value or "") == RICHMONDSTUDIO_TOKEN_BRIDGE_PENDING:
+        return RICHMONDSTUDIO_TOKEN_BRIDGE_PENDING
+    return _clean_token_value(browser_value)
+
+
 def _get_jira_login_candidates() -> Set[str]:
     login_values: Set[str] = set()
     jira_login_query = st.query_params.get(JIRA_LOGIN_QUERY_PARAM, "")
@@ -500,6 +522,33 @@ def _inject_professional_theme() -> None:
           rel="stylesheet"
           href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css"
         />
+        <style>
+        div[data-testid="stButton"],
+        div[data-testid="stDownloadButton"] {
+            display: flex;
+            justify-content: center;
+        }
+        div[data-testid="stButton"] > button,
+        div[data-testid="stDownloadButton"] > button {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            margin-left: auto;
+            margin-right: auto;
+            line-height: 1.2;
+        }
+        div[data-testid="stButton"] > button > div,
+        div[data-testid="stDownloadButton"] > button > div,
+        div[data-testid="stButton"] > button > span,
+        div[data-testid="stDownloadButton"] > button > span {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            width: 100%;
+        }
+        </style>
         """,
         unsafe_allow_html=True,
     )
@@ -714,6 +763,14 @@ def _sync_shared_token_from_input() -> None:
     st.session_state["shared_pegasus_token"] = token_input
     if token_input != old_token:
         _clear_shared_colegios_cache(clear_selection=not bool(token_input))
+
+
+def _sync_richmondstudio_token_from_input() -> None:
+    token_input = _clean_token_value(
+        st.session_state.get("rs_groups_bearer_token_input", "")
+    )
+    st.session_state["rs_groups_bearer_token"] = token_input
+    st.session_state["rs_bearer_token"] = token_input
 
 
 st.set_page_config(page_title="santed", layout="wide")
@@ -2555,14 +2612,14 @@ def _build_richmondstudio_bulk_user_csv_bytes(
     rows: List[Dict[str, object]]
 ) -> bytes:
     output = StringIO()
-    writer = csv.writer(output, lineterminator="\n")
+    writer = csv.writer(output, lineterminator="\r\n")
     headers = [
-        "Username",
-        "New last name",
-        "New first name",
-        "New class code",
-        "New password",
-        "Keep in class",
+        "Username(Email)",
+        "New last name(optional)",
+        "New first name(optional)",
+        "New class code(optional)",
+        "New password(optional)",
+        "Keep in classes(optional)",
     ]
     writer.writerow(headers)
     for row in rows:
@@ -2598,7 +2655,7 @@ def _build_richmondstudio_bulk_user_csv_bytes(
                 ).strip(),
             ]
         )
-    return output.getvalue().encode("utf-8")
+    return output.getvalue().encode("utf-8-sig")
 
 
 def _normalize_richmondstudio_bulk_keep_in_class(value: object) -> str:
@@ -10551,21 +10608,73 @@ def _apply_single_alumno_move_and_reassign(
 
 def render_richmond_studio_view() -> None:
     timeout = 30
+    bridge_mode = str(
+        st.session_state.get("rs_bearer_token_bridge_mode") or "read"
+    ).strip().lower() or "read"
+    bridge_value = _clean_token_value(
+        st.session_state.get("rs_bearer_token_bridge_value", "")
+    )
+    browser_rs_token = _read_browser_richmondstudio_token(
+        mode=bridge_mode,
+        value=bridge_value,
+    )
+    if bridge_mode != "read":
+        st.session_state["rs_bearer_token_bridge_mode"] = "read"
+        st.session_state["rs_bearer_token_bridge_value"] = ""
+
     rs_token_default = _get_richmondstudio_token()
     if "rs_groups_bearer_token" not in st.session_state:
-        st.session_state["rs_groups_bearer_token"] = rs_token_default
+        initial_rs_token = ""
+        if browser_rs_token not in ("", RICHMONDSTUDIO_TOKEN_BRIDGE_PENDING):
+            initial_rs_token = browser_rs_token
+        else:
+            initial_rs_token = rs_token_default
+        st.session_state["rs_groups_bearer_token"] = initial_rs_token
+    elif (
+        not _clean_token_value(st.session_state.get("rs_groups_bearer_token", ""))
+        and browser_rs_token not in ("", RICHMONDSTUDIO_TOKEN_BRIDGE_PENDING)
+    ):
+        st.session_state["rs_groups_bearer_token"] = browser_rs_token
     if "rs_bearer_token" not in st.session_state:
-        st.session_state["rs_bearer_token"] = rs_token_default
+        st.session_state["rs_bearer_token"] = str(
+            st.session_state.get("rs_groups_bearer_token", rs_token_default) or ""
+        )
+    if "rs_groups_bearer_token_input" not in st.session_state:
+        st.session_state["rs_groups_bearer_token_input"] = str(
+            st.session_state.get("rs_groups_bearer_token", "")
+        )
+    elif (
+        not _clean_token_value(st.session_state.get("rs_groups_bearer_token_input", ""))
+        and browser_rs_token not in ("", RICHMONDSTUDIO_TOKEN_BRIDGE_PENDING)
+        and _clean_token_value(st.session_state.get("rs_groups_bearer_token", ""))
+        == browser_rs_token
+    ):
+        st.session_state["rs_groups_bearer_token_input"] = browser_rs_token
 
     st.markdown("**Configuracion RS**")
-    rs_token = _clean_token(
-        st.text_input(
-            "Bearer token RS",
-            key="rs_groups_bearer_token",
-            help="Se usa para clases RS y EXCEL RS.",
+    rs_col_input, rs_col_save = st.columns([5.1, 1], gap="small")
+    with rs_col_input:
+        rs_token = _clean_token(
+            st.text_input(
+                "Bearer token RS",
+                key="rs_groups_bearer_token_input",
+                help="Se usa para clases RS y EXCEL RS. Pulsa Guardar para conservarlo en el navegador.",
+            )
         )
-    )
+    with rs_col_save:
+        if st.button("Guardar", key="rs_token_save_btn", use_container_width=True):
+            _sync_richmondstudio_token_from_input()
+            st.session_state["rs_bearer_token_bridge_mode"] = "write"
+            st.session_state["rs_bearer_token_bridge_value"] = str(
+                st.session_state.get("rs_groups_bearer_token", "")
+            )
+            st.rerun()
     st.session_state["rs_bearer_token"] = rs_token
+    saved_rs_token = _clean_token_value(st.session_state.get("rs_groups_bearer_token", ""))
+    if saved_rs_token:
+        st.caption("Token RS guardado en sesion y navegador.")
+    if rs_token and rs_token != saved_rs_token:
+        st.caption("Hay cambios no guardados en el token RS.")
 
     def _request_richmondstudio_confirmation(action_key: str, action_label: str) -> None:
         if not rs_token:

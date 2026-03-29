@@ -183,6 +183,33 @@
       max-width: 100%;
     }
 
+    .board-head-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+      gap: var(--spacing-md);
+      align-items: end;
+    }
+
+    .board-key-picker {
+      width: 100%;
+      max-width: 100%;
+    }
+
+    .board-key-row {
+      display: flex;
+      gap: var(--spacing-sm);
+      align-items: center;
+    }
+
+    .board-key-row .inp {
+      flex: 1 1 auto;
+    }
+
+    .board-key-row .btn {
+      flex: 0 0 auto;
+      white-space: nowrap;
+    }
+
     .issue-insight {
       margin-top: var(--spacing-sm);
       border: 1px solid var(--line);
@@ -2334,6 +2361,10 @@
         grid-template-columns: 1fr;
       }
 
+      .board-head-grid {
+        grid-template-columns: 1fr;
+      }
+
       .panel-head {
         align-items: stretch;
       }
@@ -2355,6 +2386,11 @@
 
       .my-comments-form-grid {
         grid-template-columns: 1fr;
+      }
+
+      .board-key-row {
+        flex-direction: column;
+        align-items: stretch;
       }
 
       .panel-worklogs .tbl-wrap {
@@ -2524,11 +2560,21 @@
 
   <section id="mainView" class="hide">
       <div class="card board-head">
-        <div class="board-ticket-picker">
-          <label for="issueSel">Ticket actual</label>
-          <select class="sel" id="issueSel"></select>
+        <div class="board-head-grid">
+          <div class="board-ticket-picker">
+            <label for="issueSel">Ticket actual</label>
+            <select class="sel" id="issueSel"></select>
+          </div>
+          <div class="board-key-picker">
+            <label for="issueKeyInp">Key manual</label>
+            <div class="board-key-row">
+              <input class="inp" id="issueKeyInp" type="text" placeholder="PACI-1234">
+              <button class="btn" id="loadIssueKeyBtn" type="button">Abrir key</button>
+            </div>
+          </div>
         </div>
         <div class="board-actions">
+          <button class="btn" id="openQueueDashboardBtn" type="button" disabled>Dashboard Jira</button>
           <button class="btn primary" id="myCommentsTodayBtn" type="button" disabled>Comentarios por fecha</button>
         </div>
         <div id="issueInsight" class="issue-insight empty">Selecciona un ticket para ver contexto rapido.</div>
@@ -2889,6 +2935,36 @@
         { id: 'table', label: '10. Tabla clara (simple)', help: 'Vista mas entendible y facil de leer para operacion.' }
       ];
       const DEFAULT_CHART_DESIGN = 'table';
+      const ISSUE_SEARCH_FIELDS = 'summary,status,issuetype,attachment,subtasks,labels,created,updated';
+      const DEFAULT_ISSUE_SEARCH_JQL = 'assignee = currentUser() AND issuetype not in subTaskIssueTypes() ORDER BY updated DESC';
+      const QUEUE_ACTIVE_JQL = [
+        'project in ("Portal de atención al cliente interno (Perú)")',
+        'and status in (Abierta, "En Progreso", "En Espera", Escalada, "Escalado nivel 3", "En proyecto")',
+        'and assignee in (currentUser())',
+        'AND (labels not in (ONBOARDING, "ACT_DNI_2024") OR labels is EMPTY)',
+        'ORDER BY created ASC, updated DESC'
+      ].join(' ');
+      const QUEUE_ONBOARDING_JQL = [
+        'project = "Portal de atención al cliente interno (Perú)"',
+        'AND labels in (2026-ONBOARDING)',
+        'AND assignee = currentUser()',
+        'AND issuetype not in subTaskIssueTypes()',
+        'ORDER BY created DESC'
+      ].join(' ');
+      const QUEUE_DASHBOARD_SECTIONS = [
+        {
+          id: 'active',
+          title: 'Mis tickets activos',
+          hint: 'Casos activos sin ONBOARDING ni ACT_DNI_2024.',
+          jql: QUEUE_ACTIVE_JQL
+        },
+        {
+          id: 'onboarding',
+          title: 'Onboarding 2026',
+          hint: 'Tickets con etiqueta 2026-ONBOARDING.',
+          jql: QUEUE_ONBOARDING_JQL
+        }
+      ];
       const FEATURES = {
         dashboard: false,
         report: false
@@ -2925,6 +3001,9 @@
         manualWorklogToCommentByIssue: {},
         chartDesign: DEFAULT_CHART_DESIGN,
         activities: [],
+        queueDash: { loading: false, sections: {}, refreshedAt: null },
+        queueDashPopupOpen: false,
+        queueDashPopup: null,
         popupWatchTimer: 0,
         popupProcessing: false,
         oauthCallbackInProgress: false,
@@ -3876,9 +3955,15 @@
           }
         },
         myself() { return this.req('GET', '/rest/api/3/myself'); },
-        searchIssues() {
-          const jql = 'assignee = currentUser() AND issuetype not in subTaskIssueTypes() ORDER BY updated DESC';
-          return this.req('GET', '/rest/api/3/search/jql', { params: { jql, maxResults: 200, fields: 'summary,status,issuetype,attachment,subtasks' } });
+        searchIssues(jql = DEFAULT_ISSUE_SEARCH_JQL) {
+          const resolvedJql = String(jql || '').trim() || DEFAULT_ISSUE_SEARCH_JQL;
+          return this.req('GET', '/rest/api/3/search/jql', {
+            params: {
+              jql: resolvedJql,
+              maxResults: 200,
+              fields: ISSUE_SEARCH_FIELDS
+            }
+          });
         },
         searchSubtasks(parentKey) {
           const key = String(parentKey || '').trim();
@@ -4250,7 +4335,7 @@
         [
           'connPill', 'syncPill', 'userPill', 'refreshIssuesBtn', 'myCommentsTodayBtn', 'disconnectBtn', 'msg',
           'loginView', 'connectBtn',
-          'mainView', 'issueSel', 'issueInsight', 'activityTypeSel', 'activityDueInp', 'activityInp', 'minutesInp', 'registerBtn', 'jiraDurationPill', 'timerVal', 'timerState', 'startBtn', 'pauseBtn',
+          'mainView', 'issueSel', 'issueKeyInp', 'loadIssueKeyBtn', 'openQueueDashboardBtn', 'issueInsight', 'activityTypeSel', 'activityDueInp', 'activityInp', 'minutesInp', 'registerBtn', 'jiraDurationPill', 'timerVal', 'timerState', 'startBtn', 'pauseBtn',
           'resetBtn', 'applyTimerBtn', 'suggestionBox', 'applySugActBtn', 'applySugTimeBtn', 'registerSugBtn', 'todayTotal', 'weekTotal', 'issueCount', 'dashMeta',
           'refreshDashBtn', 'recentBox', 'commentsPanel', 'commentsBox', 'worklogsPanel', 'worklogBody', 'worklogsMeta', 'deleteAllWorklogsBtn', 'timelineBox', 'timelineMeta', 'ganttBox', 'genReportBtn', 'exportReportBtn', 'reportMeta',
           'reportBody', 'timelinePanel', 'chartDesignSel', 'chartDesignHelp', 'activityFocusBox', 'activityQuickSel', 'activityQuickMeta', 'compactBtn', 'floatBox', 'floatIssue', 'floatTimer', 'floatState', 'floatStartBtn', 'floatPauseBtn', 'floatExpandBtn',
@@ -4518,12 +4603,16 @@
           : 'Usuario: -';
         el.disconnectBtn.disabled = !state.connected;
         el.refreshIssuesBtn.disabled = !state.connected;
+        if (el.openQueueDashboardBtn) {
+          el.openQueueDashboardBtn.disabled = !state.connected;
+        }
         if (el.myCommentsTodayBtn) {
           el.myCommentsTodayBtn.disabled = !state.connected || !!state.myCommentsToday.loading || !!state.myCommentsToday.saving;
           el.myCommentsTodayBtn.textContent = state.myCommentsToday.loading ? 'Buscando...' : (state.myCommentsToday.saving ? 'Guardando...' : 'Comentarios por fecha');
         }
         el.loginView.classList.toggle('hide', state.connected);
         el.mainView.classList.toggle('hide', !state.connected);
+        renderQueueDashboardPopup();
       }
 
       function selectedMyCommentsInputDate(rawValue) {
@@ -5882,36 +5971,44 @@
         `;
       }
 
+      function buildIssueRecord(it) {
+        if (!it || !it.key || !it.fields || (it.fields.issuetype && it.fields.issuetype.subtask)) {
+          return null;
+        }
+        const statusObj = it.fields.status && typeof it.fields.status === 'object' ? it.fields.status : {};
+        const statusCategoryObj = statusObj.statusCategory && typeof statusObj.statusCategory === 'object'
+          ? statusObj.statusCategory
+          : {};
+        const subtasksRaw = Array.isArray(it.fields.subtasks) ? it.fields.subtasks : [];
+        const subtasksDetail = subtasksRaw
+          .map((sub) => buildSubtaskRecord(sub))
+          .filter((sub) => sub.key || sub.summary);
+        const subtasks = uniqueStrings(
+          subtasksDetail
+            .map((sub) => sub.displayLabel || subtaskDisplayLabel(sub))
+            .filter((label) => !!label)
+        );
+        return {
+          key: String(it.key || '').trim(),
+          summary: String(it.fields.summary || ''),
+          statusName: String(statusObj.name || '').trim(),
+          statusCategoryName: String(statusCategoryObj.name || '').trim(),
+          labels: Array.isArray(it.fields.labels) ? uniqueStrings(it.fields.labels.map((label) => String(label || '').trim()).filter((label) => !!label)) : [],
+          created: String(it.fields.created || '').trim(),
+          updated: String(it.fields.updated || '').trim(),
+          attachments: Array.isArray(it.fields.attachment) ? it.fields.attachment : [],
+          subtasks,
+          subtasksDetail
+        };
+      }
+
       function parseIssues(payload) {
         const list = Array.isArray(payload.issues)
           ? payload.issues
           : (Array.isArray(payload.values) ? payload.values : []);
         return list
-          .filter((it) => it && it.key && it.fields && !(it.fields.issuetype && it.fields.issuetype.subtask))
-          .map((it) => {
-            const statusObj = it.fields.status && typeof it.fields.status === 'object' ? it.fields.status : {};
-            const statusCategoryObj = statusObj.statusCategory && typeof statusObj.statusCategory === 'object'
-              ? statusObj.statusCategory
-              : {};
-            const subtasksRaw = Array.isArray(it.fields.subtasks) ? it.fields.subtasks : [];
-            const subtasksDetail = subtasksRaw
-              .map((sub) => buildSubtaskRecord(sub))
-              .filter((sub) => sub.key || sub.summary);
-            const subtasks = uniqueStrings(
-              subtasksDetail
-                .map((sub) => sub.displayLabel || subtaskDisplayLabel(sub))
-                .filter((label) => !!label)
-            );
-            return {
-              key: it.key,
-              summary: String(it.fields.summary || ''),
-              statusName: String(statusObj.name || '').trim(),
-              statusCategoryName: String(statusCategoryObj.name || '').trim(),
-              attachments: Array.isArray(it.fields.attachment) ? it.fields.attachment : [],
-              subtasks,
-              subtasksDetail
-            };
-          });
+          .map((it) => buildIssueRecord(it))
+          .filter((it) => !!it);
       }
 
       function humanizeIssueStatusCategory(rawValue) {
@@ -5930,11 +6027,70 @@
         return statusName || categoryLabel || '';
       }
 
+      function normalizeIssueKey(value) {
+        return String(value || '').trim().toUpperCase();
+      }
+
+      function syncIssueKeyInput() {
+        if (!el.issueKeyInp) return;
+        el.issueKeyInp.value = state.selectedIssueKey || '';
+      }
+
+      function sortIssueRecords(list) {
+        return (Array.isArray(list) ? list.slice() : []).sort((a, b) => {
+          const updatedA = new Date(a && a.updated ? a.updated : 0).getTime();
+          const updatedB = new Date(b && b.updated ? b.updated : 0).getTime();
+          if (updatedA !== updatedB) return updatedB - updatedA;
+          const createdA = new Date(a && a.created ? a.created : 0).getTime();
+          const createdB = new Date(b && b.created ? b.created : 0).getTime();
+          if (createdA !== createdB) return createdB - createdA;
+          return String(a && a.key ? a.key : '').localeCompare(String(b && b.key ? b.key : ''));
+        });
+      }
+
+      function upsertIssueRecord(issue) {
+        if (!issue || !issue.key) return null;
+        const next = state.issues.slice();
+        const idx = next.findIndex((it) => String(it && it.key ? it.key : '') === String(issue.key || ''));
+        if (idx >= 0) {
+          next[idx] = Object.assign({}, next[idx], issue);
+        } else {
+          next.push(issue);
+        }
+        state.issues = sortIssueRecords(next);
+        return issueByKey(issue.key);
+      }
+
+      function formatIssueStamp(rawValue) {
+        const raw = String(rawValue || '').trim();
+        if (!raw) return '-';
+        try {
+          return TimeService.dtLabel(raw);
+        } catch (_e) {
+          return raw;
+        }
+      }
+
+      function summarizeIssuesByStatus(issues) {
+        const map = {};
+        (Array.isArray(issues) ? issues : []).forEach((issue) => {
+          const key = String(issue && issue.statusName ? issue.statusName : '').trim() || 'Sin estado';
+          map[key] = Number(map[key] || 0) + 1;
+        });
+        return Object.entries(map)
+          .map(([statusName, total]) => ({ statusName, total: Math.max(0, Math.floor(Number(total || 0))) }))
+          .sort((a, b) => {
+            if (b.total !== a.total) return b.total - a.total;
+            return String(a.statusName || '').localeCompare(String(b.statusName || ''));
+          });
+      }
+
       function renderIssueSelect() {
         el.issueSel.innerHTML = '';
         if (!state.issues.length) {
           el.issueSel.innerHTML = '<option value="">Sin tickets</option>';
           state.selectedIssueKey = '';
+          syncIssueKeyInput();
           uiStateSave();
           renderIssueData();
           return;
@@ -5952,7 +6108,517 @@
           state.selectedIssueKey = state.issues[0].key;
         }
         el.issueSel.value = state.selectedIssueKey;
+        syncIssueKeyInput();
         uiStateSave();
+      }
+
+      function queueDashboardSnapshot() {
+        return {
+          connected: !!state.connected,
+          loading: !!(state.queueDash && state.queueDash.loading),
+          refreshedAt: state.queueDash && state.queueDash.refreshedAt instanceof Date
+            ? formatIssueStamp(state.queueDash.refreshedAt)
+            : '',
+          selectedIssueKey: String(state.selectedIssueKey || '').trim(),
+          sections: QUEUE_DASHBOARD_SECTIONS.map((section) => {
+            const current = state.queueDash && state.queueDash.sections && typeof state.queueDash.sections === 'object'
+              ? state.queueDash.sections[section.id]
+              : null;
+            const issues = Array.isArray(current && current.issues) ? current.issues : [];
+            return {
+              id: section.id,
+              title: section.title,
+              hint: section.hint,
+              jql: section.jql,
+              total: issues.length,
+              summary: summarizeIssuesByStatus(issues),
+              issues: issues.map((issue) => ({
+                key: String(issue && issue.key ? issue.key : '').trim(),
+                summary: String(issue && issue.summary ? issue.summary : '').trim(),
+                statusName: String(issue && issue.statusName ? issue.statusName : '').trim(),
+                statusCategoryName: String(issue && issue.statusCategoryName ? issue.statusCategoryName : '').trim(),
+                labels: Array.isArray(issue && issue.labels) ? issue.labels.slice() : [],
+                created: formatIssueStamp(issue && issue.created ? issue.created : ''),
+                updated: formatIssueStamp(issue && issue.updated ? issue.updated : '')
+              }))
+            };
+          })
+        };
+      }
+
+      function queueDashboardPopupHtml() {
+        return `<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard Jira</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --card: #ffffff;
+      --line: #d9e0ea;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --primary: #2563eb;
+      --primary-dark: #1d4ed8;
+      --ok: #059669;
+      --warn: #d97706;
+      --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+      --radius: 14px;
+      --radius-sm: 10px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .app {
+      padding: 20px;
+      display: grid;
+      gap: 16px;
+    }
+    .topbar, .manual, .panel {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+    }
+    .topbar {
+      padding: 18px 20px;
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .topbar h1 {
+      margin: 0 0 4px 0;
+      font-size: 24px;
+      line-height: 1.1;
+    }
+    .muted { color: var(--muted); }
+    .actions, .manual-row, .table-actions, .status-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    button, input {
+      font: inherit;
+    }
+    button {
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--text);
+      border-radius: 10px;
+      padding: 10px 14px;
+      cursor: pointer;
+    }
+    button.primary {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: #fff;
+    }
+    button:hover {
+      border-color: var(--primary);
+    }
+    input {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px 12px;
+      background: #fff;
+      color: var(--text);
+    }
+    .manual {
+      padding: 16px 20px;
+      display: grid;
+      gap: 10px;
+    }
+    .manual label {
+      font-weight: 600;
+      font-size: 14px;
+    }
+    .manual-row input {
+      flex: 1 1 220px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .panel {
+      padding: 16px;
+      display: grid;
+      gap: 12px;
+      min-height: 240px;
+    }
+    .panel-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+      flex-wrap: wrap;
+    }
+    .panel-head h2 {
+      margin: 0;
+      font-size: 18px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 42px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: #eff6ff;
+      color: var(--primary);
+      font-weight: 700;
+      border: 1px solid #bfdbfe;
+    }
+    .jql {
+      font-family: "JetBrains Mono", Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #f8fafc;
+      border: 1px dashed var(--line);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      color: #334155;
+    }
+    .status-wrap {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .status-chip {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: #f8fafc;
+      border: 1px solid var(--line);
+      font-size: 12px;
+    }
+    .status-chip b { font-size: 13px; }
+    .tbl-wrap {
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: #fff;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th, td {
+      padding: 10px 12px;
+      border-bottom: 1px solid #edf2f7;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      position: sticky;
+      top: 0;
+      background: #f8fafc;
+      z-index: 1;
+    }
+    tr.current-row {
+      background: #eff6ff;
+    }
+    .key {
+      font-family: "JetBrains Mono", Consolas, monospace;
+      font-weight: 700;
+      color: var(--primary-dark);
+    }
+    .summary {
+      min-width: 280px;
+      font-weight: 600;
+    }
+    .meta {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .empty {
+      padding: 18px;
+      text-align: center;
+      color: var(--muted);
+    }
+    .selected-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid #bbf7d0;
+      background: #ecfdf5;
+      color: var(--ok);
+      font-weight: 600;
+    }
+    @media (max-width: 1080px) {
+      .grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="topbar">
+      <div>
+        <h1>Dashboard Jira</h1>
+        <div class="muted" id="dashMeta">Sin datos.</div>
+      </div>
+      <div class="actions">
+        <button class="primary" id="refreshBtn" type="button">Actualizar</button>
+        <button id="focusBtn" type="button">Ir a Jira Focus</button>
+      </div>
+    </div>
+    <div class="manual">
+      <label for="manualKeyInp">Key manual</label>
+      <div class="manual-row">
+        <input id="manualKeyInp" type="text" placeholder="PACI-1234">
+        <button class="primary" id="openKeyBtn" type="button">Abrir key</button>
+      </div>
+      <div class="status-row">
+        <span class="selected-pill" id="selectedKeyPill">Ticket actual: -</span>
+        <span class="muted">Puedes editar el key y cargarlo en la ventana principal.</span>
+      </div>
+    </div>
+    <div class="grid" id="sectionsBox"></div>
+  </div>
+  <script>
+    (function () {
+      const popupState = { snapshot: null };
+      function safeOpener() {
+        try {
+          return window.opener && !window.opener.closed ? window.opener : null;
+        } catch (_err) {
+          return null;
+        }
+      }
+      function escapeHtml(value) {
+        return String(value || '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+      function renderSection(section, selectedIssueKey) {
+        const rows = Array.isArray(section && section.issues) ? section.issues : [];
+        const summary = Array.isArray(section && section.summary) ? section.summary : [];
+        const summaryHtml = summary.length
+          ? summary.map((item) => '<span class="status-chip"><span>' + escapeHtml(String(item.statusName || 'Sin estado')) + '</span><b>' + escapeHtml(String(item.total || 0)) + '</b></span>').join('')
+          : '<span class="muted">Sin resumen por estado.</span>';
+        const rowsHtml = rows.length
+          ? rows.map((issue) => {
+            const key = String(issue && issue.key ? issue.key : '').trim();
+            const isCurrent = key && key === String(selectedIssueKey || '').trim();
+            const labels = Array.isArray(issue && issue.labels) ? issue.labels.join(', ') : '';
+            const status = String(issue && issue.statusName ? issue.statusName : '').trim() || '-';
+            const created = String(issue && issue.created ? issue.created : '').trim() || '-';
+            const updated = String(issue && issue.updated ? issue.updated : '').trim() || '-';
+            return '<tr class="' + (isCurrent ? 'current-row' : '') + '">' +
+              '<td><div class="key">' + escapeHtml(key) + '</div><div class="meta">' + escapeHtml(labels || 'Sin labels') + '</div></td>' +
+              '<td><div class="summary">' + escapeHtml(String(issue && issue.summary ? issue.summary : '')) + '</div></td>' +
+              '<td>' + escapeHtml(status) + '</td>' +
+              '<td><div class="meta">Creado: ' + escapeHtml(created) + '</div><div class="meta">Actualizado: ' + escapeHtml(updated) + '</div></td>' +
+              '<td><div class="table-actions"><button type="button" data-action="open-issue" data-key="' + escapeHtml(key) + '">Usar key</button></div></td>' +
+            '</tr>';
+          }).join('')
+          : '<tr><td colspan="5"><div class="empty">Sin tickets para esta consulta.</div></td></tr>';
+        return '<section class="panel">' +
+          '<div class="panel-head"><div><h2>' + escapeHtml(String(section && section.title ? section.title : 'Tickets')) + '</h2><div class="muted">' + escapeHtml(String(section && section.hint ? section.hint : '')) + '</div></div><span class="badge">' + escapeHtml(String(section && section.total ? section.total : 0)) + '</span></div>' +
+          '<div class="jql">' + escapeHtml(String(section && section.jql ? section.jql : '')) + '</div>' +
+          '<div class="status-wrap">' + summaryHtml + '</div>' +
+          '<div class="tbl-wrap"><table><thead><tr><th>Key</th><th>Resumen</th><th>Estado</th><th>Fechas</th><th>Accion</th></tr></thead><tbody>' + rowsHtml + '</tbody></table></div>' +
+        '</section>';
+      }
+      function render(snapshot) {
+        popupState.snapshot = snapshot || null;
+        const connected = !!(snapshot && snapshot.connected);
+        const loading = !!(snapshot && snapshot.loading);
+        const refreshedAt = snapshot && snapshot.refreshedAt ? String(snapshot.refreshedAt) : '';
+        const selectedIssueKey = snapshot && snapshot.selectedIssueKey ? String(snapshot.selectedIssueKey) : '';
+        const metaParts = [];
+        metaParts.push(connected ? 'Sesion Jira activa' : 'Sesion Jira no disponible');
+        if (loading) metaParts.push('Actualizando...');
+        if (refreshedAt) metaParts.push('Ultima actualizacion: ' + refreshedAt);
+        document.getElementById('dashMeta').textContent = metaParts.join(' | ');
+        document.getElementById('selectedKeyPill').textContent = 'Ticket actual: ' + (selectedIssueKey || '-');
+        const sections = snapshot && Array.isArray(snapshot.sections) ? snapshot.sections : [];
+        document.getElementById('sectionsBox').innerHTML = sections.map((section) => renderSection(section, selectedIssueKey)).join('') || '<div class="empty">Sin datos.</div>';
+      }
+      async function invoke(action, payload) {
+        const opener = safeOpener();
+        if (!opener || typeof opener.__jiraQueueDashboardHandleAction !== 'function') {
+          window.alert('La ventana principal de Jira Focus ya no esta disponible.');
+          return;
+        }
+        try {
+          await opener.__jiraQueueDashboardHandleAction(action, payload || {});
+        } catch (error) {
+          window.alert(error && error.message ? error.message : String(error));
+        }
+      }
+      document.addEventListener('click', async (ev) => {
+        const btn = ev.target && ev.target.closest ? ev.target.closest('button') : null;
+        if (!btn) return;
+        const action = String(btn.getAttribute('data-action') || '').trim();
+        if (btn.id === 'refreshBtn') {
+          await invoke('refresh');
+          return;
+        }
+        if (btn.id === 'focusBtn') {
+          await invoke('focus-main');
+          return;
+        }
+        if (btn.id === 'openKeyBtn') {
+          const key = String(document.getElementById('manualKeyInp').value || '').trim();
+          await invoke('open-issue', { key });
+          return;
+        }
+        if (action === 'open-issue') {
+          await invoke('open-issue', { key: String(btn.getAttribute('data-key') || '').trim() });
+        }
+      });
+      document.addEventListener('keydown', async (ev) => {
+        if (!ev || ev.key !== 'Enter') return;
+        const target = ev.target;
+        if (!target || target.id !== 'manualKeyInp') return;
+        ev.preventDefault();
+        const key = String(target.value || '').trim();
+        await invoke('open-issue', { key });
+      });
+      window.__jiraQueueDashRender = render;
+      window.addEventListener('beforeunload', () => {
+        const opener = safeOpener();
+        if (opener && typeof opener.__jiraQueueDashboardHandleAction === 'function') {
+          opener.__jiraQueueDashboardHandleAction('popup-closed', {});
+        }
+      });
+    })();
+  <\/script>
+</body>
+</html>`;
+      }
+
+      function renderQueueDashboardPopup() {
+        const popup = state.queueDashPopup;
+        if (!popup) return;
+        try {
+          if (popup.closed) {
+            state.queueDashPopup = null;
+            state.queueDashPopupOpen = false;
+            return;
+          }
+        } catch (_e) {
+          state.queueDashPopup = null;
+          state.queueDashPopupOpen = false;
+          return;
+        }
+        try {
+          if (!popup.__jiraQueueDashBooted) {
+            popup.document.open();
+            popup.document.write(queueDashboardPopupHtml());
+            popup.document.close();
+            popup.__jiraQueueDashBooted = true;
+          }
+          if (typeof popup.__jiraQueueDashRender === 'function') {
+            popup.__jiraQueueDashRender(queueDashboardSnapshot());
+          }
+        } catch (_e) {
+          // ignore render issues in popup
+        }
+      }
+
+      function openQueueDashboardPopup() {
+        let popup = state.queueDashPopup;
+        try {
+          if (popup && popup.closed) {
+            popup = null;
+          }
+        } catch (_e) {
+          popup = null;
+        }
+        if (!popup) {
+          popup = window.open('', 'jira_queue_dashboard', 'popup=yes,width=1680,height=980,resizable=yes,scrollbars=yes');
+        }
+        if (!popup) {
+          showMsg('error', 'El navegador bloqueo la nueva ventana del dashboard Jira.');
+          return null;
+        }
+        state.queueDashPopup = popup;
+        state.queueDashPopupOpen = true;
+        renderQueueDashboardPopup();
+        try {
+          popup.focus();
+        } catch (_e) {
+          // ignore
+        }
+        return popup;
+      }
+
+      async function refreshQueueDashboard() {
+        if (!state.connected) {
+          state.queueDash = { loading: false, sections: {}, refreshedAt: null };
+          renderQueueDashboardPopup();
+          return;
+        }
+        state.queueDash.loading = true;
+        renderQueueDashboardPopup();
+        const sections = {};
+        try {
+          await mapLimit(QUEUE_DASHBOARD_SECTIONS, 2, async (section) => {
+            const payload = await JiraService.searchIssues(section.jql);
+            sections[section.id] = {
+              issues: sortIssueRecords(parseIssues(payload))
+            };
+          });
+          state.queueDash = {
+            loading: false,
+            sections,
+            refreshedAt: new Date()
+          };
+          renderQueueDashboardPopup();
+        } catch (error) {
+          state.queueDash.loading = false;
+          renderQueueDashboardPopup();
+          throw error;
+        }
+      }
+
+      async function loadIssueByKey(issueKey, options = {}) {
+        const key = normalizeIssueKey(issueKey);
+        const silent = !!(options && options.silent);
+        if (!key) {
+          if (!silent) showMsg('error', 'Ingresa un key Jira valido.');
+          return false;
+        }
+        let issue = issueByKey(key);
+        if (!issue) {
+          const payload = await JiraService.issue(key, { fields: ISSUE_SEARCH_FIELDS });
+          issue = buildIssueRecord(payload);
+          if (!issue) {
+            throw new Error(`No se pudo leer el ticket ${key}.`);
+          }
+          upsertIssueRecord(issue);
+        }
+        state.selectedIssueKey = key;
+        renderIssueSelect();
+        await loadIssueData(key);
+        renderCompact();
+        renderQueueDashboardPopup();
+        if (!silent) {
+          showMsg('ok', `Ticket ${key} cargado.`);
+        }
+        return true;
       }
 
       function timerBusinessMsNow() {
@@ -7705,10 +8371,16 @@
 
       async function loadIssues() {
         const payload = await JiraService.searchIssues();
-        state.issues = parseIssues(payload);
+        const parsedIssues = sortIssueRecords(parseIssues(payload));
+        const currentSelected = issueByKey(state.selectedIssueKey);
+        if (currentSelected && !parsedIssues.some((issue) => String(issue && issue.key ? issue.key : '') === String(currentSelected.key || ''))) {
+          parsedIssues.unshift(currentSelected);
+        }
+        state.issues = sortIssueRecords(parsedIssues);
         renderIssueSelect();
         if (state.selectedIssueKey) await loadIssueData(state.selectedIssueKey);
         else renderIssueData();
+        renderQueueDashboardPopup();
       }
 
       async function createWorklog(issueKey, activity, minutes, explicitStarted = null, linkedCommentId = '') {
@@ -7855,6 +8527,7 @@
         state.selectedTimelineMinutes = 0;
         state.report = { detail: [], grouped: [] };
         state.dash = { logs: [], today: 0, week: 0, issueCount: 0, refreshedAt: null };
+        state.queueDash = { loading: false, sections: {}, refreshedAt: null };
         state.netPendingCount = 0;
         state.subtaskPhaseOptionsByKey = {};
         state.subtaskLabelsDraftByKey = {};
@@ -7866,6 +8539,7 @@
         state.subtaskPhaseApplying = false;
         closeMyCommentsTodayModal();
         JiraService.setCloudId('');
+        renderQueueDashboardPopup();
       }
 
       async function resolveCloudId(cfg, tokens) {
@@ -8082,9 +8756,48 @@
 
         el.refreshIssuesBtn.addEventListener('click', async () => {
           if (!state.connected) return;
-          try { await loadIssues(); await refreshDashboard(); showMsg('ok', 'Tickets actualizados.'); }
+          try {
+            await loadIssues();
+            await refreshDashboard();
+            if (state.queueDashPopupOpen) {
+              await refreshQueueDashboard();
+            }
+            showMsg('ok', 'Tickets actualizados.');
+          }
           catch (e) { applyError(e, 'No se pudieron recargar tickets.'); }
         });
+        if (el.openQueueDashboardBtn) {
+          el.openQueueDashboardBtn.addEventListener('click', async () => {
+            const popup = openQueueDashboardPopup();
+            if (!popup) return;
+            try {
+              await refreshQueueDashboard();
+              showMsg('ok', 'Dashboard Jira actualizado.');
+            } catch (e) {
+              applyError(e, 'No se pudo actualizar el dashboard Jira.');
+            }
+          });
+        }
+        if (el.loadIssueKeyBtn) {
+          el.loadIssueKeyBtn.addEventListener('click', async () => {
+            try {
+              await loadIssueByKey(el.issueKeyInp ? el.issueKeyInp.value : '');
+            } catch (e) {
+              applyError(e, 'No se pudo cargar el ticket por key.');
+            }
+          });
+        }
+        if (el.issueKeyInp) {
+          el.issueKeyInp.addEventListener('keydown', async (ev) => {
+            if (!ev || ev.key !== 'Enter') return;
+            ev.preventDefault();
+            try {
+              await loadIssueByKey(el.issueKeyInp.value);
+            } catch (e) {
+              applyError(e, 'No se pudo cargar el ticket por key.');
+            }
+          });
+        }
         el.myCommentsTodayBtn.addEventListener('click', async () => {
           try {
             await showMyCommentsTodayModal();
@@ -8198,11 +8911,13 @@
 
         el.issueSel.addEventListener('change', async () => {
           state.selectedIssueKey = String(el.issueSel.value || '');
+          syncIssueKeyInput();
           uiStateSave();
           if (!state.selectedIssueKey) { renderIssueData(); return; }
           try { await loadIssueData(state.selectedIssueKey); }
           catch (e) { applyError(e, `No se pudo cargar detalle de ${state.selectedIssueKey}.`); }
           renderCompact();
+          renderQueueDashboardPopup();
         });
 
         el.issueInsight.addEventListener('change', (ev) => {
@@ -8774,6 +9489,48 @@
           }
         }
       }
+
+      window.__jiraQueueDashboardReadState = function () {
+        return queueDashboardSnapshot();
+      };
+
+      window.__jiraQueueDashboardHandleAction = async function (action, payload = {}) {
+        const act = String(action || '').trim();
+        if (act === 'refresh') {
+          await refreshQueueDashboard();
+          return true;
+        }
+        if (act === 'open-issue') {
+          const loaded = await loadIssueByKey(payload && payload.key ? payload.key : '', { silent: true });
+          if (!loaded) {
+            return false;
+          }
+          try {
+            window.focus();
+          } catch (_e) {
+            // ignore
+          }
+          showMsg('ok', `Ticket ${normalizeIssueKey(payload && payload.key ? payload.key : '')} cargado desde dashboard.`);
+          return true;
+        }
+        if (act === 'focus-main') {
+          try {
+            window.focus();
+            if (window.top && window.top !== window) {
+              window.top.focus();
+            }
+          } catch (_e) {
+            // ignore
+          }
+          return true;
+        }
+        if (act === 'popup-closed') {
+          state.queueDashPopupOpen = false;
+          state.queueDashPopup = null;
+          return true;
+        }
+        return false;
+      };
 
       function bootstrap() {
         initAutoFrameHeight();

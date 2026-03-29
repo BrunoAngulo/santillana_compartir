@@ -1,12 +1,13 @@
 import os
 import re
+import csv
 import tempfile
 import threading
 import traceback
 import unicodedata
 from datetime import date, datetime
 from html import escape
-from io import BytesIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 from urllib.parse import unquote, urljoin
@@ -230,6 +231,9 @@ PEGASUS_NIVEL_LABEL_BY_ID = {
 RICHMONDSTUDIO_USERS_URL = "https://richmondstudio.global/api/users"
 RICHMONDSTUDIO_GROUPS_URL = "https://richmondstudio.global/api/groups"
 RICHMONDSTUDIO_CURRENT_USER_URL = "https://richmondstudio.global/api/users/current"
+RICHMONDSTUDIO_BULK_USER_EDITION_URL = (
+    "https://richmondstudio.global/api/administration/users/bulk/user-edition"
+)
 RESTRICTED_SECTIONS_PASSWORD = "Ted2026"
 RESTRICTED_SECTIONS_ENABLED = True
 JIRA_ADMIN_DISPLAY_NAME = "Bruno Ricardo Adrian Angulo Perez"
@@ -890,6 +894,16 @@ def _richmondstudio_headers(token: str) -> Dict[str, str]:
         "Content-Type": "application/vnd.api+json",
         "Origin": "https://richmondstudio.global",
         "Referer": "https://richmondstudio.global/settings/classes",
+        "x-pwa-origin": "browser",
+    }
+
+
+def _richmondstudio_bulk_user_headers(token: str) -> Dict[str, str]:
+    return {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json, text/plain, */*",
+        "Origin": "https://richmondstudio.global",
+        "Referer": "https://richmondstudio.global/settings/users",
         "x-pwa-origin": "browser",
     }
 
@@ -2135,6 +2149,7 @@ def _build_richmondstudio_registered_listing_data(
         }
 
     registered_rows: List[Dict[str, str]] = []
+    registered_user_rows: List[Dict[str, str]] = []
     multi_class_students_rows: List[Dict[str, str]] = []
 
     for item in rs_users:
@@ -2151,6 +2166,12 @@ def _build_richmondstudio_registered_listing_data(
         student_name = " ".join(part for part in [first_name, last_name] if part).strip()
         identifier = str(attrs.get("identifier") or "").strip()
         email = str(attrs.get("email") or "").strip()
+        login = (
+            email
+            or str(attrs.get("login") or "").strip()
+            or str(attrs.get("username") or "").strip()
+            or identifier
+        )
         created_at = _richmondstudio_date_display(attrs.get("createdAt"))
         last_sign_in_at = _richmondstudio_date_display(attrs.get("lastSignInAt"))
         user_id = str(item.get("id") or "").strip()
@@ -2213,6 +2234,27 @@ def _build_richmondstudio_registered_listing_data(
                 }
             )
 
+        primary_class_name = class_names[0] if len(class_names) == 1 else ""
+        primary_class_code = class_codes[0] if len(class_codes) == 1 else ""
+        registered_user_rows.append(
+            {
+                "RS USER ID": user_id,
+                "Username": login,
+                "Login": login,
+                "Email": email,
+                "IDENTIFIER": identifier,
+                "First name": first_name,
+                "Last name": last_name,
+                "Class name": primary_class_name,
+                "Class code": primary_class_code,
+                "CLASS NAMES": " | ".join(class_names),
+                "CLASS CODES": " | ".join(class_codes),
+                "Classes count": str(len(group_ids)),
+                "createdAt": created_at,
+                "lastSignInAt": last_sign_in_at,
+            }
+        )
+
     registered_rows = [
         row
         for row in registered_rows
@@ -2242,8 +2284,18 @@ def _build_richmondstudio_registered_listing_data(
             str(row.get("IDENTIFIER") or "").lower(),
         ),
     )
+    registered_user_rows = sorted(
+        registered_user_rows,
+        key=lambda row: (
+            str(row.get("Class name") or "").lower(),
+            str(row.get("Last name") or "").lower(),
+            str(row.get("First name") or "").lower(),
+            str(row.get("Username") or "").lower(),
+        ),
+    )
     return {
         "registered_rows": registered_rows,
+        "registered_user_rows": registered_user_rows,
         "multi_class_students_rows": multi_class_students_rows,
         "excluded_roles": excluded_roles,
         "valid_users_count": int(len(filtered_users)),
@@ -2416,6 +2468,297 @@ def _build_richmondstudio_users_export_rows(
             }
         )
     return export_rows
+
+
+def _build_richmondstudio_password_update_filename(
+    institution_name: object,
+    prefix: str = "actualizacion_password_rs",
+) -> str:
+    raw = str(institution_name or "").strip()
+    cleaned = re.sub(r'[\\/:*?"<>|]+', " ", raw)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if cleaned:
+        return f"{prefix}_{cleaned}.xlsx"
+    return f"{prefix}.xlsx"
+
+
+def _build_richmondstudio_password_update_template_rows(
+    rows: List[Dict[str, object]],
+) -> List[Dict[str, str]]:
+    template_rows: List[Dict[str, str]] = []
+    seen_usernames: Set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        username = (
+            str(row.get("Username") or "").strip()
+            or str(row.get("Login") or "").strip()
+            or str(row.get("Email") or "").strip()
+            or str(row.get("IDENTIFIER") or "").strip()
+        )
+        if not username:
+            continue
+        username_key = _normalize_plain_text(username)
+        if username_key in seen_usernames:
+            continue
+        seen_usernames.add(username_key)
+
+        class_codes_raw = (
+            str(row.get("Class code") or "").strip()
+            or str(row.get("CLASS CODE") or "").strip()
+            or str(row.get("CLASS CODES") or "").strip()
+        )
+        normalized_class_code = ""
+        if class_codes_raw:
+            class_code_parts = [
+                part.strip()
+                for part in re.split(r"[|;,]+", class_codes_raw)
+                if str(part).strip()
+            ]
+            if len(class_code_parts) == 1:
+                normalized_class_code = class_code_parts[0]
+
+        class_name_raw = (
+            str(row.get("Class") or "").strip()
+            or str(row.get("Class name") or "").strip()
+            or str(row.get("CLASS NAME") or "").strip()
+            or str(row.get("CLASS NAMES") or "").strip()
+        )
+        template_rows.append(
+            {
+                "Username": username,
+                "New last name": str(
+                    row.get("Last name")
+                    or row.get("LAST NAME")
+                    or row.get("Apellido")
+                    or ""
+                ).strip(),
+                "New first name": str(
+                    row.get("First name")
+                    or row.get("FIRST NAME")
+                    or row.get("Nombre")
+                    or ""
+                ).strip(),
+                "New class code": normalized_class_code,
+                "New password": "",
+                "Keep in class": "yes",
+                "Current class name": class_name_raw,
+                "Current class codes": class_codes_raw,
+                "Identifier": str(row.get("IDENTIFIER") or "").strip(),
+                "Email": str(row.get("Email") or row.get("EMAIL") or "").strip(),
+            }
+        )
+
+    template_rows.sort(
+        key=lambda item: (
+            _normalize_plain_text(item.get("Current class name")),
+            _normalize_plain_text(item.get("New last name")),
+            _normalize_plain_text(item.get("New first name")),
+            _normalize_plain_text(item.get("Username")),
+        )
+    )
+    return template_rows
+
+
+def _build_richmondstudio_bulk_user_csv_bytes(
+    rows: List[Dict[str, object]]
+) -> bytes:
+    output = StringIO()
+    writer = csv.writer(output, lineterminator="\n")
+    headers = [
+        "Username",
+        "New last name",
+        "New first name",
+        "New class code",
+        "New password",
+        "Keep in class",
+    ]
+    writer.writerow(headers)
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        writer.writerow(
+            [
+                str(row.get("Username") or "").strip(),
+                str(row.get("New last name") or "").strip(),
+                str(row.get("New first name") or "").strip(),
+                str(row.get("New class code") or "").strip(),
+                str(row.get("New password") or "").strip(),
+                str(row.get("Keep in class") or "").strip(),
+            ]
+        )
+    return output.getvalue().encode("utf-8")
+
+
+def _normalize_richmondstudio_bulk_keep_in_class(value: object) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return "yes"
+    normalized = _normalize_plain_text(raw)
+    if normalized in {"YES", "Y", "SI", "S", "TRUE", "1"}:
+        return "yes"
+    if normalized in {"NO", "N", "FALSE", "0"}:
+        return "no"
+    return raw.lower()
+
+
+def _load_richmondstudio_bulk_user_update_rows(
+    file_bytes: bytes,
+    file_name: str,
+) -> List[Dict[str, str]]:
+    file_name_txt = str(file_name or "").strip().lower()
+    if not file_bytes:
+        raise ValueError("El archivo de actualizacion RS esta vacio.")
+
+    if file_name_txt.endswith((".csv", ".txt")):
+        try:
+            df = pd.read_csv(BytesIO(file_bytes), dtype=str).fillna("")
+        except Exception as exc:
+            raise ValueError(f"No se pudo leer el CSV de actualizacion RS: {exc}") from exc
+    else:
+        try:
+            df = pd.read_excel(BytesIO(file_bytes), dtype=str).fillna("")
+        except Exception as exc:
+            raise ValueError(f"No se pudo leer el Excel de actualizacion RS: {exc}") from exc
+
+    header_aliases = {
+        "USERNAME": "Username",
+        "NEW LAST NAME": "New last name",
+        "NEW FIRST NAME": "New first name",
+        "NEW CLASS CODE": "New class code",
+        "NEW PASSWORD": "New password",
+        "KEEP IN CLASS": "Keep in class",
+    }
+    renamed_columns: Dict[str, str] = {}
+    used_columns: Set[str] = set()
+    for column in df.columns:
+        normalized = _normalize_plain_text(column)
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        canonical = header_aliases.get(normalized)
+        if not canonical:
+            if normalized.startswith("NEW LAST NAM"):
+                canonical = "New last name"
+            elif normalized.startswith("NEW FIRST NAM"):
+                canonical = "New first name"
+            elif normalized.startswith("NEW CLASS CO"):
+                canonical = "New class code"
+            elif normalized.startswith("NEW PASSWOR"):
+                canonical = "New password"
+            elif normalized.startswith("KEEP IN CLASS"):
+                canonical = "Keep in class"
+        if canonical and canonical not in used_columns:
+            renamed_columns[str(column)] = canonical
+            used_columns.add(canonical)
+
+    df = df.rename(columns=renamed_columns)
+    required_headers = {"Username", "New password"}
+    missing_headers = [
+        header for header in required_headers if header not in set(df.columns)
+    ]
+    if missing_headers:
+        raise ValueError(
+            "Faltan columnas obligatorias en el archivo RS: "
+            + ", ".join(missing_headers)
+        )
+
+    rows: List[Dict[str, str]] = []
+    for _, row in df.iterrows():
+        normalized_row = {
+            "Username": str(row.get("Username") or "").strip(),
+            "New last name": str(row.get("New last name") or "").strip(),
+            "New first name": str(row.get("New first name") or "").strip(),
+            "New class code": str(row.get("New class code") or "").strip(),
+            "New password": str(row.get("New password") or "").strip(),
+            "Keep in class": _normalize_richmondstudio_bulk_keep_in_class(
+                row.get("Keep in class")
+            ),
+        }
+        if any(str(value).strip() for value in normalized_row.values()):
+            rows.append(normalized_row)
+    return rows
+
+
+def _build_richmondstudio_bulk_user_update_preview_rows(
+    rows: List[Dict[str, str]]
+) -> List[Dict[str, str]]:
+    preview_rows: List[Dict[str, str]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        password_txt = str(row.get("New password") or "").strip()
+        preview_rows.append(
+            {
+                "Username": str(row.get("Username") or "").strip(),
+                "New last name": str(row.get("New last name") or "").strip(),
+                "New first name": str(row.get("New first name") or "").strip(),
+                "New class code": str(row.get("New class code") or "").strip(),
+                "New password": "********" if password_txt else "",
+                "Keep in class": str(row.get("Keep in class") or "").strip(),
+                "Aplicar": "Si"
+                if str(row.get("Username") or "").strip() and password_txt
+                else "No",
+            }
+        )
+    return preview_rows
+
+
+def _submit_richmondstudio_bulk_user_update(
+    token: str,
+    rows: List[Dict[str, str]],
+    timeout: int = 120,
+) -> str:
+    actionable_rows = [
+        row
+        for row in rows
+        if str(row.get("Username") or "").strip()
+        and str(row.get("New password") or "").strip()
+    ]
+    if not actionable_rows:
+        raise ValueError("No hay filas con Username y New password para actualizar.")
+
+    csv_bytes = _build_richmondstudio_bulk_user_csv_bytes(actionable_rows)
+    try:
+        response = requests.post(
+            RICHMONDSTUDIO_BULK_USER_EDITION_URL,
+            headers=_richmondstudio_bulk_user_headers(token),
+            files={
+                "csv_file": (
+                    "rs_bulk_user_edition.csv",
+                    csv_bytes,
+                    "text/csv",
+                )
+            },
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Error de red: {exc}") from exc
+
+    status_code = response.status_code
+    response_text = str(response.text or "").strip()
+    parsed_body: object = None
+    if response.content:
+        try:
+            parsed_body = response.json()
+        except ValueError:
+            parsed_body = response_text
+
+    if not response.ok:
+        raise RuntimeError(
+            _richmondstudio_response_error(response, status_code, parsed_body)
+        )
+
+    if isinstance(parsed_body, str) and parsed_body.strip():
+        return parsed_body.strip()
+    if isinstance(parsed_body, dict):
+        message = str(
+            parsed_body.get("message")
+            or parsed_body.get("detail")
+            or parsed_body.get("status")
+            or ""
+        ).strip()
+        if message:
+            return message
+    return response_text or "ok"
 
 
 def _richmondstudio_display_bool(value: object) -> str:
@@ -11096,6 +11439,25 @@ def render_richmond_studio_view() -> None:
                                     institution_name_for_file
                                 )
                             )
+                            rs_password_template_rows = (
+                                _build_richmondstudio_password_update_template_rows(
+                                    resultados_rs_users
+                                )
+                            )
+                            st.session_state["rs_users_password_template_bytes"] = (
+                                _export_simple_excel(
+                                    rs_password_template_rows,
+                                    sheet_name="password_update_rs",
+                                )
+                                if rs_password_template_rows
+                                else b""
+                            )
+                            st.session_state["rs_users_password_template_filename"] = (
+                                _build_richmondstudio_password_update_filename(
+                                    institution_name_for_file,
+                                    prefix="plantilla_password_rs",
+                                )
+                            )
 
                             if ok_rs_users and not err_rs_users:
                                 st.session_state["rs_users_create_download_only"] = True
@@ -11120,7 +11482,10 @@ def render_richmond_studio_view() -> None:
                                 )
 
             if st.session_state.get("rs_users_create_output_bytes"):
-                st.download_button(
+                col_rs_users_download_a, col_rs_users_download_b = st.columns(
+                    2, gap="small"
+                )
+                col_rs_users_download_a.download_button(
                     label="Descargar resultado usuarios RS",
                     data=st.session_state["rs_users_create_output_bytes"],
                     file_name=str(
@@ -11132,6 +11497,21 @@ def render_richmond_studio_view() -> None:
                     key="rs_users_create_output_download",
                     use_container_width=True,
                 )
+                if st.session_state.get("rs_users_password_template_bytes"):
+                    col_rs_users_download_b.download_button(
+                        label="Descargar plantilla password RS",
+                        data=st.session_state["rs_users_password_template_bytes"],
+                        file_name=str(
+                            st.session_state.get(
+                                "rs_users_password_template_filename"
+                            )
+                            or "plantilla_password_rs.xlsx"
+                        ).strip()
+                        or "plantilla_password_rs.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="rs_users_password_template_download",
+                        use_container_width=True,
+                    )
 
     with tab_rs_docentes:
         with st.container(border=True):
@@ -11596,6 +11976,9 @@ def render_richmond_studio_view() -> None:
             run_rs_cleanup_subscriptions_mass_confirmed = _consume_richmondstudio_confirmed_action(
                 "rs_mass_remove_expiring_subscriptions"
             )
+            run_rs_password_update_confirmed = _consume_richmondstudio_confirmed_action(
+                "rs_users_password_update"
+            )
             run_rs_excel = st.button(
                 "Listar alumnos registrados",
                 type="primary",
@@ -11606,6 +11989,19 @@ def render_richmond_studio_view() -> None:
                 if not rs_token:
                     st.error("Ingresa el bearer token de Richmond Studio.")
                     st.stop()
+                institution_name_for_file = ""
+                try:
+                    current_context_excel = _fetch_richmondstudio_current_user_context(
+                        rs_token,
+                        timeout=int(timeout),
+                    )
+                except Exception:
+                    current_context_excel = {}
+                institution_name_for_file = str(
+                    current_context_excel.get("institution_name")
+                    if isinstance(current_context_excel, dict)
+                    else ""
+                ).strip()
                 try:
                     with st.spinner("Consultando Richmond Studio..."):
                         rs_users = _fetch_richmondstudio_users(rs_token, timeout=30)
@@ -11619,6 +12015,9 @@ def render_richmond_studio_view() -> None:
                     rs_groups,
                 )
                 rows_rs = list(listing_data.get("registered_rows") or [])
+                rs_registered_user_rows = list(
+                    listing_data.get("registered_user_rows") or []
+                )
                 multi_class_students_rows = list(
                     listing_data.get("multi_class_students_rows") or []
                 )
@@ -11630,6 +12029,29 @@ def render_richmond_studio_view() -> None:
                 rs_excel_bytes = _export_simple_excel(rows_rs, sheet_name="users")
                 st.session_state["rs_excel_bytes"] = rs_excel_bytes
                 st.session_state["rs_excel_count"] = int(len(rows_rs))
+                st.session_state["rs_registered_user_rows"] = rs_registered_user_rows
+                rs_password_template_rows = (
+                    _build_richmondstudio_password_update_template_rows(
+                        rs_registered_user_rows
+                    )
+                )
+                st.session_state["rs_password_update_template_bytes"] = (
+                    _export_simple_excel(
+                        rs_password_template_rows,
+                        sheet_name="password_update_rs",
+                    )
+                    if rs_password_template_rows
+                    else b""
+                )
+                st.session_state["rs_password_update_template_count"] = int(
+                    len(rs_password_template_rows)
+                )
+                st.session_state["rs_password_update_template_filename"] = (
+                    _build_richmondstudio_password_update_filename(
+                        institution_name_for_file,
+                        prefix="plantilla_password_rs",
+                    )
+                )
                 st.session_state["rs_multi_class_students_rows"] = (
                     multi_class_students_rows
                 )
@@ -11947,7 +12369,9 @@ def render_richmond_studio_view() -> None:
                     )
 
             if st.session_state.get("rs_excel_bytes"):
-                col_rs_download_a, col_rs_download_b = st.columns(2, gap="small")
+                col_rs_download_a, col_rs_download_b, col_rs_download_c = st.columns(
+                    3, gap="small"
+                )
                 col_rs_download_a.download_button(
                     label="Descargar listado RS",
                     data=st.session_state["rs_excel_bytes"],
@@ -11965,6 +12389,145 @@ def render_richmond_studio_view() -> None:
                         key="rs_rs_multi_students_download",
                         use_container_width=True,
                     )
+                if st.session_state.get("rs_password_update_template_bytes"):
+                    col_rs_download_c.download_button(
+                        label="Descargar plantilla password RS",
+                        data=st.session_state["rs_password_update_template_bytes"],
+                        file_name=str(
+                            st.session_state.get(
+                                "rs_password_update_template_filename"
+                            )
+                            or "plantilla_password_rs.xlsx"
+                        ).strip()
+                        or "plantilla_password_rs.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="rs_password_update_template_download_list",
+                        use_container_width=True,
+                    )
+
+            st.markdown("**Actualizar password usuarios RS**")
+            st.caption(
+                "Descarga la plantilla, completa New password y vuelve a subir el archivo. "
+                "La app lo convierte a CSV y lo envia al endpoint bulk de RS."
+            )
+            uploaded_rs_password_update = st.file_uploader(
+                "Plantilla de actualizacion password RS",
+                type=["xlsx", "csv", "txt"],
+                key="rs_password_update_upload_file",
+                help=(
+                    "Columnas esperadas: Username, New last name, New first name, "
+                    "New class code, New password, Keep in class."
+                ),
+            )
+            rs_password_update_bytes = b""
+            rs_password_update_name = ""
+            rs_password_update_rows: List[Dict[str, str]] = []
+            rs_password_update_error = ""
+            if uploaded_rs_password_update is not None:
+                rs_password_update_bytes = uploaded_rs_password_update.getvalue()
+                rs_password_update_name = str(
+                    uploaded_rs_password_update.name or "password_update_rs.xlsx"
+                ).strip()
+                try:
+                    rs_password_update_rows = _load_richmondstudio_bulk_user_update_rows(
+                        rs_password_update_bytes,
+                        rs_password_update_name,
+                    )
+                except Exception as exc:
+                    rs_password_update_error = str(exc)
+                    st.error(f"Error en plantilla RS: {exc}")
+                else:
+                    preview_rows = _build_richmondstudio_bulk_user_update_preview_rows(
+                        rs_password_update_rows
+                    )
+                    actionable_count = sum(
+                        1
+                        for row in rs_password_update_rows
+                        if str(row.get("Username") or "").strip()
+                        and str(row.get("New password") or "").strip()
+                    )
+                    st.caption(
+                        "Filas cargadas: {total} | Listas para actualizar: {actionable}".format(
+                            total=len(rs_password_update_rows),
+                            actionable=actionable_count,
+                        )
+                    )
+                    if preview_rows:
+                        _show_dataframe(preview_rows[:200], use_container_width=True)
+
+            run_rs_password_update = st.button(
+                "Actualizar passwords RS",
+                type="primary",
+                key="rs_password_update_run_btn",
+                use_container_width=True,
+            )
+            if run_rs_password_update:
+                if not rs_token:
+                    st.error("Ingresa el bearer token de Richmond Studio.")
+                elif uploaded_rs_password_update is None:
+                    st.error("Sube la plantilla de actualizacion password RS.")
+                elif rs_password_update_error:
+                    st.error(
+                        f"Corrige la plantilla antes de continuar: {rs_password_update_error}"
+                    )
+                else:
+                    actionable_count = sum(
+                        1
+                        for row in rs_password_update_rows
+                        if str(row.get("Username") or "").strip()
+                        and str(row.get("New password") or "").strip()
+                    )
+                    if not actionable_count:
+                        st.error(
+                            "No hay filas con Username y New password para actualizar."
+                        )
+                    else:
+                        st.session_state["rs_password_update_upload_bytes"] = (
+                            rs_password_update_bytes
+                        )
+                        st.session_state["rs_password_update_upload_name"] = (
+                            rs_password_update_name
+                        )
+                        _request_richmondstudio_confirmation(
+                            "rs_users_password_update",
+                            f"actualizar password de {actionable_count} usuarios RS",
+                        )
+
+            if run_rs_password_update_confirmed:
+                stored_upload_bytes = bytes(
+                    st.session_state.get("rs_password_update_upload_bytes") or b""
+                )
+                stored_upload_name = str(
+                    st.session_state.get("rs_password_update_upload_name") or ""
+                ).strip()
+                if not rs_token:
+                    st.error("Ingresa el bearer token de Richmond Studio.")
+                elif not stored_upload_bytes:
+                    st.error("No se encontro la plantilla cargada para actualizar.")
+                else:
+                    try:
+                        rows_to_update = _load_richmondstudio_bulk_user_update_rows(
+                            stored_upload_bytes,
+                            stored_upload_name or "password_update_rs.xlsx",
+                        )
+                        actionable_rows = [
+                            row
+                            for row in rows_to_update
+                            if str(row.get("Username") or "").strip()
+                            and str(row.get("New password") or "").strip()
+                        ]
+                        response_message = _submit_richmondstudio_bulk_user_update(
+                            rs_token,
+                            actionable_rows,
+                            timeout=max(120, int(timeout)),
+                        )
+                    except Exception as exc:
+                        st.error(f"No se pudo actualizar passwords RS: {exc}")
+                    else:
+                        st.success(
+                            "Actualizacion bulk RS enviada correctamente. "
+                            f"Filas procesadas: {len(actionable_rows)} | Respuesta: {response_message}"
+                        )
 
     if isinstance(st.session_state.get("rs_pending_confirmation"), dict):
         _render_richmondstudio_confirmation_dialog()

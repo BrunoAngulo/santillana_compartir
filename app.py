@@ -4572,7 +4572,11 @@ def _to_bool(value: object) -> bool:
         text = value.strip().lower()
         text = unicodedata.normalize("NFD", text)
         text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
-        return text in {"true", "1", "si", "s", "yes", "y"}
+        if text in {"true", "1", "si", "s", "yes", "y", "activo", "active", "enabled"}:
+            return True
+        if text in {"false", "0", "no", "n", "inactivo", "inactive", "disabled"}:
+            return False
+        return False
     return False
 
 
@@ -5210,13 +5214,34 @@ def _flatten_censo_alumno_for_auto_plan(
     item: Dict[str, object],
     fallback: Dict[str, object],
 ) -> Dict[str, object]:
-    persona = item.get("persona") if isinstance(item.get("persona"), dict) else {}
+    source = _extract_alumno_payload(item)
+    persona = (
+        source.get("persona")
+        if isinstance(source.get("persona"), dict)
+        else (
+            item.get("persona")
+            if isinstance(item.get("persona"), dict)
+            else {}
+        )
+    )
     persona_login = (
         persona.get("personaLogin") if isinstance(persona.get("personaLogin"), dict) else {}
     )
-    nivel = item.get("nivel") if isinstance(item.get("nivel"), dict) else {}
-    grado = item.get("grado") if isinstance(item.get("grado"), dict) else {}
-    grupo = item.get("grupo") if isinstance(item.get("grupo"), dict) else {}
+    nivel = (
+        source.get("nivel")
+        if isinstance(source.get("nivel"), dict)
+        else (item.get("nivel") if isinstance(item.get("nivel"), dict) else {})
+    )
+    grado = (
+        source.get("grado")
+        if isinstance(source.get("grado"), dict)
+        else (item.get("grado") if isinstance(item.get("grado"), dict) else {})
+    )
+    grupo = (
+        source.get("grupo")
+        if isinstance(source.get("grupo"), dict)
+        else (item.get("grupo") if isinstance(item.get("grupo"), dict) else {})
+    )
     seccion = str(
         grupo.get("grupoClave")
         or grupo.get("grupo")
@@ -5225,15 +5250,24 @@ def _flatten_censo_alumno_for_auto_plan(
     ).strip()
     seccion_norm = _normalize_seccion_key(seccion)
     return {
-        "alumno_id": _safe_int(item.get("alumnoId")),
-        "persona_id": _safe_int(persona.get("personaId")),
+        "alumno_id": _safe_int(source.get("alumnoId")) or _safe_int(item.get("alumnoId")),
+        "persona_id": (
+            _safe_int(persona.get("personaId"))
+            or _safe_int(source.get("personaId"))
+            or _safe_int(item.get("personaId"))
+        ),
         "nombre": str(persona.get("nombre") or "").strip(),
         "apellido_paterno": str(persona.get("apellidoPaterno") or "").strip(),
         "apellido_materno": str(persona.get("apellidoMaterno") or "").strip(),
         "nombre_completo": str(persona.get("nombreCompleto") or "").strip(),
         "id_oficial": str(persona.get("idOficial") or "").strip(),
-        "login": str(persona_login.get("login") or item.get("login") or "").strip(),
-        "password": str(item.get("password") or "").strip(),
+        "login": str(
+            persona_login.get("login")
+            or source.get("login")
+            or item.get("login")
+            or ""
+        ).strip(),
+        "password": str(source.get("password") or item.get("password") or "").strip(),
         "nivel_id": _safe_int(nivel.get("nivelId")) or _safe_int(fallback.get("nivel_id")),
         "grado_id": _safe_int(grado.get("gradoId")) or _safe_int(fallback.get("grado_id")),
         "grupo_id": _safe_int(grupo.get("grupoId")) or _safe_int(fallback.get("grupo_id")),
@@ -5241,9 +5275,17 @@ def _flatten_censo_alumno_for_auto_plan(
         "grado": str(grado.get("grado") or fallback.get("grado") or "").strip(),
         "seccion": seccion,
         "seccion_norm": seccion_norm,
-        "activo": _to_bool(item.get("activo")),
-        "con_pago": _to_bool(item.get("conPago")),
-        "fecha_desde": str(item.get("fechaDesde") or "").strip(),
+        "activo": _to_bool(
+            source.get("activo")
+            if source.get("activo") is not None
+            else item.get("activo")
+        ),
+        "con_pago": _to_bool(
+            source.get("conPago")
+            if source.get("conPago") is not None
+            else item.get("conPago")
+        ),
+        "fecha_desde": str(source.get("fechaDesde") or item.get("fechaDesde") or "").strip(),
     }
 
 
@@ -5251,9 +5293,22 @@ def _censo_alumno_matches_context(
     item: Dict[str, object],
     context: Dict[str, object],
 ) -> bool:
-    nivel = item.get("nivel") if isinstance(item.get("nivel"), dict) else {}
-    grado = item.get("grado") if isinstance(item.get("grado"), dict) else {}
-    grupo = item.get("grupo") if isinstance(item.get("grupo"), dict) else {}
+    source = _extract_alumno_payload(item)
+    nivel = (
+        source.get("nivel")
+        if isinstance(source.get("nivel"), dict)
+        else (item.get("nivel") if isinstance(item.get("nivel"), dict) else {})
+    )
+    grado = (
+        source.get("grado")
+        if isinstance(source.get("grado"), dict)
+        else (item.get("grado") if isinstance(item.get("grado"), dict) else {})
+    )
+    grupo = (
+        source.get("grupo")
+        if isinstance(source.get("grupo"), dict)
+        else (item.get("grupo") if isinstance(item.get("grupo"), dict) else {})
+    )
 
     expected_nivel_id = _safe_int(context.get("nivel_id"))
     expected_grado_id = _safe_int(context.get("grado_id"))

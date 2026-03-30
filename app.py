@@ -838,6 +838,10 @@ if menu_option != "Richmond Studio":
                 help="Acepta token solo o con prefijo Bearer. Guarda primero para cargar la lista de colegios.",
             )
         with token_col_save:
+            st.markdown(
+                "<div style='height: 1.85rem;' aria-hidden='true'></div>",
+                unsafe_allow_html=True,
+            )
             if st.button("Guardar", key="shared_token_save_btn", use_container_width=True):
                 _sync_shared_token_from_input()
                 st.session_state["shared_pegasus_token_bridge_mode"] = "write"
@@ -10662,6 +10666,10 @@ def render_richmond_studio_view() -> None:
             )
         )
     with rs_col_save:
+        st.markdown(
+            "<div style='height: 1.85rem;' aria-hidden='true'></div>",
+            unsafe_allow_html=True,
+        )
         if st.button("Guardar", key="rs_token_save_btn", use_container_width=True):
             _sync_richmondstudio_token_from_input()
             st.session_state["rs_bearer_token_bridge_mode"] = "write"

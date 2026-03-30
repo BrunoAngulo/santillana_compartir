@@ -2984,6 +2984,7 @@ def _sync_richmondstudio_user_classes_from_excel_rows(
         "input_rows": int(len(rows)),
         "users_found": 0,
         "users_updated": 0,
+        "users_unchanged": 0,
         "error_total": 0,
     }
 
@@ -3081,9 +3082,52 @@ def _sync_richmondstudio_user_classes_from_excel_rows(
                 user_id=user_id,
                 timeout=int(timeout),
             )
+            detail_data = (
+                detail_body.get("data")
+                if isinstance(detail_body.get("data"), dict)
+                else {}
+            )
+            current_group_ids = _richmondstudio_relationship_ids(
+                detail_data,
+                "groups",
+            )
+            final_group_ids = list(current_group_ids)
+            added_group_ids: List[str] = []
+            added_group_labels: List[str] = []
+            for group_id in requested_group_ids:
+                if group_id in final_group_ids:
+                    continue
+                final_group_ids.append(group_id)
+                added_group_ids.append(group_id)
+                for idx_label, pending_group_id in enumerate(
+                    pending.get("group_ids") or []
+                ):
+                    if str(pending_group_id or "").strip() != group_id:
+                        continue
+                    label = str(
+                        (pending.get("group_labels") or [])[idx_label]
+                        if idx_label < len(pending.get("group_labels") or [])
+                        else group_id
+                    ).strip() or group_id
+                    if label not in added_group_labels:
+                        added_group_labels.append(label)
+                    break
+            if not added_group_ids:
+                summary["users_unchanged"] += 1
+                result_rows.append(
+                    {
+                        "Username(Email)": username,
+                        "Class name": "",
+                        "Class code": "",
+                        "RS USER ID": user_id,
+                        "STATUS": "SIN CAMBIOS",
+                        "DETAIL": "El usuario ya estaba en las clases del Excel.",
+                    }
+                )
+                continue
             payload = _build_richmondstudio_user_patch_payload_from_detail(
                 detail_body,
-                group_ids=requested_group_ids,
+                group_ids=final_group_ids,
             )
             _update_richmondstudio_user(
                 token=token,
@@ -3112,9 +3156,9 @@ def _sync_richmondstudio_user_classes_from_excel_rows(
                 "Class code": "",
                 "RS USER ID": user_id,
                 "STATUS": "ACTUALIZADO",
-                "DETAIL": "Clases finales: {classes}".format(
-                    classes=" | ".join(pending.get("group_labels") or [])
-                    or "sin clases",
+                "DETAIL": "Clases agregadas: {classes}".format(
+                    classes=" | ".join(added_group_labels)
+                    or "sin cambios",
                 ),
             }
         )
@@ -13469,7 +13513,7 @@ def render_richmond_studio_view() -> None:
             st.markdown("**Actualizar clases RS por Excel**")
             st.caption(
                 "Sube un Excel con Username(Email) y Class name o Class code. "
-                "Para cada correo del archivo, RS dejara solo las clases listadas ahi y quitara las demas."
+                "La app solo agregara las clases del archivo; si el usuario ya esta en esa clase no hara nada y conservara sus otras clases."
             )
             if registered_user_rows_cached:
                 rs_class_sync_template_rows = (
@@ -13504,7 +13548,7 @@ def render_richmond_studio_view() -> None:
                 key="rs_class_sync_upload_file",
                 help=(
                     "Columnas esperadas: Username(Email) y Class name o Class code. "
-                    "Puedes repetir el mismo correo en varias filas para dejar varias clases finales."
+                    "Puedes repetir el mismo correo en varias filas para agregar varias clases."
                 ),
             )
             rs_class_sync_bytes = b""
@@ -13652,9 +13696,10 @@ def render_richmond_studio_view() -> None:
                             else b""
                         )
                         st.success(
-                            "Sincronizacion de clases RS completada. "
+                            "Actualizacion de clases RS completada. "
                             "Filas: {input_rows} | Usuarios encontrados: {users_found} | "
-                            "Usuarios actualizados: {users_updated} | Errores: {error_total}".format(
+                            "Usuarios actualizados: {users_updated} | Sin cambios: {users_unchanged} | "
+                            "Errores: {error_total}".format(
                                 **class_sync_summary
                             )
                         )
@@ -13670,9 +13715,11 @@ def render_richmond_studio_view() -> None:
             )
             if rs_class_sync_summary_cached:
                 st.info(
-                    "Ultima sincronizacion clases RS: Filas {input_rows} | "
+                    "Ultima actualizacion clases RS: Filas {input_rows} | "
                     "Usuarios encontrados {users_found} | Actualizados {users_updated} | "
-                    "Errores {error_total}".format(**rs_class_sync_summary_cached)
+                    "Sin cambios {users_unchanged} | Errores {error_total}".format(
+                        **rs_class_sync_summary_cached
+                    )
                 )
                 if rs_class_sync_result_rows_cached:
                     _show_dataframe(

@@ -1792,7 +1792,8 @@ def _richmondstudio_subscription_ids_expiring_until_month_in_year(
 
 def _build_richmondstudio_user_patch_payload_from_detail(
     detail_body: Dict[str, object],
-    subscription_ids: Sequence[object],
+    subscription_ids: Optional[Sequence[object]] = None,
+    group_ids: Optional[Sequence[object]] = None,
 ) -> Dict[str, object]:
     data = detail_body.get("data") if isinstance(detail_body.get("data"), dict) else {}
     attrs = data.get("attributes") if isinstance(data.get("attributes"), dict) else {}
@@ -1814,31 +1815,51 @@ def _build_richmondstudio_user_patch_payload_from_detail(
     if not role:
         raise ValueError(f"Falta role en el detalle del usuario {user_id}.")
 
-    group_ids = _richmondstudio_relationship_ids(data, "groups")
+    normalized_group_ids: List[str] = []
+    seen_group_ids = set()
+    for item in (
+        group_ids
+        if group_ids is not None
+        else _richmondstudio_relationship_ids(data, "groups")
+    ):
+        group_id = str(item or "").strip()
+        if not group_id or group_id in seen_group_ids:
+            continue
+        seen_group_ids.add(group_id)
+        normalized_group_ids.append(group_id)
+
     normalized_subscription_ids: List[str] = []
     seen_subscription_ids = set()
-    for item in subscription_ids or []:
+    for item in (
+        subscription_ids
+        if subscription_ids is not None
+        else _richmondstudio_relationship_ids(data, "subscriptions")
+    ):
         subscription_id = str(item or "").strip()
         if not subscription_id or subscription_id in seen_subscription_ids:
             continue
         seen_subscription_ids.add(subscription_id)
         normalized_subscription_ids.append(subscription_id)
 
+    payload_attributes = {
+        "first_name": first_name,
+        "last_name": last_name,
+        "email": email,
+        "role": role,
+    }
+    if "teachermatic" in attrs:
+        payload_attributes["teachermatic"] = bool(attrs.get("teachermatic"))
+
     return {
         "data": {
             "type": "users",
             "id": user_id,
-            "attributes": {
-                "first_name": first_name,
-                "last_name": last_name,
-                "email": email,
-                "role": role,
-            },
+            "attributes": payload_attributes,
             "relationships": {
                 "groups": {
                     "data": [
                         {"type": "groups", "id": group_id}
-                        for group_id in group_ids
+                        for group_id in normalized_group_ids
                     ]
                 },
                 "subscriptions": {
@@ -2303,6 +2324,7 @@ def _build_richmondstudio_registered_listing_data(
                 "Username": login,
                 "Login": login,
                 "Email": email,
+                "Role": role,
                 "IDENTIFIER": identifier,
                 "First name": first_name,
                 "Last name": last_name,
@@ -2313,6 +2335,7 @@ def _build_richmondstudio_registered_listing_data(
                 "Classes count": str(len(group_ids)),
                 "createdAt": created_at,
                 "lastSignInAt": last_sign_in_at,
+                "_group_ids": list(group_ids),
             }
         )
 
@@ -2361,6 +2384,116 @@ def _build_richmondstudio_registered_listing_data(
         "excluded_roles": excluded_roles,
         "valid_users_count": int(len(filtered_users)),
         "total_users_count": int(len(rs_users)),
+    }
+
+
+def _load_richmondstudio_registered_panel_data(
+    token: str,
+    timeout: int = 30,
+) -> Dict[str, object]:
+    institution_name = ""
+    try:
+        current_context = _fetch_richmondstudio_current_user_context(
+            token,
+            timeout=int(timeout),
+        )
+    except Exception:
+        current_context = {}
+
+    institution_name = str(
+        current_context.get("institution_name")
+        if isinstance(current_context, dict)
+        else ""
+    ).strip()
+    rs_users = _fetch_richmondstudio_users(token, timeout=int(timeout))
+    rs_groups = _fetch_richmondstudio_groups(token, timeout=int(timeout))
+    return {
+        "institution_name": institution_name,
+        "listing_data": _build_richmondstudio_registered_listing_data(
+            rs_users,
+            rs_groups,
+        ),
+        "groups_lookup": _build_richmondstudio_groups_lookup(rs_groups),
+    }
+
+
+def _store_richmondstudio_registered_panel_data(
+    panel_data: Dict[str, object],
+) -> Dict[str, object]:
+    listing_data = (
+        panel_data.get("listing_data")
+        if isinstance(panel_data.get("listing_data"), dict)
+        else {}
+    )
+    institution_name = str(panel_data.get("institution_name") or "").strip()
+    groups_lookup = (
+        panel_data.get("groups_lookup")
+        if isinstance(panel_data.get("groups_lookup"), dict)
+        else {"by_id": {}, "by_name": {}}
+    )
+
+    rows_rs = list(listing_data.get("registered_rows") or [])
+    rs_registered_user_rows = list(listing_data.get("registered_user_rows") or [])
+    multi_class_students_rows = list(
+        listing_data.get("multi_class_students_rows") or []
+    )
+    excluded_roles = (
+        listing_data.get("excluded_roles")
+        if isinstance(listing_data.get("excluded_roles"), dict)
+        else {}
+    )
+
+    rs_password_template_rows = _build_richmondstudio_password_update_template_rows(
+        rs_registered_user_rows
+    )
+    st.session_state["rs_excel_bytes"] = _export_simple_excel(
+        rows_rs,
+        sheet_name="users",
+    )
+    st.session_state["rs_excel_count"] = int(len(rows_rs))
+    st.session_state["rs_registered_user_rows"] = rs_registered_user_rows
+    st.session_state["rs_registered_groups_lookup"] = groups_lookup
+    st.session_state["rs_password_update_template_bytes"] = (
+        _export_simple_excel(
+            rs_password_template_rows,
+            sheet_name="password_update_rs",
+        )
+        if rs_password_template_rows
+        else b""
+    )
+    st.session_state["rs_password_update_template_count"] = int(
+        len(rs_password_template_rows)
+    )
+    st.session_state["rs_password_update_template_filename"] = (
+        _build_richmondstudio_password_update_filename(
+            institution_name,
+            prefix="plantilla_password_rs",
+        )
+    )
+    st.session_state["rs_multi_class_students_rows"] = multi_class_students_rows
+    st.session_state["rs_multi_class_students_bytes"] = (
+        _export_simple_excel(
+            multi_class_students_rows,
+            sheet_name="students_multi_class",
+        )
+        if multi_class_students_rows
+        else b""
+    )
+    for state_key in (
+        "rs_multi_class_cleanup_summary",
+        "rs_multi_class_cleanup_rows",
+        "rs_multi_class_cleanup_bytes",
+        "rs_multi_class_cleanup_target_user_id",
+    ):
+        st.session_state.pop(state_key, None)
+
+    return {
+        "institution_name": institution_name,
+        "listing_data": listing_data,
+        "rows": rows_rs,
+        "registered_user_rows": rs_registered_user_rows,
+        "multi_class_students_rows": multi_class_students_rows,
+        "excluded_roles": excluded_roles,
     }
 
 
@@ -12136,6 +12269,15 @@ def render_richmond_studio_view() -> None:
             run_rs_cleanup_subscriptions_mass_confirmed = _consume_richmondstudio_confirmed_action(
                 "rs_mass_remove_expiring_subscriptions"
             )
+            run_rs_user_classes_replace_confirmed = _consume_richmondstudio_confirmed_action(
+                "rs_user_classes_replace"
+            )
+            run_rs_user_classes_remove_confirmed = _consume_richmondstudio_confirmed_action(
+                "rs_user_classes_remove"
+            )
+            run_rs_user_classes_clear_confirmed = _consume_richmondstudio_confirmed_action(
+                "rs_user_classes_clear"
+            )
             run_rs_password_update_confirmed = _consume_richmondstudio_confirmed_action(
                 "rs_users_password_update"
             )
@@ -12149,87 +12291,35 @@ def render_richmond_studio_view() -> None:
                 if not rs_token:
                     st.error("Ingresa el bearer token de Richmond Studio.")
                     st.stop()
-                institution_name_for_file = ""
-                try:
-                    current_context_excel = _fetch_richmondstudio_current_user_context(
-                        rs_token,
-                        timeout=int(timeout),
-                    )
-                except Exception:
-                    current_context_excel = {}
-                institution_name_for_file = str(
-                    current_context_excel.get("institution_name")
-                    if isinstance(current_context_excel, dict)
-                    else ""
-                ).strip()
                 try:
                     with st.spinner("Consultando Richmond Studio..."):
-                        rs_users = _fetch_richmondstudio_users(rs_token, timeout=30)
-                        rs_groups = _fetch_richmondstudio_groups(rs_token, timeout=30)
+                        rs_registered_panel_data = (
+                            _load_richmondstudio_registered_panel_data(
+                                rs_token,
+                                timeout=int(timeout),
+                            )
+                        )
                 except Exception as exc:  # pragma: no cover - UI
                     st.error(f"Error: {exc}")
                     st.stop()
 
-                listing_data = _build_richmondstudio_registered_listing_data(
-                    rs_users,
-                    rs_groups,
+                registered_panel_state = _store_richmondstudio_registered_panel_data(
+                    rs_registered_panel_data
                 )
-                rows_rs = list(listing_data.get("registered_rows") or [])
-                rs_registered_user_rows = list(
-                    listing_data.get("registered_user_rows") or []
-                )
-                multi_class_students_rows = list(
-                    listing_data.get("multi_class_students_rows") or []
-                )
-                excluded_roles = (
-                    listing_data.get("excluded_roles")
-                    if isinstance(listing_data.get("excluded_roles"), dict)
+                listing_data = (
+                    registered_panel_state.get("listing_data")
+                    if isinstance(registered_panel_state.get("listing_data"), dict)
                     else {}
                 )
-                rs_excel_bytes = _export_simple_excel(rows_rs, sheet_name="users")
-                st.session_state["rs_excel_bytes"] = rs_excel_bytes
-                st.session_state["rs_excel_count"] = int(len(rows_rs))
-                st.session_state["rs_registered_user_rows"] = rs_registered_user_rows
-                rs_password_template_rows = (
-                    _build_richmondstudio_password_update_template_rows(
-                        rs_registered_user_rows
-                    )
+                rows_rs = list(registered_panel_state.get("rows") or [])
+                multi_class_students_rows = list(
+                    registered_panel_state.get("multi_class_students_rows") or []
                 )
-                st.session_state["rs_password_update_template_bytes"] = (
-                    _export_simple_excel(
-                        rs_password_template_rows,
-                        sheet_name="password_update_rs",
-                    )
-                    if rs_password_template_rows
-                    else b""
+                excluded_roles = (
+                    registered_panel_state.get("excluded_roles")
+                    if isinstance(registered_panel_state.get("excluded_roles"), dict)
+                    else {}
                 )
-                st.session_state["rs_password_update_template_count"] = int(
-                    len(rs_password_template_rows)
-                )
-                st.session_state["rs_password_update_template_filename"] = (
-                    _build_richmondstudio_password_update_filename(
-                        institution_name_for_file,
-                        prefix="plantilla_password_rs",
-                    )
-                )
-                st.session_state["rs_multi_class_students_rows"] = (
-                    multi_class_students_rows
-                )
-                st.session_state["rs_multi_class_students_bytes"] = (
-                    _export_simple_excel(
-                        multi_class_students_rows,
-                        sheet_name="students_multi_class",
-                    )
-                    if multi_class_students_rows
-                    else b""
-                )
-                for state_key in (
-                    "rs_multi_class_cleanup_summary",
-                    "rs_multi_class_cleanup_rows",
-                    "rs_multi_class_cleanup_bytes",
-                    "rs_multi_class_cleanup_target_user_id",
-                ):
-                    st.session_state.pop(state_key, None)
                 st.success(
                     "Listado RS listo. Filas: {filas} | Usuarios validos: {validos}/{total}.".format(
                         filas=len(rows_rs),
@@ -12563,6 +12653,375 @@ def render_richmond_studio_view() -> None:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         key="rs_password_update_template_download_list",
                         use_container_width=True,
+                    )
+
+            st.markdown("**Gestionar clases de usuario RS**")
+            st.caption(
+                "Usa el listado registrado para seleccionar un usuario, reemplazar sus clases, "
+                "quitar algunas o dejarlo sin clases."
+            )
+
+            rs_user_classes_notice = str(
+                st.session_state.pop("rs_user_classes_notice", "") or ""
+            ).strip()
+            if rs_user_classes_notice:
+                st.success(rs_user_classes_notice)
+
+            registered_user_rows_cached = [
+                dict(row)
+                for row in st.session_state.get("rs_registered_user_rows") or []
+                if isinstance(row, dict)
+            ]
+            registered_groups_lookup = (
+                st.session_state.get("rs_registered_groups_lookup")
+                if isinstance(
+                    st.session_state.get("rs_registered_groups_lookup"), dict
+                )
+                else {"by_id": {}, "by_name": {}}
+            )
+            registered_groups_by_id = (
+                registered_groups_lookup.get("by_id")
+                if isinstance(registered_groups_lookup.get("by_id"), dict)
+                else {}
+            )
+            registered_user_rows_by_id = {
+                str(row.get("RS USER ID") or "").strip(): row
+                for row in registered_user_rows_cached
+                if str(row.get("RS USER ID") or "").strip()
+            }
+            registered_user_options = list(registered_user_rows_by_id.keys())
+            registered_group_options = sorted(
+                list(registered_groups_by_id.keys()),
+                key=lambda group_id: _richmondstudio_group_label(
+                    registered_groups_by_id.get(group_id)
+                ).upper(),
+            )
+            valid_registered_group_ids = set(registered_group_options)
+            confirmed_user_classes_mode = ""
+            if run_rs_user_classes_replace_confirmed:
+                confirmed_user_classes_mode = "replace"
+            elif run_rs_user_classes_remove_confirmed:
+                confirmed_user_classes_mode = "remove"
+            elif run_rs_user_classes_clear_confirmed:
+                confirmed_user_classes_mode = "clear"
+
+            if confirmed_user_classes_mode:
+                pending_user_classes = st.session_state.pop(
+                    "rs_user_classes_pending_action",
+                    None,
+                )
+                if not isinstance(pending_user_classes, dict):
+                    st.error("No se encontro el borrador de clases RS del usuario.")
+                elif (
+                    str(pending_user_classes.get("mode") or "").strip()
+                    != confirmed_user_classes_mode
+                ):
+                    st.error(
+                        "La confirmacion no coincide con la accion de clases RS."
+                    )
+                elif not rs_token:
+                    st.error("Ingresa el bearer token de Richmond Studio.")
+                else:
+                    target_user_id = str(
+                        pending_user_classes.get("user_id") or ""
+                    ).strip()
+                    try:
+                        with st.spinner("Actualizando clases del usuario en RS..."):
+                            detail_body = _fetch_richmondstudio_user_detail(
+                                rs_token,
+                                target_user_id,
+                                timeout=int(timeout),
+                            )
+                            detail_data = (
+                                detail_body.get("data")
+                                if isinstance(detail_body.get("data"), dict)
+                                else {}
+                            )
+                            current_group_ids = _richmondstudio_relationship_ids(
+                                detail_data,
+                                "groups",
+                            )
+                            final_group_ids = list(current_group_ids)
+                            if confirmed_user_classes_mode == "replace":
+                                final_group_ids = [
+                                    str(group_id or "").strip()
+                                    for group_id in (
+                                        pending_user_classes.get("target_group_ids")
+                                        or []
+                                    )
+                                    if str(group_id or "").strip()
+                                ]
+                            elif confirmed_user_classes_mode == "remove":
+                                remove_group_ids = {
+                                    str(group_id or "").strip()
+                                    for group_id in (
+                                        pending_user_classes.get("remove_group_ids")
+                                        or []
+                                    )
+                                    if str(group_id or "").strip()
+                                }
+                                final_group_ids = [
+                                    group_id
+                                    for group_id in current_group_ids
+                                    if group_id not in remove_group_ids
+                                ]
+                            elif confirmed_user_classes_mode == "clear":
+                                final_group_ids = []
+
+                            payload_user_classes = (
+                                _build_richmondstudio_user_patch_payload_from_detail(
+                                    detail_body,
+                                    group_ids=final_group_ids,
+                                )
+                            )
+                            _update_richmondstudio_user(
+                                rs_token,
+                                target_user_id,
+                                payload_user_classes,
+                                timeout=int(timeout),
+                            )
+                            refreshed_registered_panel_data = (
+                                _load_richmondstudio_registered_panel_data(
+                                    rs_token,
+                                    timeout=int(timeout),
+                                )
+                            )
+                    except Exception as exc:  # pragma: no cover - UI
+                        st.error(f"Error RS: {exc}")
+                    else:
+                        _store_richmondstudio_registered_panel_data(
+                            refreshed_registered_panel_data
+                        )
+                        st.session_state["rs_user_classes_selected_user_id"] = (
+                            target_user_id
+                        )
+                        st.session_state["rs_user_classes_form_loaded_user_id"] = ""
+                        st.session_state["rs_user_classes_remove_group_ids"] = []
+                        action_label = (
+                            "Clases del usuario RS actualizadas correctamente."
+                            if confirmed_user_classes_mode == "replace"
+                            else (
+                                "Clases seleccionadas removidas correctamente."
+                                if confirmed_user_classes_mode == "remove"
+                                else "Todas las clases del usuario fueron removidas."
+                            )
+                        )
+                        st.session_state["rs_user_classes_notice"] = action_label
+                        st.rerun()
+
+            if not registered_user_rows_cached:
+                st.caption(
+                    "Primero ejecuta `Listar alumnos registrados` para cargar usuarios y clases."
+                )
+            else:
+                current_selected_user_id = str(
+                    st.session_state.get("rs_user_classes_selected_user_id") or ""
+                ).strip()
+                if current_selected_user_id not in registered_user_rows_by_id:
+                    current_selected_user_id = registered_user_options[0]
+                    st.session_state["rs_user_classes_selected_user_id"] = (
+                        current_selected_user_id
+                    )
+
+                user_option_labels: Dict[str, str] = {}
+                for user_id, row in registered_user_rows_by_id.items():
+                    full_name = " ".join(
+                        part
+                        for part in (
+                            str(row.get("First name") or "").strip(),
+                            str(row.get("Last name") or "").strip(),
+                        )
+                        if part
+                    ).strip()
+                    login_txt = str(row.get("Username") or row.get("Login") or "").strip()
+                    identifier_txt = str(row.get("IDENTIFIER") or "").strip()
+                    role_txt = str(row.get("Role") or "").strip().lower() or "user"
+                    classes_txt = str(row.get("Classes count") or "0").strip() or "0"
+                    main_label = full_name or login_txt or identifier_txt or user_id
+                    extra_label = login_txt or identifier_txt
+                    if extra_label:
+                        user_option_labels[user_id] = (
+                            f"{main_label} | {extra_label} | {role_txt} | {classes_txt} clase(s)"
+                        )
+                    else:
+                        user_option_labels[user_id] = (
+                            f"{main_label} | {role_txt} | {classes_txt} clase(s)"
+                        )
+
+                selected_user_id = str(
+                    st.selectbox(
+                        "Usuario RS",
+                        options=registered_user_options,
+                        key="rs_user_classes_selected_user_id",
+                        format_func=lambda user_id: user_option_labels.get(
+                            str(user_id or "").strip(),
+                            str(user_id or "").strip(),
+                        ),
+                    )
+                    or ""
+                ).strip()
+                selected_user_row = (
+                    registered_user_rows_by_id.get(selected_user_id) or {}
+                )
+
+                loaded_user_id = str(
+                    st.session_state.get("rs_user_classes_form_loaded_user_id") or ""
+                ).strip()
+                if loaded_user_id != selected_user_id:
+                    current_group_ids = []
+                    for item in selected_user_row.get("_group_ids") or []:
+                        group_id = str(item or "").strip()
+                        if group_id and group_id in valid_registered_group_ids:
+                            current_group_ids.append(group_id)
+                    st.session_state["rs_user_classes_target_group_ids"] = current_group_ids
+                    st.session_state["rs_user_classes_remove_group_ids"] = []
+                    st.session_state["rs_user_classes_form_loaded_user_id"] = (
+                        selected_user_id
+                    )
+
+                current_group_ids = []
+                for item in selected_user_row.get("_group_ids") or []:
+                    group_id = str(item or "").strip()
+                    if group_id and group_id in valid_registered_group_ids:
+                        current_group_ids.append(group_id)
+
+                selected_name = " ".join(
+                    part
+                    for part in (
+                        str(selected_user_row.get("First name") or "").strip(),
+                        str(selected_user_row.get("Last name") or "").strip(),
+                    )
+                    if part
+                ).strip()
+                if not selected_name:
+                    selected_name = (
+                        str(selected_user_row.get("Username") or "").strip()
+                        or str(selected_user_row.get("IDENTIFIER") or "").strip()
+                        or selected_user_id
+                    )
+
+                current_group_labels = [
+                    _richmondstudio_group_label(registered_groups_by_id.get(group_id))
+                    or group_id
+                    for group_id in current_group_ids
+                ]
+                st.caption(
+                    "Seleccionado: {name} | Email: {email} | Role: {role} | Clases actuales: {classes}".format(
+                        name=selected_name or "(sin nombre)",
+                        email=str(
+                            selected_user_row.get("Email")
+                            or selected_user_row.get("Username")
+                            or ""
+                        ).strip()
+                        or "(sin email)",
+                        role=str(selected_user_row.get("Role") or "").strip() or "-",
+                        classes=(
+                            " | ".join(current_group_labels)
+                            if current_group_labels
+                            else "sin clases"
+                        ),
+                    )
+                )
+
+                st.multiselect(
+                    "Clases finales del usuario",
+                    options=registered_group_options,
+                    key="rs_user_classes_target_group_ids",
+                    format_func=lambda group_id: _richmondstudio_group_label(
+                        registered_groups_by_id.get(str(group_id or "").strip())
+                    )
+                    or str(group_id or "").strip(),
+                    placeholder="Selecciona una o varias clases",
+                )
+                st.multiselect(
+                    "Clases actuales a quitar",
+                    options=current_group_ids,
+                    key="rs_user_classes_remove_group_ids",
+                    format_func=lambda group_id: _richmondstudio_group_label(
+                        registered_groups_by_id.get(str(group_id or "").strip())
+                    )
+                    or str(group_id or "").strip(),
+                    placeholder="Marca una o varias clases actuales",
+                    disabled=not bool(current_group_ids),
+                )
+
+                (
+                    col_rs_user_classes_a,
+                    col_rs_user_classes_b,
+                    col_rs_user_classes_c,
+                ) = st.columns(3, gap="small")
+                run_rs_user_classes_replace = col_rs_user_classes_a.button(
+                    "Guardar clases RS",
+                    type="primary",
+                    key="rs_user_classes_replace_btn",
+                    use_container_width=True,
+                )
+                run_rs_user_classes_remove = col_rs_user_classes_b.button(
+                    "Quitar clases marcadas",
+                    key="rs_user_classes_remove_btn",
+                    use_container_width=True,
+                )
+                run_rs_user_classes_clear = col_rs_user_classes_c.button(
+                    "Quitar todas las clases",
+                    key="rs_user_classes_clear_btn",
+                    use_container_width=True,
+                )
+
+                if run_rs_user_classes_replace:
+                    replace_group_ids = [
+                        str(group_id or "").strip()
+                        for group_id in (
+                            st.session_state.get("rs_user_classes_target_group_ids")
+                            or []
+                        )
+                        if str(group_id or "").strip()
+                    ]
+                    st.session_state["rs_user_classes_pending_action"] = {
+                        "mode": "replace",
+                        "user_id": selected_user_id,
+                        "target_group_ids": replace_group_ids,
+                    }
+                    _request_richmondstudio_confirmation(
+                        "rs_user_classes_replace",
+                        (
+                            f"actualizar clases RS de {selected_name} "
+                            f"({len(replace_group_ids)} clase(s) finales)"
+                        ),
+                    )
+
+                if run_rs_user_classes_remove:
+                    remove_group_ids = [
+                        str(group_id or "").strip()
+                        for group_id in (
+                            st.session_state.get("rs_user_classes_remove_group_ids")
+                            or []
+                        )
+                        if str(group_id or "").strip()
+                    ]
+                    if not remove_group_ids:
+                        st.error("Selecciona al menos una clase actual para quitar.")
+                    else:
+                        st.session_state["rs_user_classes_pending_action"] = {
+                            "mode": "remove",
+                            "user_id": selected_user_id,
+                            "remove_group_ids": remove_group_ids,
+                        }
+                        _request_richmondstudio_confirmation(
+                            "rs_user_classes_remove",
+                            (
+                                f"quitar {len(remove_group_ids)} clase(s) RS de "
+                                f"{selected_name}"
+                            ),
+                        )
+
+                if run_rs_user_classes_clear:
+                    st.session_state["rs_user_classes_pending_action"] = {
+                        "mode": "clear",
+                        "user_id": selected_user_id,
+                    }
+                    _request_richmondstudio_confirmation(
+                        "rs_user_classes_clear",
+                        f"quitar todas las clases RS de {selected_name}",
                     )
 
             st.markdown("**Actualizar password usuarios RS**")

@@ -235,7 +235,7 @@ RICHMONDSTUDIO_BULK_USER_EDITION_URL = (
     "https://richmondstudio.global/api/administration/users/bulk/user-edition"
 )
 RESTRICTED_SECTIONS_PASSWORD = "Ted2026"
-RESTRICTED_SECTIONS_ENABLED = True
+RESTRICTED_SECTIONS_ENABLED = False
 JIRA_ADMIN_DISPLAY_NAME = "Bruno Ricardo Adrian Angulo Perez"
 JIRA_ADMIN_QUERY_PARAM = "jira_admin"
 JIRA_ADMIN_COOKIE_NAME = "jira_focus_admin_access"
@@ -1587,29 +1587,58 @@ def _update_richmondstudio_user(
     user_id_txt = str(user_id or "").strip()
     if not user_id_txt:
         raise ValueError("Falta user_id de RS.")
-    try:
-        response = requests.put(
-            f"{RICHMONDSTUDIO_USERS_URL}/{user_id_txt}",
-            headers=_richmondstudio_headers(token),
-            json=payload,
-            timeout=timeout,
-        )
-    except requests.RequestException as exc:
-        raise RuntimeError(f"Error de red: {exc}") from exc
+    url = f"{RICHMONDSTUDIO_USERS_URL}/{user_id_txt}"
 
+    def _request_update(method: str) -> Tuple[requests.Response, object]:
+        try:
+            response = requests.request(
+                method.upper(),
+                url,
+                headers=_richmondstudio_headers(token),
+                json=payload,
+                timeout=timeout,
+            )
+        except requests.RequestException as exc:
+            raise RuntimeError(f"Error de red: {exc}") from exc
+
+        try:
+            body_local = response.json() if response.content else {}
+        except ValueError:
+            body_local = None
+        return response, body_local
+
+    response, body = _request_update("PUT")
     status_code = response.status_code
-    try:
-        body = response.json() if response.content else {}
-    except ValueError:
-        body = None
+    if response.ok:
+        if body is None:
+            raise RuntimeError(f"Respuesta no JSON (status {status_code})")
+        if not isinstance(body, dict):
+            raise RuntimeError("Respuesta invalida al actualizar usuario en RS.")
+        return body
 
-    if not response.ok:
-        raise RuntimeError(_richmondstudio_response_error(response, status_code, body))
-    if body is None:
-        raise RuntimeError(f"Respuesta no JSON (status {status_code})")
-    if not isinstance(body, dict):
+    put_error = _richmondstudio_response_error(response, status_code, body)
+    if int(status_code) not in {404, 405, 501}:
+        raise RuntimeError(put_error)
+
+    patch_response, patch_body = _request_update("PATCH")
+    patch_status_code = patch_response.status_code
+    if not patch_response.ok:
+        patch_error = _richmondstudio_response_error(
+            patch_response,
+            patch_status_code,
+            patch_body,
+        )
+        raise RuntimeError(
+            "PUT fallo ({put_status}) y PATCH tambien fallo: {patch_error}".format(
+                put_status=status_code,
+                patch_error=patch_error,
+            )
+        )
+    if patch_body is None:
+        raise RuntimeError(f"Respuesta no JSON (status {patch_status_code})")
+    if not isinstance(patch_body, dict):
         raise RuntimeError("Respuesta invalida al actualizar usuario en RS.")
-    return body
+    return patch_body
 
 
 def _patch_richmondstudio_user(
@@ -2262,6 +2291,7 @@ def _build_richmondstudio_registered_listing_data(
         filtered_users.append(item)
         first_name = str(attrs.get("firstName") or "").strip()
         last_name = str(attrs.get("lastName") or "").strip()
+        level = str(attrs.get("level") or "").strip().lower()
         student_name = " ".join(part for part in [first_name, last_name] if part).strip()
         identifier = str(attrs.get("identifier") or "").strip()
         email = str(attrs.get("email") or "").strip()
@@ -2345,6 +2375,7 @@ def _build_richmondstudio_registered_listing_data(
                 "IDENTIFIER": identifier,
                 "First name": first_name,
                 "Last name": last_name,
+                "level": level,
                 "Class name": primary_class_name,
                 "Class code": primary_class_code,
                 "CLASS NAMES": " | ".join(class_names),
@@ -2762,6 +2793,58 @@ def _build_richmondstudio_password_update_template_rows(
     return template_rows
 
 
+def _build_richmondstudio_class_sync_create_payload(
+    first_name: object,
+    last_name: object,
+    email: object,
+    level: object,
+    group_ids: Sequence[object],
+) -> Dict[str, object]:
+    first_name_txt = str(first_name or "").strip()
+    last_name_txt = str(last_name or "").strip()
+    email_txt = str(email or "").strip()
+    level_txt = _normalize_richmondstudio_user_level(level)
+
+    if not first_name_txt:
+        raise ValueError("Falta First name.")
+    if not last_name_txt:
+        raise ValueError("Falta Last name.")
+    if not email_txt:
+        raise ValueError("Falta Email.")
+    if "@" not in email_txt:
+        raise ValueError(f"Email invalido: {email_txt}")
+
+    normalized_group_ids: List[str] = []
+    seen_group_ids = set()
+    for item in group_ids or []:
+        group_id = str(item or "").strip()
+        if not group_id or group_id in seen_group_ids:
+            continue
+        seen_group_ids.add(group_id)
+        normalized_group_ids.append(group_id)
+
+    return {
+        "data": {
+            "type": "users",
+            "attributes": {
+                "first_name": first_name_txt,
+                "last_name": last_name_txt,
+                "email": email_txt,
+                "role": "student",
+                "level": level_txt,
+            },
+            "relationships": {
+                "groups": {
+                    "data": [
+                        {"type": "groups", "id": group_id}
+                        for group_id in normalized_group_ids
+                    ]
+                }
+            },
+        }
+    }
+
+
 def _build_richmondstudio_class_sync_template_rows(
     rows: List[Dict[str, object]],
     groups_lookup: Dict[str, Dict[str, object]],
@@ -2793,6 +2876,9 @@ def _build_richmondstudio_class_sync_template_rows(
             template_rows.append(
                 {
                     "Username(Email)": username,
+                    "First name": str(row.get("First name") or "").strip(),
+                    "Last name": str(row.get("Last name") or "").strip(),
+                    "level": str(row.get("level") or "").strip(),
                     "Class name": "",
                     "Class code": "",
                 }
@@ -2804,6 +2890,9 @@ def _build_richmondstudio_class_sync_template_rows(
             template_rows.append(
                 {
                     "Username(Email)": username,
+                    "First name": str(row.get("First name") or "").strip(),
+                    "Last name": str(row.get("Last name") or "").strip(),
+                    "level": str(row.get("level") or "").strip(),
                     "Class name": str(group_meta.get("class_name") or "").strip(),
                     "Class code": str(group_meta.get("code") or "").strip(),
                 }
@@ -2812,6 +2901,8 @@ def _build_richmondstudio_class_sync_template_rows(
     template_rows.sort(
         key=lambda item: (
             _normalize_plain_text(item.get("Username(Email)")),
+            _normalize_plain_text(item.get("Last name")),
+            _normalize_plain_text(item.get("First name")),
             _normalize_plain_text(item.get("Class name")),
             _normalize_plain_text(item.get("Class code")),
         )
@@ -2844,6 +2935,14 @@ def _load_richmondstudio_bulk_class_sync_rows(
         "CORREO": "Username",
         "USERNAME EMAIL": "Username",
         "USERNAME(EMAIL)": "Username",
+        "FIRST NAME": "First name",
+        "FIRSTNAME": "First name",
+        "NOMBRE": "First name",
+        "LAST NAME": "Last name",
+        "LASTNAME": "Last name",
+        "APELLIDO": "Last name",
+        "LEVEL": "level",
+        "NIVEL": "level",
         "CLASS": "Class name",
         "CLASS NAME": "Class name",
         "CLASE": "Class name",
@@ -2880,6 +2979,15 @@ def _load_richmondstudio_bulk_class_sync_rows(
         username = str(
             item.get(normalized_columns.get("Username", "")) or ""
         ).strip()
+        first_name = str(
+            item.get(normalized_columns.get("First name", "")) or ""
+        ).strip()
+        last_name = str(
+            item.get(normalized_columns.get("Last name", "")) or ""
+        ).strip()
+        level = str(
+            item.get(normalized_columns.get("level", "")) or ""
+        ).strip()
         class_name = str(
             item.get(normalized_columns.get("Class name", "")) or ""
         ).strip()
@@ -2897,6 +3005,9 @@ def _load_richmondstudio_bulk_class_sync_rows(
         rows.append(
             {
                 "Username": username,
+                "First name": first_name,
+                "Last name": last_name,
+                "level": level,
                 "Class name": class_name,
                 "Class code": class_code,
             }
@@ -2923,9 +3034,18 @@ def _build_richmondstudio_bulk_class_sync_preview_rows(
             username,
             {
                 "Username(Email)": username,
+                "First name": str(row.get("First name") or "").strip(),
+                "Last name": str(row.get("Last name") or "").strip(),
+                "level": str(row.get("level") or "").strip(),
                 "_classes": [],
             },
         )
+        if not str(bucket.get("First name") or "").strip():
+            bucket["First name"] = str(row.get("First name") or "").strip()
+        if not str(bucket.get("Last name") or "").strip():
+            bucket["Last name"] = str(row.get("Last name") or "").strip()
+        if not str(bucket.get("level") or "").strip():
+            bucket["level"] = str(row.get("level") or "").strip()
         class_label = str(row.get("Class code") or "").strip() or str(
             row.get("Class name") or ""
         ).strip()
@@ -2938,6 +3058,9 @@ def _build_richmondstudio_bulk_class_sync_preview_rows(
         preview_rows.append(
             {
                 "Username(Email)": username,
+                "First name": str(bucket.get("First name") or "").strip(),
+                "Last name": str(bucket.get("Last name") or "").strip(),
+                "level": str(bucket.get("level") or "").strip(),
                 "Classes requested": len(classes),
                 "Classes": " | ".join(classes),
             }
@@ -2978,23 +3101,31 @@ def _sync_richmondstudio_user_classes_from_excel_rows(
             if key and key not in user_row_by_key:
                 user_row_by_key[key] = row
 
-    pending_by_user_id: Dict[str, Dict[str, object]] = {}
+    pending_existing_by_user_id: Dict[str, Dict[str, object]] = {}
+    pending_create_by_username: Dict[str, Dict[str, object]] = {}
     result_rows: List[Dict[str, str]] = []
     summary = {
         "input_rows": int(len(rows)),
         "users_found": 0,
         "users_updated": 0,
         "users_unchanged": 0,
+        "users_created": 0,
         "error_total": 0,
     }
 
     for idx_row, row in enumerate(rows, start=1):
         username = str(row.get("Username") or "").strip()
+        first_name = str(row.get("First name") or "").strip()
+        last_name = str(row.get("Last name") or "").strip()
+        level = str(row.get("level") or "").strip()
         class_code = str(row.get("Class code") or "").strip()
         class_name = str(row.get("Class name") or "").strip()
         class_value = class_code or class_name
         result_row = {
             "Username(Email)": username,
+            "First name": first_name,
+            "Last name": last_name,
+            "level": level,
             "Class name": class_name,
             "Class code": class_code,
             "RS USER ID": "",
@@ -3009,12 +3140,6 @@ def _sync_richmondstudio_user_classes_from_excel_rows(
 
         user_row = user_row_by_key.get(_normalize_compare_text(username)) or {}
         user_id = str(user_row.get("RS USER ID") or "").strip()
-        if not user_id:
-            summary["error_total"] += 1
-            result_row["STATUS"] = "ERROR"
-            result_row["DETAIL"] = "No se encontro el usuario RS por correo/login."
-            result_rows.append(result_row)
-            continue
 
         try:
             group_meta = _resolve_richmondstudio_group_for_user_row(
@@ -3040,28 +3165,48 @@ def _sync_richmondstudio_user_classes_from_excel_rows(
             result_rows.append(result_row)
             continue
 
-        bucket = pending_by_user_id.setdefault(
-            user_id,
-            {
-                "username": username,
-                "user_id": user_id,
-                "group_ids": [],
-                "group_labels": [],
-            },
-        )
+        if user_id:
+            bucket = pending_existing_by_user_id.setdefault(
+                user_id,
+                {
+                    "username": username,
+                    "user_id": user_id,
+                    "group_ids": [],
+                    "group_labels": [],
+                },
+            )
+        else:
+            create_key = _normalize_compare_text(username)
+            bucket = pending_create_by_username.setdefault(
+                create_key,
+                {
+                    "username": username,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "level": level,
+                    "group_ids": [],
+                    "group_labels": [],
+                },
+            )
+            if not str(bucket.get("first_name") or "").strip():
+                bucket["first_name"] = first_name
+            if not str(bucket.get("last_name") or "").strip():
+                bucket["last_name"] = last_name
+            if not str(bucket.get("level") or "").strip():
+                bucket["level"] = level
         if group_id not in bucket["group_ids"]:
             bucket["group_ids"].append(group_id)
             bucket["group_labels"].append(
                 _richmondstudio_group_label(group_meta) or class_value
             )
         result_row["RS USER ID"] = user_id
-        result_row["STATUS"] = "LISTA"
+        result_row["STATUS"] = "LISTA" if user_id else "LISTA CREATE"
         result_row["DETAIL"] = _richmondstudio_group_label(group_meta) or class_value
         result_rows.append(result_row)
 
-    summary["users_found"] = int(len(pending_by_user_id))
+    summary["users_found"] = int(len(pending_existing_by_user_id))
 
-    for idx_user, pending in enumerate(pending_by_user_id.values(), start=1):
+    for idx_user, pending in enumerate(pending_existing_by_user_id.values(), start=1):
         user_id = str(pending.get("user_id") or "").strip()
         username = str(pending.get("username") or "").strip()
         requested_group_ids = [
@@ -3072,7 +3217,7 @@ def _sync_richmondstudio_user_classes_from_excel_rows(
         _status(
             "Actualizando clases RS {idx}/{total}: {username}".format(
                 idx=idx_user,
-                total=max(len(pending_by_user_id), 1),
+                total=max(len(pending_existing_by_user_id), 1),
                 username=username or user_id,
             )
         )
@@ -3159,6 +3304,92 @@ def _sync_richmondstudio_user_classes_from_excel_rows(
                 "DETAIL": "Clases agregadas: {classes}".format(
                     classes=" | ".join(added_group_labels)
                     or "sin cambios",
+                ),
+            }
+        )
+
+    for idx_user, pending in enumerate(pending_create_by_username.values(), start=1):
+        username = str(pending.get("username") or "").strip()
+        first_name = str(pending.get("first_name") or "").strip()
+        last_name = str(pending.get("last_name") or "").strip()
+        level = str(pending.get("level") or "").strip()
+        requested_group_ids = [
+            str(item or "").strip()
+            for item in (pending.get("group_ids") or [])
+            if str(item or "").strip()
+        ]
+        _status(
+            "Creando usuario RS {idx}/{total}: {username}".format(
+                idx=idx_user,
+                total=max(len(pending_create_by_username), 1),
+                username=username,
+            )
+        )
+        if not first_name or not last_name or not level:
+            summary["error_total"] += 1
+            result_rows.append(
+                {
+                    "Username(Email)": username,
+                    "First name": first_name,
+                    "Last name": last_name,
+                    "level": level,
+                    "Class name": "",
+                    "Class code": "",
+                    "RS USER ID": "",
+                    "STATUS": "ERROR CREATE",
+                    "DETAIL": (
+                        "No se encontro el usuario RS y faltan First name, Last name o level para crearlo."
+                    ),
+                }
+            )
+            continue
+        try:
+            create_payload = _build_richmondstudio_class_sync_create_payload(
+                first_name=first_name,
+                last_name=last_name,
+                email=username,
+                level=level,
+                group_ids=requested_group_ids,
+            )
+            created_user = _create_richmondstudio_user(
+                token=token,
+                payload=create_payload,
+                timeout=int(timeout),
+            )
+            created_meta = _extract_richmondstudio_user_create_result(
+                created_user,
+                fallback_email=username,
+            )
+        except Exception as exc:
+            summary["error_total"] += 1
+            result_rows.append(
+                {
+                    "Username(Email)": username,
+                    "First name": first_name,
+                    "Last name": last_name,
+                    "level": level,
+                    "Class name": "",
+                    "Class code": "",
+                    "RS USER ID": "",
+                    "STATUS": "ERROR CREATE",
+                    "DETAIL": str(exc),
+                }
+            )
+            continue
+        summary["users_created"] += 1
+        result_rows.append(
+            {
+                "Username(Email)": username,
+                "First name": first_name,
+                "Last name": last_name,
+                "level": level,
+                "Class name": "",
+                "Class code": "",
+                "RS USER ID": str(created_meta.get("user_id") or "").strip(),
+                "STATUS": "CREADO",
+                "DETAIL": "Usuario creado y clases asignadas: {classes}".format(
+                    classes=" | ".join(pending.get("group_labels") or [])
+                    or "sin clases",
                 ),
             }
         )
@@ -13512,8 +13743,9 @@ def render_richmond_studio_view() -> None:
 
             st.markdown("**Actualizar clases RS por Excel**")
             st.caption(
-                "Sube un Excel con Username(Email) y Class name o Class code. "
-                "La app solo agregara las clases del archivo; si el usuario ya esta en esa clase no hara nada y conservara sus otras clases."
+                "Sube un Excel con Username(Email), Class name o Class code. "
+                "Si el usuario ya existe, la app solo agregara las clases del archivo y conservara sus otras clases. "
+                "Si no existe, lo creara como student usando First name, Last name y level."
             )
             if registered_user_rows_cached:
                 rs_class_sync_template_rows = (
@@ -13547,7 +13779,9 @@ def render_richmond_studio_view() -> None:
                 type=["xlsx", "csv", "txt"],
                 key="rs_class_sync_upload_file",
                 help=(
-                    "Columnas esperadas: Username(Email) y Class name o Class code. "
+                    "Columnas esperadas: Username(Email), Class name o Class code. "
+                    "Si el alumno no existe en RS, agrega tambien First name, Last name y level "
+                    "(preschool, primary, secondary o adult). "
                     "Puedes repetir el mismo correo en varias filas para agregar varias clases."
                 ),
             )
@@ -13698,7 +13932,7 @@ def render_richmond_studio_view() -> None:
                         st.success(
                             "Actualizacion de clases RS completada. "
                             "Filas: {input_rows} | Usuarios encontrados: {users_found} | "
-                            "Usuarios actualizados: {users_updated} | Sin cambios: {users_unchanged} | "
+                            "Usuarios creados: {users_created} | Usuarios actualizados: {users_updated} | Sin cambios: {users_unchanged} | "
                             "Errores: {error_total}".format(
                                 **class_sync_summary
                             )
@@ -13716,7 +13950,7 @@ def render_richmond_studio_view() -> None:
             if rs_class_sync_summary_cached:
                 st.info(
                     "Ultima actualizacion clases RS: Filas {input_rows} | "
-                    "Usuarios encontrados {users_found} | Actualizados {users_updated} | "
+                    "Usuarios encontrados {users_found} | Creados {users_created} | Actualizados {users_updated} | "
                     "Sin cambios {users_unchanged} | Errores {error_total}".format(
                         **rs_class_sync_summary_cached
                     )

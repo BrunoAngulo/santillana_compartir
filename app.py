@@ -4005,6 +4005,8 @@ def _render_richmondstudio_students_password_panel(
             ).strip()
             st.session_state["rs_students_crud_password"] = ""
             st.session_state["rs_students_crud_form_loaded_user_id"] = selected_student_id
+            st.session_state.pop("rs_students_crud_last_sent_csv_bytes", None)
+            st.session_state.pop("rs_students_crud_last_sent_user", None)
         elif bool(st.session_state.pop("rs_students_crud_reset_password", False)):
             st.session_state["rs_students_crud_password"] = ""
 
@@ -4034,49 +4036,29 @@ def _render_richmondstudio_students_password_panel(
             )
         )
 
-        rs_password_col_1, rs_password_col_2 = st.columns(2, gap="small")
-        rs_password_col_1.text_input(
-            "Usuario RS / Email",
-            key="rs_students_crud_username",
-        )
-        rs_password_col_2.text_input(
-            "Nueva password RS",
-            key="rs_students_crud_password",
-            type="password",
-        )
+        with st.form("rs_students_crud_password_form", clear_on_submit=False):
+            rs_password_col_1, rs_password_col_2 = st.columns(2, gap="small")
+            rs_password_col_1.text_input(
+                "Usuario RS / Email",
+                key="rs_students_crud_username",
+            )
+            rs_password_col_2.text_input(
+                "Nueva password RS",
+                key="rs_students_crud_password",
+                type="password",
+            )
+            update_clicked = st.form_submit_button(
+                "Actualizar password RS",
+                use_container_width=True,
+            )
         rs_username = str(
             st.session_state.get("rs_students_crud_username") or ""
         ).strip()
         rs_password = str(
             st.session_state.get("rs_students_crud_password") or ""
         )
-        rs_single_csv_bytes = b""
-        if rs_username or rs_password:
-            rs_single_csv_bytes = _build_richmondstudio_bulk_user_csv_bytes(
-                [
-                    {
-                        "Username": rs_username,
-                        "New password": rs_password,
-                        "Keep in class": "yes",
-                    }
-                ]
-            )
-        action_col_download, action_col_update = st.columns(2, gap="small")
-        action_col_download.download_button(
-            "Descargar CSV exacto",
-            data=rs_single_csv_bytes,
-            file_name="password_rs_single.csv",
-            mime="text/csv",
-            key="rs_students_crud_download_csv_btn",
-            use_container_width=True,
-            disabled=not bool(rs_single_csv_bytes),
-        )
 
-        if action_col_update.button(
-            "Actualizar password RS",
-            key="rs_students_crud_password_btn",
-            use_container_width=True,
-        ):
+        if update_clicked:
             if not rs_token:
                 st.error("Ingresa el bearer token de Richmond Studio.")
             elif not rs_username:
@@ -4084,17 +4066,21 @@ def _render_richmondstudio_students_password_panel(
             elif not rs_password:
                 st.error("Ingresa la nueva password de RS.")
             else:
+                rs_update_rows = [
+                    {
+                        "Username": rs_username,
+                        "New password": rs_password,
+                        "Keep in class": "yes",
+                    }
+                ]
+                rs_sent_csv_bytes = _build_richmondstudio_bulk_user_csv_bytes(
+                    rs_update_rows
+                )
                 try:
                     with st.spinner("Actualizando password RS..."):
                         rs_response_message = _submit_richmondstudio_bulk_user_update(
                             rs_token,
-                            [
-                                {
-                                    "Username": rs_username,
-                                    "New password": rs_password,
-                                    "Keep in class": "yes",
-                                }
-                            ],
+                            rs_update_rows,
                             timeout=max(120, int(timeout)),
                         )
                 except Exception as exc:  # pragma: no cover - UI
@@ -4105,6 +4091,10 @@ def _render_richmondstudio_students_password_panel(
                         ),
                     }
                 else:
+                    st.session_state["rs_students_crud_last_sent_csv_bytes"] = (
+                        rs_sent_csv_bytes
+                    )
+                    st.session_state["rs_students_crud_last_sent_user"] = rs_username
                     st.session_state["rs_students_crud_reset_password"] = True
                     st.session_state["rs_students_crud_notice"] = {
                         "type": "success",
@@ -4114,6 +4104,27 @@ def _render_richmondstudio_students_password_panel(
                         ),
                     }
                 st.rerun()
+
+        rs_last_sent_csv_bytes = bytes(
+            st.session_state.get("rs_students_crud_last_sent_csv_bytes") or b""
+        )
+        rs_last_sent_user = str(
+            st.session_state.get("rs_students_crud_last_sent_user") or ""
+        ).strip()
+        if rs_last_sent_csv_bytes:
+            st.caption(
+                "CSV enviado en la ultima actualizacion para: {user}".format(
+                    user=rs_last_sent_user or "-"
+                )
+            )
+            st.download_button(
+                "Descargar CSV enviado",
+                data=rs_last_sent_csv_bytes,
+                file_name="password_rs_single.csv",
+                mime="text/csv",
+                key="rs_students_crud_download_csv_btn",
+                use_container_width=True,
+            )
 
 
 def _build_richmondstudio_bulk_user_csv_bytes(

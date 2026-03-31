@@ -10043,11 +10043,6 @@ def _clear_profesores_edit_state() -> None:
         "profesores_edit_errors",
         "profesores_edit_summary",
         "profesores_edit_colegio_id",
-        "profesores_edit_assignment_rows",
-        "profesores_edit_assignment_clases",
-        "profesores_edit_assignment_summary",
-        "profesores_edit_assignment_errors",
-        "profesores_edit_assignment_colegio_id",
         "profesores_edit_selected_persona_id",
         "profesores_edit_selected_nivel_id",
         "profesores_edit_loaded_persona_id",
@@ -10063,10 +10058,6 @@ def _clear_profesores_edit_state() -> None:
         "profesores_edit_login",
         "profesores_edit_original_login",
         "profesores_edit_password",
-        "profesores_edit_selected_class_ids",
-        "profesores_edit_selected_class_ids_signature",
-        "profesores_edit_estado_activo",
-        "profesores_edit_estado_activo_signature",
         "profesores_edit_fetch_error",
         "profesores_edit_notice",
         "profesores_edit_pending_detail_refresh",
@@ -10100,20 +10091,6 @@ def _store_profesor_edit_detail_state(
     st.session_state["profesores_edit_original_login"] = login_txt
     st.session_state["profesores_edit_password"] = ""
     st.session_state["profesores_edit_fetch_error"] = ""
-
-
-def _store_profesores_edit_assignment_state(
-    profesores_rows: List[Dict[str, object]],
-    clases_rows: List[Dict[str, object]],
-    summary: Dict[str, int],
-    errors: List[Dict[str, object]],
-    colegio_id: int,
-) -> None:
-    st.session_state["profesores_edit_assignment_rows"] = profesores_rows
-    st.session_state["profesores_edit_assignment_clases"] = clases_rows
-    st.session_state["profesores_edit_assignment_summary"] = summary
-    st.session_state["profesores_edit_assignment_errors"] = errors
-    st.session_state["profesores_edit_assignment_colegio_id"] = int(colegio_id)
 
 
 def _fetch_profesor_edit_detail_web(
@@ -10445,6 +10422,116 @@ def _asignar_alumno_a_clase_web(
         message = str(body.get("message") or "Respuesta invalida").strip()
         return False, message
     return True, ""
+
+
+def _assign_alumno_to_matching_classes_for_context(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+    alumno_id: int,
+    nivel_id: int,
+    grado_id: int,
+    grupo_id: int,
+    seccion: str,
+    on_status: Optional[Callable[[str], None]] = None,
+    on_progress: Optional[Callable[[int, int, str], None]] = None,
+) -> Dict[str, object]:
+    def _status(message: str) -> None:
+        if callable(on_status):
+            try:
+                on_status(str(message or ""))
+            except Exception:
+                pass
+
+    def _progress(current: int, total: int, message: str) -> None:
+        if callable(on_progress):
+            try:
+                on_progress(int(current), int(total), str(message or ""))
+            except Exception:
+                pass
+
+    _status("Listando clases del colegio...")
+    _progress(0, 1, "Listando clases del colegio...")
+    clases_rows, _grouped = listar_y_mapear_clases(
+        token=token,
+        colegio_id=int(colegio_id),
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        timeout=int(timeout),
+        ordered=True,
+        on_log=None,
+    )
+    clases_unicas: List[Dict[str, object]] = []
+    seen_class_ids: Set[int] = set()
+    for row in clases_rows:
+        clase_id = _safe_int(row.get("clase_id"))
+        if clase_id is None or int(clase_id) in seen_class_ids:
+            continue
+        seen_class_ids.add(int(clase_id))
+        clases_unicas.append(
+            {
+                "clase_id": int(clase_id),
+                "clase": str(row.get("clase") or "").strip(),
+                "nivel_id": _safe_int(row.get("nivel_id")),
+                "grado_id": _safe_int(row.get("grado_id")),
+                "grupo_id": _safe_int(row.get("grupo_id")),
+                "seccion": str(row.get("seccion") or "").strip(),
+            }
+        )
+
+    target_classes = _build_clases_destino_for_plan(
+        clases_rows=clases_unicas,
+        nivel_id=int(nivel_id),
+        grado_id=int(grado_id),
+        grupo_destino_id=int(grupo_id),
+        seccion_destino=str(seccion or ""),
+    )
+    target_total = len(target_classes)
+    _status(f"Clases destino detectadas: {target_total}.")
+    if target_total == 0:
+        _progress(1, 1, "Sin clases destino para el grado/seccion.")
+        return {
+            "target_classes_total": 0,
+            "assigned_ok": 0,
+            "assigned_error": 0,
+            "assigned_errors": [],
+        }
+
+    assign_ok = 0
+    assign_err = 0
+    assign_errors: List[str] = []
+    for idx, clase in enumerate(target_classes, start=1):
+        clase_id = _safe_int(clase.get("clase_id")) if isinstance(clase, dict) else None
+        if clase_id is None:
+            continue
+        status_message = "Asignando clases {idx}/{total}...".format(
+            idx=idx,
+            total=target_total,
+        )
+        _status(status_message)
+        _progress(idx, target_total, status_message)
+        ok_assign, msg_assign = _asignar_alumno_a_clase_web(
+            token=token,
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            clase_id=int(clase_id),
+            alumno_id=int(alumno_id),
+            timeout=int(timeout),
+        )
+        if ok_assign:
+            assign_ok += 1
+        else:
+            assign_err += 1
+            assign_errors.append(f"clase {int(clase_id)}: {msg_assign}")
+
+    return {
+        "target_classes_total": int(target_total),
+        "assigned_ok": int(assign_ok),
+        "assigned_error": int(assign_err),
+        "assigned_errors": assign_errors,
+    }
 
 
 def _apply_auto_move_changes(
@@ -17065,20 +17152,8 @@ with tab_crud_profesores:
                         st.error(f"Error: {exc}")
                         st.stop()
                     try:
-                        with st.spinner("Cargando docentes y clases del colegio..."):
+                        with st.spinner("Cargando docentes del colegio..."):
                             profesores_edit_rows, profesores_edit_summary, profesores_edit_errors = listar_profesores_filters_data(
-                                token=token,
-                                colegio_id=colegio_id_int,
-                                empresa_id=DEFAULT_EMPRESA_ID,
-                                ciclo_id=int(ciclo_id),
-                                timeout=int(timeout),
-                            )
-                            (
-                                profesores_edit_assignment_rows,
-                                profesores_edit_assignment_clases,
-                                profesores_edit_assignment_summary,
-                                profesores_edit_assignment_errors,
-                            ) = listar_profesores_clases_panel_data(
                                 token=token,
                                 colegio_id=colegio_id_int,
                                 empresa_id=DEFAULT_EMPRESA_ID,
@@ -17105,10 +17180,6 @@ with tab_crud_profesores:
                         "profesores_edit_login",
                         "profesores_edit_original_login",
                         "profesores_edit_password",
-                        "profesores_edit_selected_class_ids",
-                        "profesores_edit_selected_class_ids_signature",
-                        "profesores_edit_estado_activo",
-                        "profesores_edit_estado_activo_signature",
                         "profesores_edit_pending_detail_refresh",
                     ):
                         st.session_state.pop(state_key, None)
@@ -17116,28 +17187,12 @@ with tab_crud_profesores:
                     st.session_state["profesores_edit_summary"] = profesores_edit_summary
                     st.session_state["profesores_edit_errors"] = profesores_edit_errors
                     st.session_state["profesores_edit_colegio_id"] = int(colegio_id_int)
-                    _store_profesores_edit_assignment_state(
-                        profesores_rows=profesores_edit_assignment_rows,
-                        clases_rows=profesores_edit_assignment_clases,
-                        summary=profesores_edit_assignment_summary,
-                        errors=profesores_edit_assignment_errors,
-                        colegio_id=int(colegio_id_int),
-                    )
 
                 profesores_edit_rows = st.session_state.get("profesores_edit_rows") or []
                 profesores_edit_summary = (
                     st.session_state.get("profesores_edit_summary") or {}
                 )
                 profesores_edit_errors = st.session_state.get("profesores_edit_errors") or []
-                profesores_edit_assignment_rows = (
-                    st.session_state.get("profesores_edit_assignment_rows") or []
-                )
-                profesores_edit_assignment_clases = (
-                    st.session_state.get("profesores_edit_assignment_clases") or []
-                )
-                profesores_edit_assignment_errors = (
-                    st.session_state.get("profesores_edit_assignment_errors") or []
-                )
                 profesores_edit_pending_refresh = st.session_state.pop(
                     "profesores_edit_pending_detail_refresh", None
                 )
@@ -17170,15 +17225,6 @@ with tab_crud_profesores:
                 if profesores_edit_errors:
                     st.error("Errores al listar docentes:")
                     _show_dataframe(profesores_edit_errors, use_container_width=True)
-                if profesores_edit_assignment_errors:
-                    with st.expander(
-                        f"Errores de carga de clases/staff ({len(profesores_edit_assignment_errors)})",
-                        expanded=False,
-                    ):
-                        _show_dataframe(
-                            profesores_edit_assignment_errors,
-                            use_container_width=True,
-                        )
 
                 if profesores_edit_rows:
                     st.caption(
@@ -17387,93 +17433,25 @@ with tab_crud_profesores:
                                             f"Niveles del docente: {niveles_docente_txt or '-'}"
                                         )
 
-                                        profesores_edit_assignment_by_id = {
-                                            int(row["persona_id"]): row
-                                            for row in profesores_edit_assignment_rows
-                                            if _safe_int(row.get("persona_id")) is not None
-                                        }
-                                        profesores_edit_classes_by_id = {
-                                            int(row["clase_id"]): row
-                                            for row in profesores_edit_assignment_clases
-                                            if _safe_int(row.get("clase_id")) is not None
-                                        }
-                                        profesor_edit_assignment_row = (
-                                            profesores_edit_assignment_by_id.get(
-                                                int(selected_profesor_persona_id), {}
-                                            )
-                                            if profesores_edit_assignment_by_id
-                                            else {}
+                                        current_profesor_activo = _profesor_edit_estado_activo(
+                                            profesor_edit_row.get("estado")
                                         )
-                                        current_profesor_class_ids = sorted(
+                                        current_profesor_level_ids_set = {
+                                            int(item)
+                                            for item in profesor_edit_level_ids
+                                            if _safe_int(item) is not None
+                                        }
+                                        status_target_level_ids = sorted(
                                             {
                                                 int(item)
                                                 for item in (
-                                                    profesor_edit_assignment_row.get(
-                                                        "clase_ids_actuales", []
-                                                    )
-                                                    or []
+                                                    list(current_profesor_level_ids_set)
+                                                    + [int(selected_profesor_level_id)]
                                                 )
                                                 if _safe_int(item) is not None
-                                                and int(item) in profesores_edit_classes_by_id
                                             }
                                         )
-                                        current_profesor_class_level_ids = sorted(
-                                            {
-                                                int(_safe_int(
-                                                    profesores_edit_classes_by_id.get(
-                                                        int(clase_id), {}
-                                                    ).get("nivel_id")
-                                                ))
-                                                for clase_id in current_profesor_class_ids
-                                                if _safe_int(
-                                                    profesores_edit_classes_by_id.get(
-                                                        int(clase_id), {}
-                                                    ).get("nivel_id")
-                                                )
-                                                is not None
-                                            }
-                                        )
-                                        current_profesor_activo = _profesor_edit_estado_activo(
-                                            profesor_edit_row.get("estado")
-                                            or profesor_edit_assignment_row.get("estado")
-                                        )
-                                        current_estado_signature = (
-                                            int(selected_profesor_persona_id),
-                                            bool(current_profesor_activo),
-                                        )
-                                        if (
-                                            st.session_state.get(
-                                                "profesores_edit_estado_activo_signature"
-                                            )
-                                            != current_estado_signature
-                                        ):
-                                            st.session_state[
-                                                "profesores_edit_estado_activo"
-                                            ] = bool(current_profesor_activo)
-                                            st.session_state[
-                                                "profesores_edit_estado_activo_signature"
-                                            ] = current_estado_signature
-
-                                        current_class_signature = (
-                                            int(selected_profesor_persona_id),
-                                            tuple(current_profesor_class_ids),
-                                        )
-                                        if (
-                                            st.session_state.get(
-                                                "profesores_edit_selected_class_ids_signature"
-                                            )
-                                            != current_class_signature
-                                        ):
-                                            st.session_state[
-                                                "profesores_edit_selected_class_ids"
-                                            ] = list(current_profesor_class_ids)
-                                            st.session_state[
-                                                "profesores_edit_selected_class_ids_signature"
-                                            ] = current_class_signature
-
-                                        status_col, clases_col = st.columns(
-                                            [1.1, 2.9], gap="large"
-                                        )
+                                        status_col = st.container()
                                         with status_col:
                                             st.markdown(
                                                 _profesor_edit_estado_badge_html(
@@ -17481,82 +17459,171 @@ with tab_crud_profesores:
                                                 ),
                                                 unsafe_allow_html=True,
                                             )
-                                            desired_profesor_activo = st.checkbox(
-                                                "Docente activo",
-                                                key="profesores_edit_estado_activo",
+                                            toggle_profesor_estado = st.button(
+                                                "Activo"
+                                                if current_profesor_activo
+                                                else "Inactivo",
+                                                key=f"profesores_edit_estado_toggle_{int(selected_profesor_persona_id)}",
+                                                use_container_width=True,
                                             )
                                             st.caption(
-                                                "Verde = activo | Rojo = inactivo"
+                                                "Haz clic en el estado para cambiarlo."
                                             )
-
-                                        selected_edit_class_ids: List[int] = list(
-                                            current_profesor_class_ids
-                                        )
-                                        target_manual_nivel_ids: List[int] = []
-                                        with clases_col:
-                                            st.markdown("**Clases del docente**")
-                                            if profesores_edit_classes_by_id:
-                                                selected_edit_class_ids = [
-                                                    int(item)
-                                                    for item in (
-                                                        st.multiselect(
-                                                            "Selecciona las clases",
-                                                            options=sorted(
-                                                                profesores_edit_classes_by_id.keys()
-                                                            ),
-                                                            format_func=lambda clase_id: str(
-                                                                profesores_edit_classes_by_id.get(
-                                                                    int(clase_id), {}
-                                                                ).get("clase_label")
-                                                                or f"Clase {clase_id}"
-                                                            ),
-                                                            key="profesores_edit_selected_class_ids",
-                                                        )
-                                                        or []
+                                            if toggle_profesor_estado:
+                                                token = _get_shared_token()
+                                                if not token:
+                                                    st.error(
+                                                        "Falta el token. Configura el token global o PEGASUS_TOKEN."
                                                     )
-                                                    if _safe_int(item) is not None
-                                                    and int(item)
-                                                    in profesores_edit_classes_by_id
-                                                ]
-                                                target_manual_nivel_ids = sorted(
-                                                    {
-                                                        int(
-                                                            _safe_int(
-                                                                profesores_edit_classes_by_id.get(
-                                                                    int(clase_id), {}
-                                                                ).get("nivel_id")
+                                                    st.stop()
+                                                try:
+                                                    colegio_id_int = _parse_colegio_id(
+                                                        colegio_id_raw
+                                                    )
+                                                except ValueError as exc:
+                                                    st.error(f"Error: {exc}")
+                                                    st.stop()
+
+                                                target_profesor_activo = not bool(
+                                                    current_profesor_activo
+                                                )
+                                                with st.spinner(
+                                                    "Actualizando estado del docente..."
+                                                ):
+                                                    estado_summary, estado_errors = _update_profesor_edit_estado_web(
+                                                        token=token,
+                                                        colegio_id=int(
+                                                            colegio_id_int
+                                                        ),
+                                                        empresa_id=DEFAULT_EMPRESA_ID,
+                                                        ciclo_id=int(ciclo_id),
+                                                        persona_id=int(
+                                                            selected_profesor_persona_id
+                                                        ),
+                                                        nivel_ids=status_target_level_ids,
+                                                        activo=bool(
+                                                            target_profesor_activo
+                                                        ),
+                                                        timeout=int(timeout),
+                                                    )
+
+                                                    refresh_warning = ""
+                                                    try:
+                                                        profesores_edit_rows_refresh, profesores_edit_summary_refresh, profesores_edit_errors_refresh = listar_profesores_filters_data(
+                                                            token=token,
+                                                            colegio_id=int(
+                                                                colegio_id_int
+                                                            ),
+                                                            empresa_id=DEFAULT_EMPRESA_ID,
+                                                            ciclo_id=int(ciclo_id),
+                                                            timeout=int(timeout),
+                                                        )
+                                                    except Exception as exc:  # pragma: no cover - UI
+                                                        refresh_warning = (
+                                                            f" No se pudo refrescar la lista: {exc}"
+                                                        )
+                                                    else:
+                                                        st.session_state[
+                                                            "profesores_edit_rows"
+                                                        ] = profesores_edit_rows_refresh
+                                                        st.session_state[
+                                                            "profesores_edit_summary"
+                                                        ] = profesores_edit_summary_refresh
+                                                        st.session_state[
+                                                            "profesores_edit_errors"
+                                                        ] = profesores_edit_errors_refresh
+                                                        st.session_state[
+                                                            "profesores_edit_colegio_id"
+                                                        ] = int(colegio_id_int)
+                                                        refreshed_detail, refreshed_detail_msg = _fetch_profesor_edit_detail_web(
+                                                            token=token,
+                                                            colegio_id=int(
+                                                                colegio_id_int
+                                                            ),
+                                                            empresa_id=DEFAULT_EMPRESA_ID,
+                                                            ciclo_id=int(ciclo_id),
+                                                            nivel_id=int(
+                                                                selected_profesor_level_id
+                                                            ),
+                                                            persona_id=int(
+                                                                selected_profesor_persona_id
+                                                            ),
+                                                            timeout=int(timeout),
+                                                        )
+                                                        if refreshed_detail is None:
+                                                            st.session_state[
+                                                                "profesores_edit_pending_detail_refresh"
+                                                            ] = {
+                                                                "detail": None,
+                                                                "persona_id": int(
+                                                                    selected_profesor_persona_id
+                                                                ),
+                                                                "nivel_id": int(
+                                                                    selected_profesor_level_id
+                                                                ),
+                                                                "fetch_error": str(
+                                                                    refreshed_detail_msg
+                                                                    or "No se pudo refrescar el detalle."
+                                                                ),
+                                                            }
+                                                        else:
+                                                            st.session_state[
+                                                                "profesores_edit_pending_detail_refresh"
+                                                            ] = {
+                                                                "detail": refreshed_detail,
+                                                                "persona_id": int(
+                                                                    selected_profesor_persona_id
+                                                                ),
+                                                                "nivel_id": int(
+                                                                    selected_profesor_level_id
+                                                                ),
+                                                                "fetch_error": "",
+                                                            }
+
+                                                estado_notice_type = (
+                                                    "warning"
+                                                    if int(
+                                                        estado_summary.get(
+                                                            "errores_api", 0
+                                                        )
+                                                    )
+                                                    > 0
+                                                    else "success"
+                                                )
+                                                estado_notice_message = (
+                                                    "Estado cambiado a {estado} en {count} nivel(es).".format(
+                                                        estado=(
+                                                            "activo"
+                                                            if bool(
+                                                                target_profesor_activo
                                                             )
-                                                        )
-                                                        for clase_id in selected_edit_class_ids
-                                                        if _safe_int(
-                                                            profesores_edit_classes_by_id.get(
-                                                                int(clase_id), {}
-                                                            ).get("nivel_id")
-                                                        )
-                                                        is not None
-                                                    }
-                                                )
-                                                niveles_sync_txt = ", ".join(
-                                                    _profesor_edit_level_label(nivel_id)
-                                                    for nivel_id in target_manual_nivel_ids
-                                                )
-                                                st.caption(
-                                                    "Clases actuales: {actuales} | Seleccionadas: {seleccionadas}".format(
-                                                        actuales=len(current_profesor_class_ids),
-                                                        seleccionadas=len(
-                                                            selected_edit_class_ids
+                                                            else "inactivo"
+                                                        ),
+                                                        count=int(
+                                                            estado_summary.get(
+                                                                "niveles_actualizados",
+                                                                0,
+                                                            )
                                                         ),
                                                     )
                                                 )
-                                                st.caption(
-                                                    "Al guardar, se sincronizan niveles: {niveles}".format(
-                                                        niveles=niveles_sync_txt or "-"
+                                                if int(
+                                                    estado_summary.get(
+                                                        "errores_api", 0
                                                     )
-                                                )
-                                            else:
-                                                st.caption(
-                                                    "No se pudo cargar el catalogo de clases para este colegio."
-                                                )
+                                                ) > 0:
+                                                    estado_notice_message = (
+                                                        "No se pudo actualizar el estado en todos los niveles."
+                                                    )
+                                                st.session_state[
+                                                    "profesores_edit_notice"
+                                                ] = {
+                                                    "type": estado_notice_type,
+                                                    "message": (
+                                                        f"{estado_notice_message}{f' {refresh_warning}' if refresh_warning else ''}"
+                                                    ).strip(),
+                                                }
+                                                st.rerun()
 
                                         profesor_edit_group_rows = _build_profesor_edit_group_rows(
                                             current_profesor_detail,
@@ -17829,188 +17896,6 @@ with tab_crud_profesores:
                                                                 "Docente actualizado correctamente."
                                                             ]
 
-                                                try:
-                                                    manual_summary, _manual_warnings, _manual_results = asignar_clases_profesor_manual(
-                                                        token=token,
-                                                        persona_id=int(
-                                                            selected_profesor_persona_id
-                                                        ),
-                                                        clase_ids=selected_edit_class_ids,
-                                                        current_clase_ids=current_profesor_class_ids,
-                                                        nivel_ids=target_manual_nivel_ids,
-                                                        colegio_id=int(colegio_id_int),
-                                                        empresa_id=DEFAULT_EMPRESA_ID,
-                                                        ciclo_id=int(ciclo_id),
-                                                        timeout=int(timeout),
-                                                        dry_run=False,
-                                                    )
-                                                except Exception as exc:  # pragma: no cover - UI
-                                                    login_notice_type = "warning"
-                                                    notice_messages.append(
-                                                        "No se pudo sincronizar clases/niveles: {msg}".format(
-                                                            msg=str(exc).strip()
-                                                            or "sin detalle"
-                                                        )
-                                                    )
-                                                else:
-                                                    if int(
-                                                        manual_summary.get("errores_api", 0)
-                                                    ) > 0:
-                                                        login_notice_type = "warning"
-                                                        notice_messages.append(
-                                                            "Clases/niveles con errores parciales."
-                                                        )
-                                                    else:
-                                                        class_change_parts: List[str] = []
-                                                        if int(
-                                                            manual_summary.get(
-                                                                "asignadas", 0
-                                                            )
-                                                        ) > 0 or int(
-                                                            manual_summary.get(
-                                                                "desasignadas", 0
-                                                            )
-                                                        ) > 0:
-                                                            class_change_parts.append(
-                                                                "Clases +{altas} / -{bajas}".format(
-                                                                    altas=int(
-                                                                        manual_summary.get(
-                                                                            "asignadas",
-                                                                            0,
-                                                                        )
-                                                                    ),
-                                                                    bajas=int(
-                                                                        manual_summary.get(
-                                                                            "desasignadas",
-                                                                            0,
-                                                                        )
-                                                                    ),
-                                                                )
-                                                            )
-                                                        if int(
-                                                            manual_summary.get(
-                                                                "niveles_actualizados",
-                                                                0,
-                                                            )
-                                                        ) > 0:
-                                                            class_change_parts.append(
-                                                                "Niveles sincronizados: {count}".format(
-                                                                    count=int(
-                                                                        manual_summary.get(
-                                                                            "niveles_actualizados",
-                                                                            0,
-                                                                        )
-                                                                    )
-                                                                )
-                                                            )
-                                                        if class_change_parts:
-                                                            notice_messages.append(
-                                                                " | ".join(
-                                                                    class_change_parts
-                                                                )
-                                                            )
-
-                                                current_profesor_level_ids_set = {
-                                                    int(item)
-                                                    for item in profesor_edit_level_ids
-                                                    if _safe_int(item) is not None
-                                                }
-                                                status_target_level_ids = sorted(
-                                                    {
-                                                        int(item)
-                                                        for item in (
-                                                            list(
-                                                                current_profesor_level_ids_set
-                                                            )
-                                                            + list(
-                                                                current_profesor_class_level_ids
-                                                            )
-                                                            + list(
-                                                                target_manual_nivel_ids
-                                                            )
-                                                            + [
-                                                                int(
-                                                                    selected_profesor_level_id
-                                                                )
-                                                            ]
-                                                        )
-                                                        if _safe_int(item)
-                                                        is not None
-                                                    }
-                                                )
-                                                estado_sync_level_ids: List[int] = []
-                                                if bool(desired_profesor_activo):
-                                                    missing_active_level_ids = sorted(
-                                                        set(status_target_level_ids)
-                                                        - current_profesor_level_ids_set
-                                                    )
-                                                    if (
-                                                        bool(desired_profesor_activo)
-                                                        != bool(
-                                                            current_profesor_activo
-                                                        )
-                                                    ):
-                                                        estado_sync_level_ids = (
-                                                            status_target_level_ids
-                                                        )
-                                                    elif missing_active_level_ids:
-                                                        estado_sync_level_ids = (
-                                                            missing_active_level_ids
-                                                        )
-                                                elif bool(desired_profesor_activo) != bool(
-                                                    current_profesor_activo
-                                                ):
-                                                    estado_sync_level_ids = (
-                                                        status_target_level_ids
-                                                    )
-
-                                                if estado_sync_level_ids:
-                                                    estado_summary, estado_errors = _update_profesor_edit_estado_web(
-                                                        token=token,
-                                                        colegio_id=int(colegio_id_int),
-                                                        empresa_id=DEFAULT_EMPRESA_ID,
-                                                        ciclo_id=int(ciclo_id),
-                                                        persona_id=int(
-                                                            selected_profesor_persona_id
-                                                        ),
-                                                        nivel_ids=estado_sync_level_ids,
-                                                        activo=bool(
-                                                            desired_profesor_activo
-                                                        ),
-                                                        timeout=int(timeout),
-                                                    )
-                                                    if int(
-                                                        estado_summary.get(
-                                                            "errores_api", 0
-                                                        )
-                                                    ) > 0:
-                                                        login_notice_type = "warning"
-                                                        notice_messages.append(
-                                                            "No se pudo actualizar el estado en todos los niveles."
-                                                        )
-                                                    elif int(
-                                                        estado_summary.get(
-                                                            "niveles_actualizados", 0
-                                                        )
-                                                    ) > 0:
-                                                        notice_messages.append(
-                                                            "Estado {estado} en {count} nivel(es).".format(
-                                                                estado=(
-                                                                    "activo"
-                                                                    if bool(
-                                                                        desired_profesor_activo
-                                                                    )
-                                                                    else "inactivo"
-                                                                ),
-                                                                count=int(
-                                                                    estado_summary.get(
-                                                                        "niveles_actualizados",
-                                                                        0,
-                                                                    )
-                                                                ),
-                                                            )
-                                                        )
-
                                             refresh_warning = ""
                                             try:
                                                 profesores_edit_rows_refresh, profesores_edit_summary_refresh, profesores_edit_errors_refresh = listar_profesores_filters_data(
@@ -18037,33 +17922,6 @@ with tab_crud_profesores:
                                                 st.session_state[
                                                     "profesores_edit_colegio_id"
                                                 ] = int(colegio_id_int)
-                                                try:
-                                                    (
-                                                        profesores_edit_assignment_rows_refresh,
-                                                        profesores_edit_assignment_clases_refresh,
-                                                        profesores_edit_assignment_summary_refresh,
-                                                        profesores_edit_assignment_errors_refresh,
-                                                    ) = listar_profesores_clases_panel_data(
-                                                        token=token,
-                                                        colegio_id=int(
-                                                            colegio_id_int
-                                                        ),
-                                                        empresa_id=DEFAULT_EMPRESA_ID,
-                                                        ciclo_id=int(ciclo_id),
-                                                        timeout=int(timeout),
-                                                    )
-                                                except Exception as exc:  # pragma: no cover - UI
-                                                    refresh_warning = (
-                                                        f"{refresh_warning} No se pudo refrescar clases/staff: {exc}"
-                                                    ).strip()
-                                                else:
-                                                    _store_profesores_edit_assignment_state(
-                                                        profesores_rows=profesores_edit_assignment_rows_refresh,
-                                                        clases_rows=profesores_edit_assignment_clases_refresh,
-                                                        summary=profesores_edit_assignment_summary_refresh,
-                                                        errors=profesores_edit_assignment_errors_refresh,
-                                                        colegio_id=int(colegio_id_int),
-                                                    )
                                                 refreshed_detail, refreshed_detail_msg = _fetch_profesor_edit_detail_web(
                                                     token=token,
                                                     colegio_id=int(colegio_id_int),
@@ -18484,193 +18342,381 @@ with tab_crud_alumnos:
                 timeout=int(timeout),
             )
         if alumnos_crud_view == "otros":
+            current_otros_colegio_id = _safe_int(colegio_id_raw)
+            cached_template_colegio_id = _safe_int(
+                st.session_state.get("alumnos_plantilla_edicion_colegio_id")
+            )
+            if (
+                current_otros_colegio_id is not None
+                and cached_template_colegio_id is not None
+                and current_otros_colegio_id != cached_template_colegio_id
+            ):
+                for state_key in (
+                    "alumnos_plantilla_edicion_bytes",
+                    "alumnos_plantilla_edicion_name",
+                    "alumnos_plantilla_edicion_summary",
+                    "alumnos_plantilla_edicion_colegio_id",
+                ):
+                    st.session_state.pop(state_key, None)
+
+            cached_censo_colegio_id = _safe_int(
+                st.session_state.get("alumnos_censo_activos_colegio_id")
+            )
+            if (
+                current_otros_colegio_id is not None
+                and cached_censo_colegio_id is not None
+                and current_otros_colegio_id != cached_censo_colegio_id
+            ):
+                for state_key in (
+                    "alumnos_censo_activos_rows",
+                    "alumnos_censo_activos_export_rows",
+                    "alumnos_censo_activos_errors",
+                    "alumnos_censo_activos_colegio_id",
+                ):
+                    st.session_state.pop(state_key, None)
+
+            plantilla_bytes_cached = (
+                st.session_state.get("alumnos_plantilla_edicion_bytes") or b""
+            )
+            plantilla_file_name_cached = str(
+                st.session_state.get("alumnos_plantilla_edicion_name") or ""
+            ).strip()
+            plantilla_summary_cached = (
+                st.session_state.get("alumnos_plantilla_edicion_summary") or {}
+            )
+            censo_rows_cached = st.session_state.get("alumnos_censo_activos_rows") or []
+            censo_export_rows_cached = (
+                st.session_state.get("alumnos_censo_activos_export_rows") or []
+            )
+            censo_errors_cached = (
+                st.session_state.get("alumnos_censo_activos_errors") or []
+            )
+            censo_display_rows = _normalize_censo_activos_export_rows(
+                censo_export_rows_cached or censo_rows_cached
+            )
+            censo_colegio_id = _safe_int(
+                st.session_state.get("alumnos_censo_activos_colegio_id")
+            )
+            colegio_label_txt = str(
+                st.session_state.get("shared_colegio_label") or ""
+            ).strip()
+
             with st.container(border=True):
                 st.markdown("**1) Otros**")
-                st.caption("Agrupa la descarga de plantilla y el censo de alumnos activos.")
+                head_col_text, head_col_rows, head_col_errors = st.columns(
+                    [2.8, 1, 1], gap="small"
+                )
+                with head_col_text:
+                    st.caption(
+                        "Descarga la plantilla operativa del colegio actual y consulta el censo de alumnos activos desde un solo panel."
+                    )
+                    if colegio_label_txt:
+                        st.caption(f"Colegio actual: {colegio_label_txt}")
+                head_col_rows.metric("Activos cargados", len(censo_display_rows))
+                head_col_errors.metric("Errores", len(censo_errors_cached))
 
-                col_plantilla, col_censo = st.columns(2, gap="large")
-                with col_plantilla:
-                    st.markdown("**Plantilla de alumnos registrados**")
-                    st.caption("Descarga la plantilla de edicion masiva.")
+                card_plantilla, card_censo = st.columns(2, gap="large")
 
-                    if st.button("Descargar plantilla", type="primary", key="alumnos_descargar"):
-                        token = _get_shared_token()
-                        if not token:
-                            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-                            st.stop()
-                        try:
-                            colegio_id_int = _parse_colegio_id(colegio_id_raw)
-                        except ValueError as exc:
-                            st.error(f"Error: {exc}")
-                            st.stop()
-                        try:
-                            with st.spinner("Descargando plantilla..."):
-                                output_bytes, summary = descargar_plantilla_edicion_masiva(
-                                    token=token,
-                                    colegio_id=colegio_id_int,
-                                    empresa_id=int(empresa_id),
-                                    ciclo_id=int(ciclo_id),
-                                    timeout=int(timeout),
-                                )
-                        except Exception as exc:  # pragma: no cover - UI
-                            st.error(f"Error: {exc}")
-                            st.stop()
-
-                        file_name = f"plantilla_edicion_alumnos_{colegio_id_int}.xlsx"
-                        st.success(f"Listo. Alumnos: {summary['alumnos_total']}.")
-                        st.download_button(
-                            label="Descargar plantilla",
-                            data=output_bytes,
-                            file_name=file_name,
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                with card_plantilla:
+                    with st.container(border=True):
+                        st.markdown("**Plantilla de alumnos registrados**")
+                        st.caption(
+                            "Prepara la plantilla de edicion masiva del colegio seleccionado."
+                        )
+                        st.caption(
+                            "Usala como base para correcciones, validaciones y actualizaciones operativas."
                         )
 
-                with col_censo:
-                    st.markdown("**Censo de alumnos activos**")
-                    st.caption("Consulta todas las secciones del colegio y muestra solo alumnos activos.")
-                    col_censo_run, col_censo_clear = st.columns([2, 1], gap="small")
-                    run_censo_activos = col_censo_run.button(
-                        "Cargar censo",
-                        type="primary",
-                        key="alumnos_censo_activos_load_btn",
-                        use_container_width=True,
-                    )
-                    clear_censo_activos = col_censo_clear.button(
-                        "Limpiar",
-                        key="alumnos_censo_activos_clear_btn",
-                        use_container_width=True,
-                    )
-
-                    if clear_censo_activos:
-                        for state_key in (
-                            "alumnos_censo_activos_rows",
-                            "alumnos_censo_activos_export_rows",
-                            "alumnos_censo_activos_errors",
-                            "alumnos_censo_activos_colegio_id",
+                        if st.button(
+                            "Preparar plantilla",
+                            type="primary",
+                            key="alumnos_descargar",
+                            use_container_width=True,
                         ):
-                            st.session_state.pop(state_key, None)
-                        st.rerun()
+                            token = _get_shared_token()
+                            if not token:
+                                st.error(
+                                    "Falta el token. Configura el token global o PEGASUS_TOKEN."
+                                )
+                                st.stop()
+                            try:
+                                colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                            except ValueError as exc:
+                                st.error(f"Error: {exc}")
+                                st.stop()
+                            try:
+                                with st.spinner("Descargando plantilla..."):
+                                    output_bytes, summary = (
+                                        descargar_plantilla_edicion_masiva(
+                                            token=token,
+                                            colegio_id=colegio_id_int,
+                                            empresa_id=int(empresa_id),
+                                            ciclo_id=int(ciclo_id),
+                                            timeout=int(timeout),
+                                        )
+                                    )
+                            except Exception as exc:  # pragma: no cover - UI
+                                st.error(f"Error: {exc}")
+                                st.stop()
 
-                    if run_censo_activos:
-                        token = _get_shared_token()
-                        if not token:
-                            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-                            st.stop()
-                        try:
-                            colegio_id_int = _parse_colegio_id(colegio_id_raw)
-                        except ValueError as exc:
-                            st.error(f"Error: {exc}")
-                            st.stop()
+                            file_name = (
+                                f"plantilla_edicion_alumnos_{colegio_id_int}.xlsx"
+                            )
+                            st.session_state["alumnos_plantilla_edicion_bytes"] = (
+                                output_bytes
+                            )
+                            st.session_state["alumnos_plantilla_edicion_name"] = (
+                                file_name
+                            )
+                            st.session_state["alumnos_plantilla_edicion_summary"] = (
+                                dict(summary)
+                            )
+                            st.session_state[
+                                "alumnos_plantilla_edicion_colegio_id"
+                            ] = int(colegio_id_int)
+                            plantilla_bytes_cached = output_bytes
+                            plantilla_file_name_cached = file_name
+                            plantilla_summary_cached = dict(summary)
+                            st.success(
+                                "Plantilla lista. Alumnos: {total}.".format(
+                                    total=int(summary.get("alumnos_total", 0))
+                                )
+                            )
 
-                        niveles = _fetch_niveles_grados_grupos_censo(
-                            token=token,
-                            colegio_id=int(colegio_id_int),
-                            empresa_id=int(empresa_id),
-                            ciclo_id=int(ciclo_id),
-                            timeout=int(timeout),
+                        if plantilla_bytes_cached and plantilla_file_name_cached:
+                            st.caption(
+                                "Ultima plantilla preparada: {total} alumno(s).".format(
+                                    total=int(
+                                        plantilla_summary_cached.get(
+                                            "alumnos_total", 0
+                                        )
+                                    )
+                                )
+                            )
+                            st.download_button(
+                                label="Descargar plantilla",
+                                data=plantilla_bytes_cached,
+                                file_name=plantilla_file_name_cached,
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                key="alumnos_plantilla_edicion_download",
+                                use_container_width=True,
+                            )
+
+                with card_censo:
+                    with st.container(border=True):
+                        st.markdown("**Censo de alumnos activos**")
+                        st.caption(
+                            "Recorre todas las secciones del colegio y conserva solo alumnos activos."
                         )
-                        contexts = _build_contexts_for_nivel_grado(niveles=niveles)
-                        rows_activos: List[Dict[str, object]] = []
-                        export_rows_activos: List[Dict[str, object]] = []
-                        errors_activos: List[str] = []
-                        try:
-                            login_lookup_by_alumno, login_lookup_by_persona = _fetch_login_password_lookup_censo(
+                        st.caption(
+                            "Incluye login cuando este disponible y deja el resultado listo para exportar."
+                        )
+
+                        col_censo_run, col_censo_clear = st.columns(
+                            [1.8, 1], gap="small"
+                        )
+                        run_censo_activos = col_censo_run.button(
+                            "Actualizar censo",
+                            type="primary",
+                            key="alumnos_censo_activos_load_btn",
+                            use_container_width=True,
+                        )
+                        clear_censo_activos = col_censo_clear.button(
+                            "Limpiar",
+                            key="alumnos_censo_activos_clear_btn",
+                            use_container_width=True,
+                        )
+
+                        if clear_censo_activos:
+                            for state_key in (
+                                "alumnos_censo_activos_rows",
+                                "alumnos_censo_activos_export_rows",
+                                "alumnos_censo_activos_errors",
+                                "alumnos_censo_activos_colegio_id",
+                            ):
+                                st.session_state.pop(state_key, None)
+                            st.rerun()
+
+                        if run_censo_activos:
+                            token = _get_shared_token()
+                            if not token:
+                                st.error(
+                                    "Falta el token. Configura el token global o PEGASUS_TOKEN."
+                                )
+                                st.stop()
+                            try:
+                                colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                            except ValueError as exc:
+                                st.error(f"Error: {exc}")
+                                st.stop()
+
+                            niveles = _fetch_niveles_grados_grupos_censo(
                                 token=token,
                                 colegio_id=int(colegio_id_int),
                                 empresa_id=int(empresa_id),
                                 ciclo_id=int(ciclo_id),
                                 timeout=int(timeout),
                             )
-                        except Exception:
-                            login_lookup_by_alumno = {}
-                            login_lookup_by_persona = {}
-                        for ctx in contexts:
+                            contexts = _build_contexts_for_nivel_grado(niveles=niveles)
+                            rows_activos: List[Dict[str, object]] = []
+                            export_rows_activos: List[Dict[str, object]] = []
+                            errors_activos: List[str] = []
                             try:
-                                alumnos_ctx = _fetch_alumnos_censo(
+                                (
+                                    login_lookup_by_alumno,
+                                    login_lookup_by_persona,
+                                ) = _fetch_login_password_lookup_censo(
                                     token=token,
                                     colegio_id=int(colegio_id_int),
                                     empresa_id=int(empresa_id),
                                     ciclo_id=int(ciclo_id),
-                                    nivel_id=int(ctx.get("nivel_id") or 0),
-                                    grado_id=int(ctx.get("grado_id") or 0),
-                                    grupo_id=int(ctx.get("grupo_id") or 0),
                                     timeout=int(timeout),
                                 )
-                            except Exception as exc:  # pragma: no cover - UI
-                                errors_activos.append(
-                                    "Error en {nivel} | {grado} ({seccion}): {err}".format(
-                                        nivel=str(ctx.get("nivel") or ""),
-                                        grado=str(ctx.get("grado") or ""),
-                                        seccion=str(ctx.get("seccion") or ""),
-                                        err=str(exc),
+                            except Exception:
+                                login_lookup_by_alumno = {}
+                                login_lookup_by_persona = {}
+                            for ctx in contexts:
+                                try:
+                                    alumnos_ctx = _fetch_alumnos_censo(
+                                        token=token,
+                                        colegio_id=int(colegio_id_int),
+                                        empresa_id=int(empresa_id),
+                                        ciclo_id=int(ciclo_id),
+                                        nivel_id=int(ctx.get("nivel_id") or 0),
+                                        grado_id=int(ctx.get("grado_id") or 0),
+                                        grupo_id=int(ctx.get("grupo_id") or 0),
+                                        timeout=int(timeout),
                                     )
-                                )
-                                continue
-                            for item in alumnos_ctx:
-                                if not isinstance(item, dict):
+                                except Exception as exc:  # pragma: no cover - UI
+                                    errors_activos.append(
+                                        "Error en {nivel} | {grado} ({seccion}): {err}".format(
+                                            nivel=str(ctx.get("nivel") or ""),
+                                            grado=str(ctx.get("grado") or ""),
+                                            seccion=str(ctx.get("seccion") or ""),
+                                            err=str(exc),
+                                        )
+                                    )
                                     continue
-                                flat = _flatten_censo_alumno_for_auto_plan(item=item, fallback=ctx)
-                                if not _to_bool(flat.get("activo")):
-                                    continue
-                                login_txt, _password_txt = _resolve_alumno_login_password(
-                                    item,
-                                    login_lookup_by_alumno,
-                                    login_lookup_by_persona,
-                                )
-                                row_activo = {
-                                    "Nivel": flat.get("nivel") or "",
-                                    "Grado": flat.get("grado") or "",
-                                    "Grupo": flat.get("seccion_norm") or flat.get("seccion") or "",
-                                    "Nombre del alumno": flat.get("nombre_completo") or "",
-                                    "DNI": flat.get("id_oficial") or "",
-                                    "Login": login_txt,
-                                    "Password": "",
-                                }
-                                rows_activos.append(dict(row_activo))
-                                export_rows_activos.append(dict(row_activo))
+                                for item in alumnos_ctx:
+                                    if not isinstance(item, dict):
+                                        continue
+                                    flat = _flatten_censo_alumno_for_auto_plan(
+                                        item=item, fallback=ctx
+                                    )
+                                    if not _to_bool(flat.get("activo")):
+                                        continue
+                                    login_txt, _password_txt = (
+                                        _resolve_alumno_login_password(
+                                            item,
+                                            login_lookup_by_alumno,
+                                            login_lookup_by_persona,
+                                        )
+                                    )
+                                    row_activo = {
+                                        "Nivel": flat.get("nivel") or "",
+                                        "Grado": flat.get("grado") or "",
+                                        "Grupo": flat.get("seccion_norm")
+                                        or flat.get("seccion")
+                                        or "",
+                                        "Nombre del alumno": flat.get(
+                                            "nombre_completo"
+                                        )
+                                        or "",
+                                        "DNI": flat.get("id_oficial") or "",
+                                        "Login": login_txt,
+                                        "Password": "",
+                                    }
+                                    rows_activos.append(dict(row_activo))
+                                    export_rows_activos.append(dict(row_activo))
 
-                        rows_activos = _normalize_censo_activos_export_rows(rows_activos)
-                        export_rows_activos = _normalize_censo_activos_export_rows(export_rows_activos)
-                        st.session_state["alumnos_censo_activos_rows"] = rows_activos
-                        st.session_state["alumnos_censo_activos_export_rows"] = export_rows_activos
-                        st.session_state["alumnos_censo_activos_errors"] = errors_activos
-                        st.session_state["alumnos_censo_activos_colegio_id"] = int(colegio_id_int)
-                        st.success(
-                            "Censo cargado. Activos: {total} | Errores de consulta: {errors}".format(
-                                total=len(rows_activos),
-                                errors=len(errors_activos),
+                            rows_activos = _normalize_censo_activos_export_rows(
+                                rows_activos
                             )
-                        )
+                            export_rows_activos = _normalize_censo_activos_export_rows(
+                                export_rows_activos
+                            )
+                            st.session_state["alumnos_censo_activos_rows"] = (
+                                rows_activos
+                            )
+                            st.session_state["alumnos_censo_activos_export_rows"] = (
+                                export_rows_activos
+                            )
+                            st.session_state["alumnos_censo_activos_errors"] = (
+                                errors_activos
+                            )
+                            st.session_state["alumnos_censo_activos_colegio_id"] = int(
+                                colegio_id_int
+                            )
+                            censo_display_rows = export_rows_activos
+                            censo_errors_cached = errors_activos
+                            censo_colegio_id = int(colegio_id_int)
+                            st.success(
+                                "Censo cargado. Activos: {total} | Errores de consulta: {errors}".format(
+                                    total=len(rows_activos),
+                                    errors=len(errors_activos),
+                                )
+                            )
 
-            censo_rows_cached = st.session_state.get("alumnos_censo_activos_rows") or []
-            censo_export_rows_cached = st.session_state.get("alumnos_censo_activos_export_rows") or []
-            censo_errors_cached = st.session_state.get("alumnos_censo_activos_errors") or []
-            censo_display_rows = _normalize_censo_activos_export_rows(
-                censo_export_rows_cached or censo_rows_cached
-            )
+                        if censo_display_rows:
+                            st.caption(
+                                "Ultimo resultado disponible: {total} alumno(s) activo(s).".format(
+                                    total=len(censo_display_rows)
+                                )
+                            )
+                        else:
+                            st.caption(
+                                "Todavia no hay resultados cargados para este colegio."
+                            )
+
             if censo_display_rows:
-                _show_dataframe(censo_display_rows, use_container_width=True)
-                censo_colegio_id = _safe_int(st.session_state.get("alumnos_censo_activos_colegio_id"))
-                file_suffix = str(censo_colegio_id) if censo_colegio_id is not None else "colegio"
-                st.download_button(
-                    label="Descargar censo activos",
-                    data=_export_simple_excel(
-                        censo_display_rows,
-                        sheet_name="activos",
-                    ),
-                    file_name=f"censo_alumnos_activos_{file_suffix}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="alumnos_censo_activos_download",
-                )
+                with st.container(border=True):
+                    result_col_text, result_col_rows, result_col_errors, result_col_download = st.columns(
+                        [2.4, 1, 1, 1.4], gap="small"
+                    )
+                    with result_col_text:
+                        st.markdown("**Resultado del censo**")
+                        st.caption(
+                            "Vista consolidada de alumnos activos lista para revisar o exportar."
+                        )
+                    result_col_rows.metric("Activos", len(censo_display_rows))
+                    result_col_errors.metric("Errores", len(censo_errors_cached))
+                    file_suffix = (
+                        str(censo_colegio_id)
+                        if censo_colegio_id is not None
+                        else "colegio"
+                    )
+                    result_col_download.download_button(
+                        label="Descargar Excel",
+                        data=_export_simple_excel(
+                            censo_display_rows,
+                            sheet_name="activos",
+                        ),
+                        file_name=f"censo_alumnos_activos_{file_suffix}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="alumnos_censo_activos_download",
+                        use_container_width=True,
+                    )
+                    _show_dataframe(censo_display_rows, use_container_width=True)
             else:
-                st.caption("Presiona 'Cargar censo de alumnos activos' para iniciar.")
+                with st.container(border=True):
+                    st.markdown("**Resultado del censo**")
+                    st.caption(
+                        "Usa `Actualizar censo` para consultar todas las secciones del colegio y mostrar solo alumnos activos."
+                    )
 
             if censo_errors_cached:
-                st.warning("Hubo errores al consultar algunas secciones del censo.")
-                st.write("\n".join(f"- {item}" for item in censo_errors_cached[:20]))
-                pending = len(censo_errors_cached) - 20
-                if pending > 0:
-                    st.caption(f"... y {pending} errores mas.")
+                with st.expander(
+                    f"Errores de consulta del censo ({len(censo_errors_cached)})",
+                    expanded=False,
+                ):
+                    st.markdown(
+                        "\n".join(
+                            f"- {item}" for item in censo_errors_cached[:40]
+                        )
+                    )
+                    pending = len(censo_errors_cached) - 40
+                    if pending > 0:
+                        st.caption(f"... y {pending} errores mas.")
 
         if alumnos_crud_view == "comparar":
             with st.container(border=True):
@@ -19710,16 +19756,11 @@ with tab_crud_alumnos:
 
                             login_changed = login_txt != original_login_txt
                             password_provided = bool(password_txt)
-                            if login_changed or password_provided:
+                            if login_changed:
                                 login_error = _validar_login_reglas(login_txt)
                                 if login_error:
                                     st.error(login_error)
                                     st.stop()
-                                if password_provided:
-                                    password_error = _validar_password_reglas(password_txt)
-                                    if password_error:
-                                        st.error(password_error)
-                                        st.stop()
 
                                 login_ok, login_msg = _validar_login_alumno_web(
                                     token=token,
@@ -19735,6 +19776,11 @@ with tab_crud_alumnos:
                                             msg=login_msg or "sin detalle"
                                         )
                                     )
+                                    st.stop()
+                            if password_provided:
+                                password_error = _validar_password_reglas(password_txt)
+                                if password_error:
+                                    st.error(password_error)
                                     st.stop()
 
                             with st.spinner("Guardando cambios del alumno..."):
@@ -20091,8 +20137,21 @@ with tab_crud_alumnos:
                     use_container_width=True,
                     key="alumnos_create_submit_btn",
                 )
+                create_progress_placeholder = st.empty()
+                create_status_placeholder = st.empty()
 
                 if create_submit:
+                    create_progress_bar = create_progress_placeholder.progress(
+                        0, text="Preparando alta de alumno..."
+                    )
+
+                    def _set_create_status(progress_value: int, message: str) -> None:
+                        percent = max(0, min(100, int(progress_value)))
+                        text = str(message or "").strip()
+                        create_progress_bar.progress(percent, text=text or None)
+                        if text:
+                            create_status_placeholder.caption(text)
+
                     token = _get_shared_token()
                     if not token:
                         st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
@@ -20103,6 +20162,7 @@ with tab_crud_alumnos:
                         st.error(f"Error: {exc}")
                         st.stop()
 
+                    _set_create_status(10, "Validando destino y datos obligatorios...")
                     selected_nivel_id = _safe_int(st.session_state.get(create_nivel_key))
                     selected_grado_id = _safe_int(st.session_state.get(create_grado_key))
                     selected_seccion = _normalize_seccion_key(
@@ -20159,123 +20219,188 @@ with tab_crud_alumnos:
                         st.error(str(exc))
                         st.stop()
 
-                    with st.spinner("Creando alumno..."):
-                        existing_students = []
-                        if (
-                            loaded_colegio_id is not None
-                            and int(loaded_colegio_id) == int(colegio_id_int)
-                        ):
-                            existing_students = st.session_state.get("alumnos_manual_move_students") or []
-                        if not existing_students:
-                            try:
-                                existing_catalog = _fetch_alumnos_catalog_for_manual_move(
-                                    token=token,
-                                    colegio_id=int(colegio_id_int),
-                                    empresa_id=int(empresa_id),
-                                    ciclo_id=int(ciclo_id),
-                                    timeout=int(timeout),
-                                )
-                            except Exception:
-                                existing_students = []
-                            else:
-                                existing_students = existing_catalog.get("students") or []
+                    _set_create_status(24, "Revisando si el alumno ya existe en el colegio...")
+                    existing_students = []
+                    if (
+                        loaded_colegio_id is not None
+                        and int(loaded_colegio_id) == int(colegio_id_int)
+                    ):
+                        existing_students = st.session_state.get("alumnos_manual_move_students") or []
+                    if not existing_students:
+                        try:
+                            existing_catalog = _fetch_alumnos_catalog_for_manual_move(
+                                token=token,
+                                colegio_id=int(colegio_id_int),
+                                empresa_id=int(empresa_id),
+                                ciclo_id=int(ciclo_id),
+                                timeout=int(timeout),
+                            )
+                        except Exception:
+                            existing_students = []
+                        else:
+                            existing_students = existing_catalog.get("students") or []
 
-                        existing_row = _find_existing_alumno_by_identificador(
-                            existing_students,
-                            dni_txt,
+                    existing_row = _find_existing_alumno_by_identificador(
+                        existing_students,
+                        dni_txt,
+                    )
+                    if isinstance(existing_row, dict):
+                        existing_nivel = str(existing_row.get("nivel") or "").strip()
+                        existing_grado = str(existing_row.get("grado") or "").strip()
+                        existing_seccion = _normalize_seccion_key(
+                            existing_row.get("seccion_norm") or existing_row.get("seccion") or ""
                         )
-                        if isinstance(existing_row, dict):
-                            existing_nivel = str(existing_row.get("nivel") or "").strip()
-                            existing_grado = str(existing_row.get("grado") or "").strip()
-                            existing_seccion = _normalize_seccion_key(
-                                existing_row.get("seccion_norm") or existing_row.get("seccion") or ""
+                        st.error(
+                            "El alumno ya existe en {nivel} | {grado} ({seccion}). "
+                            "No se puede crear duplicado; usa el boton de mover en Editar.".format(
+                                nivel=existing_nivel or "-",
+                                grado=existing_grado or "-",
+                                seccion=existing_seccion or "-",
                             )
-                            st.error(
-                                "El alumno ya existe en {nivel} | {grado} ({seccion}). "
-                                "No se puede crear duplicado; usa el boton de mover en Editar.".format(
-                                    nivel=existing_nivel or "-",
-                                    grado=existing_grado or "-",
-                                    seccion=existing_seccion or "-",
-                                )
-                            )
-                            st.stop()
+                        )
+                        st.stop()
 
-                        id_ok, id_msg = _validar_identificador_alumno_web(
+                    _set_create_status(38, "Validando identificador del alumno...")
+                    id_ok, id_msg = _validar_identificador_alumno_web(
+                        token=token,
+                        colegio_id=int(colegio_id_int),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        nivel_id=int(selected_nivel_id),
+                        identificador=dni_txt,
+                        timeout=int(timeout),
+                    )
+                    if not id_ok:
+                        st.error(f"Identificador invalido: {id_msg}")
+                        st.stop()
+
+                    _set_create_status(50, "Validando login del alumno...")
+                    login_ok, login_msg = _validar_login_alumno_web(
+                        token=token,
+                        empresa_id=int(empresa_id),
+                        login=login_txt,
+                        timeout=int(timeout),
+                    )
+                    if not login_ok:
+                        st.error(
+                            "El login no es valido. No se creo el alumno: {msg}".format(
+                                msg=login_msg or "sin detalle"
+                            )
+                        )
+                        st.stop()
+
+                    _set_create_status(68, "Creando alumno en censo...")
+                    created_ok, created_data, created_msg = _crear_alumno_web(
+                        token=token,
+                        colegio_id=int(colegio_id_int),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        nivel_id=int(selected_nivel_id),
+                        grado_id=int(selected_grado_id),
+                        grupo_id=int(destino_payload.get("grupo_id") or 0),
+                        nombre=nombre_txt,
+                        apellido_paterno=ap_pat_txt,
+                        apellido_materno=ap_mat_txt,
+                        sexo=sexo_txt,
+                        fecha_nacimiento=fecha_txt,
+                        id_oficial=dni_txt,
+                        extranjero=extranjero_flag,
+                        timeout=int(timeout),
+                    )
+                    if not created_ok:
+                        st.error(f"No se pudo crear el alumno: {created_msg}")
+                        st.stop()
+
+                    alumno_id_created = _safe_int(created_data.get("alumnoId"))
+                    if alumno_id_created is None:
+                        st.error("El alta no devolvio alumnoId valido.")
+                        st.stop()
+
+                    create_notice_type = "success"
+                    notice_parts: List[str] = []
+
+                    _set_create_status(82, "Actualizando login y password del alumno...")
+                    update_ok, update_data, update_msg = _update_login_alumno_web(
+                        token=token,
+                        colegio_id=int(colegio_id_int),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        nivel_id=int(selected_nivel_id),
+                        grado_id=int(selected_grado_id),
+                        grupo_id=int(destino_payload.get("grupo_id") or 0),
+                        alumno_id=int(alumno_id_created),
+                        login=login_txt,
+                        password=password_txt,
+                        timeout=int(timeout),
+                    )
+                    if not update_ok:
+                        create_notice_type = "warning"
+                        notice_parts.append(
+                            "Login/password no actualizado: {msg}".format(
+                                msg=update_msg or "sin detalle"
+                            )
+                        )
+
+                    def _on_create_assign_status(message: str) -> None:
+                        _set_create_status(92, message)
+
+                    def _on_create_assign_progress(
+                        current: int, total: int, message: str
+                    ) -> None:
+                        total_safe = max(int(total or 0), 1)
+                        current_safe = max(0, min(int(current or 0), total_safe))
+                        mapped_progress = 92 + int((current_safe / total_safe) * 6)
+                        _set_create_status(mapped_progress, message)
+
+                    assign_summary: Dict[str, object] = {
+                        "target_classes_total": 0,
+                        "assigned_ok": 0,
+                        "assigned_error": 0,
+                        "assigned_errors": [],
+                    }
+                    try:
+                        assign_summary = _assign_alumno_to_matching_classes_for_context(
                             token=token,
                             colegio_id=int(colegio_id_int),
                             empresa_id=int(empresa_id),
                             ciclo_id=int(ciclo_id),
-                            nivel_id=int(selected_nivel_id),
-                            identificador=dni_txt,
                             timeout=int(timeout),
-                        )
-                        if not id_ok:
-                            st.error(f"Identificador invalido: {id_msg}")
-                            st.stop()
-
-                        login_ok, login_msg = _validar_login_alumno_web(
-                            token=token,
-                            empresa_id=int(empresa_id),
-                            login=login_txt,
-                            timeout=int(timeout),
-                        )
-                        if not login_ok:
-                            st.error(
-                                "El login no es valido. No se creo el alumno: {msg}".format(
-                                    msg=login_msg or "sin detalle"
-                                )
-                            )
-                            st.stop()
-
-                        created_ok, created_data, created_msg = _crear_alumno_web(
-                            token=token,
-                            colegio_id=int(colegio_id_int),
-                            empresa_id=int(empresa_id),
-                            ciclo_id=int(ciclo_id),
-                            nivel_id=int(selected_nivel_id),
-                            grado_id=int(selected_grado_id),
-                            grupo_id=int(destino_payload.get("grupo_id") or 0),
-                            nombre=nombre_txt,
-                            apellido_paterno=ap_pat_txt,
-                            apellido_materno=ap_mat_txt,
-                            sexo=sexo_txt,
-                            fecha_nacimiento=fecha_txt,
-                            id_oficial=dni_txt,
-                            extranjero=extranjero_flag,
-                            timeout=int(timeout),
-                        )
-                        if not created_ok:
-                            st.error(f"No se pudo crear el alumno: {created_msg}")
-                            st.stop()
-
-                        alumno_id_created = _safe_int(created_data.get("alumnoId"))
-                        if alumno_id_created is None:
-                            st.error("El alta no devolvio alumnoId valido.")
-                            st.stop()
-
-                        update_ok, update_data, update_msg = _update_login_alumno_web(
-                            token=token,
-                            colegio_id=int(colegio_id_int),
-                            empresa_id=int(empresa_id),
-                            ciclo_id=int(ciclo_id),
-                            nivel_id=int(selected_nivel_id),
-                            grado_id=int(selected_grado_id),
-                            grupo_id=int(destino_payload.get("grupo_id") or 0),
                             alumno_id=int(alumno_id_created),
-                            login=login_txt,
-                            password=password_txt,
-                            timeout=int(timeout),
+                            nivel_id=int(selected_nivel_id),
+                            grado_id=int(selected_grado_id),
+                            grupo_id=int(destino_payload.get("grupo_id") or 0),
+                            seccion=str(destino_payload.get("seccion") or "").strip(),
+                            on_status=_on_create_assign_status,
+                            on_progress=_on_create_assign_progress,
                         )
-                        if not update_ok:
-                            st.session_state["alumnos_create_notice"] = {
-                                "type": "warning",
-                                "message": (
-                                    "Alumno creado, pero no se pudo actualizar login/password: {msg}".format(
-                                        msg=update_msg or "sin detalle"
-                                    )
-                                ),
-                            }
-                            st.rerun()
+                    except Exception as exc:  # pragma: no cover - UI
+                        create_notice_type = "warning"
+                        notice_parts.append(
+                            "No se pudieron asignar las clases: {msg}".format(
+                                msg=str(exc).strip() or "sin detalle"
+                            )
+                        )
+                    else:
+                        if int(assign_summary.get("assigned_error", 0)) > 0:
+                            create_notice_type = "warning"
+                            notice_parts.append(
+                                "Clases: OK {ok} | ERROR {error}".format(
+                                    ok=int(assign_summary.get("assigned_ok", 0)),
+                                    error=int(assign_summary.get("assigned_error", 0)),
+                                )
+                            )
+                        elif int(assign_summary.get("target_classes_total", 0)) > 0:
+                            notice_parts.append(
+                                "Clases asignadas: {ok}".format(
+                                    ok=int(assign_summary.get("assigned_ok", 0))
+                                )
+                            )
+                        else:
+                            notice_parts.append(
+                                "Sin clases destino para ese grado/seccion."
+                            )
+
+                    _set_create_status(100, "Proceso completado.")
 
                     created_row = _flatten_censo_alumno_for_auto_plan(
                         item=update_data or created_data,
@@ -20326,14 +20451,21 @@ with tab_crud_alumnos:
                         "alumnos_create_password",
                     )
                     st.session_state["alumnos_create_notice"] = {
-                        "type": "success",
+                        "type": create_notice_type,
                         "message": (
                             "Alumno creado: {nombre} | {dni} | {login}".format(
                                 nombre=str(created_row.get("nombre_completo") or nombre_txt).strip(),
                                 dni=dni_txt,
                                 login=login_txt,
                             )
-                        ),
+                            + (
+                                " | " + " | ".join(
+                                    part for part in notice_parts if str(part).strip()
+                                )
+                                if notice_parts
+                                else ""
+                            )
+                        ).strip(),
                     }
                     st.rerun()
 

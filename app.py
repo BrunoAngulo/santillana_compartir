@@ -3808,6 +3808,291 @@ def _render_richmondstudio_class_sync_section(
             )
 
 
+def _render_richmondstudio_students_password_panel(
+    rs_token: str,
+    timeout: int,
+) -> None:
+    with st.container(border=True):
+        st.markdown("**CRUD Alumnos RS**")
+        st.caption(
+            "Carga alumnos de Richmond Studio, buscalos y actualiza su password desde esta vista. "
+            "La app envia internamente un CSV temporal de una sola fila al bulk endpoint."
+        )
+
+        rs_students_notice = st.session_state.pop("rs_students_crud_notice", None)
+        if isinstance(rs_students_notice, dict):
+            notice_type = str(rs_students_notice.get("type") or "").strip().lower()
+            notice_message = str(rs_students_notice.get("message") or "").strip()
+            if notice_message:
+                if notice_type == "success":
+                    st.success(notice_message)
+                elif notice_type == "warning":
+                    st.warning(notice_message)
+                elif notice_type == "error":
+                    st.error(notice_message)
+                else:
+                    st.info(notice_message)
+
+        if st.button(
+            "Cargar alumnos RS",
+            type="primary",
+            key="rs_students_crud_load_btn",
+            use_container_width=True,
+        ):
+            if not rs_token:
+                st.error("Ingresa el bearer token de Richmond Studio.")
+            else:
+                try:
+                    with st.spinner("Cargando alumnos RS..."):
+                        panel_data = _load_richmondstudio_registered_panel_data(
+                            rs_token,
+                            timeout=int(timeout),
+                        )
+                except Exception as exc:  # pragma: no cover - UI
+                    st.error(f"Error RS: {exc}")
+                else:
+                    _store_richmondstudio_registered_panel_data(panel_data)
+                    listing_data = (
+                        panel_data.get("listing_data")
+                        if isinstance(panel_data.get("listing_data"), dict)
+                        else {}
+                    )
+                    registered_user_rows = list(
+                        listing_data.get("registered_user_rows") or []
+                    )
+                    student_rows = [
+                        dict(row)
+                        for row in registered_user_rows
+                        if isinstance(row, dict)
+                        and str(row.get("Role") or "").strip().lower() == "student"
+                    ]
+                    student_rows.sort(
+                        key=lambda row: (
+                            _normalize_plain_text(
+                                " ".join(
+                                    part
+                                    for part in (
+                                        str(row.get("First name") or "").strip(),
+                                        str(row.get("Last name") or "").strip(),
+                                    )
+                                    if part
+                                )
+                            ),
+                            _normalize_plain_text(
+                                row.get("Email") or row.get("Username") or ""
+                            ),
+                        )
+                    )
+                    st.session_state["rs_students_crud_rows"] = student_rows
+                    st.session_state["rs_students_crud_loaded_token"] = _clean_token_value(
+                        rs_token
+                    )
+                    st.session_state["rs_students_crud_selected_user_id"] = ""
+                    st.session_state["rs_students_crud_form_loaded_user_id"] = ""
+
+        students_rows_cached = [
+            dict(row)
+            for row in st.session_state.get("rs_students_crud_rows") or []
+            if isinstance(row, dict)
+        ]
+        if (
+            not students_rows_cached
+            and _clean_token_value(rs_token)
+            == _clean_token_value(
+                st.session_state.get("rs_students_crud_loaded_token", "")
+            )
+        ):
+            students_rows_cached = [
+                dict(row)
+                for row in st.session_state.get("rs_registered_user_rows") or []
+                if isinstance(row, dict)
+                and str(row.get("Role") or "").strip().lower() == "student"
+            ]
+            if students_rows_cached:
+                st.session_state["rs_students_crud_rows"] = students_rows_cached
+
+        if not students_rows_cached:
+            st.caption("Pulsa `Cargar alumnos RS` para empezar.")
+            return
+
+        rs_students_search = st.text_input(
+            "Filtrar alumnos RS",
+            key="rs_students_crud_search_text",
+            placeholder="Nombre, email, login o identificador",
+        )
+        rs_students_search_norm = _normalize_plain_text(rs_students_search)
+        students_rows_by_id: Dict[str, Dict[str, object]] = {}
+        students_option_labels: Dict[str, str] = {}
+        preview_rows: List[Dict[str, object]] = []
+        for row in students_rows_cached:
+            user_id = str(row.get("RS USER ID") or "").strip()
+            if not user_id:
+                continue
+            full_name = " ".join(
+                part
+                for part in (
+                    str(row.get("First name") or "").strip(),
+                    str(row.get("Last name") or "").strip(),
+                )
+                if part
+            ).strip()
+            email_txt = str(row.get("Email") or row.get("Username") or "").strip()
+            login_txt = str(row.get("Username") or row.get("Login") or "").strip()
+            identifier_txt = str(row.get("IDENTIFIER") or "").strip()
+            haystack = " ".join((full_name, email_txt, login_txt, identifier_txt))
+            if rs_students_search_norm and (
+                rs_students_search_norm not in _normalize_plain_text(haystack)
+            ):
+                continue
+            students_rows_by_id[user_id] = row
+            students_option_labels[user_id] = (
+                f"{full_name or email_txt or user_id} | {email_txt or login_txt or '-'}"
+            )
+            preview_rows.append(
+                {
+                    "Alumno": full_name,
+                    "Email": email_txt,
+                    "Login": login_txt,
+                    "IDENTIFIER": identifier_txt,
+                }
+            )
+
+        filtered_student_ids = list(students_rows_by_id.keys())
+        st.caption(
+            "Mostrando {filtered} de {total} alumnos RS.".format(
+                filtered=len(filtered_student_ids),
+                total=len(students_rows_cached),
+            )
+        )
+        if preview_rows:
+            _show_dataframe(preview_rows[:200], use_container_width=True)
+        if not filtered_student_ids:
+            st.warning("No hay alumnos RS que coincidan con el filtro.")
+            return
+
+        current_selected_student_id = str(
+            st.session_state.get("rs_students_crud_selected_user_id") or ""
+        ).strip()
+        if current_selected_student_id not in filtered_student_ids:
+            current_selected_student_id = filtered_student_ids[0]
+            st.session_state["rs_students_crud_selected_user_id"] = (
+                current_selected_student_id
+            )
+
+        selected_student_id = str(
+            st.selectbox(
+                "Alumno RS",
+                options=filtered_student_ids,
+                key="rs_students_crud_selected_user_id",
+                format_func=lambda user_id: students_option_labels.get(
+                    str(user_id or "").strip(),
+                    str(user_id or "").strip(),
+                ),
+            )
+            or ""
+        ).strip()
+        selected_student_row = students_rows_by_id.get(selected_student_id) or {}
+
+        loaded_student_id = str(
+            st.session_state.get("rs_students_crud_form_loaded_user_id") or ""
+        ).strip()
+        if loaded_student_id != selected_student_id:
+            st.session_state["rs_students_crud_username"] = str(
+                selected_student_row.get("Email")
+                or selected_student_row.get("Username")
+                or selected_student_row.get("Login")
+                or ""
+            ).strip()
+            st.session_state["rs_students_crud_password"] = ""
+            st.session_state["rs_students_crud_form_loaded_user_id"] = selected_student_id
+
+        st.caption(
+            "Seleccionado: {name} | Email: {email} | Login: {login}".format(
+                name=" ".join(
+                    part
+                    for part in (
+                        str(selected_student_row.get("First name") or "").strip(),
+                        str(selected_student_row.get("Last name") or "").strip(),
+                    )
+                    if part
+                ).strip()
+                or "(sin nombre)",
+                email=str(
+                    selected_student_row.get("Email")
+                    or selected_student_row.get("Username")
+                    or ""
+                ).strip()
+                or "-",
+                login=str(
+                    selected_student_row.get("Username")
+                    or selected_student_row.get("Login")
+                    or ""
+                ).strip()
+                or "-",
+            )
+        )
+
+        rs_password_col_1, rs_password_col_2 = st.columns(2, gap="small")
+        rs_password_col_1.text_input(
+            "Usuario RS / Email",
+            key="rs_students_crud_username",
+        )
+        rs_password_col_2.text_input(
+            "Nueva password RS",
+            key="rs_students_crud_password",
+            type="password",
+        )
+
+        if st.button(
+            "Actualizar password RS",
+            key="rs_students_crud_password_btn",
+            use_container_width=True,
+        ):
+            rs_username = str(
+                st.session_state.get("rs_students_crud_username") or ""
+            ).strip()
+            rs_password = str(
+                st.session_state.get("rs_students_crud_password") or ""
+            )
+            if not rs_token:
+                st.error("Ingresa el bearer token de Richmond Studio.")
+            elif not rs_username:
+                st.error("Ingresa el usuario o email de RS.")
+            elif not rs_password:
+                st.error("Ingresa la nueva password de RS.")
+            else:
+                try:
+                    with st.spinner("Actualizando password RS..."):
+                        rs_response_message = _submit_richmondstudio_bulk_user_update(
+                            rs_token,
+                            [
+                                {
+                                    "Username": rs_username,
+                                    "New password": rs_password,
+                                    "Keep in class": "yes",
+                                }
+                            ],
+                            timeout=max(120, int(timeout)),
+                        )
+                except Exception as exc:  # pragma: no cover - UI
+                    st.session_state["rs_students_crud_notice"] = {
+                        "type": "error",
+                        "message": "No se pudo actualizar la password RS: {msg}".format(
+                            msg=str(exc).strip() or "sin detalle"
+                        ),
+                    }
+                else:
+                    st.session_state["rs_students_crud_password"] = ""
+                    st.session_state["rs_students_crud_notice"] = {
+                        "type": "success",
+                        "message": "Password RS actualizada para {user}. Respuesta: {response}".format(
+                            user=rs_username,
+                            response=str(rs_response_message or "ok").strip() or "ok",
+                        ),
+                    }
+                st.rerun()
+
+
 def _build_richmondstudio_bulk_user_csv_bytes(
     rows: List[Dict[str, object]]
 ) -> bytes:
@@ -10035,10 +10320,6 @@ def _clear_alumnos_edit_state() -> None:
         "alumnos_edit_login",
         "alumnos_edit_original_login",
         "alumnos_edit_password",
-        "alumnos_edit_rs_username",
-        "alumnos_edit_rs_password",
-        "alumnos_edit_rs_form_loaded_alumno_id",
-        "alumnos_edit_rs_notice",
         "alumnos_edit_notice",
         "alumnos_edit_pending_detail_refresh",
         "alumnos_edit_move_dialog_alumno_id",
@@ -10198,9 +10479,6 @@ def _store_alumno_edit_detail_state(detail: Dict[str, object], context: Dict[str
     st.session_state["alumnos_edit_login"] = login_txt
     st.session_state["alumnos_edit_original_login"] = login_txt
     st.session_state["alumnos_edit_password"] = ""
-    st.session_state["alumnos_edit_rs_username"] = login_txt
-    st.session_state["alumnos_edit_rs_password"] = ""
-    st.session_state["alumnos_edit_rs_form_loaded_alumno_id"] = int(context["alumno_id"])
     st.session_state["alumnos_edit_fetch_error"] = ""
 
 
@@ -12812,8 +13090,20 @@ def render_richmond_studio_view() -> None:
     if rs_notice:
         st.info(rs_notice)
 
-    tab_rs_clases, tab_rs_usuarios, tab_rs_docentes, tab_rs_excel = st.tabs(
-        ["Clases RS", "Usuarios RS", "Asignar clases a docentes", "Listar alumnos registrados"]
+    (
+        tab_rs_clases,
+        tab_rs_usuarios,
+        tab_rs_alumnos,
+        tab_rs_docentes,
+        tab_rs_excel,
+    ) = st.tabs(
+        [
+            "Clases RS",
+            "Usuarios RS",
+            "CRUD Alumnos RS",
+            "Asignar clases a docentes",
+            "Listar alumnos registrados",
+        ]
     )
     with tab_rs_clases:
         if "rs_groups_create_rows" not in st.session_state:
@@ -13698,6 +13988,31 @@ def render_richmond_studio_view() -> None:
                             )
                             st.session_state["rs_teacher_save_meta"] = teacher_result_meta
                             st.rerun()
+
+    with tab_rs_alumnos:
+        if str(st.session_state.get("rs_students_crud_nav") or "").strip() not in {
+            "password",
+        }:
+            st.session_state["rs_students_crud_nav"] = "password"
+        rs_alumnos_nav_col, rs_alumnos_body_col = st.columns([1.15, 4.85], gap="large")
+        with rs_alumnos_nav_col:
+            rs_alumnos_view = _render_crud_menu(
+                "Funciones alumnos RS",
+                [
+                    (
+                        "password",
+                        "Password",
+                        "Busca alumnos RS y actualiza password",
+                    ),
+                ],
+                state_key="rs_students_crud_nav",
+            )
+        with rs_alumnos_body_col:
+            if rs_alumnos_view == "password":
+                _render_richmondstudio_students_password_panel(
+                    rs_token=rs_token,
+                    timeout=int(timeout),
+                )
 
     with tab_rs_excel:
         rs_listado_sidebar_col, rs_listado_body_col = st.columns([1.15, 4.85], gap="large")
@@ -19372,19 +19687,6 @@ with tab_crud_alumnos:
                         st.error(notice_message)
                     else:
                         st.info(notice_message)
-            alumnos_edit_rs_notice = st.session_state.pop("alumnos_edit_rs_notice", None)
-            if isinstance(alumnos_edit_rs_notice, dict):
-                rs_notice_type = str(alumnos_edit_rs_notice.get("type") or "").strip().lower()
-                rs_notice_message = str(alumnos_edit_rs_notice.get("message") or "").strip()
-                if rs_notice_message:
-                    if rs_notice_type == "success":
-                        st.success(rs_notice_message)
-                    elif rs_notice_type == "warning":
-                        st.warning(rs_notice_message)
-                    elif rs_notice_type == "error":
-                        st.error(rs_notice_message)
-                    else:
-                        st.info(rs_notice_message)
 
             col_edit_load, col_edit_clear = st.columns([2, 1], gap="small")
             run_edit_load = col_edit_load.button(
@@ -19682,94 +19984,6 @@ with tab_crud_alumnos:
                         cred_col_2.caption(
                             "Opcional. Si la completas, tambien actualiza la password."
                         )
-
-                        loaded_rs_form_alumno_id = _safe_int(
-                            st.session_state.get("alumnos_edit_rs_form_loaded_alumno_id")
-                        )
-                        if loaded_rs_form_alumno_id != int(alumno_edit_context["alumno_id"]):
-                            st.session_state["alumnos_edit_rs_username"] = str(
-                                st.session_state.get("alumnos_edit_original_login")
-                                or st.session_state.get("alumnos_edit_login")
-                                or ""
-                            ).strip()
-                            st.session_state["alumnos_edit_rs_password"] = ""
-                            st.session_state["alumnos_edit_rs_form_loaded_alumno_id"] = int(
-                                alumno_edit_context["alumno_id"]
-                            )
-
-                        st.divider()
-                        st.markdown("**Password Richmond Studio**")
-                        st.caption(
-                            "Busca el alumno aqui y actualiza su password RS. La app envia internamente un CSV temporal de una sola fila al bulk endpoint."
-                        )
-                        rs_password_col_1, rs_password_col_2 = st.columns(2, gap="small")
-                        rs_password_col_1.text_input(
-                            "Usuario RS / Email",
-                            key="alumnos_edit_rs_username",
-                        )
-                        rs_password_col_2.text_input(
-                            "Nueva password RS",
-                            key="alumnos_edit_rs_password",
-                            type="password",
-                        )
-                        run_alumno_edit_rs_password = st.button(
-                            "Actualizar password RS",
-                            use_container_width=True,
-                            key="alumnos_edit_rs_password_btn",
-                        )
-
-                        if run_alumno_edit_rs_password:
-                            rs_token = _get_richmondstudio_token()
-                            rs_username = str(
-                                st.session_state.get("alumnos_edit_rs_username") or ""
-                            ).strip()
-                            rs_password = str(
-                                st.session_state.get("alumnos_edit_rs_password") or ""
-                            )
-                            if not rs_token:
-                                st.error(
-                                    "Falta el bearer token de Richmond Studio. Configuralo en Richmond Studio."
-                                )
-                                st.stop()
-                            if not rs_username:
-                                st.error("Ingresa el usuario o email de RS.")
-                                st.stop()
-                            if not rs_password:
-                                st.error("Ingresa la nueva password de RS.")
-                                st.stop()
-                            try:
-                                with st.spinner("Actualizando password RS..."):
-                                    rs_response_message = (
-                                        _submit_richmondstudio_bulk_user_update(
-                                            rs_token,
-                                            [
-                                                {
-                                                    "Username": rs_username,
-                                                    "New password": rs_password,
-                                                    "Keep in class": "yes",
-                                                }
-                                            ],
-                                            timeout=max(120, int(timeout)),
-                                        )
-                                    )
-                            except Exception as exc:
-                                st.session_state["alumnos_edit_rs_notice"] = {
-                                    "type": "error",
-                                    "message": "No se pudo actualizar la password RS: {msg}".format(
-                                        msg=str(exc).strip() or "sin detalle"
-                                    ),
-                                }
-                            else:
-                                st.session_state["alumnos_edit_rs_password"] = ""
-                                st.session_state["alumnos_edit_rs_notice"] = {
-                                    "type": "success",
-                                    "message": "Password RS actualizada para {user}. Respuesta: {response}".format(
-                                        user=rs_username,
-                                        response=str(rs_response_message or "ok").strip()
-                                        or "ok",
-                                    ),
-                                }
-                            st.rerun()
 
                         run_alumno_edit_save = st.button(
                             "Guardar cambios del alumno",

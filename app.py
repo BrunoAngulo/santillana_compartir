@@ -4005,6 +4005,8 @@ def _render_richmondstudio_students_password_panel(
             ).strip()
             st.session_state["rs_students_crud_password"] = ""
             st.session_state["rs_students_crud_form_loaded_user_id"] = selected_student_id
+        elif bool(st.session_state.pop("rs_students_crud_reset_password", False)):
+            st.session_state["rs_students_crud_password"] = ""
 
         st.caption(
             "Seleccionado: {name} | Email: {email} | Login: {login}".format(
@@ -4082,7 +4084,7 @@ def _render_richmondstudio_students_password_panel(
                         ),
                     }
                 else:
-                    st.session_state["rs_students_crud_password"] = ""
+                    st.session_state["rs_students_crud_reset_password"] = True
                     st.session_state["rs_students_crud_notice"] = {
                         "type": "success",
                         "message": "Password RS actualizada para {user}. Respuesta: {response}".format(

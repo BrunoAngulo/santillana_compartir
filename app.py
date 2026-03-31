@@ -14509,12 +14509,89 @@ with tab_crud_clases:
                 for item in (st.session_state.get("clases_gestion_selected_ids") or [])
                 if _safe_int(item) is not None
             }
+            action_status_box = st.empty()
+            action_progress_slot = st.empty()
 
             col_list, col_selected = st.columns([2.2, 1.4], gap="large")
             with col_list:
                 with st.container(border=True):
                     st.markdown("**Clases disponibles**")
                     run_listar_clases = st.button("Listar clases", key="clases_listar_btn")
+                    if run_listar_clases:
+                        if not token:
+                            action_progress_slot.empty()
+                            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                        else:
+                            progress_bar = action_progress_slot.progress(5)
+                            action_status_box.info("Validando parametros para listar clases...")
+                            try:
+                                colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                            except ValueError as exc:
+                                action_progress_slot.empty()
+                                action_status_box.error(f"Error: {exc}")
+                                st.error(f"Error: {exc}")
+                                st.stop()
+                            try:
+                                progress_bar.progress(35)
+                                action_status_box.info("Consultando clases en Pegasus...")
+                                clases = _fetch_clases_gestion_escolar(
+                                    token=token,
+                                    colegio_id=colegio_id_int,
+                                    empresa_id=int(empresa_id),
+                                    ciclo_id=int(ciclo_id),
+                                    timeout=int(timeout),
+                                )
+                            except Exception as exc:  # pragma: no cover - UI
+                                action_progress_slot.empty()
+                                action_status_box.error(f"Error al listar clases: {exc}")
+                                st.error(f"Error: {exc}")
+                            else:
+                                progress_bar.progress(80)
+                                if not clases:
+                                    listed_class_rows = []
+                                    st.session_state["clases_gestion_rows"] = []
+                                    st.session_state["clases_gestion_selected_ids"] = []
+                                    progress_bar.progress(100)
+                                    action_status_box.info("No se encontraron clases.")
+                                else:
+                                    action_status_box.info(
+                                        f"Procesando {len(clases)} clase(s) encontradas..."
+                                    )
+                                    tabla = [
+                                        {
+                                            "ID": item.get("geClaseId"),
+                                            "Clase": item.get("geClase") or item.get("geClaseClave") or "",
+                                            "Nivel": (
+                                                ((item.get("colegioNivelCiclo") or {}).get("nivel") or {}).get("nivel")
+                                                if isinstance(item, dict)
+                                                else ""
+                                            )
+                                            or "",
+                                            "Grado": (
+                                                ((item.get("colegioGradoGrupo") or {}).get("grado") or {}).get("grado")
+                                                if isinstance(item, dict)
+                                                else ""
+                                            )
+                                            or "",
+                                            "Grupo": (
+                                                ((item.get("colegioGradoGrupo") or {}).get("grupo") or {}).get("grupoClave")
+                                                or ((item.get("colegioGradoGrupo") or {}).get("grupo") or {}).get("grupo")
+                                                if isinstance(item, dict)
+                                                else ""
+                                            )
+                                            or "",
+                                        }
+                                        for item in clases
+                                        if isinstance(item, dict)
+                                    ]
+                                    listed_class_rows = tabla
+                                    selected_class_ids_state = set()
+                                    st.session_state["clases_gestion_rows"] = tabla
+                                    st.session_state["clases_gestion_selected_ids"] = []
+                                    progress_bar.progress(100)
+                                    action_status_box.success(
+                                        f"Clases encontradas: {len(tabla)}"
+                                    )
                     valid_class_rows = [
                         {
                             "ID": item.get("ID"),
@@ -14583,65 +14660,13 @@ with tab_crud_clases:
                         disabled=not selected_class_rows,
                     )
 
-            if run_listar_clases:
-                if not token:
-                    st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-                else:
-                    try:
-                        colegio_id_int = _parse_colegio_id(colegio_id_raw)
-                    except ValueError as exc:
-                        st.error(f"Error: {exc}")
-                        st.stop()
-                    try:
-                        clases = _fetch_clases_gestion_escolar(
-                            token=token,
-                            colegio_id=colegio_id_int,
-                            empresa_id=int(empresa_id),
-                            ciclo_id=int(ciclo_id),
-                            timeout=int(timeout),
-                        )
-                    except Exception as exc:  # pragma: no cover - UI
-                        st.error(f"Error: {exc}")
-                    else:
-                        if not clases:
-                            st.info("No se encontraron clases.")
-                        else:
-                            tabla = [
-                                {
-                                    "ID": item.get("geClaseId"),
-                                    "Clase": item.get("geClase") or item.get("geClaseClave") or "",
-                                    "Nivel": (
-                                        ((item.get("colegioNivelCiclo") or {}).get("nivel") or {}).get("nivel")
-                                        if isinstance(item, dict)
-                                        else ""
-                                    )
-                                    or "",
-                                    "Grado": (
-                                        ((item.get("colegioGradoGrupo") or {}).get("grado") or {}).get("grado")
-                                        if isinstance(item, dict)
-                                        else ""
-                                    )
-                                    or "",
-                                    "Grupo": (
-                                        ((item.get("colegioGradoGrupo") or {}).get("grupo") or {}).get("grupoClave")
-                                        or ((item.get("colegioGradoGrupo") or {}).get("grupo") or {}).get("grupo")
-                                        if isinstance(item, dict)
-                                        else ""
-                                    )
-                                    or "",
-                                }
-                                for item in clases
-                                if isinstance(item, dict)
-                            ]
-                            st.session_state["clases_gestion_rows"] = tabla
-                            st.session_state["clases_gestion_selected_ids"] = []
-                            st.success(f"Clases encontradas: {len(tabla)}")
-
             if run_eliminar_clases:
                 if not token:
+                    action_progress_slot.empty()
                     st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
                     st.stop()
                 if not confirm_delete:
+                    action_progress_slot.empty()
                     st.error("Debes confirmar antes de eliminar.")
                     st.stop()
                 selected_class_rows = [
@@ -14656,16 +14681,33 @@ with tab_crud_clases:
                     }
                 ]
                 if not selected_class_rows:
+                    action_progress_slot.empty()
                     st.error("No hay clases seleccionadas.")
                     st.stop()
 
+                progress_bar = action_progress_slot.progress(5)
+                action_status_box.info(
+                    f"Preparando eliminacion de {len(selected_class_rows)} clase(s)..."
+                )
                 errores: List[str] = []
                 eliminadas_ids: Set[int] = set()
-                for item in selected_class_rows:
+                total_selected = len(selected_class_rows)
+                for idx_item, item in enumerate(selected_class_rows, start=1):
                     clase_id = item.get("ID") if isinstance(item, dict) else None
                     if clase_id is None:
                         errores.append("Clase sin ID.")
+                        progress_bar.progress(
+                            min(95, max(10, int((idx_item / max(total_selected, 1)) * 100)))
+                        )
                         continue
+                    clase_label = str(item.get("Clase") or clase_id).strip()
+                    action_status_box.info(
+                        "Eliminando clase {idx}/{total}: {label}".format(
+                            idx=idx_item,
+                            total=total_selected,
+                            label=clase_label,
+                        )
+                    )
                     try:
                         _delete_clase_gestion_escolar(
                             token=token,
@@ -14677,6 +14719,9 @@ with tab_crud_clases:
                         eliminadas_ids.add(int(clase_id))
                     except Exception as exc:  # pragma: no cover - UI
                         errores.append(f"{clase_id}: {exc}")
+                    progress_bar.progress(
+                        min(95, max(10, int((idx_item / max(total_selected, 1)) * 100)))
+                    )
 
                 remaining_rows = [
                     item
@@ -14694,6 +14739,14 @@ with tab_crud_clases:
                     if _safe_int(item) is not None and int(item) not in eliminadas_ids
                 ]
                 eliminadas = len(eliminadas_ids)
+                progress_bar.progress(100)
+                if errores:
+                    action_status_box.warning(
+                        "Eliminacion completada con observaciones. "
+                        f"Eliminadas: {eliminadas} | Errores: {len(errores)}"
+                    )
+                else:
+                    action_status_box.success(f"Clases eliminadas: {eliminadas}")
                 st.success(f"Clases eliminadas: {eliminadas}")
                 if errores:
                     st.error("Errores al eliminar:")
@@ -14729,29 +14782,47 @@ with tab_crud_clases:
                 )
 
                 if st.button("Generar clases", type="primary"):
+                    create_progress = st.progress(0)
+                    create_status = st.empty()
                     if not uploaded_excel:
+                        create_progress.empty()
+                        create_status.error("Sube un Excel de entrada.")
                         st.error("Sube un Excel de entrada.")
                         st.stop()
                     if not codigo.strip():
+                        create_progress.empty()
+                        create_status.error("Ingresa un codigo.")
                         st.error("Ingresa un cÃ³digo.")
                         st.stop()
                     if not grupos.strip():
+                        create_progress.empty()
+                        create_status.error("Ingresa las secciones (A,B,C,D).")
                         st.error("Ingresa las secciones (A,B,C,D).")
                         st.stop()
 
+                    create_progress.progress(10)
+                    create_status.info("Leyendo Excel de entrada...")
                     excel_bytes = uploaded_excel.read()
                     plantilla_path = Path(OUTPUT_FILENAME) if Path(OUTPUT_FILENAME).exists() else None
 
                     try:
-                        with st.spinner("Procesando..."):
-                            output_bytes, summary = process_excel(
-                                excel_bytes,
-                                codigo=codigo,
-                                columna_codigo=CODE_COLUMN_NAME,
-                                hoja=SHEET_NAME,
-                                plantilla_path=plantilla_path,
-                                grupos=grupos,
+                        create_progress.progress(35)
+                        create_status.info("Procesando clases y generando plantilla...")
+                        output_bytes, summary = process_excel(
+                            excel_bytes,
+                            codigo=codigo,
+                            columna_codigo=CODE_COLUMN_NAME,
+                            hoja=SHEET_NAME,
+                            plantilla_path=plantilla_path,
+                            grupos=grupos,
+                        )
+                        create_progress.progress(100)
+                        create_status.success(
+                            "Listo. Filtradas: {filtradas}, Salida: {salida} filas.".format(
+                                filtradas=summary["filas_filtradas"],
+                                salida=summary["filas_salida"],
                             )
+                        )
                         st.success(
                             f"Listo. Filtradas: {summary['filas_filtradas']}, Salida: {summary['filas_salida']} filas."
                         )
@@ -14763,6 +14834,8 @@ with tab_crud_clases:
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         )
                     except Exception as exc:  # pragma: no cover - UI
+                        create_progress.empty()
+                        create_status.error(f"Error al generar clases: {exc}")
                         st.error(f"Error: {exc}")
             if clases_crud_view == "gestion":
                 st.markdown("**2) Gestion de clases**")

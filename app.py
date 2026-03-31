@@ -4081,6 +4081,7 @@ def _render_richmondstudio_students_password_panel(
                         rs_response_message = _submit_richmondstudio_bulk_user_update(
                             rs_token,
                             rs_update_rows,
+                            csv_bytes=rs_sent_csv_bytes,
                             timeout=max(120, int(timeout)),
                         )
                 except Exception as exc:  # pragma: no cover - UI
@@ -4120,7 +4121,7 @@ def _render_richmondstudio_students_password_panel(
             st.download_button(
                 "Descargar CSV enviado",
                 data=rs_last_sent_csv_bytes,
-                file_name="password_rs_single.csv",
+                file_name="CSV_Template_Edit_User.csv",
                 mime="text/csv",
                 key="rs_students_crud_download_csv_btn",
                 use_container_width=True,
@@ -4324,6 +4325,7 @@ def _build_richmondstudio_bulk_user_update_preview_rows(
 def _submit_richmondstudio_bulk_user_update(
     token: str,
     rows: List[Dict[str, str]],
+    csv_bytes: Optional[bytes] = None,
     timeout: int = 120,
 ) -> str:
     actionable_rows = [
@@ -4335,7 +4337,11 @@ def _submit_richmondstudio_bulk_user_update(
     if not actionable_rows:
         raise ValueError("No hay filas con Username y New password para actualizar.")
 
-    csv_bytes = _build_richmondstudio_bulk_user_csv_bytes(actionable_rows)
+    payload_csv_bytes = (
+        bytes(csv_bytes)
+        if csv_bytes
+        else _build_richmondstudio_bulk_user_csv_bytes(actionable_rows)
+    )
     try:
         response = requests.post(
             RICHMONDSTUDIO_BULK_USER_EDITION_URL,
@@ -4343,7 +4349,7 @@ def _submit_richmondstudio_bulk_user_update(
             files={
                 "csv_file": (
                     "rs_bulk_user_edition.csv",
-                    csv_bytes,
+                    payload_csv_bytes,
                     "text/csv",
                 )
             },

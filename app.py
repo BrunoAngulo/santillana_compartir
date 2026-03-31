@@ -11775,6 +11775,566 @@ def _apply_single_alumno_move_and_reassign(
     return result
 
 
+def _render_richmondstudio_classes_manage_panel(
+    rs_token: str,
+    timeout: int,
+) -> None:
+    with st.container(border=True):
+        st.markdown("**1) Gestion de clases RS**")
+        st.caption(
+            "Carga las clases de Richmond Studio y trabaja sobre el listado filtrado."
+        )
+        run_rs_groups_load = st.button(
+            "Cargar clases RS",
+            key="rs_rs_groups_load_btn",
+            use_container_width=True,
+        )
+
+        if run_rs_groups_load:
+            if not rs_token:
+                st.error("Ingresa el bearer token de Richmond Studio.")
+                st.stop()
+            try:
+                with st.spinner("Consultando clases RS..."):
+                    rs_groups_loaded = _fetch_richmondstudio_groups(
+                        rs_token,
+                        timeout=int(timeout),
+                        include_users=True,
+                    )
+            except Exception as exc:  # pragma: no cover - UI
+                st.error(f"Error RS: {exc}")
+                st.stop()
+
+            rs_group_rows = [
+                _normalize_richmondstudio_group_row(item)
+                for item in rs_groups_loaded
+                if isinstance(item, dict)
+            ]
+            st.session_state["rs_groups_loaded_rows"] = (
+                _normalize_richmondstudio_loaded_rows(
+                    sorted(
+                        rs_group_rows,
+                        key=lambda row: (
+                            str(row.get("Class name") or "").upper(),
+                            str(row.get("Code") or "").upper(),
+                        ),
+                    )
+                )
+            )
+            st.success(f"Clases RS cargadas: {len(rs_group_rows)}.")
+
+        rs_loaded_rows = _normalize_richmondstudio_loaded_rows(
+            st.session_state.get("rs_groups_loaded_rows") or []
+        )
+        st.session_state["rs_groups_loaded_rows"] = rs_loaded_rows
+        if rs_loaded_rows:
+            st.markdown("**Listado RS**")
+            col_rs_filter_a, col_rs_filter_b, col_rs_filter_c = st.columns(
+                [2.4, 1.2, 1],
+                gap="small",
+            )
+            rs_filter_text = col_rs_filter_a.text_input(
+                "Filtrar por Class name o Code",
+                key="rs_rs_groups_filter_text",
+                placeholder="Ej: 2026 Ingles 2SA",
+            )
+            rs_filter_level = col_rs_filter_b.selectbox(
+                "Test level",
+                options=["Todos"] + RICHMONDSTUDIO_TEST_LEVEL_LABELS,
+                key="rs_rs_groups_filter_level",
+            )
+            rs_filter_iread = col_rs_filter_c.selectbox(
+                "iRead",
+                options=["Todos", "Si", "No"],
+                key="rs_rs_groups_filter_iread",
+            )
+
+            rs_filter_text_norm = str(rs_filter_text or "").strip().lower()
+            rs_filtered_rows = []
+            rs_filtered_edit_rows = []
+            for row in rs_loaded_rows:
+                class_name_txt = str(row.get("Class name") or "")
+                code_txt = str(row.get("Code") or "")
+                level_txt = str(row.get("Test level") or "")
+                iread_txt = _richmondstudio_display_bool(row.get("iRead"))
+                hay_texto = not rs_filter_text_norm or (
+                    rs_filter_text_norm in class_name_txt.lower()
+                    or rs_filter_text_norm in code_txt.lower()
+                )
+                hay_level = rs_filter_level == "Todos" or level_txt == rs_filter_level
+                hay_iread = rs_filter_iread == "Todos" or iread_txt == rs_filter_iread
+                if hay_texto and hay_level and hay_iread:
+                    rs_filtered_edit_rows.append(dict(row))
+                    rs_filtered_rows.append(
+                        {
+                            "Class name": class_name_txt,
+                            "Grade": str(row.get("Grade") or ""),
+                            "Dates": str(row.get("Dates") or ""),
+                            "iRead": iread_txt,
+                            "Code": code_txt,
+                            "Students": int(row.get("Students") or 0),
+                        }
+                    )
+            st.caption(
+                f"Mostrando {len(rs_filtered_rows)} de {len(rs_loaded_rows)} clases RS."
+            )
+            _show_dataframe(rs_filtered_rows, use_container_width=True)
+            st.markdown("**Editar o eliminar clases cargadas**")
+            rs_edit_columns = [
+                "Seleccionar",
+                "ID",
+                "Class name",
+                "Description",
+                "Grade",
+                "Test level",
+                "Start date",
+                "End date",
+                "iRead",
+                "Code",
+                "Students",
+            ]
+            rs_edit_df = _richmondstudio_loaded_editor_df(
+                rs_filtered_edit_rows,
+                rs_edit_columns,
+            )
+            edited_rs_loaded_df = st.data_editor(
+                rs_edit_df,
+                key="rs_rs_groups_loaded_editor",
+                hide_index=True,
+                use_container_width=True,
+                disabled=["ID", "Code", "Students"],
+                column_config={
+                    "Seleccionar": st.column_config.CheckboxColumn("Seleccionar"),
+                    "ID": st.column_config.TextColumn("ID"),
+                    "Class name": st.column_config.TextColumn(
+                        "Class name",
+                        required=True,
+                        width="large",
+                    ),
+                    "Description": st.column_config.TextColumn(
+                        "Description",
+                        width="large",
+                    ),
+                    "Grade": st.column_config.SelectboxColumn(
+                        "Grade",
+                        options=RICHMONDSTUDIO_GRADE_LABELS,
+                        required=True,
+                    ),
+                    "Test level": st.column_config.SelectboxColumn(
+                        "Test level",
+                        options=[""] + RICHMONDSTUDIO_TEST_LEVEL_LABELS,
+                        required=False,
+                    ),
+                    "Start date": st.column_config.DateColumn(
+                        "Start date",
+                        format="YYYY-MM-DD",
+                        required=True,
+                    ),
+                    "End date": st.column_config.DateColumn(
+                        "End date",
+                        format="YYYY-MM-DD",
+                        required=True,
+                    ),
+                    "iRead": st.column_config.CheckboxColumn("iRead"),
+                    "Code": st.column_config.TextColumn("Code"),
+                    "Students": st.column_config.NumberColumn("Students", format="%d"),
+                },
+            )
+            if isinstance(edited_rs_loaded_df, pd.DataFrame):
+                edited_lookup = {
+                    str(item.get("ID") or "").strip(): item
+                    for item in edited_rs_loaded_df.to_dict("records")
+                    if str(item.get("ID") or "").strip()
+                }
+                merged_rows: List[Dict[str, object]] = []
+                for row in rs_loaded_rows:
+                    row_id = str(row.get("ID") or "").strip()
+                    if row_id and row_id in edited_lookup:
+                        merged_row = dict(row)
+                        merged_row.update(edited_lookup[row_id])
+                        merged_rows.append(merged_row)
+                    else:
+                        merged_rows.append(dict(row))
+                rs_loaded_rows = _normalize_richmondstudio_loaded_rows(merged_rows)
+                st.session_state["rs_groups_loaded_rows"] = rs_loaded_rows
+
+            col_rs_update, col_rs_delete = st.columns([1, 1], gap="small")
+            run_rs_groups_update = col_rs_update.button(
+                "Actualizar clases RS",
+                key="rs_rs_groups_update_btn",
+                use_container_width=True,
+            )
+            run_rs_groups_delete = col_rs_delete.button(
+                "Eliminar clases RS",
+                key="rs_rs_groups_delete_btn",
+                use_container_width=True,
+            )
+            run_rs_groups_update_confirmed = _consume_richmondstudio_confirmed_action(
+                "rs_groups_update"
+            )
+            run_rs_groups_delete_confirmed = _consume_richmondstudio_confirmed_action(
+                "rs_groups_delete"
+            )
+            confirm_rs_delete = st.checkbox(
+                "Confirmar eliminacion de clases RS seleccionadas",
+                key="rs_rs_groups_delete_confirm",
+                value=False,
+            )
+            if run_rs_groups_update:
+                rows_to_update = [
+                    row for row in rs_loaded_rows if bool(row.get("Seleccionar"))
+                ]
+                if not rows_to_update:
+                    st.error("Selecciona al menos una clase RS para actualizar.")
+                else:
+                    _request_richmondstudio_confirmation(
+                        "rs_groups_update",
+                        f"actualizar {len(rows_to_update)} clases RS",
+                    )
+
+            if run_rs_groups_update_confirmed:
+                rows_to_update = [
+                    row for row in rs_loaded_rows if bool(row.get("Seleccionar"))
+                ]
+                if not rs_token:
+                    st.error("Ingresa el bearer token de Richmond Studio.")
+                elif not rows_to_update:
+                    st.error("Selecciona al menos una clase RS para actualizar.")
+                else:
+                    resultados_rs_update: List[Dict[str, str]] = []
+                    ok_rs_update = 0
+                    err_rs_update = 0
+                    progress_rs_update = st.progress(0)
+                    status_rs_update = st.empty()
+
+                    for idx_rs, row in enumerate(rows_to_update, start=1):
+                        class_name = str(row.get("Class name") or "").strip()
+                        group_id = str(row.get("ID") or "").strip()
+                        try:
+                            payload_rs = _build_richmondstudio_group_update_payload(row)
+                            status_rs_update.write(
+                                f"Actualizando {idx_rs}/{len(rows_to_update)}: {class_name}"
+                            )
+                            _update_richmondstudio_group(
+                                rs_token,
+                                group_id,
+                                payload_rs,
+                                timeout=int(timeout),
+                            )
+                            resultados_rs_update.append(
+                                {
+                                    "Class name": class_name,
+                                    "Resultado": "OK",
+                                    "ID": group_id,
+                                    "Detalle": "Actualizada correctamente.",
+                                }
+                            )
+                            ok_rs_update += 1
+                        except Exception as exc:  # pragma: no cover - UI
+                            resultados_rs_update.append(
+                                {
+                                    "Class name": class_name,
+                                    "Resultado": "Error",
+                                    "ID": group_id,
+                                    "Detalle": str(exc),
+                                }
+                            )
+                            err_rs_update += 1
+                        progress_rs_update.progress(
+                            int((idx_rs / len(rows_to_update)) * 100)
+                        )
+
+                    status_rs_update.empty()
+                    progress_rs_update.empty()
+                    if ok_rs_update:
+                        try:
+                            rs_groups_loaded = _fetch_richmondstudio_groups(
+                                rs_token,
+                                timeout=int(timeout),
+                                include_users=True,
+                            )
+                            rs_group_rows = [
+                                _normalize_richmondstudio_group_row(item)
+                                for item in rs_groups_loaded
+                                if isinstance(item, dict)
+                            ]
+                            st.session_state["rs_groups_loaded_rows"] = _normalize_richmondstudio_loaded_rows(
+                                sorted(
+                                    rs_group_rows,
+                                    key=lambda row: (
+                                        str(row.get("Class name") or "").upper(),
+                                        str(row.get("Code") or "").upper(),
+                                    ),
+                                )
+                            )
+                        except Exception:
+                            pass
+
+                    if ok_rs_update and not err_rs_update:
+                        st.success(
+                            f"Clases RS actualizadas correctamente: {ok_rs_update}."
+                        )
+                    elif ok_rs_update and err_rs_update:
+                        st.warning(
+                            f"Resultado parcial RS: OK {ok_rs_update} | Error {err_rs_update}."
+                        )
+                    else:
+                        st.error("No se pudo actualizar ninguna clase RS.")
+                    _show_dataframe(resultados_rs_update, use_container_width=True)
+
+            if run_rs_groups_delete:
+                if not confirm_rs_delete:
+                    st.error("Marca la confirmacion para eliminar clases RS.")
+                else:
+                    rows_to_delete = [
+                        row for row in rs_loaded_rows if bool(row.get("Seleccionar"))
+                    ]
+                    if not rows_to_delete:
+                        st.error("Selecciona al menos una clase RS para eliminar.")
+                    else:
+                        _request_richmondstudio_confirmation(
+                            "rs_groups_delete",
+                            f"eliminar {len(rows_to_delete)} clases RS",
+                        )
+
+            if run_rs_groups_delete_confirmed:
+                rows_to_delete = [
+                    row for row in rs_loaded_rows if bool(row.get("Seleccionar"))
+                ]
+                if not rs_token:
+                    st.error("Ingresa el bearer token de Richmond Studio.")
+                elif not confirm_rs_delete:
+                    st.error("Marca la confirmacion para eliminar clases RS.")
+                elif not rows_to_delete:
+                    st.error("Selecciona al menos una clase RS para eliminar.")
+                else:
+                    resultados_rs_delete: List[Dict[str, str]] = []
+                    ok_rs_delete = 0
+                    err_rs_delete = 0
+                    progress_rs_delete = st.progress(0)
+                    status_rs_delete = st.empty()
+
+                    for idx_rs, row in enumerate(rows_to_delete, start=1):
+                        class_name = str(row.get("Class name") or "").strip()
+                        group_id = str(row.get("ID") or "").strip()
+                        try:
+                            status_rs_delete.write(
+                                f"Eliminando {idx_rs}/{len(rows_to_delete)}: {class_name}"
+                            )
+                            _delete_richmondstudio_group(
+                                rs_token,
+                                group_id,
+                                timeout=int(timeout),
+                            )
+                            resultados_rs_delete.append(
+                                {
+                                    "Class name": class_name,
+                                    "Resultado": "OK",
+                                    "ID": group_id,
+                                    "Detalle": "Eliminada correctamente.",
+                                }
+                            )
+                            ok_rs_delete += 1
+                        except Exception as exc:  # pragma: no cover - UI
+                            resultados_rs_delete.append(
+                                {
+                                    "Class name": class_name,
+                                    "Resultado": "Error",
+                                    "ID": group_id,
+                                    "Detalle": str(exc),
+                                }
+                            )
+                            err_rs_delete += 1
+                        progress_rs_delete.progress(
+                            int((idx_rs / len(rows_to_delete)) * 100)
+                        )
+
+                    status_rs_delete.empty()
+                    progress_rs_delete.empty()
+                    if ok_rs_delete:
+                        try:
+                            rs_groups_loaded = _fetch_richmondstudio_groups(
+                                rs_token,
+                                timeout=int(timeout),
+                                include_users=True,
+                            )
+                            rs_group_rows = [
+                                _normalize_richmondstudio_group_row(item)
+                                for item in rs_groups_loaded
+                                if isinstance(item, dict)
+                            ]
+                            st.session_state["rs_groups_loaded_rows"] = _normalize_richmondstudio_loaded_rows(
+                                sorted(
+                                    rs_group_rows,
+                                    key=lambda row: (
+                                        str(row.get("Class name") or "").upper(),
+                                        str(row.get("Code") or "").upper(),
+                                    ),
+                                )
+                            )
+                        except Exception:
+                            st.session_state["rs_groups_loaded_rows"] = [
+                                row
+                                for row in rs_loaded_rows
+                                if not bool(row.get("Seleccionar"))
+                            ]
+
+                    if ok_rs_delete and not err_rs_delete:
+                        st.success(
+                            f"Clases RS eliminadas correctamente: {ok_rs_delete}."
+                        )
+                    elif ok_rs_delete and err_rs_delete:
+                        st.warning(
+                            f"Resultado parcial RS: OK {ok_rs_delete} | Error {err_rs_delete}."
+                        )
+                    else:
+                        st.error("No se pudo eliminar ninguna clase RS.")
+                    _show_dataframe(resultados_rs_delete, use_container_width=True)
+        else:
+            st.info("Aun no has cargado clases RS.")
+
+
+def _render_richmondstudio_classes_create_panel(
+    rs_token: str,
+    timeout: int,
+) -> None:
+    with st.container(border=True):
+        st.markdown("**2) Crear clases RS**")
+        st.caption(
+            "Llena una clase por fila. Description se completa con Class name si lo dejas vacio. Al crear: inicio = hoy, fin = 31/12 del ano actual y Test level vacio no se manda."
+        )
+        _render_richmondstudio_create_rows_form(
+            state_key="rs_groups_create_rows",
+            widget_prefix="rs_rs_groups_create_form",
+        )
+
+        run_rs_groups_create = st.button(
+            "Crear clases RS",
+            type="primary",
+            key="rs_rs_groups_create_btn",
+            use_container_width=True,
+        )
+        run_rs_groups_create_confirmed = _consume_richmondstudio_confirmed_action(
+            "rs_groups_create"
+        )
+        if run_rs_groups_create:
+            rows_to_create = _normalize_richmondstudio_create_rows(
+                st.session_state.get("rs_groups_create_rows") or []
+            )
+            selected_rows = [
+                row
+                for row in rows_to_create
+                if bool(row.get("Crear")) and str(row.get("Class name") or "").strip()
+            ]
+            if not selected_rows:
+                st.error("No hay filas marcadas con Class name para crear.")
+            else:
+                _request_richmondstudio_confirmation(
+                    "rs_groups_create",
+                    f"crear {len(selected_rows)} clases RS",
+                )
+        if run_rs_groups_create_confirmed:
+            rows_to_create = _normalize_richmondstudio_create_rows(
+                st.session_state.get("rs_groups_create_rows") or []
+            )
+            selected_rows = [
+                row
+                for row in rows_to_create
+                if bool(row.get("Crear")) and str(row.get("Class name") or "").strip()
+            ]
+            if not rs_token:
+                st.error("Ingresa el bearer token de Richmond Studio.")
+            elif not selected_rows:
+                st.error("No hay filas marcadas con Class name para crear.")
+            else:
+                resultados_rs: List[Dict[str, object]] = []
+                ok_rs = 0
+                err_rs = 0
+                progress_rs = st.progress(0)
+                status_rs = st.empty()
+
+                for idx_rs, row in enumerate(selected_rows, start=1):
+                    class_name = str(row.get("Class name") or "").strip()
+                    try:
+                        payload_rs = _build_richmondstudio_group_payload(row)
+                        status_rs.write(
+                            f"Creando {idx_rs}/{len(selected_rows)}: {class_name}"
+                        )
+                        created_rs = _create_richmondstudio_group(
+                            rs_token,
+                            payload_rs,
+                            timeout=int(timeout),
+                        )
+                        created_data = (
+                            created_rs.get("data")
+                            if isinstance(created_rs.get("data"), dict)
+                            else {}
+                        )
+                        created_attrs = (
+                            created_data.get("attributes")
+                            if isinstance(created_data.get("attributes"), dict)
+                            else {}
+                        )
+                        resultados_rs.append(
+                            {
+                                "Class name": class_name,
+                                "Resultado": "OK",
+                                "ID": str(created_data.get("id") or "").strip(),
+                                "Code": str(created_attrs.get("code") or "").strip(),
+                                "Detalle": "Creada correctamente.",
+                            }
+                        )
+                        ok_rs += 1
+                    except Exception as exc:  # pragma: no cover - UI
+                        resultados_rs.append(
+                            {
+                                "Class name": class_name,
+                                "Resultado": "Error",
+                                "ID": "",
+                                "Code": "",
+                                "Detalle": str(exc),
+                            }
+                        )
+                        err_rs += 1
+                    progress_rs.progress(int((idx_rs / len(selected_rows)) * 100))
+
+                status_rs.empty()
+                progress_rs.empty()
+                if ok_rs:
+                    try:
+                        rs_groups_loaded = _fetch_richmondstudio_groups(
+                            rs_token,
+                            timeout=int(timeout),
+                            include_users=True,
+                        )
+                        rs_group_rows = [
+                            _normalize_richmondstudio_group_row(item)
+                            for item in rs_groups_loaded
+                            if isinstance(item, dict)
+                        ]
+                        st.session_state["rs_groups_loaded_rows"] = (
+                            _normalize_richmondstudio_loaded_rows(
+                                sorted(
+                                    rs_group_rows,
+                                    key=lambda row: (
+                                        str(row.get("Class name") or "").upper(),
+                                        str(row.get("Code") or "").upper(),
+                                    ),
+                                )
+                            )
+                        )
+                    except Exception:
+                        pass
+
+                if ok_rs and not err_rs:
+                    st.success(f"Clases RS creadas correctamente: {ok_rs}.")
+                elif ok_rs and err_rs:
+                    st.warning(f"Resultado parcial RS: OK {ok_rs} | Error {err_rs}.")
+                else:
+                    st.error("No se pudo crear ninguna clase RS.")
+                _show_dataframe(resultados_rs, use_container_width=True)
+
+
 def render_richmond_studio_view() -> None:
     timeout = 30
     bridge_mode = str(
@@ -11914,551 +12474,37 @@ def render_richmond_studio_view() -> None:
         ["Clases RS", "Usuarios RS", "Asignar clases a docentes", "Listar alumnos registrados"]
     )
     with tab_rs_clases:
-        st.markdown("**RS | Listado y creacion masiva de clases**")
-        st.caption(
-            "Lista clases de Richmond Studio, filtralas y crea varias filas en una sola grilla."
-        )
-        with st.container(border=True):
-            if "rs_groups_create_rows" not in st.session_state:
-                st.session_state["rs_groups_create_rows"] = [
-                    _default_richmondstudio_group_row()
-                ]
-            run_rs_groups_load = st.button(
-                "Cargar clases RS",
-                key="rs_rs_groups_load_btn",
-                use_container_width=True,
+        if "rs_groups_create_rows" not in st.session_state:
+            st.session_state["rs_groups_create_rows"] = [
+                _default_richmondstudio_group_row()
+            ]
+        if str(st.session_state.get("rs_clases_nav") or "").strip() not in {
+            "gestion",
+            "crear",
+        }:
+            st.session_state["rs_clases_nav"] = "gestion"
+
+        rs_clases_nav_col, rs_clases_body_col = st.columns([1.15, 4.85], gap="large")
+        with rs_clases_nav_col:
+            rs_clases_view = _render_crud_menu(
+                "Funciones de clases RS",
+                [
+                    ("gestion", "Gestion", "Lista, filtra, edita o elimina clases"),
+                    ("crear", "Crear", "Crea varias clases en una sola grilla"),
+                ],
+                state_key="rs_clases_nav",
             )
-
-            if run_rs_groups_load:
-                if not rs_token:
-                    st.error("Ingresa el bearer token de Richmond Studio.")
-                    st.stop()
-                try:
-                    with st.spinner("Consultando clases RS..."):
-                        rs_groups_loaded = _fetch_richmondstudio_groups(
-                            rs_token,
-                            timeout=int(timeout),
-                            include_users=True,
-                        )
-                except Exception as exc:  # pragma: no cover - UI
-                    st.error(f"Error RS: {exc}")
-                    st.stop()
-
-                rs_group_rows = [
-                    _normalize_richmondstudio_group_row(item)
-                    for item in rs_groups_loaded
-                    if isinstance(item, dict)
-                ]
-                st.session_state["rs_groups_loaded_rows"] = _normalize_richmondstudio_loaded_rows(
-                    sorted(
-                        rs_group_rows,
-                        key=lambda row: (
-                            str(row.get("Class name") or "").upper(),
-                            str(row.get("Code") or "").upper(),
-                        ),
-                    )
+        with rs_clases_body_col:
+            if rs_clases_view == "gestion":
+                _render_richmondstudio_classes_manage_panel(
+                    rs_token=rs_token,
+                    timeout=int(timeout),
                 )
-                st.success(f"Clases RS cargadas: {len(rs_group_rows)}.")
-
-            rs_loaded_rows = _normalize_richmondstudio_loaded_rows(
-                st.session_state.get("rs_groups_loaded_rows") or []
-            )
-            st.session_state["rs_groups_loaded_rows"] = rs_loaded_rows
-            if rs_loaded_rows:
-                st.markdown("**Listado RS**")
-                col_rs_filter_a, col_rs_filter_b, col_rs_filter_c = st.columns(
-                    [2.4, 1.2, 1],
-                    gap="small",
+            if rs_clases_view == "crear":
+                _render_richmondstudio_classes_create_panel(
+                    rs_token=rs_token,
+                    timeout=int(timeout),
                 )
-                rs_filter_text = col_rs_filter_a.text_input(
-                    "Filtrar por Class name o Code",
-                    key="rs_rs_groups_filter_text",
-                    placeholder="Ej: 2026 Ingles 2SA",
-                )
-                rs_filter_level = col_rs_filter_b.selectbox(
-                    "Test level",
-                    options=["Todos"] + RICHMONDSTUDIO_TEST_LEVEL_LABELS,
-                    key="rs_rs_groups_filter_level",
-                )
-                rs_filter_iread = col_rs_filter_c.selectbox(
-                    "iRead",
-                    options=["Todos", "Si", "No"],
-                    key="rs_rs_groups_filter_iread",
-                )
-
-                rs_filter_text_norm = str(rs_filter_text or "").strip().lower()
-                rs_filtered_rows = []
-                rs_filtered_edit_rows = []
-                for row in rs_loaded_rows:
-                    class_name_txt = str(row.get("Class name") or "")
-                    code_txt = str(row.get("Code") or "")
-                    level_txt = str(row.get("Test level") or "")
-                    iread_txt = _richmondstudio_display_bool(row.get("iRead"))
-                    hay_texto = not rs_filter_text_norm or (
-                        rs_filter_text_norm in class_name_txt.lower()
-                        or rs_filter_text_norm in code_txt.lower()
-                    )
-                    hay_level = rs_filter_level == "Todos" or level_txt == rs_filter_level
-                    hay_iread = rs_filter_iread == "Todos" or iread_txt == rs_filter_iread
-                    if hay_texto and hay_level and hay_iread:
-                        rs_filtered_edit_rows.append(dict(row))
-                        rs_filtered_rows.append(
-                            {
-                                "Class name": class_name_txt,
-                                "Grade": str(row.get("Grade") or ""),
-                                "Dates": str(row.get("Dates") or ""),
-                                "iRead": iread_txt,
-                                "Code": code_txt,
-                                "Students": int(row.get("Students") or 0),
-                            }
-                        )
-                st.caption(
-                    f"Mostrando {len(rs_filtered_rows)} de {len(rs_loaded_rows)} clases RS."
-                )
-                _show_dataframe(rs_filtered_rows, use_container_width=True)
-                st.markdown("**RS | Editar o eliminar clases cargadas**")
-                rs_edit_columns = [
-                    "Seleccionar",
-                    "ID",
-                    "Class name",
-                    "Description",
-                    "Grade",
-                    "Test level",
-                    "Start date",
-                    "End date",
-                    "iRead",
-                    "Code",
-                    "Students",
-                ]
-                rs_edit_df = _richmondstudio_loaded_editor_df(
-                    rs_filtered_edit_rows,
-                    rs_edit_columns,
-                )
-                edited_rs_loaded_df = st.data_editor(
-                    rs_edit_df,
-                    key="rs_rs_groups_loaded_editor",
-                    hide_index=True,
-                    use_container_width=True,
-                    disabled=["ID", "Code", "Students"],
-                    column_config={
-                        "Seleccionar": st.column_config.CheckboxColumn("Seleccionar"),
-                        "ID": st.column_config.TextColumn("ID"),
-                        "Class name": st.column_config.TextColumn(
-                            "Class name",
-                            required=True,
-                            width="large",
-                        ),
-                        "Description": st.column_config.TextColumn(
-                            "Description",
-                            width="large",
-                        ),
-                        "Grade": st.column_config.SelectboxColumn(
-                            "Grade",
-                            options=RICHMONDSTUDIO_GRADE_LABELS,
-                            required=True,
-                        ),
-                        "Test level": st.column_config.SelectboxColumn(
-                            "Test level",
-                            options=[""] + RICHMONDSTUDIO_TEST_LEVEL_LABELS,
-                            required=False,
-                        ),
-                        "Start date": st.column_config.DateColumn(
-                            "Start date",
-                            format="YYYY-MM-DD",
-                            required=True,
-                        ),
-                        "End date": st.column_config.DateColumn(
-                            "End date",
-                            format="YYYY-MM-DD",
-                            required=True,
-                        ),
-                        "iRead": st.column_config.CheckboxColumn("iRead"),
-                        "Code": st.column_config.TextColumn("Code"),
-                        "Students": st.column_config.NumberColumn("Students", format="%d"),
-                    },
-                )
-                if isinstance(edited_rs_loaded_df, pd.DataFrame):
-                    edited_lookup = {
-                        str(item.get("ID") or "").strip(): item
-                        for item in edited_rs_loaded_df.to_dict("records")
-                        if str(item.get("ID") or "").strip()
-                    }
-                    merged_rows: List[Dict[str, object]] = []
-                    for row in rs_loaded_rows:
-                        row_id = str(row.get("ID") or "").strip()
-                        if row_id and row_id in edited_lookup:
-                            merged_row = dict(row)
-                            merged_row.update(edited_lookup[row_id])
-                            merged_rows.append(merged_row)
-                        else:
-                            merged_rows.append(dict(row))
-                    rs_loaded_rows = _normalize_richmondstudio_loaded_rows(merged_rows)
-                    st.session_state["rs_groups_loaded_rows"] = rs_loaded_rows
-
-                col_rs_update, col_rs_delete = st.columns([1, 1], gap="small")
-                run_rs_groups_update = col_rs_update.button(
-                    "Actualizar clases RS",
-                    key="rs_rs_groups_update_btn",
-                    use_container_width=True,
-                )
-                run_rs_groups_delete = col_rs_delete.button(
-                    "Eliminar clases RS",
-                    key="rs_rs_groups_delete_btn",
-                    use_container_width=True,
-                )
-                run_rs_groups_update_confirmed = _consume_richmondstudio_confirmed_action(
-                    "rs_groups_update"
-                )
-                run_rs_groups_delete_confirmed = _consume_richmondstudio_confirmed_action(
-                    "rs_groups_delete"
-                )
-                confirm_rs_delete = st.checkbox(
-                    "Confirmar eliminacion de clases RS seleccionadas",
-                    key="rs_rs_groups_delete_confirm",
-                    value=False,
-                )
-                if run_rs_groups_update:
-                    rows_to_update = [
-                        row for row in rs_loaded_rows if bool(row.get("Seleccionar"))
-                    ]
-                    if not rows_to_update:
-                        st.error("Selecciona al menos una clase RS para actualizar.")
-                    else:
-                        _request_richmondstudio_confirmation(
-                            "rs_groups_update",
-                            f"actualizar {len(rows_to_update)} clases RS",
-                        )
-
-                if run_rs_groups_update_confirmed:
-                    rows_to_update = [
-                        row for row in rs_loaded_rows if bool(row.get("Seleccionar"))
-                    ]
-                    if not rs_token:
-                        st.error("Ingresa el bearer token de Richmond Studio.")
-                    elif not rows_to_update:
-                        st.error("Selecciona al menos una clase RS para actualizar.")
-                    else:
-                        resultados_rs_update: List[Dict[str, str]] = []
-                        ok_rs_update = 0
-                        err_rs_update = 0
-                        progress_rs_update = st.progress(0)
-                        status_rs_update = st.empty()
-
-                        for idx_rs, row in enumerate(rows_to_update, start=1):
-                            class_name = str(row.get("Class name") or "").strip()
-                            group_id = str(row.get("ID") or "").strip()
-                            try:
-                                payload_rs = _build_richmondstudio_group_update_payload(row)
-                                status_rs_update.write(
-                                    f"Actualizando {idx_rs}/{len(rows_to_update)}: {class_name}"
-                                )
-                                _update_richmondstudio_group(
-                                    rs_token,
-                                    group_id,
-                                    payload_rs,
-                                    timeout=int(timeout),
-                                )
-                                resultados_rs_update.append(
-                                    {
-                                        "Class name": class_name,
-                                        "Resultado": "OK",
-                                        "ID": group_id,
-                                        "Detalle": "Actualizada correctamente.",
-                                    }
-                                )
-                                ok_rs_update += 1
-                            except Exception as exc:  # pragma: no cover - UI
-                                resultados_rs_update.append(
-                                    {
-                                        "Class name": class_name,
-                                        "Resultado": "Error",
-                                        "ID": group_id,
-                                        "Detalle": str(exc),
-                                    }
-                                )
-                                err_rs_update += 1
-                            progress_rs_update.progress(
-                                int((idx_rs / len(rows_to_update)) * 100)
-                            )
-
-                        status_rs_update.empty()
-                        progress_rs_update.empty()
-                        if ok_rs_update:
-                            try:
-                                rs_groups_loaded = _fetch_richmondstudio_groups(
-                                    rs_token,
-                                    timeout=int(timeout),
-                                    include_users=True,
-                                )
-                                rs_group_rows = [
-                                    _normalize_richmondstudio_group_row(item)
-                                    for item in rs_groups_loaded
-                                    if isinstance(item, dict)
-                                ]
-                                st.session_state["rs_groups_loaded_rows"] = _normalize_richmondstudio_loaded_rows(
-                                    sorted(
-                                        rs_group_rows,
-                                        key=lambda row: (
-                                            str(row.get("Class name") or "").upper(),
-                                            str(row.get("Code") or "").upper(),
-                                        ),
-                                    )
-                                )
-                            except Exception:
-                                pass
-
-                        if ok_rs_update and not err_rs_update:
-                            st.success(f"Clases RS actualizadas correctamente: {ok_rs_update}.")
-                        elif ok_rs_update and err_rs_update:
-                            st.warning(
-                                f"Resultado parcial RS: OK {ok_rs_update} | Error {err_rs_update}."
-                            )
-                        else:
-                            st.error("No se pudo actualizar ninguna clase RS.")
-                        _show_dataframe(resultados_rs_update, use_container_width=True)
-
-                if run_rs_groups_delete:
-                    if not confirm_rs_delete:
-                        st.error("Marca la confirmacion para eliminar clases RS.")
-                    else:
-                        rows_to_delete = [
-                            row for row in rs_loaded_rows if bool(row.get("Seleccionar"))
-                        ]
-                        if not rows_to_delete:
-                            st.error("Selecciona al menos una clase RS para eliminar.")
-                        else:
-                            _request_richmondstudio_confirmation(
-                                "rs_groups_delete",
-                                f"eliminar {len(rows_to_delete)} clases RS",
-                            )
-
-                if run_rs_groups_delete_confirmed:
-                    rows_to_delete = [
-                        row for row in rs_loaded_rows if bool(row.get("Seleccionar"))
-                    ]
-                    if not rs_token:
-                        st.error("Ingresa el bearer token de Richmond Studio.")
-                    elif not confirm_rs_delete:
-                        st.error("Marca la confirmacion para eliminar clases RS.")
-                    elif not rows_to_delete:
-                        st.error("Selecciona al menos una clase RS para eliminar.")
-                    else:
-                        resultados_rs_delete: List[Dict[str, str]] = []
-                        ok_rs_delete = 0
-                        err_rs_delete = 0
-                        progress_rs_delete = st.progress(0)
-                        status_rs_delete = st.empty()
-
-                        for idx_rs, row in enumerate(rows_to_delete, start=1):
-                            class_name = str(row.get("Class name") or "").strip()
-                            group_id = str(row.get("ID") or "").strip()
-                            try:
-                                status_rs_delete.write(
-                                    f"Eliminando {idx_rs}/{len(rows_to_delete)}: {class_name}"
-                                )
-                                _delete_richmondstudio_group(
-                                    rs_token,
-                                    group_id,
-                                    timeout=int(timeout),
-                                )
-                                resultados_rs_delete.append(
-                                    {
-                                        "Class name": class_name,
-                                        "Resultado": "OK",
-                                        "ID": group_id,
-                                        "Detalle": "Eliminada correctamente.",
-                                    }
-                                )
-                                ok_rs_delete += 1
-                            except Exception as exc:  # pragma: no cover - UI
-                                resultados_rs_delete.append(
-                                    {
-                                        "Class name": class_name,
-                                        "Resultado": "Error",
-                                        "ID": group_id,
-                                        "Detalle": str(exc),
-                                    }
-                                )
-                                err_rs_delete += 1
-                            progress_rs_delete.progress(
-                                int((idx_rs / len(rows_to_delete)) * 100)
-                            )
-
-                        status_rs_delete.empty()
-                        progress_rs_delete.empty()
-                        if ok_rs_delete:
-                            try:
-                                rs_groups_loaded = _fetch_richmondstudio_groups(
-                                    rs_token,
-                                    timeout=int(timeout),
-                                    include_users=True,
-                                )
-                                rs_group_rows = [
-                                    _normalize_richmondstudio_group_row(item)
-                                    for item in rs_groups_loaded
-                                    if isinstance(item, dict)
-                                ]
-                                st.session_state["rs_groups_loaded_rows"] = _normalize_richmondstudio_loaded_rows(
-                                    sorted(
-                                        rs_group_rows,
-                                        key=lambda row: (
-                                            str(row.get("Class name") or "").upper(),
-                                            str(row.get("Code") or "").upper(),
-                                        ),
-                                    )
-                                )
-                            except Exception:
-                                st.session_state["rs_groups_loaded_rows"] = [
-                                    row
-                                    for row in rs_loaded_rows
-                                    if not bool(row.get("Seleccionar"))
-                                ]
-
-                        if ok_rs_delete and not err_rs_delete:
-                            st.success(f"Clases RS eliminadas correctamente: {ok_rs_delete}.")
-                        elif ok_rs_delete and err_rs_delete:
-                            st.warning(
-                                f"Resultado parcial RS: OK {ok_rs_delete} | Error {err_rs_delete}."
-                            )
-                        else:
-                            st.error("No se pudo eliminar ninguna clase RS.")
-                        _show_dataframe(resultados_rs_delete, use_container_width=True)
-            else:
-                st.caption("Aun no has cargado clases RS.")
-
-        with st.container(border=True):
-            st.markdown("**RS | Crear clases en bloque**")
-            st.caption(
-                "Llena una clase por fila. Description se completa con Class name si lo dejas vacio. Al crear: inicio = hoy, fin = 31/12 del ano actual y Test level vacio no se manda."
-            )
-            rs_create_rows = _render_richmondstudio_create_rows_form(
-                state_key="rs_groups_create_rows",
-                widget_prefix="rs_rs_groups_create_form",
-            )
-
-            run_rs_groups_create = st.button(
-                "Crear clases RS",
-                type="primary",
-                key="rs_rs_groups_create_btn",
-                use_container_width=True,
-            )
-            run_rs_groups_create_confirmed = _consume_richmondstudio_confirmed_action(
-                "rs_groups_create"
-            )
-            if run_rs_groups_create:
-                rows_to_create = _normalize_richmondstudio_create_rows(
-                    st.session_state.get("rs_groups_create_rows") or []
-                )
-                selected_rows = [
-                    row
-                    for row in rows_to_create
-                    if bool(row.get("Crear")) and str(row.get("Class name") or "").strip()
-                ]
-                if not selected_rows:
-                    st.error("No hay filas marcadas con Class name para crear.")
-                else:
-                    _request_richmondstudio_confirmation(
-                        "rs_groups_create",
-                        f"crear {len(selected_rows)} clases RS",
-                    )
-            if run_rs_groups_create_confirmed:
-                rows_to_create = _normalize_richmondstudio_create_rows(
-                    st.session_state.get("rs_groups_create_rows") or []
-                )
-                selected_rows = [
-                    row
-                    for row in rows_to_create
-                    if bool(row.get("Crear")) and str(row.get("Class name") or "").strip()
-                ]
-                if not rs_token:
-                    st.error("Ingresa el bearer token de Richmond Studio.")
-                elif not selected_rows:
-                    st.error("No hay filas marcadas con Class name para crear.")
-                else:
-                    resultados_rs: List[Dict[str, object]] = []
-                    ok_rs = 0
-                    err_rs = 0
-                    progress_rs = st.progress(0)
-                    status_rs = st.empty()
-
-                    for idx_rs, row in enumerate(selected_rows, start=1):
-                        class_name = str(row.get("Class name") or "").strip()
-                        try:
-                            payload_rs = _build_richmondstudio_group_payload(row)
-                            status_rs.write(
-                                f"Creando {idx_rs}/{len(selected_rows)}: {class_name}"
-                            )
-                            created_rs = _create_richmondstudio_group(
-                                rs_token,
-                                payload_rs,
-                                timeout=int(timeout),
-                            )
-                            created_data = (
-                                created_rs.get("data")
-                                if isinstance(created_rs.get("data"), dict)
-                                else {}
-                            )
-                            created_attrs = (
-                                created_data.get("attributes")
-                                if isinstance(created_data.get("attributes"), dict)
-                                else {}
-                            )
-                            resultados_rs.append(
-                                {
-                                    "Class name": class_name,
-                                    "Resultado": "OK",
-                                    "ID": str(created_data.get("id") or "").strip(),
-                                    "Code": str(created_attrs.get("code") or "").strip(),
-                                    "Detalle": "Creada correctamente.",
-                                }
-                            )
-                            ok_rs += 1
-                        except Exception as exc:  # pragma: no cover - UI
-                            resultados_rs.append(
-                                {
-                                    "Class name": class_name,
-                                    "Resultado": "Error",
-                                    "ID": "",
-                                    "Code": "",
-                                    "Detalle": str(exc),
-                                }
-                            )
-                            err_rs += 1
-                        progress_rs.progress(int((idx_rs / len(selected_rows)) * 100))
-
-                    status_rs.empty()
-                    progress_rs.empty()
-                    if ok_rs:
-                        try:
-                            rs_groups_loaded = _fetch_richmondstudio_groups(
-                                rs_token,
-                                timeout=int(timeout),
-                                include_users=True,
-                            )
-                            rs_group_rows = [
-                                _normalize_richmondstudio_group_row(item)
-                                for item in rs_groups_loaded
-                                if isinstance(item, dict)
-                            ]
-                            st.session_state["rs_groups_loaded_rows"] = _normalize_richmondstudio_loaded_rows(
-                                sorted(
-                                    rs_group_rows,
-                                    key=lambda row: (
-                                        str(row.get("Class name") or "").upper(),
-                                        str(row.get("Code") or "").upper(),
-                                    ),
-                                )
-                            )
-                        except Exception:
-                            pass
-
-                    if ok_rs and not err_rs:
-                        st.success(f"Clases RS creadas correctamente: {ok_rs}.")
-                    elif ok_rs and err_rs:
-                        st.warning(f"Resultado parcial RS: OK {ok_rs} | Error {err_rs}.")
-                    else:
-                        st.error("No se pudo crear ninguna clase RS.")
-                    _show_dataframe(resultados_rs, use_container_width=True)
     with tab_rs_usuarios:
         with st.container(border=True):
             st.markdown("**RS | Crear usuarios desde Excel**")
@@ -18322,8 +18368,8 @@ with tab_crud_alumnos:
         alumnos_crud_view = _render_crud_menu(
             "Funciones de alumnos",
             [
-                ("otros", "Otros", "Plantilla y censo"),
-                ("comparar", "Comparar", "Compara BD vs actualizada"),
+                ("otros", "Otros", "Censo de alumnos activos"),
+                ("comparar", "Comparar", "Compara BD vs actualizada y descarga plantilla"),
                 ("editar", "Editar", "Edita datos y mueve de seccion"),
                 ("crear", "Crear", "Crea alumno nuevo"),
                 ("payments", "Actualizar users Payments", "Prepara y aplica cambios de users payments"),
@@ -18343,22 +18389,6 @@ with tab_crud_alumnos:
             )
         if alumnos_crud_view == "otros":
             current_otros_colegio_id = _safe_int(colegio_id_raw)
-            cached_template_colegio_id = _safe_int(
-                st.session_state.get("alumnos_plantilla_edicion_colegio_id")
-            )
-            if (
-                current_otros_colegio_id is not None
-                and cached_template_colegio_id is not None
-                and current_otros_colegio_id != cached_template_colegio_id
-            ):
-                for state_key in (
-                    "alumnos_plantilla_edicion_bytes",
-                    "alumnos_plantilla_edicion_name",
-                    "alumnos_plantilla_edicion_summary",
-                    "alumnos_plantilla_edicion_colegio_id",
-                ):
-                    st.session_state.pop(state_key, None)
-
             cached_censo_colegio_id = _safe_int(
                 st.session_state.get("alumnos_censo_activos_colegio_id")
             )
@@ -18375,15 +18405,6 @@ with tab_crud_alumnos:
                 ):
                     st.session_state.pop(state_key, None)
 
-            plantilla_bytes_cached = (
-                st.session_state.get("alumnos_plantilla_edicion_bytes") or b""
-            )
-            plantilla_file_name_cached = str(
-                st.session_state.get("alumnos_plantilla_edicion_name") or ""
-            ).strip()
-            plantilla_summary_cached = (
-                st.session_state.get("alumnos_plantilla_edicion_summary") or {}
-            )
             censo_rows_cached = st.session_state.get("alumnos_censo_activos_rows") or []
             censo_export_rows_cached = (
                 st.session_state.get("alumnos_censo_activos_export_rows") or []
@@ -18397,276 +18418,134 @@ with tab_crud_alumnos:
             censo_colegio_id = _safe_int(
                 st.session_state.get("alumnos_censo_activos_colegio_id")
             )
-            colegio_label_txt = str(
-                st.session_state.get("shared_colegio_label") or ""
-            ).strip()
 
             with st.container(border=True):
-                st.markdown("**1) Otros**")
-                head_col_text, head_col_rows, head_col_errors = st.columns(
-                    [2.8, 1, 1], gap="small"
+                run_censo_activos = st.button(
+                    "Censo de alumnos activos",
+                    type="primary",
+                    key="alumnos_censo_activos_load_btn",
+                    use_container_width=True,
                 )
-                with head_col_text:
-                    st.caption(
-                        "Descarga la plantilla operativa del colegio actual y consulta el censo de alumnos activos desde un solo panel."
+
+                if run_censo_activos:
+                    token = _get_shared_token()
+                    if not token:
+                        st.error(
+                            "Falta el token. Configura el token global o PEGASUS_TOKEN."
+                        )
+                        st.stop()
+                    try:
+                        colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                    except ValueError as exc:
+                        st.error(f"Error: {exc}")
+                        st.stop()
+
+                    niveles = _fetch_niveles_grados_grupos_censo(
+                        token=token,
+                        colegio_id=int(colegio_id_int),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
                     )
-                    if colegio_label_txt:
-                        st.caption(f"Colegio actual: {colegio_label_txt}")
-                head_col_rows.metric("Activos cargados", len(censo_display_rows))
-                head_col_errors.metric("Errores", len(censo_errors_cached))
-
-                card_plantilla, card_censo = st.columns(2, gap="large")
-
-                with card_plantilla:
-                    with st.container(border=True):
-                        st.markdown("**Plantilla de alumnos registrados**")
-                        st.caption(
-                            "Prepara la plantilla de edicion masiva del colegio seleccionado."
+                    contexts = _build_contexts_for_nivel_grado(niveles=niveles)
+                    rows_activos: List[Dict[str, object]] = []
+                    export_rows_activos: List[Dict[str, object]] = []
+                    errors_activos: List[str] = []
+                    try:
+                        (
+                            login_lookup_by_alumno,
+                            login_lookup_by_persona,
+                        ) = _fetch_login_password_lookup_censo(
+                            token=token,
+                            colegio_id=int(colegio_id_int),
+                            empresa_id=int(empresa_id),
+                            ciclo_id=int(ciclo_id),
+                            timeout=int(timeout),
                         )
-                        st.caption(
-                            "Usala como base para correcciones, validaciones y actualizaciones operativas."
-                        )
-
-                        if st.button(
-                            "Preparar plantilla",
-                            type="primary",
-                            key="alumnos_descargar",
-                            use_container_width=True,
-                        ):
-                            token = _get_shared_token()
-                            if not token:
-                                st.error(
-                                    "Falta el token. Configura el token global o PEGASUS_TOKEN."
-                                )
-                                st.stop()
-                            try:
-                                colegio_id_int = _parse_colegio_id(colegio_id_raw)
-                            except ValueError as exc:
-                                st.error(f"Error: {exc}")
-                                st.stop()
-                            try:
-                                with st.spinner("Descargando plantilla..."):
-                                    output_bytes, summary = (
-                                        descargar_plantilla_edicion_masiva(
-                                            token=token,
-                                            colegio_id=colegio_id_int,
-                                            empresa_id=int(empresa_id),
-                                            ciclo_id=int(ciclo_id),
-                                            timeout=int(timeout),
-                                        )
-                                    )
-                            except Exception as exc:  # pragma: no cover - UI
-                                st.error(f"Error: {exc}")
-                                st.stop()
-
-                            file_name = (
-                                f"plantilla_edicion_alumnos_{colegio_id_int}.xlsx"
-                            )
-                            st.session_state["alumnos_plantilla_edicion_bytes"] = (
-                                output_bytes
-                            )
-                            st.session_state["alumnos_plantilla_edicion_name"] = (
-                                file_name
-                            )
-                            st.session_state["alumnos_plantilla_edicion_summary"] = (
-                                dict(summary)
-                            )
-                            st.session_state[
-                                "alumnos_plantilla_edicion_colegio_id"
-                            ] = int(colegio_id_int)
-                            plantilla_bytes_cached = output_bytes
-                            plantilla_file_name_cached = file_name
-                            plantilla_summary_cached = dict(summary)
-                            st.success(
-                                "Plantilla lista. Alumnos: {total}.".format(
-                                    total=int(summary.get("alumnos_total", 0))
-                                )
-                            )
-
-                        if plantilla_bytes_cached and plantilla_file_name_cached:
-                            st.caption(
-                                "Ultima plantilla preparada: {total} alumno(s).".format(
-                                    total=int(
-                                        plantilla_summary_cached.get(
-                                            "alumnos_total", 0
-                                        )
-                                    )
-                                )
-                            )
-                            st.download_button(
-                                label="Descargar plantilla",
-                                data=plantilla_bytes_cached,
-                                file_name=plantilla_file_name_cached,
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                key="alumnos_plantilla_edicion_download",
-                                use_container_width=True,
-                            )
-
-                with card_censo:
-                    with st.container(border=True):
-                        st.markdown("**Censo de alumnos activos**")
-                        st.caption(
-                            "Recorre todas las secciones del colegio y conserva solo alumnos activos."
-                        )
-                        st.caption(
-                            "Incluye login cuando este disponible y deja el resultado listo para exportar."
-                        )
-
-                        col_censo_run, col_censo_clear = st.columns(
-                            [1.8, 1], gap="small"
-                        )
-                        run_censo_activos = col_censo_run.button(
-                            "Actualizar censo",
-                            type="primary",
-                            key="alumnos_censo_activos_load_btn",
-                            use_container_width=True,
-                        )
-                        clear_censo_activos = col_censo_clear.button(
-                            "Limpiar",
-                            key="alumnos_censo_activos_clear_btn",
-                            use_container_width=True,
-                        )
-
-                        if clear_censo_activos:
-                            for state_key in (
-                                "alumnos_censo_activos_rows",
-                                "alumnos_censo_activos_export_rows",
-                                "alumnos_censo_activos_errors",
-                                "alumnos_censo_activos_colegio_id",
-                            ):
-                                st.session_state.pop(state_key, None)
-                            st.rerun()
-
-                        if run_censo_activos:
-                            token = _get_shared_token()
-                            if not token:
-                                st.error(
-                                    "Falta el token. Configura el token global o PEGASUS_TOKEN."
-                                )
-                                st.stop()
-                            try:
-                                colegio_id_int = _parse_colegio_id(colegio_id_raw)
-                            except ValueError as exc:
-                                st.error(f"Error: {exc}")
-                                st.stop()
-
-                            niveles = _fetch_niveles_grados_grupos_censo(
+                    except Exception:
+                        login_lookup_by_alumno = {}
+                        login_lookup_by_persona = {}
+                    for ctx in contexts:
+                        try:
+                            alumnos_ctx = _fetch_alumnos_censo(
                                 token=token,
                                 colegio_id=int(colegio_id_int),
                                 empresa_id=int(empresa_id),
                                 ciclo_id=int(ciclo_id),
+                                nivel_id=int(ctx.get("nivel_id") or 0),
+                                grado_id=int(ctx.get("grado_id") or 0),
+                                grupo_id=int(ctx.get("grupo_id") or 0),
                                 timeout=int(timeout),
                             )
-                            contexts = _build_contexts_for_nivel_grado(niveles=niveles)
-                            rows_activos: List[Dict[str, object]] = []
-                            export_rows_activos: List[Dict[str, object]] = []
-                            errors_activos: List[str] = []
-                            try:
-                                (
+                        except Exception as exc:  # pragma: no cover - UI
+                            errors_activos.append(
+                                "Error en {nivel} | {grado} ({seccion}): {err}".format(
+                                    nivel=str(ctx.get("nivel") or ""),
+                                    grado=str(ctx.get("grado") or ""),
+                                    seccion=str(ctx.get("seccion") or ""),
+                                    err=str(exc),
+                                )
+                            )
+                            continue
+                        for item in alumnos_ctx:
+                            if not isinstance(item, dict):
+                                continue
+                            flat = _flatten_censo_alumno_for_auto_plan(
+                                item=item, fallback=ctx
+                            )
+                            if not _to_bool(flat.get("activo")):
+                                continue
+                            login_txt, _password_txt = (
+                                _resolve_alumno_login_password(
+                                    item,
                                     login_lookup_by_alumno,
                                     login_lookup_by_persona,
-                                ) = _fetch_login_password_lookup_censo(
-                                    token=token,
-                                    colegio_id=int(colegio_id_int),
-                                    empresa_id=int(empresa_id),
-                                    ciclo_id=int(ciclo_id),
-                                    timeout=int(timeout),
                                 )
-                            except Exception:
-                                login_lookup_by_alumno = {}
-                                login_lookup_by_persona = {}
-                            for ctx in contexts:
-                                try:
-                                    alumnos_ctx = _fetch_alumnos_censo(
-                                        token=token,
-                                        colegio_id=int(colegio_id_int),
-                                        empresa_id=int(empresa_id),
-                                        ciclo_id=int(ciclo_id),
-                                        nivel_id=int(ctx.get("nivel_id") or 0),
-                                        grado_id=int(ctx.get("grado_id") or 0),
-                                        grupo_id=int(ctx.get("grupo_id") or 0),
-                                        timeout=int(timeout),
-                                    )
-                                except Exception as exc:  # pragma: no cover - UI
-                                    errors_activos.append(
-                                        "Error en {nivel} | {grado} ({seccion}): {err}".format(
-                                            nivel=str(ctx.get("nivel") or ""),
-                                            grado=str(ctx.get("grado") or ""),
-                                            seccion=str(ctx.get("seccion") or ""),
-                                            err=str(exc),
-                                        )
-                                    )
-                                    continue
-                                for item in alumnos_ctx:
-                                    if not isinstance(item, dict):
-                                        continue
-                                    flat = _flatten_censo_alumno_for_auto_plan(
-                                        item=item, fallback=ctx
-                                    )
-                                    if not _to_bool(flat.get("activo")):
-                                        continue
-                                    login_txt, _password_txt = (
-                                        _resolve_alumno_login_password(
-                                            item,
-                                            login_lookup_by_alumno,
-                                            login_lookup_by_persona,
-                                        )
-                                    )
-                                    row_activo = {
-                                        "Nivel": flat.get("nivel") or "",
-                                        "Grado": flat.get("grado") or "",
-                                        "Grupo": flat.get("seccion_norm")
-                                        or flat.get("seccion")
-                                        or "",
-                                        "Nombre del alumno": flat.get(
-                                            "nombre_completo"
-                                        )
-                                        or "",
-                                        "DNI": flat.get("id_oficial") or "",
-                                        "Login": login_txt,
-                                        "Password": "",
-                                    }
-                                    rows_activos.append(dict(row_activo))
-                                    export_rows_activos.append(dict(row_activo))
+                            )
+                            row_activo = {
+                                "Nivel": flat.get("nivel") or "",
+                                "Grado": flat.get("grado") or "",
+                                "Grupo": flat.get("seccion_norm")
+                                or flat.get("seccion")
+                                or "",
+                                "Nombre del alumno": flat.get(
+                                    "nombre_completo"
+                                )
+                                or "",
+                                "DNI": flat.get("id_oficial") or "",
+                                "Login": login_txt,
+                                "Password": "",
+                            }
+                            rows_activos.append(dict(row_activo))
+                            export_rows_activos.append(dict(row_activo))
 
-                            rows_activos = _normalize_censo_activos_export_rows(
-                                rows_activos
-                            )
-                            export_rows_activos = _normalize_censo_activos_export_rows(
-                                export_rows_activos
-                            )
-                            st.session_state["alumnos_censo_activos_rows"] = (
-                                rows_activos
-                            )
-                            st.session_state["alumnos_censo_activos_export_rows"] = (
-                                export_rows_activos
-                            )
-                            st.session_state["alumnos_censo_activos_errors"] = (
-                                errors_activos
-                            )
-                            st.session_state["alumnos_censo_activos_colegio_id"] = int(
-                                colegio_id_int
-                            )
-                            censo_display_rows = export_rows_activos
-                            censo_errors_cached = errors_activos
-                            censo_colegio_id = int(colegio_id_int)
-                            st.success(
-                                "Censo cargado. Activos: {total} | Errores de consulta: {errors}".format(
-                                    total=len(rows_activos),
-                                    errors=len(errors_activos),
-                                )
-                            )
-
-                        if censo_display_rows:
-                            st.caption(
-                                "Ultimo resultado disponible: {total} alumno(s) activo(s).".format(
-                                    total=len(censo_display_rows)
-                                )
-                            )
-                        else:
-                            st.caption(
-                                "Todavia no hay resultados cargados para este colegio."
-                            )
+                    rows_activos = _normalize_censo_activos_export_rows(
+                        rows_activos
+                    )
+                    export_rows_activos = _normalize_censo_activos_export_rows(
+                        export_rows_activos
+                    )
+                    st.session_state["alumnos_censo_activos_rows"] = (
+                        rows_activos
+                    )
+                    st.session_state["alumnos_censo_activos_export_rows"] = (
+                        export_rows_activos
+                    )
+                    st.session_state["alumnos_censo_activos_errors"] = (
+                        errors_activos
+                    )
+                    st.session_state["alumnos_censo_activos_colegio_id"] = int(
+                        colegio_id_int
+                    )
+                    censo_display_rows = export_rows_activos
+                    censo_errors_cached = errors_activos
+                    censo_colegio_id = int(colegio_id_int)
+                    st.success(
+                        "Censo cargado. Activos: {total} | Errores de consulta: {errors}".format(
+                            total=len(rows_activos),
+                            errors=len(errors_activos),
+                        )
+                    )
 
             if censo_display_rows:
                 with st.container(border=True):
@@ -18697,13 +18576,6 @@ with tab_crud_alumnos:
                         use_container_width=True,
                     )
                     _show_dataframe(censo_display_rows, use_container_width=True)
-            else:
-                with st.container(border=True):
-                    st.markdown("**Resultado del censo**")
-                    st.caption(
-                        "Usa `Actualizar censo` para consultar todas las secciones del colegio y mostrar solo alumnos activos."
-                    )
-
             if censo_errors_cached:
                 with st.expander(
                     f"Errores de consulta del censo ({len(censo_errors_cached)})",
@@ -18719,9 +18591,106 @@ with tab_crud_alumnos:
                         st.caption(f"... y {pending} errores mas.")
 
         if alumnos_crud_view == "comparar":
+            current_compare_colegio_id = _safe_int(colegio_id_raw)
+            cached_template_colegio_id = _safe_int(
+                st.session_state.get("alumnos_plantilla_edicion_colegio_id")
+            )
+            if (
+                current_compare_colegio_id is not None
+                and cached_template_colegio_id is not None
+                and current_compare_colegio_id != cached_template_colegio_id
+            ):
+                for state_key in (
+                    "alumnos_plantilla_edicion_bytes",
+                    "alumnos_plantilla_edicion_name",
+                    "alumnos_plantilla_edicion_summary",
+                    "alumnos_plantilla_edicion_colegio_id",
+                ):
+                    st.session_state.pop(state_key, None)
+
+            plantilla_bytes_cached = (
+                st.session_state.get("alumnos_plantilla_edicion_bytes") or b""
+            )
+            plantilla_file_name_cached = str(
+                st.session_state.get("alumnos_plantilla_edicion_name") or ""
+            ).strip()
+            plantilla_summary_cached = (
+                st.session_state.get("alumnos_plantilla_edicion_summary") or {}
+            )
+
             with st.container(border=True):
                 st.markdown("**2) Comparar Plantilla_BD vs Plantilla_Actualizada**")
                 st.caption("Genera altas, match e inactivados.")
+                compare_top_cols = st.columns([1.2, 1.1, 2.7], gap="small")
+                if compare_top_cols[0].button(
+                    "Preparar plantilla",
+                    key="alumnos_descargar",
+                    use_container_width=True,
+                ):
+                    token = _get_shared_token()
+                    if not token:
+                        st.error(
+                            "Falta el token. Configura el token global o PEGASUS_TOKEN."
+                        )
+                        st.stop()
+                    try:
+                        colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                    except ValueError as exc:
+                        st.error(f"Error: {exc}")
+                        st.stop()
+                    try:
+                        with st.spinner("Descargando plantilla..."):
+                            output_bytes, summary = (
+                                descargar_plantilla_edicion_masiva(
+                                    token=token,
+                                    colegio_id=colegio_id_int,
+                                    empresa_id=int(empresa_id),
+                                    ciclo_id=int(ciclo_id),
+                                    timeout=int(timeout),
+                                )
+                            )
+                    except Exception as exc:  # pragma: no cover - UI
+                        st.error(f"Error: {exc}")
+                        st.stop()
+
+                    file_name = f"plantilla_edicion_alumnos_{colegio_id_int}.xlsx"
+                    st.session_state["alumnos_plantilla_edicion_bytes"] = (
+                        output_bytes
+                    )
+                    st.session_state["alumnos_plantilla_edicion_name"] = file_name
+                    st.session_state["alumnos_plantilla_edicion_summary"] = dict(
+                        summary
+                    )
+                    st.session_state["alumnos_plantilla_edicion_colegio_id"] = int(
+                        colegio_id_int
+                    )
+                    plantilla_bytes_cached = output_bytes
+                    plantilla_file_name_cached = file_name
+                    plantilla_summary_cached = dict(summary)
+                    st.success(
+                        "Plantilla lista. Alumnos: {total}.".format(
+                            total=int(summary.get("alumnos_total", 0))
+                        )
+                    )
+
+                compare_top_cols[1].download_button(
+                    label="Descargar plantilla",
+                    data=plantilla_bytes_cached,
+                    file_name=plantilla_file_name_cached or "plantilla_edicion_alumnos.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="alumnos_plantilla_edicion_download",
+                    use_container_width=True,
+                    disabled=not bool(plantilla_bytes_cached and plantilla_file_name_cached),
+                )
+                if plantilla_bytes_cached and plantilla_file_name_cached:
+                    compare_top_cols[2].caption(
+                        "Ultima plantilla preparada: {total} alumno(s).".format(
+                            total=int(
+                                plantilla_summary_cached.get("alumnos_total", 0)
+                            )
+                        )
+                    )
+
                 uploaded_compare = st.file_uploader(
                     "Archivo .xlsx",
                     type=["xlsx"],
@@ -19879,14 +19848,8 @@ with tab_crud_alumnos:
                     "Valida DNI, crea el alumno en el grado/seccion elegidos y luego actualiza login/password."
                 )
 
-            col_create_load, col_create_clear = st.columns([2, 1], gap="small")
-            run_create_load = col_create_load.button(
-                "Cargar niveles para crear",
-                type="primary",
-                key="alumnos_create_load_btn",
-                use_container_width=True,
-            )
-            run_create_clear = col_create_clear.button(
+            create_actions_cols = st.columns([2, 1], gap="small")
+            run_create_clear = create_actions_cols[1].button(
                 "Limpiar formulario",
                 key="alumnos_create_clear_btn",
                 use_container_width=True,
@@ -19903,34 +19866,6 @@ with tab_crud_alumnos:
                     if str(state_key).startswith("alumnos_create_"):
                         st.session_state.pop(state_key, None)
                 st.rerun()
-
-            if run_create_load:
-                token = _get_shared_token()
-                if not token:
-                    st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-                    st.stop()
-                try:
-                    colegio_id_int = _parse_colegio_id(colegio_id_raw)
-                except ValueError as exc:
-                    st.error(f"Error: {exc}")
-                    st.stop()
-
-                try:
-                    with st.spinner("Cargando niveles, grados y secciones..."):
-                        niveles_create = _fetch_niveles_grados_grupos_censo(
-                            token=token,
-                            colegio_id=int(colegio_id_int),
-                            empresa_id=int(empresa_id),
-                            ciclo_id=int(ciclo_id),
-                            timeout=int(timeout),
-                        )
-                except Exception as exc:  # pragma: no cover - UI
-                    st.error(f"Error cargando opciones: {exc}")
-                    st.stop()
-
-                st.session_state["alumnos_create_niveles"] = niveles_create
-                st.session_state["alumnos_create_colegio_id"] = int(colegio_id_int)
-                st.success("Opciones cargadas para crear alumno.")
 
             create_notice = st.session_state.pop("alumnos_create_notice", None)
             if isinstance(create_notice, dict):
@@ -19956,14 +19891,59 @@ with tab_crud_alumnos:
                 create_niveles = loaded_niveles
                 create_colegio_id = int(loaded_colegio_id)
 
+            create_autoload_error = ""
+            if current_colegio_id is not None and (
+                not create_niveles
+                or create_colegio_id is None
+                or int(create_colegio_id) != int(current_colegio_id)
+            ):
+                token = _get_shared_token()
+                if not token:
+                    create_autoload_error = (
+                        "Falta el token. Configura el token global o PEGASUS_TOKEN."
+                    )
+                else:
+                    try:
+                        colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                    except ValueError as exc:
+                        create_autoload_error = f"Error: {exc}"
+                    else:
+                        try:
+                            with st.spinner(
+                                "Cargando niveles, grados y secciones para crear alumno..."
+                            ):
+                                niveles_create = _fetch_niveles_grados_grupos_censo(
+                                    token=token,
+                                    colegio_id=int(colegio_id_int),
+                                    empresa_id=int(empresa_id),
+                                    ciclo_id=int(ciclo_id),
+                                    timeout=int(timeout),
+                                )
+                        except Exception as exc:  # pragma: no cover - UI
+                            create_autoload_error = f"Error cargando opciones: {exc}"
+                        else:
+                            st.session_state["alumnos_create_niveles"] = (
+                                niveles_create
+                            )
+                            st.session_state["alumnos_create_colegio_id"] = int(
+                                colegio_id_int
+                            )
+                            create_niveles = niveles_create
+                            create_colegio_id = int(colegio_id_int)
+
+            if create_autoload_error:
+                st.error(create_autoload_error)
+
             if (
                 create_colegio_id is not None
                 and current_colegio_id is not None
                 and int(create_colegio_id) != int(current_colegio_id)
             ):
-                st.warning("El colegio global cambio. Vuelve a cargar las opciones para crear.")
+                st.warning(
+                    "El colegio global cambio. Se volveran a cargar las opciones automaticamente."
+                )
             elif not create_niveles:
-                st.caption("Primero presiona 'Cargar niveles para crear'.")
+                st.caption("No hay opciones disponibles para crear en este colegio.")
             else:
                 create_catalog = _build_manual_move_destination_catalog(create_niveles)
                 create_nivel_ids = create_catalog.get("nivel_ids") or []

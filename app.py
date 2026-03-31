@@ -8276,27 +8276,18 @@ def _render_ingles_por_niveles_excel_assignment_block(
             "clases_auto_group_ingles_excel_result_notice"
         ) or {}
 
-        col_analyze, col_apply, col_clear = st.columns([1.4, 1.4, 1], gap="small")
+        col_analyze, col_apply = st.columns([1.4, 1.4], gap="small")
         run_analyze = col_analyze.button(
             "Buscar alumnos y clases",
             key="clases_auto_group_ingles_excel_analyze_btn",
             use_container_width=True,
         )
         run_apply = col_apply.button(
-            "Aplicar grados seleccionados",
+            "Aplicar ingles de grados seleccionados",
             key="clases_auto_group_ingles_excel_apply_btn",
             use_container_width=True,
             disabled=not bool(preview_rows_state),
         )
-        run_clear = col_clear.button(
-            "Limpiar",
-            key="clases_auto_group_ingles_excel_clear_btn",
-            use_container_width=True,
-        )
-
-        if run_clear:
-            _clear_ingles_por_niveles_assignment_state()
-            st.rerun()
 
         if run_analyze:
             if not token:
@@ -10287,7 +10278,42 @@ def _apply_auto_move_changes(
     ciclo_id: int,
     timeout: int,
     plan_rows: List[Dict[str, object]],
+    on_status: Optional[Callable[[str], None]] = None,
+    on_progress: Optional[Callable[[Dict[str, object]], None]] = None,
 ) -> Tuple[Dict[str, int], List[Dict[str, object]]]:
+    def _status(message: str) -> None:
+        if callable(on_status):
+            try:
+                on_status(str(message or ""))
+            except Exception:
+                pass
+
+    def _progress(
+        processed: int,
+        total: int,
+        current_student: str = "",
+        current_colegio_id: Optional[int] = None,
+        current_status: str = "",
+    ) -> None:
+        if callable(on_progress):
+            try:
+                on_progress(
+                    {
+                        "processed": int(processed),
+                        "total": int(total),
+                        "current_student": str(current_student or "").strip(),
+                        "current_colegio_id": (
+                            int(current_colegio_id)
+                            if current_colegio_id is not None
+                            else 0
+                        ),
+                        "current_status": str(current_status or "").strip(),
+                        "summary": dict(summary),
+                    }
+                )
+            except Exception:
+                pass
+
     summary = {
         "total": len(plan_rows),
         "inactivar_ok": 0,
@@ -10300,7 +10326,9 @@ def _apply_auto_move_changes(
     }
     resultados: List[Dict[str, object]] = []
     inactivados_seen: Set[int] = set()
-    for plan in plan_rows:
+    total_rows = int(len(plan_rows))
+    _progress(0, total_rows, current_status="Iniciando guardado")
+    for idx_plan, plan in enumerate(plan_rows, start=1):
         pagado = plan.get("alumno_pagado") if isinstance(plan.get("alumno_pagado"), dict) else {}
         inactivar = plan.get("alumno_inactivar") if isinstance(plan.get("alumno_inactivar"), dict) else {}
         alumno_pagado_id = _safe_int(pagado.get("alumno_id"))
@@ -10308,6 +10336,13 @@ def _apply_auto_move_changes(
         if plan_colegio_id is None:
             plan_colegio_id = _safe_int(colegio_id)
         label_pagado = _format_alumno_label(pagado)
+        _status(
+            "Alumno {idx}/{total}: {alumno}".format(
+                idx=idx_plan,
+                total=max(total_rows, 1),
+                alumno=label_pagado or "-",
+            )
+        )
         result_row = {
             "Colegio": int(plan_colegio_id) if plan_colegio_id is not None else "",
             "Alumno pagado": label_pagado,
@@ -10327,6 +10362,13 @@ def _apply_auto_move_changes(
                 result_row["Mover"] = "ERROR (sin colegio_id)"
             result_row["Asignar clases"] = "SKIP (sin colegio_id)"
             resultados.append(result_row)
+            _progress(
+                idx_plan,
+                total_rows,
+                current_student=label_pagado,
+                current_colegio_id=plan_colegio_id,
+                current_status="Sin colegio destino",
+            )
             continue
 
         alumno_inactivar_id = _safe_int(inactivar.get("alumno_id"))
@@ -10441,6 +10483,19 @@ def _apply_auto_move_changes(
             summary["asignar_skip"] += len(clases_destino)
 
         resultados.append(result_row)
+        _progress(
+            idx_plan,
+            total_rows,
+            current_student=label_pagado,
+            current_colegio_id=plan_colegio_id,
+            current_status=(
+                "Inactivar={inactivar} | Mover={mover} | Asignar={asignar}".format(
+                    inactivar=str(result_row.get("Inactivar no pagado") or ""),
+                    mover=str(result_row.get("Mover") or ""),
+                    asignar=str(result_row.get("Asignar clases") or ""),
+                )
+            ),
+        )
 
     return summary, resultados
 
@@ -14212,9 +14267,6 @@ with tab_crud_clases:
                 exclude_ingles_por_niveles = st.checkbox(
                     "Ingles por niveles",
                     key="clases_auto_group_exclude_ingles_checkbox",
-                    help=(
-                        "Solo afecta las clases de ingles de los grados seleccionados."
-                    ),
                 )
                 ingles_grade_options = (
                     st.session_state.get("clases_auto_group_ingles_grade_options") or []
@@ -14267,7 +14319,6 @@ with tab_crud_clases:
                                 "clases_auto_group_ingles_grade_selected_keys"
                             ] = []
 
-                    st.caption("Selecciona los grados de ingles.")
                     if ingles_grade_error:
                         st.error(
                             f"No se pudieron cargar los grados de Ingles: {ingles_grade_error}"
@@ -14399,10 +14450,6 @@ with tab_crud_clases:
                     st.caption(f"Colegio actual invalido: {colegio_error}")
 
                 if not isinstance(current_job, dict):
-                    st.caption(
-                        "Usa este bloque para sincronizar en segundo plano los alumnos "
-                        "activos del colegio actual."
-                    )
                     return
 
                 state = str(current_job.get("state") or "").strip()
@@ -14504,13 +14551,13 @@ with tab_crud_clases:
         @st.fragment
         def _render_clases_gestion_section() -> None:
             listed_class_rows = st.session_state.get("clases_gestion_rows") or []
+            selected_class_widget_key = "clases_gestion_selected_ids_widget"
             selected_class_ids_state = {
                 int(item)
                 for item in (st.session_state.get("clases_gestion_selected_ids") or [])
                 if _safe_int(item) is not None
             }
             action_status_box = st.empty()
-            action_progress_slot = st.empty()
 
             col_list, col_selected = st.columns([2.2, 1.4], gap="large")
             with col_list:
@@ -14519,20 +14566,16 @@ with tab_crud_clases:
                     run_listar_clases = st.button("Listar clases", key="clases_listar_btn")
                     if run_listar_clases:
                         if not token:
-                            action_progress_slot.empty()
                             st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
                         else:
-                            progress_bar = action_progress_slot.progress(5)
                             action_status_box.info("Validando parametros para listar clases...")
                             try:
                                 colegio_id_int = _parse_colegio_id(colegio_id_raw)
                             except ValueError as exc:
-                                action_progress_slot.empty()
                                 action_status_box.error(f"Error: {exc}")
                                 st.error(f"Error: {exc}")
                                 st.stop()
                             try:
-                                progress_bar.progress(35)
                                 action_status_box.info("Consultando clases en Pegasus...")
                                 clases = _fetch_clases_gestion_escolar(
                                     token=token,
@@ -14542,16 +14585,14 @@ with tab_crud_clases:
                                     timeout=int(timeout),
                                 )
                             except Exception as exc:  # pragma: no cover - UI
-                                action_progress_slot.empty()
                                 action_status_box.error(f"Error al listar clases: {exc}")
                                 st.error(f"Error: {exc}")
                             else:
-                                progress_bar.progress(80)
                                 if not clases:
                                     listed_class_rows = []
                                     st.session_state["clases_gestion_rows"] = []
                                     st.session_state["clases_gestion_selected_ids"] = []
-                                    progress_bar.progress(100)
+                                    st.session_state[selected_class_widget_key] = []
                                     action_status_box.info("No se encontraron clases.")
                                 else:
                                     action_status_box.info(
@@ -14588,7 +14629,7 @@ with tab_crud_clases:
                                     selected_class_ids_state = set()
                                     st.session_state["clases_gestion_rows"] = tabla
                                     st.session_state["clases_gestion_selected_ids"] = []
-                                    progress_bar.progress(100)
+                                    st.session_state[selected_class_widget_key] = []
                                     action_status_box.success(
                                         f"Clases encontradas: {len(tabla)}"
                                     )
@@ -14610,18 +14651,35 @@ with tab_crud_clases:
                             int(item["ID"]): item["Clase"] or "Clase sin nombre"
                             for item in valid_class_rows
                         }
+                        selected_widget_ids_raw = (
+                            st.session_state.get(selected_class_widget_key)
+                            if isinstance(
+                                st.session_state.get(selected_class_widget_key), list
+                            )
+                            else sorted(selected_class_ids_state)
+                        )
+                        selected_widget_ids = [
+                            int(class_id)
+                            for class_id in selected_widget_ids_raw
+                            if _safe_int(class_id) is not None
+                            and int(class_id) in class_name_by_id
+                        ]
+                        if (
+                            selected_class_widget_key not in st.session_state
+                            or st.session_state.get(selected_class_widget_key)
+                            != selected_widget_ids
+                        ):
+                            st.session_state[selected_class_widget_key] = (
+                                selected_widget_ids
+                            )
                         selected_ids = st.multiselect(
                             "Clases a eliminar",
                             options=list(class_name_by_id.keys()),
-                            default=[
-                                class_id
-                                for class_id in selected_class_ids_state
-                                if class_id in class_name_by_id
-                            ],
                             format_func=lambda class_id: class_name_by_id.get(
                                 int(class_id), str(class_id)
                             ),
                             placeholder="Selecciona una o varias clases.",
+                            key=selected_class_widget_key,
                         )
                         selected_class_ids_state = {
                             int(class_id)
@@ -14662,11 +14720,9 @@ with tab_crud_clases:
 
             if run_eliminar_clases:
                 if not token:
-                    action_progress_slot.empty()
                     st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
                     st.stop()
                 if not confirm_delete:
-                    action_progress_slot.empty()
                     st.error("Debes confirmar antes de eliminar.")
                     st.stop()
                 selected_class_rows = [
@@ -14681,11 +14737,9 @@ with tab_crud_clases:
                     }
                 ]
                 if not selected_class_rows:
-                    action_progress_slot.empty()
                     st.error("No hay clases seleccionadas.")
                     st.stop()
 
-                progress_bar = action_progress_slot.progress(5)
                 action_status_box.info(
                     f"Preparando eliminacion de {len(selected_class_rows)} clase(s)..."
                 )
@@ -14696,9 +14750,6 @@ with tab_crud_clases:
                     clase_id = item.get("ID") if isinstance(item, dict) else None
                     if clase_id is None:
                         errores.append("Clase sin ID.")
-                        progress_bar.progress(
-                            min(95, max(10, int((idx_item / max(total_selected, 1)) * 100)))
-                        )
                         continue
                     clase_label = str(item.get("Clase") or clase_id).strip()
                     action_status_box.info(
@@ -14719,9 +14770,6 @@ with tab_crud_clases:
                         eliminadas_ids.add(int(clase_id))
                     except Exception as exc:  # pragma: no cover - UI
                         errores.append(f"{clase_id}: {exc}")
-                    progress_bar.progress(
-                        min(95, max(10, int((idx_item / max(total_selected, 1)) * 100)))
-                    )
 
                 remaining_rows = [
                     item
@@ -14738,8 +14786,10 @@ with tab_crud_clases:
                     for item in (st.session_state.get("clases_gestion_selected_ids") or [])
                     if _safe_int(item) is not None and int(item) not in eliminadas_ids
                 ]
+                st.session_state[selected_class_widget_key] = list(
+                    st.session_state["clases_gestion_selected_ids"]
+                )
                 eliminadas = len(eliminadas_ids)
-                progress_bar.progress(100)
                 if errores:
                     action_status_box.warning(
                         "Eliminacion completada con observaciones. "
@@ -15246,22 +15296,80 @@ with tab_crud_clases:
                                     st.error(f"Error: {exc}")
                                     st.stop()
                             try:
+                                apply_progress = st.progress(
+                                    0,
+                                    text="Iniciando guardado de cambios autorizados...",
+                                )
+                                apply_status_box = st.empty()
+                                apply_metrics_box = st.empty()
+
+                                def _on_apply_status(message: str) -> None:
+                                    msg = str(message or "").strip()
+                                    if msg:
+                                        apply_status_box.info(msg)
+
+                                def _on_apply_progress(payload: Dict[str, object]) -> None:
+                                    processed = int(payload.get("processed") or 0)
+                                    total = max(int(payload.get("total") or 0), 1)
+                                    alumno_actual = str(
+                                        payload.get("current_student") or ""
+                                    ).strip()
+                                    current_status = str(
+                                        payload.get("current_status") or ""
+                                    ).strip()
+                                    summary_payload = (
+                                        payload.get("summary")
+                                        if isinstance(payload.get("summary"), dict)
+                                        else {}
+                                    )
+                                    apply_progress.progress(
+                                        min(processed / total, 1.0),
+                                        text=(
+                                            f"Procesados {processed}/{total} alumno(s)"
+                                        ),
+                                    )
+                                    if alumno_actual or current_status:
+                                        apply_status_box.info(
+                                            "Alumno {processed}/{total}: {alumno} | {status}".format(
+                                                processed=processed,
+                                                total=total,
+                                                alumno=alumno_actual or "-",
+                                                status=current_status or "Procesando",
+                                            )
+                                        )
+                                    apply_metrics_box.caption(
+                                        "Avance: "
+                                        f"{processed}/{total} | "
+                                        f"Inactivar OK={int(summary_payload.get('inactivar_ok', 0))}, ERROR={int(summary_payload.get('inactivar_error', 0))} | "
+                                        f"Mover OK={int(summary_payload.get('mover_ok', 0))}, ERROR={int(summary_payload.get('mover_error', 0))} | "
+                                        f"Asignar OK={int(summary_payload.get('asignar_ok', 0))}, ERROR={int(summary_payload.get('asignar_error', 0))}, SKIP={int(summary_payload.get('asignar_skip', 0))}"
+                                    )
+
                                 st.info(
                                     "Iniciando guardado de cambios autorizados: "
                                     f"{len(authorized_plans)} alumno(s)."
                                 )
-                                with st.spinner(
-                                    "Guardando cambios (inactivar referencia, mover seccion y asignar clases)..."
-                                ):
-                                    summary_apply, results_apply = _apply_auto_move_changes(
-                                        token=token,
-                                        colegio_id=int(colegio_id_exec),
-                                        empresa_id=int(empresa_id),
-                                        ciclo_id=int(ciclo_id),
-                                        timeout=int(timeout),
-                                        plan_rows=authorized_plans,
-                                    )
+                                summary_apply, results_apply = _apply_auto_move_changes(
+                                    token=token,
+                                    colegio_id=int(colegio_id_exec),
+                                    empresa_id=int(empresa_id),
+                                    ciclo_id=int(ciclo_id),
+                                    timeout=int(timeout),
+                                    plan_rows=authorized_plans,
+                                    on_status=_on_apply_status,
+                                    on_progress=_on_apply_progress,
+                                )
+                                apply_progress.progress(
+                                    1.0,
+                                    text=(
+                                        "Guardado completado: "
+                                        f"{len(authorized_plans)}/{len(authorized_plans)} alumno(s)"
+                                    ),
+                                )
                             except Exception as exc:  # pragma: no cover - UI
+                                apply_status_box.error(
+                                    f"Error durante el guardado: {exc}"
+                                )
                                 st.error(f"No se pudieron guardar los cambios: {exc}")
                                 st.stop()
 
@@ -15572,22 +15680,85 @@ with tab_crud_clases:
                                 st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
                                 st.stop()
                             try:
+                                apply_progress_multi = st.progress(
+                                    0,
+                                    text="Iniciando guardado masivo de cambios autorizados...",
+                                )
+                                apply_status_box_multi = st.empty()
+                                apply_metrics_box_multi = st.empty()
+
+                                def _on_apply_status_multi(message: str) -> None:
+                                    msg = str(message or "").strip()
+                                    if msg:
+                                        apply_status_box_multi.info(msg)
+
+                                def _on_apply_progress_multi(payload: Dict[str, object]) -> None:
+                                    processed = int(payload.get("processed") or 0)
+                                    total = max(int(payload.get("total") or 0), 1)
+                                    alumno_actual = str(
+                                        payload.get("current_student") or ""
+                                    ).strip()
+                                    colegio_actual = _safe_int(
+                                        payload.get("current_colegio_id")
+                                    )
+                                    current_status = str(
+                                        payload.get("current_status") or ""
+                                    ).strip()
+                                    summary_payload = (
+                                        payload.get("summary")
+                                        if isinstance(payload.get("summary"), dict)
+                                        else {}
+                                    )
+                                    apply_progress_multi.progress(
+                                        min(processed / total, 1.0),
+                                        text=(
+                                            f"Procesados {processed}/{total} alumno(s) | "
+                                            f"Ultimo colegio: {colegio_actual or '-'}"
+                                        ),
+                                    )
+                                    if alumno_actual or current_status:
+                                        apply_status_box_multi.info(
+                                            "Alumno {processed}/{total}: {alumno} | Colegio {colegio} | {status}".format(
+                                                processed=processed,
+                                                total=total,
+                                                alumno=alumno_actual or "-",
+                                                colegio=colegio_actual or "-",
+                                                status=current_status or "Procesando",
+                                            )
+                                        )
+                                    apply_metrics_box_multi.caption(
+                                        "Avance acumulado: "
+                                        f"{processed}/{total} | "
+                                        f"Inactivar OK={int(summary_payload.get('inactivar_ok', 0))}, ERROR={int(summary_payload.get('inactivar_error', 0))} | "
+                                        f"Mover OK={int(summary_payload.get('mover_ok', 0))}, ERROR={int(summary_payload.get('mover_error', 0))} | "
+                                        f"Asignar OK={int(summary_payload.get('asignar_ok', 0))}, ERROR={int(summary_payload.get('asignar_error', 0))}, SKIP={int(summary_payload.get('asignar_skip', 0))}"
+                                    )
+
                                 st.info(
                                     "Iniciando guardado masivo de cambios autorizados: "
                                     f"{len(authorized_plans_multi)} alumno(s)."
                                 )
-                                with st.spinner(
-                                    "Guardando cambios por colegio (inactivar referencia, mover seccion y asignar clases)..."
-                                ):
-                                    summary_apply_multi, results_apply_multi = _apply_auto_move_changes(
-                                        token=token,
-                                        colegio_id=None,
-                                        empresa_id=int(empresa_id),
-                                        ciclo_id=int(ciclo_id),
-                                        timeout=int(timeout),
-                                        plan_rows=authorized_plans_multi,
-                                    )
+                                summary_apply_multi, results_apply_multi = _apply_auto_move_changes(
+                                    token=token,
+                                    colegio_id=None,
+                                    empresa_id=int(empresa_id),
+                                    ciclo_id=int(ciclo_id),
+                                    timeout=int(timeout),
+                                    plan_rows=authorized_plans_multi,
+                                    on_status=_on_apply_status_multi,
+                                    on_progress=_on_apply_progress_multi,
+                                )
+                                apply_progress_multi.progress(
+                                    1.0,
+                                    text=(
+                                        "Guardado masivo completado: "
+                                        f"{len(authorized_plans_multi)}/{len(authorized_plans_multi)} alumno(s)"
+                                    ),
+                                )
                             except Exception as exc:  # pragma: no cover - UI
+                                apply_status_box_multi.error(
+                                    f"Error durante el guardado masivo: {exc}"
+                                )
                                 st.error(f"No se pudieron guardar los cambios: {exc}")
                                 st.stop()
 

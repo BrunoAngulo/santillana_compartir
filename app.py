@@ -51,6 +51,10 @@ from santillana_format.profesores_clases import asignar_profesores_clases
 from santillana_format.profesores_password import actualizar_passwords_docentes
 from santillana_format.clases_api import listar_y_mapear_clases
 
+APP_ASSETS_DIR = Path(__file__).resolve().parent / "assets"
+APP_TAB_LOGO_PATH = APP_ASSETS_DIR / "tab_logo.png"
+APP_NAVBAR_LOGO_PATH = APP_ASSETS_DIR / "navbar_logo.png"
+
 PROFESORES_COMPARE_IMPORT_ERROR = ""
 try:
     from santillana_format.profesores_compare import (
@@ -822,17 +826,26 @@ def _sync_richmondstudio_token_from_input() -> None:
     st.session_state["rs_bearer_token"] = token_input
 
 
-st.set_page_config(page_title="santed", layout="wide")
+st.set_page_config(
+    page_title="santed",
+    page_icon=str(APP_TAB_LOGO_PATH) if APP_TAB_LOGO_PATH.exists() else None,
+    layout="wide",
+)
 _inject_professional_theme()
 _inject_selectbox_title_cleanup()
-st.markdown("**Menu principal**")
-menu_option = st.radio(
-    "Menu",
-    ["Procesos Pegasus", "Richmond Studio", "Jira Focus Web"],
-    horizontal=True,
-    label_visibility="collapsed",
-    key="main_top_menu",
-)
+menu_logo_col, menu_main_col = st.columns([0.8, 4.2], gap="small")
+with menu_logo_col:
+    if APP_NAVBAR_LOGO_PATH.exists():
+        st.image(str(APP_NAVBAR_LOGO_PATH), width=120)
+with menu_main_col:
+    st.markdown("**Menu principal**")
+    menu_option = st.radio(
+        "Menu",
+        ["Procesos Pegasus", "Richmond Studio", "Jira Focus Web"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="main_top_menu",
+    )
 if menu_option == "Jira Focus Web":
     render_jira_focus_web()
     st.stop()
@@ -2924,12 +2937,21 @@ def _build_richmondstudio_class_sync_template_rows(
         if not group_ids:
             template_rows.append(
                 {
-                    "Username(Email)": username,
-                    "First name": str(row.get("First name") or "").strip(),
-                    "Last name": str(row.get("Last name") or "").strip(),
-                    "level": str(row.get("level") or "").strip(),
-                    "Class name": "",
-                    "Class code": "",
+                    RICHMONDSTUDIO_USER_IMPORT_LAST_NAME: str(
+                        row.get("Last name") or ""
+                    ).strip(),
+                    RICHMONDSTUDIO_USER_IMPORT_FIRST_NAME: str(
+                        row.get("First name") or ""
+                    ).strip(),
+                    RICHMONDSTUDIO_USER_IMPORT_CLASS_NAME: "",
+                    RICHMONDSTUDIO_USER_IMPORT_EMAIL: username,
+                    RICHMONDSTUDIO_USER_IMPORT_ROLE: str(
+                        row.get("Role") or "Student"
+                    ).strip().title()
+                    or "Student",
+                    RICHMONDSTUDIO_USER_IMPORT_LEVEL: str(
+                        row.get("level") or ""
+                    ).strip(),
                 }
             )
             continue
@@ -2938,22 +2960,32 @@ def _build_richmondstudio_class_sync_template_rows(
             group_meta = groups_by_id.get(group_id) or {}
             template_rows.append(
                 {
-                    "Username(Email)": username,
-                    "First name": str(row.get("First name") or "").strip(),
-                    "Last name": str(row.get("Last name") or "").strip(),
-                    "level": str(row.get("level") or "").strip(),
-                    "Class name": str(group_meta.get("class_name") or "").strip(),
-                    "Class code": str(group_meta.get("code") or "").strip(),
+                    RICHMONDSTUDIO_USER_IMPORT_LAST_NAME: str(
+                        row.get("Last name") or ""
+                    ).strip(),
+                    RICHMONDSTUDIO_USER_IMPORT_FIRST_NAME: str(
+                        row.get("First name") or ""
+                    ).strip(),
+                    RICHMONDSTUDIO_USER_IMPORT_CLASS_NAME: str(
+                        group_meta.get("class_name") or ""
+                    ).strip(),
+                    RICHMONDSTUDIO_USER_IMPORT_EMAIL: username,
+                    RICHMONDSTUDIO_USER_IMPORT_ROLE: str(
+                        row.get("Role") or "Student"
+                    ).strip().title()
+                    or "Student",
+                    RICHMONDSTUDIO_USER_IMPORT_LEVEL: str(
+                        row.get("level") or ""
+                    ).strip(),
                 }
             )
 
     template_rows.sort(
         key=lambda item: (
-            _normalize_plain_text(item.get("Username(Email)")),
-            _normalize_plain_text(item.get("Last name")),
-            _normalize_plain_text(item.get("First name")),
-            _normalize_plain_text(item.get("Class name")),
-            _normalize_plain_text(item.get("Class code")),
+            _normalize_plain_text(item.get(RICHMONDSTUDIO_USER_IMPORT_EMAIL)),
+            _normalize_plain_text(item.get(RICHMONDSTUDIO_USER_IMPORT_LAST_NAME)),
+            _normalize_plain_text(item.get(RICHMONDSTUDIO_USER_IMPORT_FIRST_NAME)),
+            _normalize_plain_text(item.get(RICHMONDSTUDIO_USER_IMPORT_CLASS_NAME)),
         )
     )
     return template_rows
@@ -2981,18 +3013,25 @@ def _load_richmondstudio_bulk_class_sync_rows(
     header_aliases = {
         "USERNAME": "Username",
         "EMAIL": "Username",
+        "EMAIL* MANDATORY": "Username",
+        "EMAIL MANDATORY": "Username",
         "CORREO": "Username",
         "USERNAME EMAIL": "Username",
         "USERNAME(EMAIL)": "Username",
         "FIRST NAME": "First name",
+        "FIRST NAME* MANDATORY": "First name",
+        "FIRST NAME MANDATORY": "First name",
         "FIRSTNAME": "First name",
         "NOMBRE": "First name",
         "LAST NAME": "Last name",
+        "LAST NAME* MANDATORY": "Last name",
+        "LAST NAME MANDATORY": "Last name",
         "LASTNAME": "Last name",
         "APELLIDO": "Last name",
         "LEVEL": "level",
         "NIVEL": "level",
         "CLASS": "Class name",
+        "CLASS OPTIONAL": "Class name",
         "CLASS NAME": "Class name",
         "CLASE": "Class name",
         "NOMBRE CLASE": "Class name",
@@ -3451,6 +3490,296 @@ def _sync_richmondstudio_user_classes_from_excel_rows(
         )
     )
     return summary, result_rows
+
+
+def _render_richmondstudio_class_sync_section(
+    rs_token: str,
+    timeout: int,
+) -> None:
+    st.markdown("**Actualizar clases RS por Excel**")
+    st.caption(
+        "Sube un Excel con el mismo formato de usuarios RS: Last name, First name, Class, Email, Role y level. "
+        "Si el usuario ya existe, la app agregara las clases del archivo. Si no existe, lo creara como student."
+    )
+
+    if st.button(
+        "Preparar plantilla clases RS",
+        key="rs_class_sync_template_prepare_btn",
+        use_container_width=True,
+    ):
+        if not rs_token:
+            st.error("Ingresa el bearer token de Richmond Studio.")
+            st.stop()
+        try:
+            with st.spinner("Consultando usuarios y clases RS..."):
+                panel_data = _load_richmondstudio_registered_panel_data(
+                    rs_token,
+                    timeout=int(timeout),
+                )
+        except Exception as exc:  # pragma: no cover - UI
+            st.error(f"No se pudo preparar la plantilla de clases RS: {exc}")
+        else:
+            _store_richmondstudio_registered_panel_data(panel_data)
+            listing_data = (
+                panel_data.get("listing_data")
+                if isinstance(panel_data.get("listing_data"), dict)
+                else {}
+            )
+            groups_lookup = (
+                panel_data.get("groups_lookup")
+                if isinstance(panel_data.get("groups_lookup"), dict)
+                else {"by_id": {}, "by_code": {}, "by_name": {}}
+            )
+            template_rows = _build_richmondstudio_class_sync_template_rows(
+                list(listing_data.get("registered_user_rows") or []),
+                groups_lookup,
+            )
+            institution_name = str(panel_data.get("institution_name") or "").strip()
+            st.session_state["rs_class_sync_template_bytes"] = (
+                _export_simple_excel(
+                    template_rows,
+                    sheet_name="class_sync_rs",
+                )
+                if template_rows
+                else b""
+            )
+            st.session_state["rs_class_sync_template_filename"] = (
+                _build_richmondstudio_password_update_filename(
+                    institution_name,
+                    prefix="plantilla_clases_rs",
+                )
+            )
+            st.session_state["rs_class_sync_template_count"] = int(len(template_rows))
+            if template_rows:
+                st.success(
+                    "Plantilla clases RS lista. Filas: {rows}.".format(
+                        rows=len(template_rows)
+                    )
+                )
+            else:
+                st.warning("No se encontraron usuarios/clases para la plantilla.")
+
+    rs_class_sync_template_bytes = bytes(
+        st.session_state.get("rs_class_sync_template_bytes") or b""
+    )
+    rs_class_sync_template_filename = str(
+        st.session_state.get("rs_class_sync_template_filename")
+        or "plantilla_clases_rs.xlsx"
+    ).strip() or "plantilla_clases_rs.xlsx"
+    rs_class_sync_template_count = int(
+        st.session_state.get("rs_class_sync_template_count") or 0
+    )
+    if rs_class_sync_template_bytes:
+        st.caption(
+            "Ultima plantilla preparada: {rows} fila(s).".format(
+                rows=rs_class_sync_template_count
+            )
+        )
+        st.download_button(
+            label="Descargar plantilla clases RS",
+            data=rs_class_sync_template_bytes,
+            file_name=rs_class_sync_template_filename,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="rs_class_sync_template_download",
+            use_container_width=True,
+        )
+
+    uploaded_rs_class_sync = st.file_uploader(
+        "Excel para sincronizar clases RS",
+        type=["xlsx", "csv", "txt"],
+        key="rs_class_sync_upload_file",
+        help=(
+            "Columnas aceptadas: Last name, First name, Class, Email, Role y level. "
+            "Si el alumno no existe en RS, First name, Last name y level son obligatorios. "
+            "Puedes repetir el mismo correo en varias filas para agregar varias clases."
+        ),
+    )
+    rs_class_sync_bytes = b""
+    rs_class_sync_name = ""
+    rs_class_sync_rows: List[Dict[str, str]] = []
+    rs_class_sync_error = ""
+    rs_class_sync_preview_rows: List[Dict[str, object]] = []
+    if uploaded_rs_class_sync is not None:
+        rs_class_sync_bytes = uploaded_rs_class_sync.getvalue()
+        rs_class_sync_name = str(
+            uploaded_rs_class_sync.name or "class_sync_rs.xlsx"
+        ).strip()
+        try:
+            rs_class_sync_rows = _load_richmondstudio_bulk_class_sync_rows(
+                rs_class_sync_bytes,
+                rs_class_sync_name,
+            )
+        except Exception as exc:
+            rs_class_sync_error = str(exc)
+            st.error(f"Error en archivo de clases RS: {exc}")
+        else:
+            rs_class_sync_preview_rows = (
+                _build_richmondstudio_bulk_class_sync_preview_rows(
+                    rs_class_sync_rows
+                )
+            )
+            st.caption(
+                "Filas validas: {rows} | Usuarios detectados: {users}".format(
+                    rows=len(rs_class_sync_rows),
+                    users=len(rs_class_sync_preview_rows),
+                )
+            )
+            if rs_class_sync_preview_rows:
+                _show_dataframe(
+                    rs_class_sync_preview_rows[:200],
+                    use_container_width=True,
+                )
+
+    run_rs_class_sync = st.button(
+        "Sincronizar clases RS por Excel",
+        type="primary",
+        key="rs_class_sync_run_btn",
+        use_container_width=True,
+    )
+    if run_rs_class_sync:
+        if not rs_token:
+            st.error("Ingresa el bearer token de Richmond Studio.")
+        elif uploaded_rs_class_sync is None:
+            st.error("Sube el Excel de clases RS.")
+        elif rs_class_sync_error:
+            st.error(
+                f"Corrige el archivo antes de continuar: {rs_class_sync_error}"
+            )
+        elif not rs_class_sync_rows:
+            st.error("No hay filas validas para sincronizar clases RS.")
+        else:
+            st.session_state["rs_class_sync_upload_bytes"] = rs_class_sync_bytes
+            st.session_state["rs_class_sync_upload_name"] = rs_class_sync_name
+            _request_richmondstudio_confirmation(
+                "rs_users_classes_sync",
+                (
+                    "sincronizar clases RS de "
+                    f"{len(rs_class_sync_preview_rows)} usuario(s) desde Excel"
+                ),
+            )
+
+    run_rs_class_sync_confirmed = _consume_richmondstudio_confirmed_action(
+        "rs_users_classes_sync"
+    )
+    if run_rs_class_sync_confirmed:
+        stored_class_sync_bytes = bytes(
+            st.session_state.get("rs_class_sync_upload_bytes") or b""
+        )
+        stored_class_sync_name = str(
+            st.session_state.get("rs_class_sync_upload_name") or ""
+        ).strip()
+        if not rs_token:
+            st.error("Ingresa el bearer token de Richmond Studio.")
+        elif not stored_class_sync_bytes:
+            st.error("No se encontro el Excel cargado para sincronizar clases RS.")
+        else:
+            status_placeholder = st.empty()
+            try:
+                rows_to_sync = _load_richmondstudio_bulk_class_sync_rows(
+                    stored_class_sync_bytes,
+                    stored_class_sync_name or "class_sync_rs.xlsx",
+                )
+                with st.spinner("Sincronizando clases RS por Excel..."):
+                    fresh_panel_data = _load_richmondstudio_registered_panel_data(
+                        rs_token,
+                        timeout=int(timeout),
+                    )
+                    fresh_listing_data = (
+                        fresh_panel_data.get("listing_data")
+                        if isinstance(fresh_panel_data.get("listing_data"), dict)
+                        else {}
+                    )
+                    fresh_registered_user_rows = list(
+                        fresh_listing_data.get("registered_user_rows") or []
+                    )
+                    fresh_groups_lookup = (
+                        fresh_panel_data.get("groups_lookup")
+                        if isinstance(fresh_panel_data.get("groups_lookup"), dict)
+                        else {"by_id": {}, "by_code": {}, "by_name": {}}
+                    )
+                    class_sync_summary, class_sync_result_rows = (
+                        _sync_richmondstudio_user_classes_from_excel_rows(
+                            token=rs_token,
+                            rows=rows_to_sync,
+                            registered_user_rows=fresh_registered_user_rows,
+                            groups_lookup=fresh_groups_lookup,
+                            timeout=int(timeout),
+                            on_status=lambda message: status_placeholder.write(
+                                message
+                            ),
+                        )
+                    )
+                    refreshed_panel_after_sync = (
+                        _load_richmondstudio_registered_panel_data(
+                            rs_token,
+                            timeout=int(timeout),
+                        )
+                    )
+            except Exception as exc:
+                status_placeholder.empty()
+                st.error(f"No se pudieron sincronizar clases RS: {exc}")
+            else:
+                status_placeholder.empty()
+                _store_richmondstudio_registered_panel_data(
+                    refreshed_panel_after_sync
+                )
+                st.session_state["rs_class_sync_summary"] = dict(
+                    class_sync_summary
+                )
+                st.session_state["rs_class_sync_result_rows"] = list(
+                    class_sync_result_rows
+                )
+                st.session_state["rs_class_sync_result_bytes"] = (
+                    _export_simple_excel(
+                        class_sync_result_rows,
+                        sheet_name="class_sync_rs",
+                    )
+                    if class_sync_result_rows
+                    else b""
+                )
+                st.success(
+                    "Actualizacion de clases RS completada. "
+                    "Filas: {input_rows} | Usuarios encontrados: {users_found} | "
+                    "Usuarios creados: {users_created} | Usuarios actualizados: {users_updated} | Sin cambios: {users_unchanged} | "
+                    "Errores: {error_total}".format(
+                        **class_sync_summary
+                    )
+                )
+
+    rs_class_sync_summary_cached = (
+        st.session_state.get("rs_class_sync_summary") or {}
+    )
+    rs_class_sync_result_rows_cached = (
+        st.session_state.get("rs_class_sync_result_rows") or []
+    )
+    rs_class_sync_result_bytes_cached = (
+        st.session_state.get("rs_class_sync_result_bytes") or b""
+    )
+    if rs_class_sync_summary_cached:
+        st.info(
+            "Ultima actualizacion clases RS: Filas {input_rows} | "
+            "Usuarios encontrados {users_found} | Creados {users_created} | Actualizados {users_updated} | "
+            "Sin cambios {users_unchanged} | Errores {error_total}".format(
+                **rs_class_sync_summary_cached
+            )
+        )
+        if rs_class_sync_result_rows_cached:
+            _show_dataframe(
+                rs_class_sync_result_rows_cached[:200],
+                use_container_width=True,
+            )
+        if rs_class_sync_result_bytes_cached:
+            st.download_button(
+                label="Descargar resultado clases RS",
+                data=rs_class_sync_result_bytes_cached,
+                file_name=_build_richmondstudio_password_update_filename(
+                    "",
+                    prefix="resultado_clases_rs",
+                ),
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="rs_class_sync_result_download",
+                use_container_width=True,
+            )
 
 
 def _build_richmondstudio_bulk_user_csv_bytes(
@@ -9940,13 +10269,11 @@ def _profesor_edit_estado_activo(estado: object) -> bool:
     return estado_txt in {"ACTIVO", "ACTIVA", "1", "SI", "TRUE", "YES"}
 
 
-def _profesor_edit_estado_badge_html(activo: bool) -> str:
+def _profesor_edit_estado_dot_html(activo: bool) -> str:
     color = "#138a52" if activo else "#c62828"
-    label = "Activo" if activo else "Inactivo"
     return (
-        "<div style='display:flex;align-items:center;gap:0.5rem;margin:0.1rem 0 0.35rem 0;'>"
+        "<div style='display:flex;align-items:center;height:2rem;'>"
         f"<span style='display:inline-block;width:0.7rem;height:0.7rem;border-radius:999px;background:{color};'></span>"
-        f"<span style='font-weight:600;color:{color};'>{label}</span>"
         "</div>"
     )
 
@@ -12883,6 +13210,11 @@ def render_richmond_studio_view() -> None:
                         key="rs_users_password_template_download",
                         use_container_width=True,
                     )
+        with st.container(border=True):
+            _render_richmondstudio_class_sync_section(
+                rs_token=rs_token,
+                timeout=int(timeout),
+            )
 
     with tab_rs_docentes:
         with st.container(border=True):
@@ -13355,9 +13687,6 @@ def render_richmond_studio_view() -> None:
             )
             run_rs_user_classes_clear_confirmed = _consume_richmondstudio_confirmed_action(
                 "rs_user_classes_clear"
-            )
-            run_rs_class_sync_confirmed = _consume_richmondstudio_confirmed_action(
-                "rs_users_classes_sync"
             )
             run_rs_password_update_confirmed = _consume_richmondstudio_confirmed_action(
                 "rs_users_password_update"
@@ -14103,238 +14432,6 @@ def render_richmond_studio_view() -> None:
                     _request_richmondstudio_confirmation(
                         "rs_user_classes_clear",
                         f"quitar todas las clases RS de {selected_name}",
-                    )
-
-            st.markdown("**Actualizar clases RS por Excel**")
-            st.caption(
-                "Sube un Excel con Username(Email), Class name o Class code. "
-                "Si el usuario ya existe, la app solo agregara las clases del archivo y conservara sus otras clases. "
-                "Si no existe, lo creara como student usando First name, Last name y level."
-            )
-            if registered_user_rows_cached:
-                rs_class_sync_template_rows = (
-                    _build_richmondstudio_class_sync_template_rows(
-                        registered_user_rows_cached,
-                        registered_groups_lookup,
-                    )
-                )
-                if rs_class_sync_template_rows:
-                    st.download_button(
-                        label="Descargar plantilla clases RS",
-                        data=_export_simple_excel(
-                            rs_class_sync_template_rows,
-                            sheet_name="class_sync_rs",
-                        ),
-                        file_name=_build_richmondstudio_password_update_filename(
-                            "",
-                            prefix="plantilla_clases_rs",
-                        ),
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="rs_class_sync_template_download",
-                        use_container_width=True,
-                    )
-            else:
-                st.caption(
-                    "Si quieres plantilla con usuarios actuales, primero ejecuta `Listar alumnos registrados`."
-                )
-
-            uploaded_rs_class_sync = st.file_uploader(
-                "Excel para sincronizar clases RS",
-                type=["xlsx", "csv", "txt"],
-                key="rs_class_sync_upload_file",
-                help=(
-                    "Columnas esperadas: Username(Email), Class name o Class code. "
-                    "Si el alumno no existe en RS, agrega tambien First name, Last name y level "
-                    "(preschool, primary, secondary o adult). "
-                    "Puedes repetir el mismo correo en varias filas para agregar varias clases."
-                ),
-            )
-            rs_class_sync_bytes = b""
-            rs_class_sync_name = ""
-            rs_class_sync_rows: List[Dict[str, str]] = []
-            rs_class_sync_error = ""
-            rs_class_sync_preview_rows: List[Dict[str, object]] = []
-            if uploaded_rs_class_sync is not None:
-                rs_class_sync_bytes = uploaded_rs_class_sync.getvalue()
-                rs_class_sync_name = str(
-                    uploaded_rs_class_sync.name or "class_sync_rs.xlsx"
-                ).strip()
-                try:
-                    rs_class_sync_rows = _load_richmondstudio_bulk_class_sync_rows(
-                        rs_class_sync_bytes,
-                        rs_class_sync_name,
-                    )
-                except Exception as exc:
-                    rs_class_sync_error = str(exc)
-                    st.error(f"Error en archivo de clases RS: {exc}")
-                else:
-                    rs_class_sync_preview_rows = (
-                        _build_richmondstudio_bulk_class_sync_preview_rows(
-                            rs_class_sync_rows
-                        )
-                    )
-                    st.caption(
-                        "Filas validas: {rows} | Usuarios detectados: {users}".format(
-                            rows=len(rs_class_sync_rows),
-                            users=len(rs_class_sync_preview_rows),
-                        )
-                    )
-                    if rs_class_sync_preview_rows:
-                        _show_dataframe(
-                            rs_class_sync_preview_rows[:200],
-                            use_container_width=True,
-                        )
-
-            run_rs_class_sync = st.button(
-                "Sincronizar clases RS por Excel",
-                type="primary",
-                key="rs_class_sync_run_btn",
-                use_container_width=True,
-            )
-            if run_rs_class_sync:
-                if not rs_token:
-                    st.error("Ingresa el bearer token de Richmond Studio.")
-                elif uploaded_rs_class_sync is None:
-                    st.error("Sube el Excel de clases RS.")
-                elif rs_class_sync_error:
-                    st.error(
-                        f"Corrige el archivo antes de continuar: {rs_class_sync_error}"
-                    )
-                elif not rs_class_sync_rows:
-                    st.error("No hay filas validas para sincronizar clases RS.")
-                else:
-                    st.session_state["rs_class_sync_upload_bytes"] = rs_class_sync_bytes
-                    st.session_state["rs_class_sync_upload_name"] = rs_class_sync_name
-                    _request_richmondstudio_confirmation(
-                        "rs_users_classes_sync",
-                        (
-                            "sincronizar clases RS de "
-                            f"{len(rs_class_sync_preview_rows)} usuario(s) desde Excel"
-                        ),
-                    )
-
-            if run_rs_class_sync_confirmed:
-                stored_class_sync_bytes = bytes(
-                    st.session_state.get("rs_class_sync_upload_bytes") or b""
-                )
-                stored_class_sync_name = str(
-                    st.session_state.get("rs_class_sync_upload_name") or ""
-                ).strip()
-                if not rs_token:
-                    st.error("Ingresa el bearer token de Richmond Studio.")
-                elif not stored_class_sync_bytes:
-                    st.error("No se encontro el Excel cargado para sincronizar clases RS.")
-                else:
-                    status_placeholder = st.empty()
-                    try:
-                        rows_to_sync = _load_richmondstudio_bulk_class_sync_rows(
-                            stored_class_sync_bytes,
-                            stored_class_sync_name or "class_sync_rs.xlsx",
-                        )
-                        with st.spinner("Sincronizando clases RS por Excel..."):
-                            fresh_panel_data = _load_richmondstudio_registered_panel_data(
-                                rs_token,
-                                timeout=int(timeout),
-                            )
-                            fresh_listing_data = (
-                                fresh_panel_data.get("listing_data")
-                                if isinstance(
-                                    fresh_panel_data.get("listing_data"), dict
-                                )
-                                else {}
-                            )
-                            fresh_registered_user_rows = list(
-                                fresh_listing_data.get("registered_user_rows") or []
-                            )
-                            fresh_groups_lookup = (
-                                fresh_panel_data.get("groups_lookup")
-                                if isinstance(
-                                    fresh_panel_data.get("groups_lookup"), dict
-                                )
-                                else {"by_id": {}, "by_code": {}, "by_name": {}}
-                            )
-                            class_sync_summary, class_sync_result_rows = (
-                                _sync_richmondstudio_user_classes_from_excel_rows(
-                                    token=rs_token,
-                                    rows=rows_to_sync,
-                                    registered_user_rows=fresh_registered_user_rows,
-                                    groups_lookup=fresh_groups_lookup,
-                                    timeout=int(timeout),
-                                    on_status=lambda message: status_placeholder.write(
-                                        message
-                                    ),
-                                )
-                            )
-                            refreshed_panel_after_sync = (
-                                _load_richmondstudio_registered_panel_data(
-                                    rs_token,
-                                    timeout=int(timeout),
-                                )
-                            )
-                    except Exception as exc:
-                        status_placeholder.empty()
-                        st.error(f"No se pudieron sincronizar clases RS: {exc}")
-                    else:
-                        status_placeholder.empty()
-                        _store_richmondstudio_registered_panel_data(
-                            refreshed_panel_after_sync
-                        )
-                        st.session_state["rs_class_sync_summary"] = dict(
-                            class_sync_summary
-                        )
-                        st.session_state["rs_class_sync_result_rows"] = list(
-                            class_sync_result_rows
-                        )
-                        st.session_state["rs_class_sync_result_bytes"] = (
-                            _export_simple_excel(
-                                class_sync_result_rows,
-                                sheet_name="class_sync_rs",
-                            )
-                            if class_sync_result_rows
-                            else b""
-                        )
-                        st.success(
-                            "Actualizacion de clases RS completada. "
-                            "Filas: {input_rows} | Usuarios encontrados: {users_found} | "
-                            "Usuarios creados: {users_created} | Usuarios actualizados: {users_updated} | Sin cambios: {users_unchanged} | "
-                            "Errores: {error_total}".format(
-                                **class_sync_summary
-                            )
-                        )
-
-            rs_class_sync_summary_cached = (
-                st.session_state.get("rs_class_sync_summary") or {}
-            )
-            rs_class_sync_result_rows_cached = (
-                st.session_state.get("rs_class_sync_result_rows") or []
-            )
-            rs_class_sync_result_bytes_cached = (
-                st.session_state.get("rs_class_sync_result_bytes") or b""
-            )
-            if rs_class_sync_summary_cached:
-                st.info(
-                    "Ultima actualizacion clases RS: Filas {input_rows} | "
-                    "Usuarios encontrados {users_found} | Creados {users_created} | Actualizados {users_updated} | "
-                    "Sin cambios {users_unchanged} | Errores {error_total}".format(
-                        **rs_class_sync_summary_cached
-                    )
-                )
-                if rs_class_sync_result_rows_cached:
-                    _show_dataframe(
-                        rs_class_sync_result_rows_cached[:200],
-                        use_container_width=True,
-                    )
-                if rs_class_sync_result_bytes_cached:
-                    st.download_button(
-                        label="Descargar resultado clases RS",
-                        data=rs_class_sync_result_bytes_cached,
-                        file_name=_build_richmondstudio_password_update_filename(
-                            "",
-                            prefix="resultado_clases_rs",
-                        ),
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="rs_class_sync_result_download",
-                        use_container_width=True,
                     )
 
             st.markdown("**Actualizar password usuarios RS**")
@@ -17499,21 +17596,27 @@ with tab_crud_profesores:
                                         )
                                         status_col = st.container()
                                         with status_col:
-                                            st.markdown(
-                                                _profesor_edit_estado_badge_html(
+                                            status_click_col_a, status_click_col_b = (
+                                                st.columns([0.12, 1], gap="small")
+                                            )
+                                            status_click_col_a.markdown(
+                                                _profesor_edit_estado_dot_html(
                                                     current_profesor_activo
                                                 ),
                                                 unsafe_allow_html=True,
                                             )
-                                            toggle_profesor_estado = st.button(
-                                                "Activo"
-                                                if current_profesor_activo
-                                                else "Inactivo",
-                                                key=f"profesores_edit_estado_toggle_{int(selected_profesor_persona_id)}",
-                                                use_container_width=True,
-                                            )
-                                            st.caption(
-                                                "Haz clic en el estado para cambiarlo."
+                                            toggle_profesor_estado = (
+                                                status_click_col_b.button(
+                                                    "Activo"
+                                                    if current_profesor_activo
+                                                    else "Inactivo",
+                                                    key=(
+                                                        "profesores_edit_estado_toggle_"
+                                                        f"{int(selected_profesor_persona_id)}"
+                                                    ),
+                                                    type="tertiary",
+                                                    use_container_width=False,
+                                                )
                                             )
                                             if toggle_profesor_estado:
                                                 token = _get_shared_token()

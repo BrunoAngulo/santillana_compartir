@@ -905,7 +905,6 @@ if menu_option != "Richmond Studio":
                 else str((row_by_id_global.get(int(value)) or {}).get("label") or f"Colegio {value}")
             ),
             disabled=not bool(colegio_rows_global),
-            help="Se reutiliza en las funciones que requieren colegio.",
         )
 
         if colegio_error_global:
@@ -14161,6 +14160,926 @@ if menu_option == "Richmond Studio":
     render_richmond_studio_view()
     st.stop()
 
+def _render_users_payments_section(
+    colegio_id_raw: str,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+) -> None:
+    with st.container(border=True):
+        st.markdown("**3) Actualizar users Payments**")
+        st.caption(
+            "Usa el Colegio Clave global para preparar y aplicar cambios de users payments."
+        )
+        if not _restricted_sections_unlocked():
+            _render_restricted_blur(
+                "Actualizar users Payments",
+                "simulador_web_y",
+            )
+            st.stop()
+
+        col_prepare, col_paid, col_clear = st.columns([2, 2, 1], gap="small")
+        run_prepare_auto_plan = col_prepare.button(
+            "Analizar y preparar lista de cambios",
+            type="primary",
+            key="auto_move_prepare_btn",
+            use_container_width=True,
+        )
+        run_paid_students = col_paid.button(
+            "Traer alumnos con pago",
+            key="auto_move_paid_students_btn",
+            use_container_width=True,
+        )
+        clear_auto_plan = col_clear.button(
+            "Limpiar lista",
+            key="auto_move_clear_btn",
+            use_container_width=True,
+        )
+
+        if clear_auto_plan:
+            for state_key in (
+                "auto_move_plan_rows",
+                "auto_move_editor_rows",
+                "auto_move_alumnos_grid",
+                "auto_move_errors",
+                "auto_move_colegio_id",
+                "auto_move_removed_ref_ids",
+                "auto_move_group_map_by_grade",
+                "auto_move_status_messages",
+                "auto_move_paid_students_grid",
+                "auto_move_paid_students_errors",
+            ):
+                st.session_state.pop(state_key, None)
+            st.rerun()
+
+        if run_paid_students:
+            token = _get_shared_token()
+            if not token:
+                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                st.stop()
+            try:
+                colegio_id_int = _parse_colegio_id(colegio_id_raw)
+            except ValueError as exc:
+                st.error(f"Error: {exc}")
+                st.stop()
+
+            try:
+                paid_status_box = st.empty()
+
+                def _on_paid_status(message: str) -> None:
+                    msg = str(message or "").strip()
+                    if not msg:
+                        return
+                    paid_status_box.info(msg)
+
+                with st.spinner("Consultando alumnos con pago..."):
+                    paid_catalog = _fetch_alumnos_con_pago_for_users_payments(
+                        token=token,
+                        colegio_id=int(colegio_id_int),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                        only_origin_section=False,
+                        on_status=_on_paid_status,
+                    )
+                paid_status_box.empty()
+            except Exception as exc:  # pragma: no cover - UI
+                st.error(f"Error: {exc}")
+                st.stop()
+
+            st.session_state["auto_move_paid_students_grid"] = (
+                paid_catalog.get("students_grid") or []
+            )
+            st.session_state["auto_move_paid_students_errors"] = (
+                paid_catalog.get("errors") or []
+            )
+            st.success(
+                "Alumnos con pago detectados: "
+                f"{len(st.session_state['auto_move_paid_students_grid'])}"
+            )
+
+        if run_prepare_auto_plan:
+            token = _get_shared_token()
+            if not token:
+                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                st.stop()
+            try:
+                colegio_id_int = _parse_colegio_id(colegio_id_raw)
+            except ValueError as exc:
+                st.error(f"Error: {exc}")
+                st.stop()
+
+            try:
+                status_box = st.empty()
+
+                def _on_status(message: str) -> None:
+                    msg = str(message or "").strip()
+                    if not msg:
+                        return
+                    status_box.info(msg)
+
+                with st.spinner("Preparando simulacion de cambios..."):
+                    simulation = _build_auto_move_simulation(
+                        token=token,
+                        colegio_id=int(colegio_id_int),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                        on_status=_on_status,
+                    )
+                status_box.empty()
+            except Exception as exc:  # pragma: no cover - UI
+                st.error(f"Error: {exc}")
+                st.stop()
+
+            st.session_state["auto_move_plan_rows"] = simulation.get("plan_rows") or []
+            st.session_state["auto_move_editor_rows"] = simulation.get("editor_rows") or []
+            st.session_state["auto_move_alumnos_grid"] = simulation.get("alumnos_all_grid") or []
+            st.session_state["auto_move_errors"] = simulation.get("errors") or []
+            st.session_state["auto_move_colegio_id"] = int(colegio_id_int)
+            st.session_state["auto_move_group_map_by_grade"] = (
+                simulation.get("grupo_id_by_seccion_by_grade") or {}
+            )
+            st.session_state["auto_move_paid_students_grid"] = (
+                simulation.get("paid_students_grid") or []
+            )
+            st.session_state["auto_move_paid_students_errors"] = (
+                simulation.get("errors") or []
+            )
+            st.session_state["auto_move_removed_ref_ids"] = []
+
+            total_plan = len(st.session_state["auto_move_plan_rows"])
+            st.success(f"Simulacion lista. Alumnos candidatos a modificar: {total_plan}")
+
+        paid_students_errors_cached = (
+            st.session_state.get("auto_move_paid_students_errors") or []
+        )
+        if paid_students_errors_cached:
+            st.warning("Hubo errores consultando alumnos con pago.")
+            st.write("\n".join(f"- {item}" for item in paid_students_errors_cached[:20]))
+            pending_paid = len(paid_students_errors_cached) - 20
+            if pending_paid > 0:
+                st.caption(f"... y {pending_paid} errores mas.")
+
+        if "auto_move_paid_students_grid" in st.session_state:
+            paid_students_grid_cached = (
+                st.session_state.get("auto_move_paid_students_grid") or []
+            )
+            if paid_students_grid_cached:
+                st.markdown("**Alumnos con pago detectados**")
+                st.dataframe(
+                    pd.DataFrame(paid_students_grid_cached),
+                    use_container_width=True,
+                    hide_index=True,
+                    height=320,
+                )
+            else:
+                st.info("No se encontraron alumnos con pago para el colegio actual.")
+
+        errors_cached = st.session_state.get("auto_move_errors") or []
+        if errors_cached:
+            st.warning("Hubo errores consultando algunas secciones.")
+            st.write("\n".join(f"- {item}" for item in errors_cached[:20]))
+            pending = len(errors_cached) - 20
+            if pending > 0:
+                st.caption(f"... y {pending} errores mas.")
+
+        plan_rows_cached = st.session_state.get("auto_move_plan_rows") or []
+        if plan_rows_cached:
+            st.markdown("**Lista de cambios para autorizar**")
+            plan_by_id = {
+                int(plan.get("plan_id")): plan
+                for plan in plan_rows_cached
+                if _safe_int(plan.get("plan_id")) is not None
+            }
+            sorted_plan_ids = sorted(plan_by_id.keys())
+            if not sorted_plan_ids:
+                st.info("No hay alumnos para modificar.")
+            group_map_by_grade = st.session_state.get("auto_move_group_map_by_grade", {})
+            destino_payload_by_option: Dict[str, Dict[str, object]] = {}
+            destino_options: List[str] = []
+            table_rows: List[Dict[str, object]] = []
+
+            for plan_id in sorted_plan_ids:
+                plan = plan_by_id.get(int(plan_id)) or {}
+                pagado = (
+                    plan.get("alumno_pagado")
+                    if isinstance(plan.get("alumno_pagado"), dict)
+                    else {}
+                )
+                referencial = (
+                    plan.get("alumno_inactivar")
+                    if isinstance(plan.get("alumno_inactivar"), dict)
+                    else {}
+                )
+                nivel_id = _safe_int(plan.get("nivel_id"))
+                grado_id = _safe_int(plan.get("grado_id"))
+                mapping: Dict[str, int] = {}
+                if (
+                    isinstance(group_map_by_grade, dict)
+                    and nivel_id is not None
+                    and grado_id is not None
+                ):
+                    mapping_raw = group_map_by_grade.get((int(nivel_id), int(grado_id)))
+                    if not isinstance(mapping_raw, dict):
+                        mapping_raw = group_map_by_grade.get(
+                            f"{int(nivel_id)}:{int(grado_id)}"
+                        )
+                    if isinstance(mapping_raw, dict):
+                        mapping = mapping_raw
+
+                nivel_txt = str(pagado.get("nivel") or plan.get("nivel") or "").strip()
+                grado_txt = str(pagado.get("grado") or plan.get("grado") or "").strip()
+                seccion_origen_txt = _normalize_seccion_key(
+                    plan.get("seccion_origen")
+                    or pagado.get("seccion_norm")
+                    or pagado.get("seccion")
+                    or AUTO_MOVE_SECCION_ORIGEN
+                )
+                seccion_destino_txt = _normalize_seccion_key(plan.get("seccion_destino") or "")
+
+                if mapping and not seccion_destino_txt:
+                    picked_sec, picked_gid = _pick_default_destino(
+                        grupo_id_by_seccion=mapping,
+                        origen_seccion=AUTO_MOVE_SECCION_ORIGEN,
+                    )
+                    if picked_sec and picked_gid is not None:
+                        seccion_destino_txt = _normalize_seccion_key(picked_sec)
+                        plan["seccion_destino"] = seccion_destino_txt
+                        plan["grupo_destino_id"] = int(picked_gid)
+
+                for seccion_key, grupo_destino_id in sorted(mapping.items(), key=lambda item: str(item[0])):
+                    sec = _normalize_seccion_key(seccion_key)
+                    option_text = f"{nivel_txt} | {grado_txt} ({sec})"
+                    if option_text not in destino_payload_by_option:
+                        destino_payload_by_option[option_text] = {
+                            "nivel_id": int(nivel_id) if nivel_id is not None else None,
+                            "grado_id": int(grado_id) if grado_id is not None else None,
+                            "grupo_destino_id": int(grupo_destino_id),
+                            "seccion_destino": sec,
+                        }
+                        destino_options.append(option_text)
+
+                default_option = ""
+                if nivel_txt or grado_txt or seccion_destino_txt:
+                    default_option = f"{nivel_txt} | {grado_txt} ({seccion_destino_txt})"
+                if default_option and default_option not in destino_payload_by_option:
+                    destino_payload_by_option[default_option] = {
+                        "nivel_id": int(nivel_id) if nivel_id is not None else None,
+                        "grado_id": int(grado_id) if grado_id is not None else None,
+                        "grupo_destino_id": _safe_int(plan.get("grupo_destino_id")),
+                        "seccion_destino": seccion_destino_txt,
+                    }
+                    destino_options.append(default_option)
+
+                alumno_col = (
+                    f"{_format_alumno_label(pagado)} | "
+                    f"{nivel_txt} | {grado_txt} ({seccion_origen_txt})"
+                )
+                referencia_col = (
+                    _format_alumno_label(referencial)
+                    if isinstance(referencial, dict) and referencial
+                    else "SIN REFERENCIA"
+                )
+                requiere_inactivar = bool(
+                    _to_bool(plan.get("requiere_inactivar"))
+                    and _safe_int(referencial.get("alumno_id")) is not None
+                )
+                table_rows.append(
+                    {
+                        "PlanId": int(plan_id),
+                        "Alumno | Grado y seccion": alumno_col,
+                        "Referencia": referencia_col,
+                        "Inactivar referencia": requiere_inactivar,
+                        "Nuevo grado y seccion": default_option,
+                    }
+                )
+
+            destino_options = sorted(destino_options)
+            if not destino_options:
+                destino_options = [""]
+
+            table_df = pd.DataFrame(table_rows)
+            edited_table_df = st.data_editor(
+                table_df,
+                key="auto_move_plan_editor_table",
+                hide_index=True,
+                use_container_width=True,
+                disabled=["PlanId", "Alumno | Grado y seccion", "Referencia"],
+                column_config={
+                    "PlanId": st.column_config.NumberColumn("PlanId", format="%d"),
+                    "Alumno | Grado y seccion": st.column_config.TextColumn(
+                        "Alumno | Grado y seccion"
+                    ),
+                    "Referencia": st.column_config.TextColumn("Referencia"),
+                    "Inactivar referencia": st.column_config.CheckboxColumn(
+                        "Inactivar referencia"
+                    ),
+                    "Nuevo grado y seccion": st.column_config.SelectboxColumn(
+                        "Nuevo grado y seccion",
+                        options=destino_options,
+                        required=True,
+                    ),
+                },
+            )
+
+            edited_rows = (
+                edited_table_df.to_dict("records")
+                if isinstance(edited_table_df, pd.DataFrame)
+                else table_rows
+            )
+
+            authorized_plans: List[Dict[str, object]] = []
+            removed_ref_ids_current: Set[int] = set()
+            for base_plan in plan_rows_cached:
+                plan_id = _safe_int(base_plan.get("plan_id"))
+                if plan_id is None:
+                    continue
+                plan = dict(base_plan) if isinstance(base_plan, dict) else {}
+                if not plan:
+                    continue
+
+                edited_row = next(
+                    (
+                        row
+                        for row in edited_rows
+                        if _safe_int(row.get("PlanId")) == int(plan_id)
+                    ),
+                    {},
+                )
+
+                keep_reference = bool(_to_bool(edited_row.get("Inactivar referencia")))
+                if not keep_reference:
+                    removed_ref_ids_current.add(int(plan_id))
+                    plan["alumno_parecido"] = {}
+                    plan["alumno_inactivar"] = {}
+                    plan["requiere_inactivar"] = False
+                    plan["comparacion"] = (
+                        "Referencia eliminada manualmente: solo movimiento de seccion."
+                    )
+                    plan["motivo"] = (
+                        "Referencia eliminada manualmente: no se inactiva alumno parecido."
+                    )
+
+                selected_destino = str(edited_row.get("Nuevo grado y seccion") or "").strip()
+                payload = destino_payload_by_option.get(selected_destino)
+                if isinstance(payload, dict):
+                    nivel_id_val = _safe_int(payload.get("nivel_id"))
+                    grado_id_val = _safe_int(payload.get("grado_id"))
+                    grupo_id_val = _safe_int(payload.get("grupo_destino_id"))
+                    seccion_val = str(payload.get("seccion_destino") or "").strip()
+                    if nivel_id_val is not None:
+                        plan["nivel_id"] = int(nivel_id_val)
+                    if grado_id_val is not None:
+                        plan["grado_id"] = int(grado_id_val)
+                    if grupo_id_val is not None:
+                        plan["grupo_destino_id"] = int(grupo_id_val)
+                    if seccion_val:
+                        plan["seccion_destino"] = seccion_val
+                authorized_plans.append(plan)
+
+            st.session_state["auto_move_removed_ref_ids"] = sorted(removed_ref_ids_current)
+
+            st.caption(
+                "Cambios listos para guardar: {total} | Referencias quitadas: {removed}".format(
+                    total=len(authorized_plans),
+                    removed=len(removed_ref_ids_current),
+                )
+            )
+
+            run_apply_auto = st.button(
+                "Guardar cambios autorizados",
+                key="auto_move_apply_btn",
+                use_container_width=True,
+            )
+
+            if run_apply_auto:
+                token = _get_shared_token()
+                if not token:
+                    st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                    st.stop()
+                if not authorized_plans:
+                    st.warning("No hay cambios autorizados para guardar.")
+                    st.stop()
+                colegio_id_exec = _safe_int(st.session_state.get("auto_move_colegio_id"))
+                if colegio_id_exec is None:
+                    try:
+                        colegio_id_exec = _parse_colegio_id(colegio_id_raw)
+                    except ValueError as exc:
+                        st.error(f"Error: {exc}")
+                        st.stop()
+                try:
+                    apply_progress = st.progress(
+                        0,
+                        text="Iniciando guardado de cambios autorizados...",
+                    )
+                    apply_status_box = st.empty()
+                    apply_metrics_box = st.empty()
+
+                    def _on_apply_status(message: str) -> None:
+                        msg = str(message or "").strip()
+                        if msg:
+                            apply_status_box.info(msg)
+
+                    def _on_apply_progress(payload: Dict[str, object]) -> None:
+                        processed = int(payload.get("processed") or 0)
+                        total = max(int(payload.get("total") or 0), 1)
+                        alumno_actual = str(
+                            payload.get("current_student") or ""
+                        ).strip()
+                        current_status = str(
+                            payload.get("current_status") or ""
+                        ).strip()
+                        summary_payload = (
+                            payload.get("summary")
+                            if isinstance(payload.get("summary"), dict)
+                            else {}
+                        )
+                        apply_progress.progress(
+                            min(processed / total, 1.0),
+                            text=(
+                                f"Procesados {processed}/{total} alumno(s)"
+                            ),
+                        )
+                        if alumno_actual or current_status:
+                            apply_status_box.info(
+                                "Alumno {processed}/{total}: {alumno} | {status}".format(
+                                    processed=processed,
+                                    total=total,
+                                    alumno=alumno_actual or "-",
+                                    status=current_status or "Procesando",
+                                )
+                            )
+                        apply_metrics_box.caption(
+                            "Avance: "
+                            f"{processed}/{total} | "
+                            f"Inactivar OK={int(summary_payload.get('inactivar_ok', 0))}, ERROR={int(summary_payload.get('inactivar_error', 0))} | "
+                            f"Mover OK={int(summary_payload.get('mover_ok', 0))}, ERROR={int(summary_payload.get('mover_error', 0))} | "
+                            f"Asignar OK={int(summary_payload.get('asignar_ok', 0))}, ERROR={int(summary_payload.get('asignar_error', 0))}, SKIP={int(summary_payload.get('asignar_skip', 0))}"
+                        )
+
+                    st.info(
+                        "Iniciando guardado de cambios autorizados: "
+                        f"{len(authorized_plans)} alumno(s)."
+                    )
+                    summary_apply, results_apply = _apply_auto_move_changes(
+                        token=token,
+                        colegio_id=int(colegio_id_exec),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                        plan_rows=authorized_plans,
+                        on_status=_on_apply_status,
+                        on_progress=_on_apply_progress,
+                    )
+                    apply_progress.progress(
+                        1.0,
+                        text=(
+                            "Guardado completado: "
+                            f"{len(authorized_plans)}/{len(authorized_plans)} alumno(s)"
+                        ),
+                    )
+                except Exception as exc:  # pragma: no cover - UI
+                    apply_status_box.error(
+                        f"Error durante el guardado: {exc}"
+                    )
+                    st.error(f"No se pudieron guardar los cambios: {exc}")
+                    st.stop()
+
+                inactivar_ok = int(summary_apply.get("inactivar_ok", 0))
+                inactivar_error = int(summary_apply.get("inactivar_error", 0))
+                mover_ok = int(summary_apply.get("mover_ok", 0))
+                mover_error = int(summary_apply.get("mover_error", 0))
+                asignar_ok = int(summary_apply.get("asignar_ok", 0))
+                asignar_error = int(summary_apply.get("asignar_error", 0))
+                asignar_skip = int(summary_apply.get("asignar_skip", 0))
+                total_errors = inactivar_error + mover_error + asignar_error
+
+                if total_errors == 0:
+                    st.success("Cambios guardados correctamente.")
+                else:
+                    st.warning("Guardado completado con observaciones.")
+
+                st.caption(
+                    "Resumen: "
+                    f"Inactivar OK={inactivar_ok}, ERROR={inactivar_error} | "
+                    f"Mover OK={mover_ok}, ERROR={mover_error} | "
+                    f"Asignar clases OK={asignar_ok}, ERROR={asignar_error}, SKIP={asignar_skip}"
+                )
+                if results_apply:
+                    details = []
+                    for item in results_apply[:80]:
+                        if not isinstance(item, dict):
+                            continue
+                        details.append(
+                            "- {alumno} | Inactivar: {inactivar} | Mover: {mover} | Asignar: {asignar}".format(
+                                alumno=str(item.get("Alumno pagado") or ""),
+                                inactivar=str(item.get("Inactivar no pagado") or ""),
+                                mover=str(item.get("Mover") or ""),
+                                asignar=str(item.get("Asignar clases") or ""),
+                            )
+                        )
+                    if details:
+                        st.markdown("**Detalle por alumno**")
+                        st.markdown("\n".join(details))
+                    if len(results_apply) > 80:
+                        st.caption(f"... y {len(results_apply) - 80} filas mas.")
+
+    with st.container(border=True):
+        st.markdown("**4) Verificar colegios Payments**")
+        st.caption(
+            "Colegios incluidos: {total}".format(
+                total=len(AUTO_MOVE_MULTI_ACTIVE_COLEGIO_IDS)
+            )
+        )
+        st.dataframe(
+            pd.DataFrame(AUTO_MOVE_MULTI_ACTIVE_SCHOOLS),
+            use_container_width=True,
+            hide_index=True,
+            height=260,
+        )
+
+        col_prepare_multi, col_clear_multi = st.columns([2, 1], gap="small")
+        run_prepare_auto_multi = col_prepare_multi.button(
+            "Analizar colegios predefinidos",
+            type="primary",
+            key="auto_move_multi_prepare_btn",
+            use_container_width=True,
+        )
+        clear_auto_multi = col_clear_multi.button(
+            "Limpiar lista masiva",
+            key="auto_move_multi_clear_btn",
+            use_container_width=True,
+        )
+
+        if clear_auto_multi:
+            for state_key in (
+                "auto_move_multi_plan_rows",
+                "auto_move_multi_errors",
+                "auto_move_multi_group_map_by_scope",
+                "auto_move_multi_summary_rows",
+                "auto_move_multi_colegio_ids",
+            ):
+                st.session_state.pop(state_key, None)
+            st.rerun()
+
+        if run_prepare_auto_multi:
+            token = _get_shared_token()
+            if not token:
+                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                st.stop()
+            colegio_ids_multi = list(AUTO_MOVE_MULTI_ACTIVE_COLEGIO_IDS)
+
+            try:
+                progress_bar_multi = st.progress(
+                    0,
+                    text="Iniciando analisis de colegios...",
+                )
+                progress_status_box_multi = st.empty()
+                progress_metrics_box_multi = st.empty()
+                progress_table_box_multi = st.empty()
+                status_box_multi = st.empty()
+
+                def _on_status_multi(message: str) -> None:
+                    msg = str(message or "").strip()
+                    if msg:
+                        status_box_multi.info(msg)
+
+                def _on_progress_multi(payload: Dict[str, object]) -> None:
+                    processed = int(payload.get("processed") or 0)
+                    total = max(int(payload.get("total") or 0), 1)
+                    current_colegio_id = int(payload.get("current_colegio_id") or 0)
+                    current_status = str(payload.get("current_status") or "").strip()
+                    plan_rows_total = int(payload.get("plan_rows_total") or 0)
+                    errors_total = int(payload.get("errors_total") or 0)
+                    summary_rows = payload.get("summary_rows") or []
+                    progress_value = min(processed / total, 1.0)
+                    progress_bar_multi.progress(
+                        progress_value,
+                        text=(
+                            f"Procesados {processed}/{total} colegios | "
+                            f"Ultimo: {current_colegio_id}"
+                        ),
+                    )
+                    progress_status_box_multi.info(
+                        f"Colegio {current_colegio_id} finalizado: {current_status}"
+                    )
+                    progress_metrics_box_multi.caption(
+                        "Avance acumulado: "
+                        f"{processed}/{total} colegios | "
+                        f"Cambios sugeridos: {plan_rows_total} | "
+                        f"Errores acumulados: {errors_total}"
+                    )
+                    if isinstance(summary_rows, list) and summary_rows:
+                        progress_table_box_multi.dataframe(
+                            pd.DataFrame(summary_rows),
+                            use_container_width=True,
+                            hide_index=True,
+                            height=260,
+                        )
+
+                with st.spinner("Preparando simulacion masiva por colegios..."):
+                    simulation_multi = _build_auto_move_simulation_multi(
+                        token=token,
+                        colegio_ids=colegio_ids_multi,
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                        on_status=_on_status_multi,
+                        on_progress=_on_progress_multi,
+                    )
+                progress_bar_multi.progress(
+                    1.0,
+                    text=(
+                        "Analisis completado: "
+                        f"{len(colegio_ids_multi)}/{len(colegio_ids_multi)} colegios"
+                    ),
+                )
+                status_box_multi.empty()
+            except Exception as exc:  # pragma: no cover - UI
+                st.error(f"Error: {exc}")
+                st.stop()
+
+            st.session_state["auto_move_multi_plan_rows"] = (
+                simulation_multi.get("plan_rows") or []
+            )
+            st.session_state["auto_move_multi_errors"] = (
+                simulation_multi.get("errors") or []
+            )
+            st.session_state["auto_move_multi_group_map_by_scope"] = (
+                simulation_multi.get("group_map_by_scope") or {}
+            )
+            st.session_state["auto_move_multi_summary_rows"] = (
+                simulation_multi.get("colegio_summary_rows") or []
+            )
+            st.session_state["auto_move_multi_colegio_ids"] = colegio_ids_multi
+
+            total_plan_multi = len(st.session_state["auto_move_multi_plan_rows"])
+            colegios_ok_multi = int(simulation_multi.get("colegios_ok") or 0)
+            st.success(
+                "Analisis masivo listo. Colegios OK: {ok}/{total} | Cambios sugeridos: {changes}".format(
+                    ok=colegios_ok_multi,
+                    total=len(colegio_ids_multi),
+                    changes=total_plan_multi,
+                )
+            )
+
+        summary_rows_multi_cached = (
+            st.session_state.get("auto_move_multi_summary_rows") or []
+        )
+        summary_preview_rows_multi = _build_auto_move_multi_summary_preview(
+            st.session_state.get("auto_move_multi_plan_rows") or []
+        )
+        if summary_preview_rows_multi:
+            st.markdown("**Resumen por colegio**")
+            st.dataframe(
+                pd.DataFrame(summary_preview_rows_multi),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        errors_multi_cached = st.session_state.get("auto_move_multi_errors") or []
+        if errors_multi_cached:
+            st.warning("Hubo errores consultando algunos colegios o secciones.")
+            st.write("\n".join(f"- {item}" for item in errors_multi_cached[:20]))
+            pending_multi = len(errors_multi_cached) - 20
+            if pending_multi > 0:
+                st.caption(f"... y {pending_multi} errores mas.")
+
+        plan_rows_multi_cached = st.session_state.get("auto_move_multi_plan_rows") or []
+        if not plan_rows_multi_cached:
+            st.caption("No hay lista masiva preparada aun.")
+            st.caption(
+                "Presiona 'Analizar colegios predefinidos' para iniciar."
+            )
+        else:
+            st.markdown("**Lista masiva de cambios para autorizar**")
+            group_map_by_scope_cached = (
+                st.session_state.get("auto_move_multi_group_map_by_scope") or {}
+            )
+            (
+                table_rows_multi,
+                destino_payload_by_option_multi,
+                destino_options_multi,
+            ) = _build_auto_move_multi_editor_state(
+                plan_rows=plan_rows_multi_cached,
+                group_map_by_scope=group_map_by_scope_cached,
+            )
+
+            if not destino_options_multi:
+                destino_options_multi = [""]
+
+            table_df_multi = pd.DataFrame(table_rows_multi)
+            edited_table_df_multi = st.data_editor(
+                table_df_multi,
+                key="auto_move_multi_plan_editor_table",
+                hide_index=True,
+                use_container_width=True,
+                disabled=[
+                    "_plan_id",
+                    "Colegio",
+                    "Alumno | Grado y seccion",
+                    "Referencia",
+                ],
+                column_config={
+                    "_plan_id": None,
+                    "Colegio": st.column_config.TextColumn("Colegio"),
+                    "Alumno | Grado y seccion": st.column_config.TextColumn(
+                        "Alumno | Grado y seccion"
+                    ),
+                    "Referencia": st.column_config.TextColumn("Referencia"),
+                    "Inactivar referencia": st.column_config.CheckboxColumn(
+                        "Inactivar referencia"
+                    ),
+                    "Nuevo grado y seccion": st.column_config.SelectboxColumn(
+                        "Nuevo grado y seccion",
+                        options=destino_options_multi,
+                        required=True,
+                    ),
+                },
+            )
+
+            edited_rows_multi = (
+                edited_table_df_multi.to_dict("records")
+                if isinstance(edited_table_df_multi, pd.DataFrame)
+                else table_rows_multi
+            )
+            (
+                authorized_plans_multi,
+                removed_ref_ids_multi,
+                validation_errors_multi,
+            ) = _materialize_auto_move_multi_plans(
+                base_plan_rows=plan_rows_multi_cached,
+                edited_rows=edited_rows_multi,
+                destino_payload_by_option=destino_payload_by_option_multi,
+            )
+
+            st.caption(
+                "Cambios listos para guardar: {total} | Referencias quitadas: {removed}".format(
+                    total=len(authorized_plans_multi),
+                    removed=len(removed_ref_ids_multi),
+                )
+            )
+            if validation_errors_multi:
+                st.error(
+                    "Hay destinos seleccionados que no pertenecen al mismo colegio."
+                )
+                st.write(
+                    "\n".join(
+                        f"- {item}" for item in validation_errors_multi[:10]
+                    )
+                )
+                pending_validation_multi = len(validation_errors_multi) - 10
+                if pending_validation_multi > 0:
+                    st.caption(
+                        f"... y {pending_validation_multi} validaciones pendientes."
+                    )
+
+            run_apply_auto_multi = st.button(
+                "Aplicar cambios autorizados de la lista",
+                key="auto_move_multi_apply_btn",
+                use_container_width=True,
+            )
+
+            if run_apply_auto_multi:
+                if validation_errors_multi:
+                    st.error("Corrige los destinos marcados antes de guardar.")
+                    st.stop()
+                if not authorized_plans_multi:
+                    st.warning("No hay cambios autorizados para guardar.")
+                    st.stop()
+                token = _get_shared_token()
+                if not token:
+                    st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                    st.stop()
+                try:
+                    apply_progress_multi = st.progress(
+                        0,
+                        text="Iniciando guardado masivo de cambios autorizados...",
+                    )
+                    apply_status_box_multi = st.empty()
+                    apply_metrics_box_multi = st.empty()
+
+                    def _on_apply_status_multi(message: str) -> None:
+                        msg = str(message or "").strip()
+                        if msg:
+                            apply_status_box_multi.info(msg)
+
+                    def _on_apply_progress_multi(payload: Dict[str, object]) -> None:
+                        processed = int(payload.get("processed") or 0)
+                        total = max(int(payload.get("total") or 0), 1)
+                        alumno_actual = str(
+                            payload.get("current_student") or ""
+                        ).strip()
+                        colegio_actual = _safe_int(
+                            payload.get("current_colegio_id")
+                        )
+                        current_status = str(
+                            payload.get("current_status") or ""
+                        ).strip()
+                        summary_payload = (
+                            payload.get("summary")
+                            if isinstance(payload.get("summary"), dict)
+                            else {}
+                        )
+                        apply_progress_multi.progress(
+                            min(processed / total, 1.0),
+                            text=(
+                                f"Procesados {processed}/{total} alumno(s) | "
+                                f"Ultimo colegio: {colegio_actual or '-'}"
+                            ),
+                        )
+                        if alumno_actual or current_status:
+                            apply_status_box_multi.info(
+                                "Alumno {processed}/{total}: {alumno} | Colegio {colegio} | {status}".format(
+                                    processed=processed,
+                                    total=total,
+                                    alumno=alumno_actual or "-",
+                                    colegio=colegio_actual or "-",
+                                    status=current_status or "Procesando",
+                                )
+                            )
+                        apply_metrics_box_multi.caption(
+                            "Avance acumulado: "
+                            f"{processed}/{total} | "
+                            f"Inactivar OK={int(summary_payload.get('inactivar_ok', 0))}, ERROR={int(summary_payload.get('inactivar_error', 0))} | "
+                            f"Mover OK={int(summary_payload.get('mover_ok', 0))}, ERROR={int(summary_payload.get('mover_error', 0))} | "
+                            f"Asignar OK={int(summary_payload.get('asignar_ok', 0))}, ERROR={int(summary_payload.get('asignar_error', 0))}, SKIP={int(summary_payload.get('asignar_skip', 0))}"
+                        )
+
+                    st.info(
+                        "Iniciando guardado masivo de cambios autorizados: "
+                        f"{len(authorized_plans_multi)} alumno(s)."
+                    )
+                    summary_apply_multi, results_apply_multi = _apply_auto_move_changes(
+                        token=token,
+                        colegio_id=None,
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                        plan_rows=authorized_plans_multi,
+                        on_status=_on_apply_status_multi,
+                        on_progress=_on_apply_progress_multi,
+                    )
+                    apply_progress_multi.progress(
+                        1.0,
+                        text=(
+                            "Guardado masivo completado: "
+                            f"{len(authorized_plans_multi)}/{len(authorized_plans_multi)} alumno(s)"
+                        ),
+                    )
+                except Exception as exc:  # pragma: no cover - UI
+                    apply_status_box_multi.error(
+                        f"Error durante el guardado masivo: {exc}"
+                    )
+                    st.error(f"No se pudieron guardar los cambios: {exc}")
+                    st.stop()
+
+                inactivar_ok_multi = int(summary_apply_multi.get("inactivar_ok", 0))
+                inactivar_error_multi = int(summary_apply_multi.get("inactivar_error", 0))
+                mover_ok_multi = int(summary_apply_multi.get("mover_ok", 0))
+                mover_error_multi = int(summary_apply_multi.get("mover_error", 0))
+                asignar_ok_multi = int(summary_apply_multi.get("asignar_ok", 0))
+                asignar_error_multi = int(summary_apply_multi.get("asignar_error", 0))
+                asignar_skip_multi = int(summary_apply_multi.get("asignar_skip", 0))
+                total_errors_multi = (
+                    inactivar_error_multi + mover_error_multi + asignar_error_multi
+                )
+
+                if total_errors_multi == 0:
+                    st.success("Cambios masivos guardados correctamente.")
+                else:
+                    st.warning("Guardado masivo completado con observaciones.")
+
+                st.caption(
+                    "Resumen: "
+                    f"Inactivar OK={inactivar_ok_multi}, ERROR={inactivar_error_multi} | "
+                    f"Mover OK={mover_ok_multi}, ERROR={mover_error_multi} | "
+                    f"Asignar clases OK={asignar_ok_multi}, ERROR={asignar_error_multi}, SKIP={asignar_skip_multi}"
+                )
+                if results_apply_multi:
+                    details_multi = []
+                    for item in results_apply_multi[:120]:
+                        if not isinstance(item, dict):
+                            continue
+                        details_multi.append(
+                            "- Colegio {colegio} | {alumno} | Inactivar: {inactivar} | Mover: {mover} | Asignar: {asignar}".format(
+                                colegio=str(item.get("Colegio") or "-"),
+                                alumno=str(item.get("Alumno pagado") or ""),
+                                inactivar=str(item.get("Inactivar no pagado") or ""),
+                                mover=str(item.get("Mover") or ""),
+                                asignar=str(item.get("Asignar clases") or ""),
+                            )
+                        )
+                    if details_multi:
+                        st.markdown("**Detalle por alumno**")
+                        st.markdown("\n".join(details_multi))
+                    if len(results_apply_multi) > 120:
+                        st.caption(
+                            f"... y {len(results_apply_multi) - 120} filas mas."
+                        )
+
+
 with tab_crud_clases:
     if not _restricted_sections_unlocked():
         _render_restricted_blur("CRUD Clases", "clases_1")
@@ -14802,6 +15721,8 @@ with tab_crud_clases:
                     st.error("Errores al eliminar:")
                     st.write("\n".join(f"- {item}" for item in errores))
 
+        if str(st.session_state.get("clases_crud_nav") or "").strip() == "simulador":
+            st.session_state["clases_crud_nav"] = "gestion"
         clases_nav_col, clases_body_col = st.columns([1.15, 4.85], gap="large")
         with clases_nav_col:
             clases_crud_view = _render_crud_menu(
@@ -14810,7 +15731,6 @@ with tab_crud_clases:
                     ("crear", "Crear", "Genera clases desde Excel"),
                     ("gestion", "Gestion", "Lista, vacia o elimina clases"),
                     ("otros", "Asignacion de clases a usuarios", "Asignacion de clases a usuarios"),
-                    ("simulador", "Actualizar users Payments", "Prepara y aplica cambios de users payments"),
                 ],
                 state_key="clases_crud_nav",
             )
@@ -14892,920 +15812,6 @@ with tab_crud_clases:
                 _render_clases_gestion_section()
             if clases_crud_view == "otros":
                 _render_asignacion_clases_usuarios_section()
-            if clases_crud_view == "simulador":
-                with st.container(border=True):
-                    st.markdown("**3) Actualizar users Payments**")
-                    st.caption(
-                        "Usa el Colegio Clave global para preparar y aplicar cambios de users payments."
-                    )
-                    if not _restricted_sections_unlocked():
-                        _render_restricted_blur(
-                            "Actualizar users Payments",
-                            "simulador_web_y",
-                        )
-                        st.stop()
-
-                    col_prepare, col_paid, col_clear = st.columns([2, 2, 1], gap="small")
-                    run_prepare_auto_plan = col_prepare.button(
-                        "Analizar y preparar lista de cambios",
-                        type="primary",
-                        key="auto_move_prepare_btn",
-                        use_container_width=True,
-                    )
-                    run_paid_students = col_paid.button(
-                        "Traer alumnos con pago",
-                        key="auto_move_paid_students_btn",
-                        use_container_width=True,
-                    )
-                    clear_auto_plan = col_clear.button(
-                        "Limpiar lista",
-                        key="auto_move_clear_btn",
-                        use_container_width=True,
-                    )
-
-                    if clear_auto_plan:
-                        for state_key in (
-                            "auto_move_plan_rows",
-                            "auto_move_editor_rows",
-                            "auto_move_alumnos_grid",
-                            "auto_move_errors",
-                            "auto_move_colegio_id",
-                            "auto_move_removed_ref_ids",
-                            "auto_move_group_map_by_grade",
-                            "auto_move_status_messages",
-                            "auto_move_paid_students_grid",
-                            "auto_move_paid_students_errors",
-                        ):
-                            st.session_state.pop(state_key, None)
-                        st.rerun()
-
-                    if run_paid_students:
-                        token = _get_shared_token()
-                        if not token:
-                            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-                            st.stop()
-                        try:
-                            colegio_id_int = _parse_colegio_id(colegio_id_raw)
-                        except ValueError as exc:
-                            st.error(f"Error: {exc}")
-                            st.stop()
-
-                        try:
-                            paid_status_box = st.empty()
-
-                            def _on_paid_status(message: str) -> None:
-                                msg = str(message or "").strip()
-                                if not msg:
-                                    return
-                                paid_status_box.info(msg)
-
-                            with st.spinner("Consultando alumnos con pago..."):
-                                paid_catalog = _fetch_alumnos_con_pago_for_users_payments(
-                                    token=token,
-                                    colegio_id=int(colegio_id_int),
-                                    empresa_id=int(empresa_id),
-                                    ciclo_id=int(ciclo_id),
-                                    timeout=int(timeout),
-                                    only_origin_section=False,
-                                    on_status=_on_paid_status,
-                                )
-                            paid_status_box.empty()
-                        except Exception as exc:  # pragma: no cover - UI
-                            st.error(f"Error: {exc}")
-                            st.stop()
-
-                        st.session_state["auto_move_paid_students_grid"] = (
-                            paid_catalog.get("students_grid") or []
-                        )
-                        st.session_state["auto_move_paid_students_errors"] = (
-                            paid_catalog.get("errors") or []
-                        )
-                        st.success(
-                            "Alumnos con pago detectados: "
-                            f"{len(st.session_state['auto_move_paid_students_grid'])}"
-                        )
-
-                    if run_prepare_auto_plan:
-                        token = _get_shared_token()
-                        if not token:
-                            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-                            st.stop()
-                        try:
-                            colegio_id_int = _parse_colegio_id(colegio_id_raw)
-                        except ValueError as exc:
-                            st.error(f"Error: {exc}")
-                            st.stop()
-
-                        try:
-                            status_box = st.empty()
-
-                            def _on_status(message: str) -> None:
-                                msg = str(message or "").strip()
-                                if not msg:
-                                    return
-                                status_box.info(msg)
-
-                            with st.spinner("Preparando simulacion de cambios..."):
-                                simulation = _build_auto_move_simulation(
-                                    token=token,
-                                    colegio_id=int(colegio_id_int),
-                                    empresa_id=int(empresa_id),
-                                    ciclo_id=int(ciclo_id),
-                                    timeout=int(timeout),
-                                    on_status=_on_status,
-                                )
-                            status_box.empty()
-                        except Exception as exc:  # pragma: no cover - UI
-                            st.error(f"Error: {exc}")
-                            st.stop()
-
-                        st.session_state["auto_move_plan_rows"] = simulation.get("plan_rows") or []
-                        st.session_state["auto_move_editor_rows"] = simulation.get("editor_rows") or []
-                        st.session_state["auto_move_alumnos_grid"] = simulation.get("alumnos_all_grid") or []
-                        st.session_state["auto_move_errors"] = simulation.get("errors") or []
-                        st.session_state["auto_move_colegio_id"] = int(colegio_id_int)
-                        st.session_state["auto_move_group_map_by_grade"] = (
-                            simulation.get("grupo_id_by_seccion_by_grade") or {}
-                        )
-                        st.session_state["auto_move_paid_students_grid"] = (
-                            simulation.get("paid_students_grid") or []
-                        )
-                        st.session_state["auto_move_paid_students_errors"] = (
-                            simulation.get("errors") or []
-                        )
-                        st.session_state["auto_move_removed_ref_ids"] = []
-
-                        total_plan = len(st.session_state["auto_move_plan_rows"])
-                        st.success(f"Simulacion lista. Alumnos candidatos a modificar: {total_plan}")
-
-                    paid_students_errors_cached = (
-                        st.session_state.get("auto_move_paid_students_errors") or []
-                    )
-                    if paid_students_errors_cached:
-                        st.warning("Hubo errores consultando alumnos con pago.")
-                        st.write("\n".join(f"- {item}" for item in paid_students_errors_cached[:20]))
-                        pending_paid = len(paid_students_errors_cached) - 20
-                        if pending_paid > 0:
-                            st.caption(f"... y {pending_paid} errores mas.")
-
-                    if "auto_move_paid_students_grid" in st.session_state:
-                        paid_students_grid_cached = (
-                            st.session_state.get("auto_move_paid_students_grid") or []
-                        )
-                        if paid_students_grid_cached:
-                            st.markdown("**Alumnos con pago detectados**")
-                            st.dataframe(
-                                pd.DataFrame(paid_students_grid_cached),
-                                use_container_width=True,
-                                hide_index=True,
-                                height=320,
-                            )
-                        else:
-                            st.info("No se encontraron alumnos con pago para el colegio actual.")
-
-                    errors_cached = st.session_state.get("auto_move_errors") or []
-                    if errors_cached:
-                        st.warning("Hubo errores consultando algunas secciones.")
-                        st.write("\n".join(f"- {item}" for item in errors_cached[:20]))
-                        pending = len(errors_cached) - 20
-                        if pending > 0:
-                            st.caption(f"... y {pending} errores mas.")
-
-                    plan_rows_cached = st.session_state.get("auto_move_plan_rows") or []
-                    if plan_rows_cached:
-                        st.markdown("**Lista de cambios para autorizar**")
-                        plan_by_id = {
-                            int(plan.get("plan_id")): plan
-                            for plan in plan_rows_cached
-                            if _safe_int(plan.get("plan_id")) is not None
-                        }
-                        sorted_plan_ids = sorted(plan_by_id.keys())
-                        if not sorted_plan_ids:
-                            st.info("No hay alumnos para modificar.")
-                        group_map_by_grade = st.session_state.get("auto_move_group_map_by_grade", {})
-                        destino_payload_by_option: Dict[str, Dict[str, object]] = {}
-                        destino_options: List[str] = []
-                        table_rows: List[Dict[str, object]] = []
-
-                        for plan_id in sorted_plan_ids:
-                            plan = plan_by_id.get(int(plan_id)) or {}
-                            pagado = (
-                                plan.get("alumno_pagado")
-                                if isinstance(plan.get("alumno_pagado"), dict)
-                                else {}
-                            )
-                            referencial = (
-                                plan.get("alumno_inactivar")
-                                if isinstance(plan.get("alumno_inactivar"), dict)
-                                else {}
-                            )
-                            nivel_id = _safe_int(plan.get("nivel_id"))
-                            grado_id = _safe_int(plan.get("grado_id"))
-                            mapping: Dict[str, int] = {}
-                            if (
-                                isinstance(group_map_by_grade, dict)
-                                and nivel_id is not None
-                                and grado_id is not None
-                            ):
-                                mapping_raw = group_map_by_grade.get((int(nivel_id), int(grado_id)))
-                                if not isinstance(mapping_raw, dict):
-                                    mapping_raw = group_map_by_grade.get(
-                                        f"{int(nivel_id)}:{int(grado_id)}"
-                                    )
-                                if isinstance(mapping_raw, dict):
-                                    mapping = mapping_raw
-
-                            nivel_txt = str(pagado.get("nivel") or plan.get("nivel") or "").strip()
-                            grado_txt = str(pagado.get("grado") or plan.get("grado") or "").strip()
-                            seccion_origen_txt = _normalize_seccion_key(
-                                plan.get("seccion_origen")
-                                or pagado.get("seccion_norm")
-                                or pagado.get("seccion")
-                                or AUTO_MOVE_SECCION_ORIGEN
-                            )
-                            seccion_destino_txt = _normalize_seccion_key(plan.get("seccion_destino") or "")
-
-                            if mapping and not seccion_destino_txt:
-                                picked_sec, picked_gid = _pick_default_destino(
-                                    grupo_id_by_seccion=mapping,
-                                    origen_seccion=AUTO_MOVE_SECCION_ORIGEN,
-                                )
-                                if picked_sec and picked_gid is not None:
-                                    seccion_destino_txt = _normalize_seccion_key(picked_sec)
-                                    plan["seccion_destino"] = seccion_destino_txt
-                                    plan["grupo_destino_id"] = int(picked_gid)
-
-                            for seccion_key, grupo_destino_id in sorted(mapping.items(), key=lambda item: str(item[0])):
-                                sec = _normalize_seccion_key(seccion_key)
-                                option_text = f"{nivel_txt} | {grado_txt} ({sec})"
-                                if option_text not in destino_payload_by_option:
-                                    destino_payload_by_option[option_text] = {
-                                        "nivel_id": int(nivel_id) if nivel_id is not None else None,
-                                        "grado_id": int(grado_id) if grado_id is not None else None,
-                                        "grupo_destino_id": int(grupo_destino_id),
-                                        "seccion_destino": sec,
-                                    }
-                                    destino_options.append(option_text)
-
-                            default_option = ""
-                            if nivel_txt or grado_txt or seccion_destino_txt:
-                                default_option = f"{nivel_txt} | {grado_txt} ({seccion_destino_txt})"
-                            if default_option and default_option not in destino_payload_by_option:
-                                destino_payload_by_option[default_option] = {
-                                    "nivel_id": int(nivel_id) if nivel_id is not None else None,
-                                    "grado_id": int(grado_id) if grado_id is not None else None,
-                                    "grupo_destino_id": _safe_int(plan.get("grupo_destino_id")),
-                                    "seccion_destino": seccion_destino_txt,
-                                }
-                                destino_options.append(default_option)
-
-                            alumno_col = (
-                                f"{_format_alumno_label(pagado)} | "
-                                f"{nivel_txt} | {grado_txt} ({seccion_origen_txt})"
-                            )
-                            referencia_col = (
-                                _format_alumno_label(referencial)
-                                if isinstance(referencial, dict) and referencial
-                                else "SIN REFERENCIA"
-                            )
-                            requiere_inactivar = bool(
-                                _to_bool(plan.get("requiere_inactivar"))
-                                and _safe_int(referencial.get("alumno_id")) is not None
-                            )
-                            table_rows.append(
-                                {
-                                    "PlanId": int(plan_id),
-                                    "Alumno | Grado y seccion": alumno_col,
-                                    "Referencia": referencia_col,
-                                    "Inactivar referencia": requiere_inactivar,
-                                    "Nuevo grado y seccion": default_option,
-                                }
-                            )
-
-                        destino_options = sorted(destino_options)
-                        if not destino_options:
-                            destino_options = [""]
-
-                        table_df = pd.DataFrame(table_rows)
-                        edited_table_df = st.data_editor(
-                            table_df,
-                            key="auto_move_plan_editor_table",
-                            hide_index=True,
-                            use_container_width=True,
-                            disabled=["PlanId", "Alumno | Grado y seccion", "Referencia"],
-                            column_config={
-                                "PlanId": st.column_config.NumberColumn("PlanId", format="%d"),
-                                "Alumno | Grado y seccion": st.column_config.TextColumn(
-                                    "Alumno | Grado y seccion"
-                                ),
-                                "Referencia": st.column_config.TextColumn("Referencia"),
-                                "Inactivar referencia": st.column_config.CheckboxColumn(
-                                    "Inactivar referencia"
-                                ),
-                                "Nuevo grado y seccion": st.column_config.SelectboxColumn(
-                                    "Nuevo grado y seccion",
-                                    options=destino_options,
-                                    required=True,
-                                ),
-                            },
-                        )
-
-                        edited_rows = (
-                            edited_table_df.to_dict("records")
-                            if isinstance(edited_table_df, pd.DataFrame)
-                            else table_rows
-                        )
-
-                        authorized_plans: List[Dict[str, object]] = []
-                        removed_ref_ids_current: Set[int] = set()
-                        for base_plan in plan_rows_cached:
-                            plan_id = _safe_int(base_plan.get("plan_id"))
-                            if plan_id is None:
-                                continue
-                            plan = dict(base_plan) if isinstance(base_plan, dict) else {}
-                            if not plan:
-                                continue
-
-                            edited_row = next(
-                                (
-                                    row
-                                    for row in edited_rows
-                                    if _safe_int(row.get("PlanId")) == int(plan_id)
-                                ),
-                                {},
-                            )
-
-                            keep_reference = bool(_to_bool(edited_row.get("Inactivar referencia")))
-                            if not keep_reference:
-                                removed_ref_ids_current.add(int(plan_id))
-                                plan["alumno_parecido"] = {}
-                                plan["alumno_inactivar"] = {}
-                                plan["requiere_inactivar"] = False
-                                plan["comparacion"] = (
-                                    "Referencia eliminada manualmente: solo movimiento de seccion."
-                                )
-                                plan["motivo"] = (
-                                    "Referencia eliminada manualmente: no se inactiva alumno parecido."
-                                )
-
-                            selected_destino = str(edited_row.get("Nuevo grado y seccion") or "").strip()
-                            payload = destino_payload_by_option.get(selected_destino)
-                            if isinstance(payload, dict):
-                                nivel_id_val = _safe_int(payload.get("nivel_id"))
-                                grado_id_val = _safe_int(payload.get("grado_id"))
-                                grupo_id_val = _safe_int(payload.get("grupo_destino_id"))
-                                seccion_val = str(payload.get("seccion_destino") or "").strip()
-                                if nivel_id_val is not None:
-                                    plan["nivel_id"] = int(nivel_id_val)
-                                if grado_id_val is not None:
-                                    plan["grado_id"] = int(grado_id_val)
-                                if grupo_id_val is not None:
-                                    plan["grupo_destino_id"] = int(grupo_id_val)
-                                if seccion_val:
-                                    plan["seccion_destino"] = seccion_val
-                            authorized_plans.append(plan)
-
-                        st.session_state["auto_move_removed_ref_ids"] = sorted(removed_ref_ids_current)
-
-                        st.caption(
-                            "Cambios listos para guardar: {total} | Referencias quitadas: {removed}".format(
-                                total=len(authorized_plans),
-                                removed=len(removed_ref_ids_current),
-                            )
-                        )
-
-                        run_apply_auto = st.button(
-                            "Guardar cambios autorizados",
-                            key="auto_move_apply_btn",
-                            use_container_width=True,
-                        )
-
-                        if run_apply_auto:
-                            token = _get_shared_token()
-                            if not token:
-                                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-                                st.stop()
-                            if not authorized_plans:
-                                st.warning("No hay cambios autorizados para guardar.")
-                                st.stop()
-                            colegio_id_exec = _safe_int(st.session_state.get("auto_move_colegio_id"))
-                            if colegio_id_exec is None:
-                                try:
-                                    colegio_id_exec = _parse_colegio_id(colegio_id_raw)
-                                except ValueError as exc:
-                                    st.error(f"Error: {exc}")
-                                    st.stop()
-                            try:
-                                apply_progress = st.progress(
-                                    0,
-                                    text="Iniciando guardado de cambios autorizados...",
-                                )
-                                apply_status_box = st.empty()
-                                apply_metrics_box = st.empty()
-
-                                def _on_apply_status(message: str) -> None:
-                                    msg = str(message or "").strip()
-                                    if msg:
-                                        apply_status_box.info(msg)
-
-                                def _on_apply_progress(payload: Dict[str, object]) -> None:
-                                    processed = int(payload.get("processed") or 0)
-                                    total = max(int(payload.get("total") or 0), 1)
-                                    alumno_actual = str(
-                                        payload.get("current_student") or ""
-                                    ).strip()
-                                    current_status = str(
-                                        payload.get("current_status") or ""
-                                    ).strip()
-                                    summary_payload = (
-                                        payload.get("summary")
-                                        if isinstance(payload.get("summary"), dict)
-                                        else {}
-                                    )
-                                    apply_progress.progress(
-                                        min(processed / total, 1.0),
-                                        text=(
-                                            f"Procesados {processed}/{total} alumno(s)"
-                                        ),
-                                    )
-                                    if alumno_actual or current_status:
-                                        apply_status_box.info(
-                                            "Alumno {processed}/{total}: {alumno} | {status}".format(
-                                                processed=processed,
-                                                total=total,
-                                                alumno=alumno_actual or "-",
-                                                status=current_status or "Procesando",
-                                            )
-                                        )
-                                    apply_metrics_box.caption(
-                                        "Avance: "
-                                        f"{processed}/{total} | "
-                                        f"Inactivar OK={int(summary_payload.get('inactivar_ok', 0))}, ERROR={int(summary_payload.get('inactivar_error', 0))} | "
-                                        f"Mover OK={int(summary_payload.get('mover_ok', 0))}, ERROR={int(summary_payload.get('mover_error', 0))} | "
-                                        f"Asignar OK={int(summary_payload.get('asignar_ok', 0))}, ERROR={int(summary_payload.get('asignar_error', 0))}, SKIP={int(summary_payload.get('asignar_skip', 0))}"
-                                    )
-
-                                st.info(
-                                    "Iniciando guardado de cambios autorizados: "
-                                    f"{len(authorized_plans)} alumno(s)."
-                                )
-                                summary_apply, results_apply = _apply_auto_move_changes(
-                                    token=token,
-                                    colegio_id=int(colegio_id_exec),
-                                    empresa_id=int(empresa_id),
-                                    ciclo_id=int(ciclo_id),
-                                    timeout=int(timeout),
-                                    plan_rows=authorized_plans,
-                                    on_status=_on_apply_status,
-                                    on_progress=_on_apply_progress,
-                                )
-                                apply_progress.progress(
-                                    1.0,
-                                    text=(
-                                        "Guardado completado: "
-                                        f"{len(authorized_plans)}/{len(authorized_plans)} alumno(s)"
-                                    ),
-                                )
-                            except Exception as exc:  # pragma: no cover - UI
-                                apply_status_box.error(
-                                    f"Error durante el guardado: {exc}"
-                                )
-                                st.error(f"No se pudieron guardar los cambios: {exc}")
-                                st.stop()
-
-                            inactivar_ok = int(summary_apply.get("inactivar_ok", 0))
-                            inactivar_error = int(summary_apply.get("inactivar_error", 0))
-                            mover_ok = int(summary_apply.get("mover_ok", 0))
-                            mover_error = int(summary_apply.get("mover_error", 0))
-                            asignar_ok = int(summary_apply.get("asignar_ok", 0))
-                            asignar_error = int(summary_apply.get("asignar_error", 0))
-                            asignar_skip = int(summary_apply.get("asignar_skip", 0))
-                            total_errors = inactivar_error + mover_error + asignar_error
-
-                            if total_errors == 0:
-                                st.success("Cambios guardados correctamente.")
-                            else:
-                                st.warning("Guardado completado con observaciones.")
-
-                            st.caption(
-                                "Resumen: "
-                                f"Inactivar OK={inactivar_ok}, ERROR={inactivar_error} | "
-                                f"Mover OK={mover_ok}, ERROR={mover_error} | "
-                                f"Asignar clases OK={asignar_ok}, ERROR={asignar_error}, SKIP={asignar_skip}"
-                            )
-                            if results_apply:
-                                details = []
-                                for item in results_apply[:80]:
-                                    if not isinstance(item, dict):
-                                        continue
-                                    details.append(
-                                        "- {alumno} | Inactivar: {inactivar} | Mover: {mover} | Asignar: {asignar}".format(
-                                            alumno=str(item.get("Alumno pagado") or ""),
-                                            inactivar=str(item.get("Inactivar no pagado") or ""),
-                                            mover=str(item.get("Mover") or ""),
-                                            asignar=str(item.get("Asignar clases") or ""),
-                                        )
-                                    )
-                                if details:
-                                    st.markdown("**Detalle por alumno**")
-                                    st.markdown("\n".join(details))
-                                if len(results_apply) > 80:
-                                    st.caption(f"... y {len(results_apply) - 80} filas mas.")
-
-                with st.container(border=True):
-                    st.markdown("**4) Verificar colegios Payments**")
-                    st.caption(
-                        "Colegios incluidos: {total}".format(
-                            total=len(AUTO_MOVE_MULTI_ACTIVE_COLEGIO_IDS)
-                        )
-                    )
-                    st.dataframe(
-                        pd.DataFrame(AUTO_MOVE_MULTI_ACTIVE_SCHOOLS),
-                        use_container_width=True,
-                        hide_index=True,
-                        height=260,
-                    )
-
-                    col_prepare_multi, col_clear_multi = st.columns([2, 1], gap="small")
-                    run_prepare_auto_multi = col_prepare_multi.button(
-                        "Analizar colegios predefinidos",
-                        type="primary",
-                        key="auto_move_multi_prepare_btn",
-                        use_container_width=True,
-                    )
-                    clear_auto_multi = col_clear_multi.button(
-                        "Limpiar lista masiva",
-                        key="auto_move_multi_clear_btn",
-                        use_container_width=True,
-                    )
-
-                    if clear_auto_multi:
-                        for state_key in (
-                            "auto_move_multi_plan_rows",
-                            "auto_move_multi_errors",
-                            "auto_move_multi_group_map_by_scope",
-                            "auto_move_multi_summary_rows",
-                            "auto_move_multi_colegio_ids",
-                        ):
-                            st.session_state.pop(state_key, None)
-                        st.rerun()
-
-                    if run_prepare_auto_multi:
-                        token = _get_shared_token()
-                        if not token:
-                            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-                            st.stop()
-                        colegio_ids_multi = list(AUTO_MOVE_MULTI_ACTIVE_COLEGIO_IDS)
-
-                        try:
-                            progress_bar_multi = st.progress(
-                                0,
-                                text="Iniciando analisis de colegios...",
-                            )
-                            progress_status_box_multi = st.empty()
-                            progress_metrics_box_multi = st.empty()
-                            progress_table_box_multi = st.empty()
-                            status_box_multi = st.empty()
-
-                            def _on_status_multi(message: str) -> None:
-                                msg = str(message or "").strip()
-                                if msg:
-                                    status_box_multi.info(msg)
-
-                            def _on_progress_multi(payload: Dict[str, object]) -> None:
-                                processed = int(payload.get("processed") or 0)
-                                total = max(int(payload.get("total") or 0), 1)
-                                current_colegio_id = int(payload.get("current_colegio_id") or 0)
-                                current_status = str(payload.get("current_status") or "").strip()
-                                plan_rows_total = int(payload.get("plan_rows_total") or 0)
-                                errors_total = int(payload.get("errors_total") or 0)
-                                summary_rows = payload.get("summary_rows") or []
-                                progress_value = min(processed / total, 1.0)
-                                progress_bar_multi.progress(
-                                    progress_value,
-                                    text=(
-                                        f"Procesados {processed}/{total} colegios | "
-                                        f"Ultimo: {current_colegio_id}"
-                                    ),
-                                )
-                                progress_status_box_multi.info(
-                                    f"Colegio {current_colegio_id} finalizado: {current_status}"
-                                )
-                                progress_metrics_box_multi.caption(
-                                    "Avance acumulado: "
-                                    f"{processed}/{total} colegios | "
-                                    f"Cambios sugeridos: {plan_rows_total} | "
-                                    f"Errores acumulados: {errors_total}"
-                                )
-                                if isinstance(summary_rows, list) and summary_rows:
-                                    progress_table_box_multi.dataframe(
-                                        pd.DataFrame(summary_rows),
-                                        use_container_width=True,
-                                        hide_index=True,
-                                        height=260,
-                                    )
-
-                            with st.spinner("Preparando simulacion masiva por colegios..."):
-                                simulation_multi = _build_auto_move_simulation_multi(
-                                    token=token,
-                                    colegio_ids=colegio_ids_multi,
-                                    empresa_id=int(empresa_id),
-                                    ciclo_id=int(ciclo_id),
-                                    timeout=int(timeout),
-                                    on_status=_on_status_multi,
-                                    on_progress=_on_progress_multi,
-                                )
-                            progress_bar_multi.progress(
-                                1.0,
-                                text=(
-                                    "Analisis completado: "
-                                    f"{len(colegio_ids_multi)}/{len(colegio_ids_multi)} colegios"
-                                ),
-                            )
-                            status_box_multi.empty()
-                        except Exception as exc:  # pragma: no cover - UI
-                            st.error(f"Error: {exc}")
-                            st.stop()
-
-                        st.session_state["auto_move_multi_plan_rows"] = (
-                            simulation_multi.get("plan_rows") or []
-                        )
-                        st.session_state["auto_move_multi_errors"] = (
-                            simulation_multi.get("errors") or []
-                        )
-                        st.session_state["auto_move_multi_group_map_by_scope"] = (
-                            simulation_multi.get("group_map_by_scope") or {}
-                        )
-                        st.session_state["auto_move_multi_summary_rows"] = (
-                            simulation_multi.get("colegio_summary_rows") or []
-                        )
-                        st.session_state["auto_move_multi_colegio_ids"] = colegio_ids_multi
-
-                        total_plan_multi = len(st.session_state["auto_move_multi_plan_rows"])
-                        colegios_ok_multi = int(simulation_multi.get("colegios_ok") or 0)
-                        st.success(
-                            "Analisis masivo listo. Colegios OK: {ok}/{total} | Cambios sugeridos: {changes}".format(
-                                ok=colegios_ok_multi,
-                                total=len(colegio_ids_multi),
-                                changes=total_plan_multi,
-                            )
-                        )
-
-                    summary_rows_multi_cached = (
-                        st.session_state.get("auto_move_multi_summary_rows") or []
-                    )
-                    summary_preview_rows_multi = _build_auto_move_multi_summary_preview(
-                        st.session_state.get("auto_move_multi_plan_rows") or []
-                    )
-                    if summary_preview_rows_multi:
-                        st.markdown("**Resumen por colegio**")
-                        st.dataframe(
-                            pd.DataFrame(summary_preview_rows_multi),
-                            use_container_width=True,
-                            hide_index=True,
-                        )
-
-                    errors_multi_cached = st.session_state.get("auto_move_multi_errors") or []
-                    if errors_multi_cached:
-                        st.warning("Hubo errores consultando algunos colegios o secciones.")
-                        st.write("\n".join(f"- {item}" for item in errors_multi_cached[:20]))
-                        pending_multi = len(errors_multi_cached) - 20
-                        if pending_multi > 0:
-                            st.caption(f"... y {pending_multi} errores mas.")
-
-                    plan_rows_multi_cached = st.session_state.get("auto_move_multi_plan_rows") or []
-                    if not plan_rows_multi_cached:
-                        st.caption("No hay lista masiva preparada aun.")
-                        st.caption(
-                            "Presiona 'Analizar colegios predefinidos' para iniciar."
-                        )
-                    else:
-                        st.markdown("**Lista masiva de cambios para autorizar**")
-                        group_map_by_scope_cached = (
-                            st.session_state.get("auto_move_multi_group_map_by_scope") or {}
-                        )
-                        (
-                            table_rows_multi,
-                            destino_payload_by_option_multi,
-                            destino_options_multi,
-                        ) = _build_auto_move_multi_editor_state(
-                            plan_rows=plan_rows_multi_cached,
-                            group_map_by_scope=group_map_by_scope_cached,
-                        )
-
-                        if not destino_options_multi:
-                            destino_options_multi = [""]
-
-                        table_df_multi = pd.DataFrame(table_rows_multi)
-                        edited_table_df_multi = st.data_editor(
-                            table_df_multi,
-                            key="auto_move_multi_plan_editor_table",
-                            hide_index=True,
-                            use_container_width=True,
-                            disabled=[
-                                "_plan_id",
-                                "Colegio",
-                                "Alumno | Grado y seccion",
-                                "Referencia",
-                            ],
-                            column_config={
-                                "_plan_id": None,
-                                "Colegio": st.column_config.TextColumn("Colegio"),
-                                "Alumno | Grado y seccion": st.column_config.TextColumn(
-                                    "Alumno | Grado y seccion"
-                                ),
-                                "Referencia": st.column_config.TextColumn("Referencia"),
-                                "Inactivar referencia": st.column_config.CheckboxColumn(
-                                    "Inactivar referencia"
-                                ),
-                                "Nuevo grado y seccion": st.column_config.SelectboxColumn(
-                                    "Nuevo grado y seccion",
-                                    options=destino_options_multi,
-                                    required=True,
-                                ),
-                            },
-                        )
-
-                        edited_rows_multi = (
-                            edited_table_df_multi.to_dict("records")
-                            if isinstance(edited_table_df_multi, pd.DataFrame)
-                            else table_rows_multi
-                        )
-                        (
-                            authorized_plans_multi,
-                            removed_ref_ids_multi,
-                            validation_errors_multi,
-                        ) = _materialize_auto_move_multi_plans(
-                            base_plan_rows=plan_rows_multi_cached,
-                            edited_rows=edited_rows_multi,
-                            destino_payload_by_option=destino_payload_by_option_multi,
-                        )
-
-                        st.caption(
-                            "Cambios listos para guardar: {total} | Referencias quitadas: {removed}".format(
-                                total=len(authorized_plans_multi),
-                                removed=len(removed_ref_ids_multi),
-                            )
-                        )
-                        if validation_errors_multi:
-                            st.error(
-                                "Hay destinos seleccionados que no pertenecen al mismo colegio."
-                            )
-                            st.write(
-                                "\n".join(
-                                    f"- {item}" for item in validation_errors_multi[:10]
-                                )
-                            )
-                            pending_validation_multi = len(validation_errors_multi) - 10
-                            if pending_validation_multi > 0:
-                                st.caption(
-                                    f"... y {pending_validation_multi} validaciones pendientes."
-                                )
-
-                        run_apply_auto_multi = st.button(
-                            "Aplicar cambios autorizados de la lista",
-                            key="auto_move_multi_apply_btn",
-                            use_container_width=True,
-                        )
-
-                        if run_apply_auto_multi:
-                            if validation_errors_multi:
-                                st.error("Corrige los destinos marcados antes de guardar.")
-                                st.stop()
-                            if not authorized_plans_multi:
-                                st.warning("No hay cambios autorizados para guardar.")
-                                st.stop()
-                            token = _get_shared_token()
-                            if not token:
-                                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-                                st.stop()
-                            try:
-                                apply_progress_multi = st.progress(
-                                    0,
-                                    text="Iniciando guardado masivo de cambios autorizados...",
-                                )
-                                apply_status_box_multi = st.empty()
-                                apply_metrics_box_multi = st.empty()
-
-                                def _on_apply_status_multi(message: str) -> None:
-                                    msg = str(message or "").strip()
-                                    if msg:
-                                        apply_status_box_multi.info(msg)
-
-                                def _on_apply_progress_multi(payload: Dict[str, object]) -> None:
-                                    processed = int(payload.get("processed") or 0)
-                                    total = max(int(payload.get("total") or 0), 1)
-                                    alumno_actual = str(
-                                        payload.get("current_student") or ""
-                                    ).strip()
-                                    colegio_actual = _safe_int(
-                                        payload.get("current_colegio_id")
-                                    )
-                                    current_status = str(
-                                        payload.get("current_status") or ""
-                                    ).strip()
-                                    summary_payload = (
-                                        payload.get("summary")
-                                        if isinstance(payload.get("summary"), dict)
-                                        else {}
-                                    )
-                                    apply_progress_multi.progress(
-                                        min(processed / total, 1.0),
-                                        text=(
-                                            f"Procesados {processed}/{total} alumno(s) | "
-                                            f"Ultimo colegio: {colegio_actual or '-'}"
-                                        ),
-                                    )
-                                    if alumno_actual or current_status:
-                                        apply_status_box_multi.info(
-                                            "Alumno {processed}/{total}: {alumno} | Colegio {colegio} | {status}".format(
-                                                processed=processed,
-                                                total=total,
-                                                alumno=alumno_actual or "-",
-                                                colegio=colegio_actual or "-",
-                                                status=current_status or "Procesando",
-                                            )
-                                        )
-                                    apply_metrics_box_multi.caption(
-                                        "Avance acumulado: "
-                                        f"{processed}/{total} | "
-                                        f"Inactivar OK={int(summary_payload.get('inactivar_ok', 0))}, ERROR={int(summary_payload.get('inactivar_error', 0))} | "
-                                        f"Mover OK={int(summary_payload.get('mover_ok', 0))}, ERROR={int(summary_payload.get('mover_error', 0))} | "
-                                        f"Asignar OK={int(summary_payload.get('asignar_ok', 0))}, ERROR={int(summary_payload.get('asignar_error', 0))}, SKIP={int(summary_payload.get('asignar_skip', 0))}"
-                                    )
-
-                                st.info(
-                                    "Iniciando guardado masivo de cambios autorizados: "
-                                    f"{len(authorized_plans_multi)} alumno(s)."
-                                )
-                                summary_apply_multi, results_apply_multi = _apply_auto_move_changes(
-                                    token=token,
-                                    colegio_id=None,
-                                    empresa_id=int(empresa_id),
-                                    ciclo_id=int(ciclo_id),
-                                    timeout=int(timeout),
-                                    plan_rows=authorized_plans_multi,
-                                    on_status=_on_apply_status_multi,
-                                    on_progress=_on_apply_progress_multi,
-                                )
-                                apply_progress_multi.progress(
-                                    1.0,
-                                    text=(
-                                        "Guardado masivo completado: "
-                                        f"{len(authorized_plans_multi)}/{len(authorized_plans_multi)} alumno(s)"
-                                    ),
-                                )
-                            except Exception as exc:  # pragma: no cover - UI
-                                apply_status_box_multi.error(
-                                    f"Error durante el guardado masivo: {exc}"
-                                )
-                                st.error(f"No se pudieron guardar los cambios: {exc}")
-                                st.stop()
-
-                            inactivar_ok_multi = int(summary_apply_multi.get("inactivar_ok", 0))
-                            inactivar_error_multi = int(summary_apply_multi.get("inactivar_error", 0))
-                            mover_ok_multi = int(summary_apply_multi.get("mover_ok", 0))
-                            mover_error_multi = int(summary_apply_multi.get("mover_error", 0))
-                            asignar_ok_multi = int(summary_apply_multi.get("asignar_ok", 0))
-                            asignar_error_multi = int(summary_apply_multi.get("asignar_error", 0))
-                            asignar_skip_multi = int(summary_apply_multi.get("asignar_skip", 0))
-                            total_errors_multi = (
-                                inactivar_error_multi + mover_error_multi + asignar_error_multi
-                            )
-
-                            if total_errors_multi == 0:
-                                st.success("Cambios masivos guardados correctamente.")
-                            else:
-                                st.warning("Guardado masivo completado con observaciones.")
-
-                            st.caption(
-                                "Resumen: "
-                                f"Inactivar OK={inactivar_ok_multi}, ERROR={inactivar_error_multi} | "
-                                f"Mover OK={mover_ok_multi}, ERROR={mover_error_multi} | "
-                                f"Asignar clases OK={asignar_ok_multi}, ERROR={asignar_error_multi}, SKIP={asignar_skip_multi}"
-                            )
-                            if results_apply_multi:
-                                details_multi = []
-                                for item in results_apply_multi[:120]:
-                                    if not isinstance(item, dict):
-                                        continue
-                                    details_multi.append(
-                                        "- Colegio {colegio} | {alumno} | Inactivar: {inactivar} | Mover: {mover} | Asignar: {asignar}".format(
-                                            colegio=str(item.get("Colegio") or "-"),
-                                            alumno=str(item.get("Alumno pagado") or ""),
-                                            inactivar=str(item.get("Inactivar no pagado") or ""),
-                                            mover=str(item.get("Mover") or ""),
-                                            asignar=str(item.get("Asignar clases") or ""),
-                                        )
-                                    )
-                                if details_multi:
-                                    st.markdown("**Detalle por alumno**")
-                                    st.markdown("\n".join(details_multi))
-                                if len(results_apply_multi) > 120:
-                                    st.caption(
-                                        f"... y {len(results_apply_multi) - 120} filas mas."
-                                    )
-
 with tab_crud_profesores:
     if not _restricted_sections_unlocked():
         _render_restricted_blur("CRUD Profesores", "profesores")
@@ -15843,12 +15849,13 @@ with tab_crud_profesores:
             and loaded_profesores_edit_colegio_id != current_profesores_edit_colegio_id
         ):
             _clear_profesores_edit_state()
+        if str(st.session_state.get("profesores_crud_nav") or "").strip() == "bd":
+            st.session_state["profesores_crud_nav"] = "manual"
         profesores_nav_col, profesores_body_col = st.columns([1.15, 4.85], gap="large")
         with profesores_nav_col:
             profesores_crud_view = _render_crud_menu(
                 "Funciones de profesores",
                 [
-                    ("bd", "BD", "Consulta, exporta y compara ProfesoresBD"),
                     ("manual", "Manual", "Asigna clases por docente"),
                     ("editar", "Editar", "Edita datos, login y password"),
                     ("base", "Base", "Genera Excel operativo"),
@@ -15857,7 +15864,7 @@ with tab_crud_profesores:
                 state_key="profesores_crud_nav",
             )
         with profesores_body_col:
-            if profesores_crud_view == "bd":
+            if False and profesores_crud_view == "bd":
                 with st.container(border=True):
                     st.markdown("**BD**")
                     st.caption(
@@ -17850,6 +17857,7 @@ with tab_crud_alumnos:
                 ("comparar", "Comparar", "Compara BD vs actualizada"),
                 ("editar", "Editar", "Edita datos y mueve de seccion"),
                 ("crear", "Crear", "Crea alumno nuevo"),
+                ("payments", "Actualizar users Payments", "Prepara y aplica cambios de users payments"),
             ],
             state_key="alumnos_crud_nav",
         )
@@ -17857,6 +17865,13 @@ with tab_crud_alumnos:
         loaded_niveles = st.session_state.get("alumnos_manual_move_niveles") or []
         loaded_colegio_id = _safe_int(st.session_state.get("alumnos_manual_move_colegio_id"))
         current_colegio_id = _safe_int(colegio_id_raw)
+        if alumnos_crud_view == "payments":
+            _render_users_payments_section(
+                colegio_id_raw=colegio_id_raw,
+                empresa_id=int(empresa_id),
+                ciclo_id=int(GESTION_ESCOLAR_CICLO_ID_DEFAULT),
+                timeout=int(timeout),
+            )
         if alumnos_crud_view == "otros":
             with st.container(border=True):
                 st.markdown("**1) Otros**")

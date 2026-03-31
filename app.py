@@ -1899,6 +1899,188 @@ def _richmondstudio_subscription_ids_expiring_until_month_in_year(
     return ids
 
 
+def _richmondstudio_subscription_rows_expiring_in_year(
+    detail_body: Dict[str, object],
+    year: int,
+) -> List[Dict[str, str]]:
+    rows: List[Dict[str, str]] = []
+    for row in _richmondstudio_subscription_rows_from_detail(detail_body):
+        expiration_date = _richmondstudio_parse_year_month(row.get("expiration_date"))
+        if expiration_date is None:
+            continue
+        expiration_year, _ = expiration_date
+        if int(expiration_year) != int(year):
+            continue
+        rows.append(dict(row))
+    return rows
+
+
+def _list_richmondstudio_users_with_subscriptions_expiring_in_year(
+    token: str,
+    rows: List[Dict[str, object]],
+    timeout: int = 30,
+    target_year: Optional[int] = None,
+    on_status: Optional[Callable[[str], None]] = None,
+    on_progress: Optional[Callable[[int, int], None]] = None,
+) -> Tuple[Dict[str, int], List[Dict[str, str]]]:
+    def _status(message: str) -> None:
+        if callable(on_status):
+            try:
+                on_status(str(message or ""))
+            except Exception:
+                pass
+
+    def _progress(current: int, total: int) -> None:
+        if callable(on_progress):
+            try:
+                on_progress(int(current), int(total))
+            except Exception:
+                pass
+
+    target_year_int = int(target_year or (date.today().year + 1))
+    eligible_rows = [
+        row
+        for row in rows
+        if str(row.get("RS USER ID") or "").strip()
+    ]
+    summary = {
+        "eligible_total": int(len(eligible_rows)),
+        "processed_total": 0,
+        "matched_total": 0,
+        "error_total": 0,
+        "subscriptions_total": 0,
+    }
+    result_rows: List[Dict[str, str]] = []
+
+    total_rows = len(eligible_rows)
+    if total_rows <= 0:
+        _progress(1, 1)
+        return summary, result_rows
+
+    _progress(0, total_rows)
+    for idx_row, row in enumerate(eligible_rows, start=1):
+        user_id = str(row.get("RS USER ID") or "").strip()
+        first_name = str(row.get("First name") or "").strip()
+        last_name = str(row.get("Last name") or "").strip()
+        user_name = " ".join(
+            part for part in (first_name, last_name) if part
+        ).strip() or str(row.get("Username") or "").strip()
+        _status(
+            "Revisando suscripciones RS {idx}/{total}: {user}".format(
+                idx=idx_row,
+                total=max(total_rows, 1),
+                user=user_name or user_id or "(sin usuario)",
+            )
+        )
+
+        try:
+            detail_body = _fetch_richmondstudio_user_detail(
+                token=token,
+                user_id=user_id,
+                timeout=int(timeout),
+            )
+            matching_subscription_rows = (
+                _richmondstudio_subscription_rows_expiring_in_year(
+                    detail_body,
+                    year=int(target_year_int),
+                )
+            )
+            summary["processed_total"] += 1
+            if not matching_subscription_rows:
+                _progress(idx_row, total_rows)
+                continue
+
+            summary["matched_total"] += 1
+            summary["subscriptions_total"] += int(len(matching_subscription_rows))
+
+            expiration_dates_raw = [
+                str(item.get("expiration_date") or "").strip()
+                for item in matching_subscription_rows
+                if str(item.get("expiration_date") or "").strip()
+            ]
+            expiration_dates = [
+                _richmondstudio_date_display(item)
+                for item in sorted(set(expiration_dates_raw))
+                if str(item).strip()
+            ]
+            product_names = sorted(
+                {
+                    str(item.get("product_name") or "").strip()
+                    for item in matching_subscription_rows
+                    if str(item.get("product_name") or "").strip()
+                }
+            )
+            subscription_ids = [
+                str(item.get("id") or "").strip()
+                for item in matching_subscription_rows
+                if str(item.get("id") or "").strip()
+            ]
+
+            result_rows.append(
+                {
+                    "RS USER ID": user_id,
+                    "USER NAME": user_name,
+                    "Username": str(row.get("Username") or "").strip(),
+                    "Email": str(row.get("Email") or "").strip(),
+                    "Role": str(row.get("Role") or "").strip(),
+                    "IDENTIFIER": str(row.get("IDENTIFIER") or "").strip(),
+                    "level": str(row.get("level") or "").strip(),
+                    "CLASSES COUNT": str(row.get("Classes count") or "").strip(),
+                    "CLASS NAMES": str(row.get("CLASS NAMES") or "").strip(),
+                    "CLASS CODES": str(row.get("CLASS CODES") or "").strip(),
+                    "SUBSCRIPTIONS EXPIRING": str(len(matching_subscription_rows)),
+                    "EXPIRATION DATES": " | ".join(expiration_dates),
+                    "PRODUCT NAMES": " | ".join(product_names),
+                    "SUBSCRIPTION IDS": " | ".join(subscription_ids),
+                    "createdAt": str(row.get("createdAt") or "").strip(),
+                    "lastSignInAt": str(row.get("lastSignInAt") or "").strip(),
+                    "STATUS": "COINCIDE",
+                    "DETAIL": (
+                        "Tiene {count} suscripcion(es) con expirationDate en {year}.".format(
+                            count=len(matching_subscription_rows),
+                            year=target_year_int,
+                        )
+                    ),
+                }
+            )
+        except Exception as exc:
+            summary["error_total"] += 1
+            result_rows.append(
+                {
+                    "RS USER ID": user_id,
+                    "USER NAME": user_name,
+                    "Username": str(row.get("Username") or "").strip(),
+                    "Email": str(row.get("Email") or "").strip(),
+                    "Role": str(row.get("Role") or "").strip(),
+                    "IDENTIFIER": str(row.get("IDENTIFIER") or "").strip(),
+                    "level": str(row.get("level") or "").strip(),
+                    "CLASSES COUNT": str(row.get("Classes count") or "").strip(),
+                    "CLASS NAMES": str(row.get("CLASS NAMES") or "").strip(),
+                    "CLASS CODES": str(row.get("CLASS CODES") or "").strip(),
+                    "SUBSCRIPTIONS EXPIRING": "0",
+                    "EXPIRATION DATES": "",
+                    "PRODUCT NAMES": "",
+                    "SUBSCRIPTION IDS": "",
+                    "createdAt": str(row.get("createdAt") or "").strip(),
+                    "lastSignInAt": str(row.get("lastSignInAt") or "").strip(),
+                    "STATUS": "ERROR",
+                    "DETAIL": str(exc).strip() or "sin detalle",
+                }
+            )
+        finally:
+            _progress(idx_row, total_rows)
+
+    result_rows = sorted(
+        result_rows,
+        key=lambda item: (
+            str(item.get("STATUS") or "").upper() == "ERROR",
+            -int(_safe_int(item.get("SUBSCRIPTIONS EXPIRING")) or 0),
+            str(item.get("USER NAME") or "").lower(),
+        ),
+    )
+    return summary, result_rows
+
+
 def _build_richmondstudio_user_patch_payload_from_detail(
     detail_body: Dict[str, object],
     subscription_ids: Optional[Sequence[object]] = None,
@@ -2598,6 +2780,9 @@ def _store_richmondstudio_registered_panel_data(
         "rs_multi_class_cleanup_rows",
         "rs_multi_class_cleanup_bytes",
         "rs_multi_class_cleanup_target_user_id",
+        "rs_expiring_next_year_summary",
+        "rs_expiring_next_year_rows",
+        "rs_expiring_next_year_bytes",
     ):
         st.session_state.pop(state_key, None)
 
@@ -14088,6 +14273,15 @@ def render_richmond_studio_view() -> None:
                     "rs_limpieza_suscripciones_"
                     f"{cleanup_target_year}_{cleanup_cutoff_month:02d}.xlsx"
                 )
+                expiring_next_year = int(date.today().year + 1)
+                expiring_next_year_label = f"01/01/{expiring_next_year}"
+                expiring_next_year_sheet = (
+                    f"subscriptions_expiring_{expiring_next_year}"
+                )
+                expiring_next_year_file_name = (
+                    "rs_suscripciones_expiran_"
+                    f"{expiring_next_year}.xlsx"
+                )
                 st.markdown("**Listar alumnos registrados**")
                 st.caption(
                     "Richmond Studio: CLASS NAME, CLASS CODE, STUDENT NAME, IDENTIFIER, createdAt y lastSignInAt. Solo roles student/teacher."
@@ -14176,11 +14370,90 @@ def render_richmond_studio_view() -> None:
                 multi_class_students_rows_cached = list(
                     st.session_state.get("rs_multi_class_students_rows") or []
                 )
+                registered_user_rows_cached = list(
+                    st.session_state.get("rs_registered_user_rows") or []
+                )
                 multi_class_eligible_rows = [
                     row
                     for row in multi_class_students_rows_cached
                     if int(_safe_int(row.get("CLASSES COUNT")) or 0) > 1
                 ]
+
+                st.markdown(
+                    f"**Usuarios con suscripciones que expiran desde {expiring_next_year_label}**"
+                )
+                st.caption(
+                    "Consulta los usuarios RS que tengan al menos una suscripcion con expirationDate en el proximo ano."
+                )
+                if st.button(
+                    f"Listar suscripciones que expiran en {expiring_next_year}",
+                    key="rs_expiring_next_year_list_btn",
+                    use_container_width=True,
+                ):
+                    if not rs_token:
+                        st.error("Ingresa el bearer token de Richmond Studio.")
+                    elif not registered_user_rows_cached:
+                        st.warning(
+                            "Primero ejecuta `Listar alumnos registrados` para cargar usuarios RS."
+                        )
+                    else:
+                        status_placeholder = st.empty()
+                        progress_placeholder = st.empty()
+                        progress_bar = progress_placeholder.progress(0)
+                        try:
+                            expiring_summary, expiring_rows = (
+                                _list_richmondstudio_users_with_subscriptions_expiring_in_year(
+                                    token=rs_token,
+                                    rows=registered_user_rows_cached,
+                                    timeout=int(timeout),
+                                    target_year=int(expiring_next_year),
+                                    on_status=lambda message: status_placeholder.write(
+                                        message
+                                    ),
+                                    on_progress=lambda current, total: progress_bar.progress(
+                                        min(
+                                            100,
+                                            max(
+                                                0,
+                                                int(
+                                                    (float(current) / max(int(total), 1))
+                                                    * 100
+                                                ),
+                                            ),
+                                        )
+                                    ),
+                                )
+                            )
+                        except Exception as exc:  # pragma: no cover - UI
+                            status_placeholder.empty()
+                            progress_placeholder.empty()
+                            st.error(f"Error RS: {exc}")
+                        else:
+                            status_placeholder.empty()
+                            progress_placeholder.empty()
+                            st.session_state["rs_expiring_next_year_summary"] = dict(
+                                expiring_summary
+                            )
+                            st.session_state["rs_expiring_next_year_rows"] = list(
+                                expiring_rows
+                            )
+                            st.session_state["rs_expiring_next_year_bytes"] = (
+                                _export_simple_excel(
+                                    expiring_rows,
+                                    sheet_name=expiring_next_year_sheet,
+                                )
+                                if expiring_rows
+                                else b""
+                            )
+                            st.success(
+                                "Consulta de suscripciones RS completada. "
+                                "Usuarios revisados: {processed_total}/{eligible_total} | "
+                                "Usuarios con coincidencia: {matched_total} | "
+                                "Suscripciones detectadas: {subscriptions_total} | "
+                                "Errores: {error_total}.".format(
+                                    **expiring_summary
+                                )
+                            )
 
                 if run_rs_cleanup_subscriptions_mass_confirmed:
                     if not rs_token:
@@ -14256,6 +14529,49 @@ def render_richmond_studio_view() -> None:
                                 f"{cleanup_cutoff_label} de {len(multi_class_eligible_rows)} "
                                 "alumno(s) en varias clases"
                             ),
+                        )
+
+                expiring_summary_cached = (
+                    st.session_state.get("rs_expiring_next_year_summary") or {}
+                )
+                expiring_rows_cached = (
+                    st.session_state.get("rs_expiring_next_year_rows") or []
+                )
+                expiring_bytes_cached = (
+                    st.session_state.get("rs_expiring_next_year_bytes") or b""
+                )
+                if expiring_summary_cached:
+                    st.markdown(
+                        f"**Resultado suscripciones que expiran desde {expiring_next_year_label}**"
+                    )
+                    st.info(
+                        "Usuarios revisados: {processed_total}/{eligible_total} | "
+                        "Usuarios con coincidencia: {matched_total} | "
+                        "Suscripciones detectadas: {subscriptions_total} | "
+                        "Errores: {error_total}".format(
+                            **expiring_summary_cached
+                        )
+                    )
+                    if expiring_rows_cached:
+                        _show_dataframe(
+                            expiring_rows_cached[:200],
+                            use_container_width=True,
+                        )
+                    else:
+                        st.caption(
+                            f"No se encontraron suscripciones con expirationDate en {expiring_next_year}."
+                        )
+                    if expiring_bytes_cached:
+                        st.download_button(
+                            label=(
+                                "Descargar usuarios con suscripciones que expiran en "
+                                f"{expiring_next_year}"
+                            ),
+                            data=expiring_bytes_cached,
+                            file_name=expiring_next_year_file_name,
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="rs_expiring_next_year_download",
+                            use_container_width=True,
                         )
 
                 cleanup_summary_cached = (

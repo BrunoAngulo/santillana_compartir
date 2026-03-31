@@ -4044,18 +4044,39 @@ def _render_richmondstudio_students_password_panel(
             key="rs_students_crud_password",
             type="password",
         )
+        rs_username = str(
+            st.session_state.get("rs_students_crud_username") or ""
+        ).strip()
+        rs_password = str(
+            st.session_state.get("rs_students_crud_password") or ""
+        )
+        rs_single_csv_bytes = b""
+        if rs_username or rs_password:
+            rs_single_csv_bytes = _build_richmondstudio_bulk_user_csv_bytes(
+                [
+                    {
+                        "Username": rs_username,
+                        "New password": rs_password,
+                        "Keep in class": "yes",
+                    }
+                ]
+            )
+        action_col_download, action_col_update = st.columns(2, gap="small")
+        action_col_download.download_button(
+            "Descargar CSV exacto",
+            data=rs_single_csv_bytes,
+            file_name="password_rs_single.csv",
+            mime="text/csv",
+            key="rs_students_crud_download_csv_btn",
+            use_container_width=True,
+            disabled=not bool(rs_single_csv_bytes),
+        )
 
-        if st.button(
+        if action_col_update.button(
             "Actualizar password RS",
             key="rs_students_crud_password_btn",
             use_container_width=True,
         ):
-            rs_username = str(
-                st.session_state.get("rs_students_crud_username") or ""
-            ).strip()
-            rs_password = str(
-                st.session_state.get("rs_students_crud_password") or ""
-            )
             if not rs_token:
                 st.error("Ingresa el bearer token de Richmond Studio.")
             elif not rs_username:

@@ -4175,7 +4175,7 @@ def _build_richmondstudio_bulk_user_csv_bytes(
                 ).strip(),
             ]
         )
-    return output.getvalue().encode("utf-8-sig")
+    return output.getvalue().encode("utf-8")
 
 
 def _normalize_richmondstudio_bulk_keep_in_class(value: object) -> str:

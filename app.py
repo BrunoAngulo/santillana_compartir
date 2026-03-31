@@ -831,7 +831,7 @@ def _sync_richmondstudio_token_from_input() -> None:
 
 
 st.set_page_config(
-    page_title="santed",
+    page_title="SANTED",
     page_icon=str(APP_TAB_LOGO_PATH) if APP_TAB_LOGO_PATH.exists() else None,
     layout="wide",
 )
@@ -3532,17 +3532,17 @@ def _render_richmondstudio_class_sync_section(
         "Sube un Excel con el mismo formato de usuarios RS: Last name, First name, Class, Email, Role y level. "
         "Si el usuario ya existe, la app agregara las clases del archivo. Si no existe, lo creara como student."
     )
-
-    if st.button(
-        "Preparar plantilla clases RS",
-        key="rs_class_sync_template_prepare_btn",
-        use_container_width=True,
-    ):
-        if not rs_token:
-            st.error("Ingresa el bearer token de Richmond Studio.")
-            st.stop()
+    rs_class_sync_token = _clean_token_value(rs_token)
+    cached_class_sync_token = _clean_token_value(
+        st.session_state.get("rs_class_sync_template_token", "")
+    )
+    needs_class_sync_template = bool(rs_class_sync_token) and (
+        rs_class_sync_token != cached_class_sync_token
+        or not bytes(st.session_state.get("rs_class_sync_template_bytes") or b"")
+    )
+    if needs_class_sync_template:
         try:
-            with st.spinner("Consultando usuarios y clases RS..."):
+            with st.spinner("Preparando plantilla clases RS..."):
                 panel_data = _load_richmondstudio_registered_panel_data(
                     rs_token,
                     timeout=int(timeout),
@@ -3581,14 +3581,7 @@ def _render_richmondstudio_class_sync_section(
                 )
             )
             st.session_state["rs_class_sync_template_count"] = int(len(template_rows))
-            if template_rows:
-                st.success(
-                    "Plantilla clases RS lista. Filas: {rows}.".format(
-                        rows=len(template_rows)
-                    )
-                )
-            else:
-                st.warning("No se encontraron usuarios/clases para la plantilla.")
+            st.session_state["rs_class_sync_template_token"] = rs_class_sync_token
 
     rs_class_sync_template_bytes = bytes(
         st.session_state.get("rs_class_sync_template_bytes") or b""
@@ -3600,9 +3593,11 @@ def _render_richmondstudio_class_sync_section(
     rs_class_sync_template_count = int(
         st.session_state.get("rs_class_sync_template_count") or 0
     )
+    if not rs_token:
+        st.caption("Ingresa el bearer token de Richmond Studio para descargar la plantilla.")
     if rs_class_sync_template_bytes:
         st.caption(
-            "Ultima plantilla preparada: {rows} fila(s).".format(
+            "Plantilla lista: {rows} fila(s).".format(
                 rows=rs_class_sync_template_count
             )
         )
@@ -10040,6 +10035,10 @@ def _clear_alumnos_edit_state() -> None:
         "alumnos_edit_login",
         "alumnos_edit_original_login",
         "alumnos_edit_password",
+        "alumnos_edit_rs_username",
+        "alumnos_edit_rs_password",
+        "alumnos_edit_rs_form_loaded_alumno_id",
+        "alumnos_edit_rs_notice",
         "alumnos_edit_notice",
         "alumnos_edit_pending_detail_refresh",
         "alumnos_edit_move_dialog_alumno_id",
@@ -10199,6 +10198,9 @@ def _store_alumno_edit_detail_state(detail: Dict[str, object], context: Dict[str
     st.session_state["alumnos_edit_login"] = login_txt
     st.session_state["alumnos_edit_original_login"] = login_txt
     st.session_state["alumnos_edit_password"] = ""
+    st.session_state["alumnos_edit_rs_username"] = login_txt
+    st.session_state["alumnos_edit_rs_password"] = ""
+    st.session_state["alumnos_edit_rs_form_loaded_alumno_id"] = int(context["alumno_id"])
     st.session_state["alumnos_edit_fetch_error"] = ""
 
 
@@ -12846,27 +12848,21 @@ def render_richmond_studio_view() -> None:
                     timeout=int(timeout),
                 )
     with tab_rs_usuarios:
+        if str(st.session_state.get("rs_users_nav") or "").strip() not in {
+            "crear",
+            "clases",
+        }:
+            st.session_state["rs_users_nav"] = "crear"
         rs_users_sidebar_col, rs_users_body_col = st.columns([1.15, 4.85], gap="large")
         with rs_users_sidebar_col:
-            with st.container(border=True):
-                st.markdown("**Usuarios RS**")
-                st.caption(
-                    "Centraliza la alta masiva y la asignacion de clases desde plantillas de Richmond Studio."
-                )
-                st.markdown("**Bloques**")
-                st.caption("Crear usuarios desde Excel")
-                st.caption("Actualizar clases RS por Excel")
-                created_rows = int(st.session_state.get("rs_users_create_output_count") or 0)
-                if created_rows:
-                    st.caption(f"Ultimo lote creado: {created_rows} fila(s).")
-                class_sync_summary = st.session_state.get("rs_class_sync_summary") or {}
-                if isinstance(class_sync_summary, dict) and class_sync_summary:
-                    st.caption(
-                        "Ultima sincronizacion: {updated} actualizados | {created} creados".format(
-                            updated=int(class_sync_summary.get("users_updated") or 0),
-                            created=int(class_sync_summary.get("users_created") or 0),
-                        )
-                    )
+            rs_users_view = _render_crud_menu(
+                "Funciones usuarios RS",
+                [
+                    ("crear", "Crear", "Alta masiva de usuarios desde Excel"),
+                    ("clases", "Clases", "Sincroniza clases o crea alumnos"),
+                ],
+                state_key="rs_users_nav",
+            )
         with rs_users_body_col:
             with st.container(border=True):
                 st.markdown("**RS | Crear usuarios desde Excel**")
@@ -13741,9 +13737,6 @@ def render_richmond_studio_view() -> None:
                 st.caption(
                     "Richmond Studio: CLASS NAME, CLASS CODE, STUDENT NAME, IDENTIFIER, createdAt y lastSignInAt. Solo roles student/teacher."
                 )
-                run_rs_cleanup_subscriptions_confirmed = _consume_richmondstudio_confirmed_action(
-                    "rs_single_remove_expiring_subscriptions"
-                )
                 run_rs_cleanup_subscriptions_mass_confirmed = _consume_richmondstudio_confirmed_action(
                     "rs_mass_remove_expiring_subscriptions"
                 )
@@ -13833,69 +13826,6 @@ def render_richmond_studio_view() -> None:
                     for row in multi_class_students_rows_cached
                     if int(_safe_int(row.get("CLASSES COUNT")) or 0) > 1
                 ]
-                eligible_row_by_user_id: Dict[str, Dict[str, object]] = {}
-                for row in multi_class_eligible_rows:
-                    user_id = str(row.get("RS USER ID") or "").strip()
-                    if user_id and user_id not in eligible_row_by_user_id:
-                        eligible_row_by_user_id[user_id] = row
-
-                if run_rs_cleanup_subscriptions_confirmed:
-                    target_user_id = str(
-                        st.session_state.get("rs_multi_class_cleanup_target_user_id") or ""
-                    ).strip()
-                    target_row = eligible_row_by_user_id.get(target_user_id)
-                    if not rs_token:
-                        st.error("Ingresa el bearer token de Richmond Studio.")
-                    elif not multi_class_eligible_rows:
-                        st.warning("No hay alumnos con mas de una clase para limpiar.")
-                    elif not target_row:
-                        st.warning(
-                            "No se encontro el alumno seleccionado para limpiar. Vuelve a elegirlo."
-                        )
-                    else:
-                        try:
-                            student_name = str(target_row.get("STUDENT NAME") or "").strip()
-                            with st.spinner(
-                                (
-                                    f"Quitando suscripciones que expiran {cleanup_cutoff_label} de {student_name}..."
-                                    if student_name
-                                    else f"Quitando suscripciones que expiran {cleanup_cutoff_label} en RS..."
-                                )
-                            ):
-                                cleanup_summary, cleanup_rows = (
-                                    _remove_richmondstudio_expiring_subscriptions_for_multiclass_students(
-                                        token=rs_token,
-                                        rows=[target_row],
-                                        timeout=int(timeout),
-                                        target_year=int(cleanup_target_year),
-                                        cutoff_month=int(cleanup_cutoff_month),
-                                    )
-                                )
-                        except Exception as exc:  # pragma: no cover - UI
-                            st.error(f"Error RS: {exc}")
-                        else:
-                            st.session_state.pop("rs_multi_class_cleanup_target_user_id", None)
-                            st.session_state["rs_multi_class_cleanup_summary"] = dict(
-                                cleanup_summary
-                            )
-                            st.session_state["rs_multi_class_cleanup_rows"] = list(
-                                cleanup_rows
-                            )
-                            st.session_state["rs_multi_class_cleanup_bytes"] = (
-                                _export_simple_excel(
-                                    cleanup_rows,
-                                    sheet_name=cleanup_sheet_name,
-                                )
-                                if cleanup_rows
-                                else b""
-                            )
-                            st.success(
-                                "Limpieza RS completada. Elegibles: {eligible_total} | "
-                                "Actualizados: {updated_total} | Sin cambios: {skipped_total} | "
-                                "Errores: {error_total} | Suscripciones removidas: {removed_total}.".format(
-                                    **cleanup_summary
-                                )
-                            )
 
                 if run_rs_cleanup_subscriptions_mass_confirmed:
                     if not rs_token:
@@ -13951,7 +13881,7 @@ def render_richmond_studio_view() -> None:
                 if multi_class_eligible_rows:
                     st.markdown("**Alumnos con mas de una clase**")
                     st.caption(
-                        "Selecciona un alumno para quitar solo suscripciones con expirationDate "
+                        "Quita de forma masiva las suscripciones con expirationDate "
                         f"{cleanup_cutoff_label}. Las que vencen despues se conservan."
                     )
                     _show_dataframe(
@@ -13972,94 +13902,6 @@ def render_richmond_studio_view() -> None:
                                 "alumno(s) en varias clases"
                             ),
                         )
-                    eligible_user_ids = list(eligible_row_by_user_id.keys())
-                    selected_cleanup_user_id = str(
-                        st.session_state.get("rs_multi_class_cleanup_selected_user_id") or ""
-                    ).strip()
-                    if selected_cleanup_user_id not in eligible_row_by_user_id:
-                        selected_cleanup_user_id = eligible_user_ids[0]
-                        st.session_state["rs_multi_class_cleanup_selected_user_id"] = (
-                            selected_cleanup_user_id
-                        )
-                    selected_cleanup_user_id = str(
-                        st.selectbox(
-                            "Alumno a limpiar",
-                            options=eligible_user_ids,
-                            key="rs_multi_class_cleanup_selected_user_id",
-                            format_func=lambda user_id: (
-                                "{name} | {identifier} | {classes} clases".format(
-                                    name=str(
-                                        eligible_row_by_user_id.get(user_id, {}).get(
-                                            "STUDENT NAME"
-                                        )
-                                        or user_id
-                                    ).strip(),
-                                    identifier=str(
-                                        eligible_row_by_user_id.get(user_id, {}).get(
-                                            "IDENTIFIER"
-                                        )
-                                        or ""
-                                    ).strip(),
-                                    classes=str(
-                                        eligible_row_by_user_id.get(user_id, {}).get(
-                                            "CLASSES COUNT"
-                                        )
-                                        or "0"
-                                    ).strip(),
-                                )
-                            ),
-                        )
-                        or ""
-                    ).strip()
-                    selected_cleanup_row = (
-                        eligible_row_by_user_id.get(selected_cleanup_user_id) or {}
-                    )
-                    if selected_cleanup_row:
-                        st.caption(
-                            "Seleccionado: {name} | Usuario: {identifier} | Clases: {classes}".format(
-                                name=str(selected_cleanup_row.get("STUDENT NAME") or "").strip()
-                                or "(sin nombre)",
-                                identifier=str(
-                                    selected_cleanup_row.get("IDENTIFIER") or ""
-                                ).strip()
-                                or "(sin identificador)",
-                                classes=str(
-                                    selected_cleanup_row.get("CLASSES COUNT") or "0"
-                                ).strip(),
-                            )
-                        )
-                    if st.button(
-                        f"Quitar suscripciones {cleanup_cutoff_label} del alumno seleccionado",
-                        type="primary",
-                        key="rs_multi_class_cleanup_request_btn",
-                        use_container_width=True,
-                    ):
-                        target_user_id = str(
-                            selected_cleanup_row.get("RS USER ID") or ""
-                        ).strip()
-                        if not target_user_id:
-                            st.error("No se pudo identificar el alumno seleccionado.")
-                        else:
-                            st.session_state["rs_multi_class_cleanup_target_user_id"] = (
-                                target_user_id
-                            )
-                            target_name = str(
-                                selected_cleanup_row.get("STUDENT NAME") or ""
-                            ).strip()
-                            target_identifier = str(
-                                selected_cleanup_row.get("IDENTIFIER") or ""
-                            ).strip()
-                            target_classes = str(
-                                selected_cleanup_row.get("CLASSES COUNT") or "0"
-                            ).strip()
-                            _request_richmondstudio_confirmation(
-                                "rs_single_remove_expiring_subscriptions",
-                                (
-                                    f"quitar suscripciones {cleanup_cutoff_label} de "
-                                    f"{target_name or target_identifier or target_user_id} "
-                                    f"({target_classes} clases)"
-                                ),
-                            )
 
                 cleanup_summary_cached = (
                     st.session_state.get("rs_multi_class_cleanup_summary") or {}
@@ -19530,6 +19372,19 @@ with tab_crud_alumnos:
                         st.error(notice_message)
                     else:
                         st.info(notice_message)
+            alumnos_edit_rs_notice = st.session_state.pop("alumnos_edit_rs_notice", None)
+            if isinstance(alumnos_edit_rs_notice, dict):
+                rs_notice_type = str(alumnos_edit_rs_notice.get("type") or "").strip().lower()
+                rs_notice_message = str(alumnos_edit_rs_notice.get("message") or "").strip()
+                if rs_notice_message:
+                    if rs_notice_type == "success":
+                        st.success(rs_notice_message)
+                    elif rs_notice_type == "warning":
+                        st.warning(rs_notice_message)
+                    elif rs_notice_type == "error":
+                        st.error(rs_notice_message)
+                    else:
+                        st.info(rs_notice_message)
 
             col_edit_load, col_edit_clear = st.columns([2, 1], gap="small")
             run_edit_load = col_edit_load.button(
@@ -19827,6 +19682,94 @@ with tab_crud_alumnos:
                         cred_col_2.caption(
                             "Opcional. Si la completas, tambien actualiza la password."
                         )
+
+                        loaded_rs_form_alumno_id = _safe_int(
+                            st.session_state.get("alumnos_edit_rs_form_loaded_alumno_id")
+                        )
+                        if loaded_rs_form_alumno_id != int(alumno_edit_context["alumno_id"]):
+                            st.session_state["alumnos_edit_rs_username"] = str(
+                                st.session_state.get("alumnos_edit_original_login")
+                                or st.session_state.get("alumnos_edit_login")
+                                or ""
+                            ).strip()
+                            st.session_state["alumnos_edit_rs_password"] = ""
+                            st.session_state["alumnos_edit_rs_form_loaded_alumno_id"] = int(
+                                alumno_edit_context["alumno_id"]
+                            )
+
+                        st.divider()
+                        st.markdown("**Password Richmond Studio**")
+                        st.caption(
+                            "Busca el alumno aqui y actualiza su password RS. La app envia internamente un CSV temporal de una sola fila al bulk endpoint."
+                        )
+                        rs_password_col_1, rs_password_col_2 = st.columns(2, gap="small")
+                        rs_password_col_1.text_input(
+                            "Usuario RS / Email",
+                            key="alumnos_edit_rs_username",
+                        )
+                        rs_password_col_2.text_input(
+                            "Nueva password RS",
+                            key="alumnos_edit_rs_password",
+                            type="password",
+                        )
+                        run_alumno_edit_rs_password = st.button(
+                            "Actualizar password RS",
+                            use_container_width=True,
+                            key="alumnos_edit_rs_password_btn",
+                        )
+
+                        if run_alumno_edit_rs_password:
+                            rs_token = _get_richmondstudio_token()
+                            rs_username = str(
+                                st.session_state.get("alumnos_edit_rs_username") or ""
+                            ).strip()
+                            rs_password = str(
+                                st.session_state.get("alumnos_edit_rs_password") or ""
+                            )
+                            if not rs_token:
+                                st.error(
+                                    "Falta el bearer token de Richmond Studio. Configuralo en Richmond Studio."
+                                )
+                                st.stop()
+                            if not rs_username:
+                                st.error("Ingresa el usuario o email de RS.")
+                                st.stop()
+                            if not rs_password:
+                                st.error("Ingresa la nueva password de RS.")
+                                st.stop()
+                            try:
+                                with st.spinner("Actualizando password RS..."):
+                                    rs_response_message = (
+                                        _submit_richmondstudio_bulk_user_update(
+                                            rs_token,
+                                            [
+                                                {
+                                                    "Username": rs_username,
+                                                    "New password": rs_password,
+                                                    "Keep in class": "yes",
+                                                }
+                                            ],
+                                            timeout=max(120, int(timeout)),
+                                        )
+                                    )
+                            except Exception as exc:
+                                st.session_state["alumnos_edit_rs_notice"] = {
+                                    "type": "error",
+                                    "message": "No se pudo actualizar la password RS: {msg}".format(
+                                        msg=str(exc).strip() or "sin detalle"
+                                    ),
+                                }
+                            else:
+                                st.session_state["alumnos_edit_rs_password"] = ""
+                                st.session_state["alumnos_edit_rs_notice"] = {
+                                    "type": "success",
+                                    "message": "Password RS actualizada para {user}. Respuesta: {response}".format(
+                                        user=rs_username,
+                                        response=str(rs_response_message or "ok").strip()
+                                        or "ok",
+                                    ),
+                                }
+                            st.rerun()
 
                         run_alumno_edit_save = st.button(
                             "Guardar cambios del alumno",

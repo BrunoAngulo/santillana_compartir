@@ -2497,12 +2497,6 @@ def _build_richmondstudio_registered_listing_data(
     rs_users: List[Dict[str, object]],
     rs_groups: List[Dict[str, object]],
 ) -> Dict[str, object]:
-    cleanup_target_year = _richmondstudio_cleanup_target_year()
-    cleanup_cutoff_month = _richmondstudio_cleanup_cutoff_month()
-    cleanup_flag_column = (
-        "REMOVE SUBSCRIPTIONS "
-        f"{_richmondstudio_cleanup_cutoff_label(cleanup_target_year, cleanup_cutoff_month)}"
-    )
     allowed_roles = {"student", "teacher"}
     excluded_roles: Dict[str, int] = {}
     filtered_users: List[Dict[str, object]] = []
@@ -2603,7 +2597,6 @@ def _build_richmondstudio_registered_listing_data(
                     "IDENTIFIER": identifier,
                     "EMAIL": email,
                     "CLASSES COUNT": str(len(group_ids)),
-                    cleanup_flag_column: "Si" if len(group_ids) > 1 else "",
                     "CLASS NAMES": " | ".join(class_names),
                     "CLASS CODES": " | ".join(class_codes),
                     "createdAt": created_at,
@@ -14245,11 +14238,11 @@ def render_richmond_studio_view() -> None:
             with st.container(border=True):
                 st.markdown("**Alumnos registrados RS**")
                 st.caption(
-                    "Desde aqui puedes listar usuarios, limpiar multiclase, gestionar clases y actualizar passwords."
+                    "Desde aqui puedes listar usuarios, revisar suscripciones, gestionar clases y actualizar passwords."
                 )
                 st.markdown("**Bloques**")
                 st.caption("Listado y exportaciones")
-                st.caption("Limpieza de suscripciones")
+                st.caption("Consulta de suscripciones")
                 st.caption("Gestionar clases por usuario")
                 st.caption("Actualizar password")
                 listed_rows = int(st.session_state.get("rs_excel_count") or 0)
@@ -14260,19 +14253,6 @@ def render_richmond_studio_view() -> None:
                     st.caption(f"Multiclase detectados: {multi_class_rows}")
         with rs_listado_body_col:
             with st.container(border=True):
-                cleanup_target_year = _richmondstudio_cleanup_target_year()
-                cleanup_cutoff_month = _richmondstudio_cleanup_cutoff_month()
-                cleanup_cutoff_label = _richmondstudio_cleanup_cutoff_label(
-                    cleanup_target_year,
-                    cleanup_cutoff_month,
-                )
-                cleanup_sheet_name = (
-                    f"cleanup_subscriptions_{cleanup_target_year}_{cleanup_cutoff_month:02d}"
-                )
-                cleanup_file_name = (
-                    "rs_limpieza_suscripciones_"
-                    f"{cleanup_target_year}_{cleanup_cutoff_month:02d}.xlsx"
-                )
                 expiring_next_year = int(date.today().year + 1)
                 expiring_next_year_label = f"01/01/{expiring_next_year}"
                 expiring_next_year_sheet = (
@@ -14285,9 +14265,6 @@ def render_richmond_studio_view() -> None:
                 st.markdown("**Listar alumnos registrados**")
                 st.caption(
                     "Richmond Studio: CLASS NAME, CLASS CODE, STUDENT NAME, IDENTIFIER, createdAt y lastSignInAt. Solo roles student/teacher."
-                )
-                run_rs_cleanup_subscriptions_mass_confirmed = _consume_richmondstudio_confirmed_action(
-                    "rs_mass_remove_expiring_subscriptions"
                 )
                 run_rs_user_classes_replace_confirmed = _consume_richmondstudio_confirmed_action(
                     "rs_user_classes_replace"
@@ -14373,11 +14350,6 @@ def render_richmond_studio_view() -> None:
                 registered_user_rows_cached = list(
                     st.session_state.get("rs_registered_user_rows") or []
                 )
-                multi_class_eligible_rows = [
-                    row
-                    for row in multi_class_students_rows_cached
-                    if int(_safe_int(row.get("CLASSES COUNT")) or 0) > 1
-                ]
 
                 st.markdown(
                     f"**Usuarios con suscripciones que expiran desde {expiring_next_year_label}**"
@@ -14455,82 +14427,6 @@ def render_richmond_studio_view() -> None:
                                 )
                             )
 
-                if run_rs_cleanup_subscriptions_mass_confirmed:
-                    if not rs_token:
-                        st.error("Ingresa el bearer token de Richmond Studio.")
-                    elif not multi_class_eligible_rows:
-                        st.warning("No hay alumnos con mas de una clase para limpiar.")
-                    else:
-                        status_placeholder = st.empty()
-                        try:
-                            with st.spinner(
-                                "Quitando suscripciones que expiran "
-                                f"{cleanup_cutoff_label} para todos los alumnos elegibles..."
-                            ):
-                                cleanup_summary, cleanup_rows = (
-                                    _remove_richmondstudio_expiring_subscriptions_for_multiclass_students(
-                                        token=rs_token,
-                                        rows=multi_class_eligible_rows,
-                                        timeout=int(timeout),
-                                        target_year=int(cleanup_target_year),
-                                        cutoff_month=int(cleanup_cutoff_month),
-                                        on_status=lambda message: status_placeholder.write(message),
-                                    )
-                                )
-                        except Exception as exc:  # pragma: no cover - UI
-                            status_placeholder.empty()
-                            st.error(f"Error RS: {exc}")
-                        else:
-                            status_placeholder.empty()
-                            st.session_state.pop("rs_multi_class_cleanup_target_user_id", None)
-                            st.session_state["rs_multi_class_cleanup_summary"] = dict(
-                                cleanup_summary
-                            )
-                            st.session_state["rs_multi_class_cleanup_rows"] = list(
-                                cleanup_rows
-                            )
-                            st.session_state["rs_multi_class_cleanup_bytes"] = (
-                                _export_simple_excel(
-                                    cleanup_rows,
-                                    sheet_name=cleanup_sheet_name,
-                                )
-                                if cleanup_rows
-                                else b""
-                            )
-                            st.success(
-                                "Limpieza masiva RS completada. Elegibles: {eligible_total} | "
-                                "Procesados: {processed_total} | Actualizados: {updated_total} | "
-                                "Sin cambios: {skipped_total} | Errores: {error_total} | "
-                                "Suscripciones removidas: {removed_total}.".format(
-                                    **cleanup_summary
-                                )
-                            )
-
-                if multi_class_eligible_rows:
-                    st.markdown("**Alumnos con mas de una clase**")
-                    st.caption(
-                        "Quita de forma masiva las suscripciones con expirationDate "
-                        f"{cleanup_cutoff_label}. Las que vencen despues se conservan."
-                    )
-                    _show_dataframe(
-                        multi_class_eligible_rows[:200],
-                        use_container_width=True,
-                    )
-                    if st.button(
-                        f"Quitar suscripciones {cleanup_cutoff_label} de todos los alumnos elegibles",
-                        type="primary",
-                        key="rs_multi_class_cleanup_mass_request_btn",
-                        use_container_width=True,
-                    ):
-                        _request_richmondstudio_confirmation(
-                            "rs_mass_remove_expiring_subscriptions",
-                            (
-                                "quitar suscripciones "
-                                f"{cleanup_cutoff_label} de {len(multi_class_eligible_rows)} "
-                                "alumno(s) en varias clases"
-                            ),
-                        )
-
                 expiring_summary_cached = (
                     st.session_state.get("rs_expiring_next_year_summary") or {}
                 )
@@ -14571,41 +14467,6 @@ def render_richmond_studio_view() -> None:
                             file_name=expiring_next_year_file_name,
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             key="rs_expiring_next_year_download",
-                            use_container_width=True,
-                        )
-
-                cleanup_summary_cached = (
-                    st.session_state.get("rs_multi_class_cleanup_summary") or {}
-                )
-                cleanup_rows_cached = (
-                    st.session_state.get("rs_multi_class_cleanup_rows") or []
-                )
-                cleanup_bytes_cached = (
-                    st.session_state.get("rs_multi_class_cleanup_bytes") or b""
-                )
-                if cleanup_summary_cached:
-                    st.markdown(
-                        f"**Resultado de limpieza de suscripciones {cleanup_cutoff_label}**"
-                    )
-                    st.info(
-                        "Elegibles: {eligible_total} | Procesados: {processed_total} | "
-                        "Actualizados: {updated_total} | Sin cambios: {skipped_total} | "
-                        "Errores: {error_total} | Suscripciones removidas: {removed_total}".format(
-                            **cleanup_summary_cached
-                        )
-                    )
-                    if cleanup_rows_cached:
-                        _show_dataframe(cleanup_rows_cached[:200], use_container_width=True)
-                    if cleanup_bytes_cached:
-                        st.download_button(
-                            label=(
-                                "Descargar resultado limpieza suscripciones "
-                                f"{cleanup_cutoff_label}"
-                            ),
-                            data=cleanup_bytes_cached,
-                            file_name=cleanup_file_name,
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="rs_multi_class_cleanup_download",
                             use_container_width=True,
                         )
 

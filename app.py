@@ -2520,8 +2520,6 @@ def _build_richmondstudio_registered_listing_data(
 
     registered_rows: List[Dict[str, str]] = []
     registered_user_rows: List[Dict[str, str]] = []
-    multi_class_students_rows: List[Dict[str, str]] = []
-
     for item in rs_users:
         attrs = item.get("attributes") if isinstance(item.get("attributes"), dict) else {}
         role = str(attrs.get("role") or "").strip().lower()
@@ -2589,21 +2587,6 @@ def _build_richmondstudio_registered_listing_data(
                 }
             )
 
-        if role == "student" and len(group_ids) > 1:
-            multi_class_students_rows.append(
-                {
-                    "RS USER ID": user_id,
-                    "STUDENT NAME": student_name,
-                    "IDENTIFIER": identifier,
-                    "EMAIL": email,
-                    "CLASSES COUNT": str(len(group_ids)),
-                    "CLASS NAMES": " | ".join(class_names),
-                    "CLASS CODES": " | ".join(class_codes),
-                    "createdAt": created_at,
-                    "lastSignInAt": last_sign_in_at,
-                }
-            )
-
         primary_class_name = class_names[0] if len(class_names) == 1 else ""
         primary_class_code = class_codes[0] if len(class_codes) == 1 else ""
         registered_user_rows.append(
@@ -2649,14 +2632,6 @@ def _build_richmondstudio_registered_listing_data(
             str(row.get("lastSignInAt") or "").lower(),
         ),
     )
-    multi_class_students_rows = sorted(
-        multi_class_students_rows,
-        key=lambda row: (
-            -int(str(row.get("CLASSES COUNT") or "0") or "0"),
-            str(row.get("STUDENT NAME") or "").lower(),
-            str(row.get("IDENTIFIER") or "").lower(),
-        ),
-    )
     registered_user_rows = sorted(
         registered_user_rows,
         key=lambda row: (
@@ -2669,7 +2644,6 @@ def _build_richmondstudio_registered_listing_data(
     return {
         "registered_rows": registered_rows,
         "registered_user_rows": registered_user_rows,
-        "multi_class_students_rows": multi_class_students_rows,
         "excluded_roles": excluded_roles,
         "valid_users_count": int(len(filtered_users)),
         "total_users_count": int(len(rs_users)),
@@ -2723,9 +2697,6 @@ def _store_richmondstudio_registered_panel_data(
 
     rows_rs = list(listing_data.get("registered_rows") or [])
     rs_registered_user_rows = list(listing_data.get("registered_user_rows") or [])
-    multi_class_students_rows = list(
-        listing_data.get("multi_class_students_rows") or []
-    )
     excluded_roles = (
         listing_data.get("excluded_roles")
         if isinstance(listing_data.get("excluded_roles"), dict)
@@ -2759,20 +2730,9 @@ def _store_richmondstudio_registered_panel_data(
             prefix="plantilla_password_rs",
         )
     )
-    st.session_state["rs_multi_class_students_rows"] = multi_class_students_rows
-    st.session_state["rs_multi_class_students_bytes"] = (
-        _export_simple_excel(
-            multi_class_students_rows,
-            sheet_name="students_multi_class",
-        )
-        if multi_class_students_rows
-        else b""
-    )
     for state_key in (
-        "rs_multi_class_cleanup_summary",
-        "rs_multi_class_cleanup_rows",
-        "rs_multi_class_cleanup_bytes",
-        "rs_multi_class_cleanup_target_user_id",
+        "rs_multi_class_students_rows",
+        "rs_multi_class_students_bytes",
         "rs_expiring_next_year_summary",
         "rs_expiring_next_year_rows",
         "rs_expiring_next_year_bytes",
@@ -2784,7 +2744,6 @@ def _store_richmondstudio_registered_panel_data(
         "listing_data": listing_data,
         "rows": rows_rs,
         "registered_user_rows": rs_registered_user_rows,
-        "multi_class_students_rows": multi_class_students_rows,
         "excluded_roles": excluded_roles,
     }
 
@@ -14248,9 +14207,6 @@ def render_richmond_studio_view() -> None:
                 listed_rows = int(st.session_state.get("rs_excel_count") or 0)
                 if listed_rows:
                     st.caption(f"Ultimo listado: {listed_rows} fila(s).")
-                multi_class_rows = len(st.session_state.get("rs_multi_class_students_rows") or [])
-                if multi_class_rows:
-                    st.caption(f"Multiclase detectados: {multi_class_rows}")
         with rs_listado_body_col:
             with st.container(border=True):
                 expiring_next_year = int(date.today().year + 1)
@@ -14309,9 +14265,6 @@ def render_richmond_studio_view() -> None:
                         else {}
                     )
                     rows_rs = list(registered_panel_state.get("rows") or [])
-                    multi_class_students_rows = list(
-                        registered_panel_state.get("multi_class_students_rows") or []
-                    )
                     excluded_roles = (
                         registered_panel_state.get("excluded_roles")
                         if isinstance(registered_panel_state.get("excluded_roles"), dict)
@@ -14332,21 +14285,6 @@ def render_richmond_studio_view() -> None:
                         st.caption(f"Roles excluidos: {excluded_txt}")
                     if rows_rs:
                         _show_dataframe(rows_rs[:200], use_container_width=True)
-                    if multi_class_students_rows:
-                        st.markdown("**Alumnos inscritos en varias clases**")
-                        st.caption(
-                            f"Alumnos detectados en mas de una clase: {len(multi_class_students_rows)}"
-                        )
-                        _show_dataframe(
-                            multi_class_students_rows[:200],
-                            use_container_width=True,
-                        )
-                    else:
-                        st.caption("No se detectaron alumnos inscritos en varias clases.")
-
-                multi_class_students_rows_cached = list(
-                    st.session_state.get("rs_multi_class_students_rows") or []
-                )
                 registered_user_rows_cached = list(
                     st.session_state.get("rs_registered_user_rows") or []
                 )
@@ -14471,8 +14409,8 @@ def render_richmond_studio_view() -> None:
                         )
 
                 if st.session_state.get("rs_excel_bytes"):
-                    col_rs_download_a, col_rs_download_b, col_rs_download_c = st.columns(
-                        3, gap="small"
+                    col_rs_download_a, col_rs_download_b = st.columns(
+                        2, gap="small"
                     )
                     col_rs_download_a.download_button(
                         label="Descargar listado RS",
@@ -14482,17 +14420,8 @@ def render_richmond_studio_view() -> None:
                         key="rs_rs_excel_download",
                         use_container_width=True,
                     )
-                    if st.session_state.get("rs_multi_class_students_bytes"):
-                        col_rs_download_b.download_button(
-                            label="Descargar alumnos en varias clases",
-                            data=st.session_state["rs_multi_class_students_bytes"],
-                            file_name="alumnos_varias_clases_rs.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="rs_rs_multi_students_download",
-                            use_container_width=True,
-                        )
                     if st.session_state.get("rs_password_update_template_bytes"):
-                        col_rs_download_c.download_button(
+                        col_rs_download_b.download_button(
                             label="Descargar todos los usuarios para actualizar",
                             data=st.session_state["rs_password_update_template_bytes"],
                             file_name=str(

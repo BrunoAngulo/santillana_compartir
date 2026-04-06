@@ -32,20 +32,17 @@ def _render_loqueleo_result_preview() -> None:
     if not isinstance(rows, list) or not rows:
         return
 
-    result_summary = {
-        "Organizacion": str(st.session_state.get("loqueleo_last_organization_name", "") or "").strip(),
-        "Tipo": str(st.session_state.get("loqueleo_last_user_type_label", "") or "").strip(),
-        "Ano": str(st.session_state.get("loqueleo_last_year", "") or "").strip(),
-        "Paginas": int(st.session_state.get("loqueleo_last_page_count", 0) or 0),
-        "Total reportado": st.session_state.get("loqueleo_last_reported_total", ""),
-        "Filas exportadas": len(rows),
-        "Motivo de parada": str(st.session_state.get("loqueleo_last_stop_reason", "") or "").strip(),
-    }
-
     st.markdown("**Resultado**")
-    result_df = pd.DataFrame([result_summary])
-    result_df.index = [1]
-    st.dataframe(result_df, use_container_width=True)
+    organization_name = str(
+        st.session_state.get("loqueleo_last_organization_name", "") or ""
+    ).strip()
+    user_type_label = str(
+        st.session_state.get("loqueleo_last_user_type_label", "") or ""
+    ).strip()
+    page_count = int(st.session_state.get("loqueleo_last_page_count", 0) or 0)
+    st.caption(
+        f"{organization_name} | {user_type_label} | Filas: {len(rows)} | Paginas: {page_count}"
+    )
 
     excel_bytes = st.session_state.get("loqueleo_last_excel_bytes")
     file_name = str(st.session_state.get("loqueleo_last_excel_filename", "") or "").strip()
@@ -65,7 +62,7 @@ def _render_loqueleo_result_preview() -> None:
 
     preview_df = pd.DataFrame(rows)
     preview_df = preview_df.reindex(
-        columns=["Usuario ID", "Nombre", "Cuenta"],
+        columns=["Nombre", "Cuenta", "Usuario ID"],
         fill_value="",
     ).head(200)
     if not preview_df.empty:

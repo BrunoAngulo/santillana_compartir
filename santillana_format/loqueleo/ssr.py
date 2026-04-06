@@ -163,12 +163,12 @@ def build_loqueleo_users_export_dataframe(result: LoqueleoUsersExport) -> pd.Dat
     for row in result.rows:
         export_rows.append(
             {
-                "Usuario ID": row.get("Usuario ID", ""),
                 "Nombre": row.get("Nombre", ""),
                 "Cuenta": row.get("Cuenta", ""),
+                "Usuario ID": row.get("Usuario ID", ""),
             }
         )
-    return pd.DataFrame(export_rows, columns=["Usuario ID", "Nombre", "Cuenta"])
+    return pd.DataFrame(export_rows, columns=["Nombre", "Cuenta", "Usuario ID"])
 
 
 def build_loqueleo_users_excel_bytes(result: LoqueleoUsersExport) -> bytes:

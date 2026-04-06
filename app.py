@@ -975,8 +975,19 @@ def _build_token_reader_status_rows() -> List[Dict[str, str]]:
     ]
 
 
+def _apply_pending_token_reader_snapshot_input() -> None:
+    pending_snapshot = st.session_state.pop(
+        "token_reader_snapshot_input_pending",
+        None,
+    )
+    if pending_snapshot is None:
+        return
+    st.session_state["token_reader_snapshot_input"] = str(pending_snapshot)
+
+
 def _render_token_reader_view() -> None:
     _sync_token_reader_bridge_state()
+    _apply_pending_token_reader_snapshot_input()
 
     st.subheader("Lectura Tokens")
     st.caption(
@@ -1018,7 +1029,7 @@ def _render_token_reader_view() -> None:
             except ValueError as exc:
                 st.session_state["token_reader_error_notice"] = str(exc)
             else:
-                st.session_state["token_reader_snapshot_input"] = json.dumps(
+                st.session_state["token_reader_snapshot_input_pending"] = json.dumps(
                     parsed_payload,
                     ensure_ascii=False,
                     indent=2,
@@ -1039,7 +1050,7 @@ def _render_token_reader_view() -> None:
                 st.session_state.get("token_reader_last_snapshot_json", "") or ""
             )
             if last_snapshot_json:
-                st.session_state["token_reader_snapshot_input"] = last_snapshot_json
+                st.session_state["token_reader_snapshot_input_pending"] = last_snapshot_json
             st.rerun()
 
     st.markdown("**Estado actual**")
@@ -1095,20 +1106,16 @@ def _render_logo_with_hidden_extension_download() -> None:
 
     extension_base64 = base64.b64encode(extension_zip).decode("ascii")
     st.markdown(
-        f"""
-        <a
-            href="data:application/zip;base64,{extension_base64}"
-            download="santillana_session_helper.zip"
-            title="Descargar extension"
-            style="display:inline-block;text-decoration:none;"
-        >
-            <img
-                src="data:image/png;base64,{logo_base64}"
-                alt="SANTED"
-                style="width:150px;max-width:100%;display:block;"
-            />
-        </a>
-        """,
+        (
+            f'<a href="data:application/zip;base64,{extension_base64}" '
+            'download="santillana_session_helper.zip" '
+            'title="Descargar extension" '
+            'style="display:inline-block;text-decoration:none;">'
+            f'<img src="data:image/png;base64,{logo_base64}" '
+            'alt="SANTED" '
+            'style="width:150px;max-width:100%;display:block;" />'
+            '</a>'
+        ),
         unsafe_allow_html=True,
     )
 

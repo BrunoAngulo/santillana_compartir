@@ -3,8 +3,8 @@ const SOURCE_CONFIG = {
     id: "pegasus",
     label: "Procesos Pegasus",
     mode: "localStorage",
-    bootstrapUrl: "https://apps.santillanacompartir.com/",
-    matchPatterns: ["https://apps.santillanacompartir.com/*"],
+    bootstrapUrl: "https://https.santillanacompartir.com/",
+    matchPatterns: ["https://https.santillanacompartir.com/*"],
     storageKey: "pgs-jwt-token",
   },
   richmond: {
@@ -163,15 +163,15 @@ async function readLoqueleoSource(source) {
     });
     const normalizedCookies = Array.isArray(cookies)
       ? cookies.map((cookie) => ({
-          name: String(cookie.name || ""),
-          value: String(cookie.value || ""),
-          domain: String(cookie.domain || ""),
-          path: String(cookie.path || ""),
-          secure: Boolean(cookie.secure),
-          httpOnly: Boolean(cookie.httpOnly),
-          session: Boolean(cookie.session),
-          sameSite: String(cookie.sameSite || ""),
-        }))
+        name: String(cookie.name || ""),
+        value: String(cookie.value || ""),
+        domain: String(cookie.domain || ""),
+        path: String(cookie.path || ""),
+        secure: Boolean(cookie.secure),
+        httpOnly: Boolean(cookie.httpOnly),
+        session: Boolean(cookie.session),
+        sameSite: String(cookie.sameSite || ""),
+      }))
       : [];
     const sessionCookie =
       normalizedCookies.find((cookie) => cookie.name === source.sessionCookieName) || null;

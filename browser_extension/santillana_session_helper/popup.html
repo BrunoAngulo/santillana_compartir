@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Santillana Session Helper</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="app__header">
+        <div>
+          <h1>Santillana Session Helper</h1>
+          <p>Lee tokens y sesiones del navegador por dominio.</p>
+        </div>
+        <div class="toolbar">
+          <button id="refresh-btn" class="button button--primary" type="button">
+            Leer datos
+          </button>
+          <button id="copy-json-btn" class="button" type="button">
+            Copiar JSON
+          </button>
+        </div>
+      </header>
+
+      <p id="status-text" class="status" aria-live="polite">
+        Cargando último resultado...
+      </p>
+
+      <section class="card" data-source-card="pegasus">
+        <header class="card__header">
+          <div>
+            <h2>Procesos Pegasus</h2>
+            <p>Origen: <code>localStorage["pgs-jwt-token"]</code></p>
+          </div>
+          <button class="button button--small" data-copy-source="pegasus" data-copy-field="value" type="button">
+            Copiar
+          </button>
+        </header>
+        <p class="card__state" data-role="state"></p>
+        <textarea class="value-box" data-role="value" readonly></textarea>
+        <p class="card__meta" data-role="meta"></p>
+      </section>
+
+      <section class="card" data-source-card="richmond">
+        <header class="card__header">
+          <div>
+            <h2>Richmond Studio</h2>
+            <p>Origen: <code>localStorage["accessToken"]</code></p>
+          </div>
+          <button class="button button--small" data-copy-source="richmond" data-copy-field="value" type="button">
+            Copiar
+          </button>
+        </header>
+        <p class="card__state" data-role="state"></p>
+        <textarea class="value-box" data-role="value" readonly></textarea>
+        <p class="card__meta" data-role="meta"></p>
+      </section>
+
+      <section class="card" data-source-card="loqueleo">
+        <header class="card__header">
+          <div>
+            <h2>Loqueleo</h2>
+            <p>Origen: cookies de <code>loqueleodigital.com</code></p>
+          </div>
+          <div class="toolbar toolbar--compact">
+            <button class="button button--small" data-copy-source="loqueleo" data-copy-field="sessionId" type="button">
+              Copiar _session_id
+            </button>
+            <button class="button button--small" data-copy-source="loqueleo" data-copy-field="cookieHeader" type="button">
+              Copiar cookie header
+            </button>
+          </div>
+        </header>
+        <p class="card__state" data-role="state"></p>
+        <textarea class="value-box" data-role="value" readonly></textarea>
+        <p class="card__meta" data-role="meta"></p>
+        <details class="details" data-role="details">
+          <summary>Ver cookies detectadas</summary>
+          <pre class="details__content" data-role="details-content"></pre>
+        </details>
+      </section>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+  </html>

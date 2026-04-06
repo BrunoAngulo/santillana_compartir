@@ -1,0 +1,170 @@
+:root {
+  color-scheme: light;
+  font-family: "Segoe UI", Tahoma, sans-serif;
+}
+
+body {
+  margin: 0;
+  min-width: 420px;
+  background: #f4f6f8;
+  color: #13212f;
+}
+
+.app {
+  padding: 16px;
+}
+
+.app__header {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.app__header h1 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.app__header p {
+  margin: 4px 0 0;
+  color: #526173;
+  font-size: 13px;
+}
+
+.toolbar {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.toolbar--compact {
+  justify-content: flex-end;
+}
+
+.button {
+  border: 1px solid #bcc7d3;
+  background: #ffffff;
+  color: #13212f;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.button:hover {
+  background: #eef3f7;
+}
+
+.button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.button--primary {
+  background: #0f6cbd;
+  border-color: #0f6cbd;
+  color: #ffffff;
+}
+
+.button--primary:hover {
+  background: #095695;
+}
+
+.button--small {
+  padding: 6px 10px;
+}
+
+.status {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: #526173;
+}
+
+.card {
+  background: #ffffff;
+  border: 1px solid #d4dce4;
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 12px;
+  box-shadow: 0 6px 20px rgba(15, 35, 52, 0.05);
+}
+
+.card__header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.card__header h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.card__header p {
+  margin: 4px 0 0;
+  color: #526173;
+  font-size: 12px;
+}
+
+.card__state {
+  margin: 10px 0 8px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.card__state--ok {
+  color: #117a37;
+}
+
+.card__state--warn {
+  color: #9a5d00;
+}
+
+.card__state--error {
+  color: #b42318;
+}
+
+.card__meta {
+  margin: 8px 0 0;
+  color: #526173;
+  font-size: 11px;
+  white-space: pre-line;
+}
+
+.value-box {
+  width: 100%;
+  min-height: 72px;
+  border: 1px solid #d4dce4;
+  border-radius: 8px;
+  padding: 8px;
+  box-sizing: border-box;
+  resize: vertical;
+  font-size: 12px;
+  font-family: Consolas, "Courier New", monospace;
+  background: #fbfcfd;
+  color: #13212f;
+}
+
+.details {
+  margin-top: 8px;
+}
+
+.details__content {
+  margin: 8px 0 0;
+  max-height: 160px;
+  overflow: auto;
+  background: #fbfcfd;
+  border: 1px solid #d4dce4;
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+code {
+  background: #eef3f7;
+  border-radius: 4px;
+  padding: 1px 4px;
+}

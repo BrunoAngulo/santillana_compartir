@@ -8,18 +8,48 @@ Herramienta web (Streamlit) para operar flujos Pegasus y Jira Focus desde una so
 Santillana_format/
 |-- app.py                         # Punto de entrada unico de la app web
 |-- santillana_format/
-|   |-- processor.py               # Logica de clases (carga, transformacion, exportacion)
-|   |-- profesores.py              # Consulta y exportacion de profesores
-|   |-- profesores_clases.py       # Asignacion de profesores a clases
-|   |-- profesores_password.py     # Actualizacion de login/password docentes
-|   |-- alumnos.py                 # Descarga de plantilla de alumnos registrados
-|   |-- alumnos_compare.py         # Comparacion de plantillas de alumnos
-|   |-- jira_focus_web.py          # Render del frontend Jira Focus (HTML embebido)
-|   |-- jira_focus_web.html        # Frontend Jira Focus (OAuth/worklogs/reportes)
-|   |-- __init__.py
+|   |-- pegasus/                   # Dominio Pegasus (servicios y utilidades)
+|   |   |-- __init__.py            # Facade del dominio
+|   |   |-- processor.py
+|   |   |-- alumnos.py
+|   |   |-- alumnos_compare.py
+|   |   |-- clases_api.py
+|   |   |-- profesores.py
+|   |   |-- profesores_clases.py
+|   |   |-- profesores_compare.py
+|   |   |-- profesores_manual.py
+|   |   |-- profesores_password.py
+|   |-- jira/                      # Dominio Jira
+|   |   |-- __init__.py            # Facade del dominio
+|   |   |-- view.py
+|   |   |-- jira_focus_web.html
+|   |-- richmond/                  # Dominio Richmond Studio
+|   |   |-- __init__.py            # Facade del dominio
+|   |   |-- view.py
+|   |-- loqueleo/                  # Dominio Loqueleo
+|   |   |-- __init__.py
+|   |   |-- view.py
+|   |-- alumnos.py                 # Wrapper de compatibilidad
+|   |-- alumnos_compare.py         # Wrapper de compatibilidad
+|   |-- clases_api.py              # Wrapper de compatibilidad
+|   |-- jira_focus_web.py          # Wrapper de compatibilidad
+|   |-- processor.py               # Wrapper de compatibilidad
+|   |-- profesores.py              # Wrapper de compatibilidad
+|   |-- profesores_clases.py       # Wrapper de compatibilidad
+|   |-- profesores_compare.py      # Wrapper de compatibilidad
+|   |-- profesores_manual.py       # Wrapper de compatibilidad
+|   |-- profesores_password.py     # Wrapper de compatibilidad
+|   |-- __init__.py                # Facade general del paquete
 |-- requirements.txt
 |-- runtime.txt
 ```
+
+## Patron de diseno aplicado
+
+- Organizacion por dominio: `pegasus`, `jira`, `richmond`, `loqueleo`.
+- Facade por dominio: cada carpeta expone un `__init__.py` como punto de entrada estable.
+- Wrappers de compatibilidad: los modulos planos antiguos se mantienen como puente para no romper imports durante la migracion.
+- `app.py` queda como orquestador de vistas y flujo, no como repositorio definitivo de toda la logica.
 
 ## Requisitos
 
@@ -44,6 +74,10 @@ streamlit run app.py
   - Descargar plantilla de alumnos registrados.
   - Comparar plantillas de alumnos.
   - Operaciones de clases API y clases + alumnos.
+- Richmond Studio:
+  - Gestion y creacion de clases.
+  - Alta y administracion de usuarios.
+  - Sincronizacion de clases y actualizacion de passwords.
 - Jira Focus Web:
   - OAuth con Jira Cloud.
   - Worklogs, timeline, dashboard y reportes.
@@ -56,5 +90,5 @@ streamlit run app.py
 ## Criterios de estructura
 
 - Entrada unica: `app.py`.
-- Logica de negocio en `santillana_format/`.
+- Logica de negocio agrupada por dominio en `santillana_format/`.
 - Sin entrypoints CLI ni paginas Streamlit duplicadas.

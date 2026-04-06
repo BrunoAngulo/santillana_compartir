@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Santillana Session Helper",
+  "version": "0.1.0",
+  "description": "Lee tokens y sesiones de Pegasus, Richmond Studio y Loqueleo desde el navegador.",
+  "permissions": [
+    "cookies",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "https://apps.santillanacompartir.com/*",
+    "https://richmondstudio.global/*",
+    "https://loqueleodigital.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Santillana Session Helper",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://apps.santillanacompartir.com/*",
+        "https://richmondstudio.global/*"
+      ],
+      "js": [
+        "content-script.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

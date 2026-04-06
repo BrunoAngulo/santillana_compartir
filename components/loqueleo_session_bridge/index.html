@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+  </head>
+  <body>
+    <script>
+      (function () {
+        const COMPONENT_READY = "streamlit:componentReady";
+        const SET_COMPONENT_VALUE = "streamlit:setComponentValue";
+        const SET_FRAME_HEIGHT = "streamlit:setFrameHeight";
+        const RENDER_EVENT = "streamlit:render";
+        const STORAGE_KEY = "loqueleo_session_id";
+
+        function getTargetWindow() {
+          try {
+            if (window.parent && window.parent !== window) {
+              return window.parent;
+            }
+          } catch (_err) {
+            // No-op
+          }
+          try {
+            if (window.top && window.top !== window) {
+              return window.top;
+            }
+          } catch (_err) {
+            // No-op
+          }
+          return window;
+        }
+
+        function readStoredValue() {
+          try {
+            return String(getTargetWindow().localStorage.getItem(STORAGE_KEY) || "").trim();
+          } catch (_err) {
+            return "";
+          }
+        }
+
+        function writeStoredValue(value) {
+          const normalized = String(value || "").trim();
+          try {
+            const targetWindow = getTargetWindow();
+            if (normalized) {
+              targetWindow.localStorage.setItem(STORAGE_KEY, normalized);
+            } else {
+              targetWindow.localStorage.removeItem(STORAGE_KEY);
+            }
+          } catch (_err) {
+            // No-op
+          }
+        }
+
+        function sendMessage(type, payload) {
+          window.parent.postMessage(
+            Object.assign({ isStreamlitMessage: true, type: type }, payload || {}),
+            "*"
+          );
+        }
+
+        function setComponentReady() {
+          sendMessage(COMPONENT_READY, { apiVersion: 1 });
+        }
+
+        function setFrameHeight(height) {
+          sendMessage(SET_FRAME_HEIGHT, { height: Number(height || 0) });
+        }
+
+        function setComponentValue(value) {
+          sendMessage(SET_COMPONENT_VALUE, {
+            value: value,
+            dataType: "json",
+          });
+        }
+
+        function onRenderMessage(event) {
+          if (!event || !event.data || event.data.type !== RENDER_EVENT) {
+            return;
+          }
+          const args =
+            event.data.args && typeof event.data.args === "object"
+              ? event.data.args
+              : {};
+          const mode = String(args.mode || "read").trim().toLowerCase();
+          const value = String(args.value || "").trim();
+          if (mode === "write") {
+            writeStoredValue(value);
+          } else if (mode === "clear") {
+            writeStoredValue("");
+          }
+          setComponentValue(readStoredValue());
+          setFrameHeight(0);
+        }
+
+        window.addEventListener("message", onRenderMessage);
+        setComponentReady();
+        setFrameHeight(0);
+      })();
+    </script>
+  </body>
+</html>

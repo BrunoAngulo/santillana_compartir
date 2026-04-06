@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from .ssr import (
+    LoqueleoUsersExport,
     build_loqueleo_users_excel_bytes,
     build_loqueleo_users_filename,
     fetch_loqueleo_users_listing,
@@ -27,38 +28,61 @@ def _sync_loqueleo_session_id_from_input() -> None:
     st.session_state["loqueleo_session_bridge_value"] = session_id
 
 
-def _render_loqueleo_result_preview() -> None:
+def _build_loqueleo_result_from_session_state() -> LoqueleoUsersExport | None:
     rows = st.session_state.get("loqueleo_last_rows") or []
     if not isinstance(rows, list) or not rows:
-        return
+        return None
 
-    st.markdown("**Resultado**")
-    organization_name = str(
-        st.session_state.get("loqueleo_last_organization_name", "") or ""
-    ).strip()
-    user_type_label = str(
-        st.session_state.get("loqueleo_last_user_type_label", "") or ""
-    ).strip()
-    page_count = int(st.session_state.get("loqueleo_last_page_count", 0) or 0)
-    st.caption(
-        f"{organization_name} | {user_type_label} | Filas: {len(rows)} | Paginas: {page_count}"
+    return LoqueleoUsersExport(
+        input_url="",
+        first_response_url="",
+        final_response_url="",
+        organization_id="",
+        organization_name=str(
+            st.session_state.get("loqueleo_last_organization_name", "") or ""
+        ).strip(),
+        user_type="",
+        user_type_label=str(
+            st.session_state.get("loqueleo_last_user_type_label", "") or ""
+        ).strip()
+        or "Usuarios",
+        locale="",
+        year=str(st.session_state.get("loqueleo_last_year", "") or "").strip(),
+        csrf_token="",
+        reported_total=st.session_state.get("loqueleo_last_reported_total"),
+        rows=rows,
+        visited_pages=list(st.session_state.get("loqueleo_last_visited_pages") or []),
+        page_count=int(st.session_state.get("loqueleo_last_page_count", 0) or 0),
+        stop_reason=str(st.session_state.get("loqueleo_last_stop_reason", "") or "").strip(),
     )
 
-    excel_bytes = st.session_state.get("loqueleo_last_excel_bytes")
-    file_name = str(st.session_state.get("loqueleo_last_excel_filename", "") or "").strip()
-    if isinstance(excel_bytes, (bytes, bytearray)) and file_name:
-        with st.container(border=True):
-            st.markdown("**Excel listo para descargar**")
-            st.caption(f"Archivo: {file_name}")
-            st.download_button(
-                "Descargar Excel",
-                data=bytes(excel_bytes),
-                file_name=file_name,
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-                type="primary",
-                key="loqueleo_download_excel_btn",
-            )
+
+def _render_loqueleo_result_preview() -> None:
+    export_result = _build_loqueleo_result_from_session_state()
+    if export_result is None:
+        return
+    rows = export_result.rows
+
+    st.markdown("**Resultado**")
+    st.caption(
+        f"{export_result.organization_name} | {export_result.user_type_label} | "
+        f"Filas: {len(rows)} | Paginas: {export_result.page_count}"
+    )
+
+    excel_bytes = build_loqueleo_users_excel_bytes(export_result)
+    file_name = build_loqueleo_users_filename(export_result)
+    with st.container(border=True):
+        st.markdown("**Excel listo para descargar**")
+        st.caption(f"Archivo: {file_name}")
+        st.download_button(
+            "Descargar Excel",
+            data=bytes(excel_bytes),
+            file_name=file_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            type="primary",
+            key="loqueleo_download_excel_btn",
+        )
 
     preview_df = pd.DataFrame(rows)
     preview_df = preview_df.reindex(

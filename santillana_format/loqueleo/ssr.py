@@ -158,44 +158,27 @@ def _normalize_filename_part(value: object, default: str) -> str:
     return text.strip("_") or default
 
 
-def _metadata_rows(result: LoqueleoUsersExport) -> List[Dict[str, object]]:
-    return [
-        {"Campo": "URL inicial", "Valor": result.input_url},
-        {"Campo": "Primera respuesta", "Valor": result.first_response_url},
-        {"Campo": "Ultima respuesta", "Valor": result.final_response_url},
-        {"Campo": "Organizacion ID", "Valor": result.organization_id},
-        {"Campo": "Organizacion", "Valor": result.organization_name},
-        {"Campo": "Tipo", "Valor": result.user_type},
-        {"Campo": "Tipo etiqueta", "Valor": result.user_type_label},
-        {"Campo": "Idioma", "Valor": result.locale},
-        {"Campo": "Ano", "Valor": result.year},
-        {"Campo": "CSRF token", "Valor": result.csrf_token},
-        {"Campo": "Total reportado", "Valor": result.reported_total or ""},
-        {"Campo": "Usuarios consolidados", "Valor": len(result.rows)},
-        {"Campo": "Paginas visitadas", "Valor": result.page_count},
-        {"Campo": "Motivo de parada", "Valor": result.stop_reason},
-    ]
+def build_loqueleo_users_export_dataframe(result: LoqueleoUsersExport) -> pd.DataFrame:
+    export_rows: List[Dict[str, object]] = []
+    for row in result.rows:
+        export_rows.append(
+            {
+                "Usuario ID": row.get("Usuario ID", ""),
+                "Nombre": row.get("Nombre", ""),
+                "Cuenta": row.get("Cuenta", ""),
+            }
+        )
+    return pd.DataFrame(export_rows, columns=["Usuario ID", "Nombre", "Cuenta"])
 
 
 def build_loqueleo_users_excel_bytes(result: LoqueleoUsersExport) -> bytes:
     output = BytesIO()
+    export_df = build_loqueleo_users_export_dataframe(result)
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        pd.DataFrame(result.rows).to_excel(
+        export_df.to_excel(
             writer,
             index=False,
             sheet_name=result.user_type_label[:31] or "Usuarios",
-        )
-        pd.DataFrame(_metadata_rows(result)).to_excel(
-            writer,
-            index=False,
-            sheet_name="Resumen",
-        )
-        pd.DataFrame(
-            [{"Pagina": idx + 1, "URL": url} for idx, url in enumerate(result.visited_pages)]
-        ).to_excel(
-            writer,
-            index=False,
-            sheet_name="Paginas",
         )
     output.seek(0)
     return output.getvalue()
@@ -204,8 +187,7 @@ def build_loqueleo_users_excel_bytes(result: LoqueleoUsersExport) -> bytes:
 def build_loqueleo_users_filename(result: LoqueleoUsersExport) -> str:
     organization_part = _normalize_filename_part(result.organization_name, "organizacion")
     type_part = _normalize_filename_part(result.user_type_label, "usuarios")
-    year_part = _normalize_filename_part(result.year, "sin_ano")
-    return f"loqueleo_{organization_part}_{type_part}_{year_part}.xlsx"
+    return f"{organization_part}_{type_part}.xlsx"
 
 
 class _LoqueleoUsersPageParser(HTMLParser):

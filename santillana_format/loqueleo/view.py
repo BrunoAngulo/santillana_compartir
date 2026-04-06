@@ -50,19 +50,27 @@ def _render_loqueleo_result_preview() -> None:
     excel_bytes = st.session_state.get("loqueleo_last_excel_bytes")
     file_name = str(st.session_state.get("loqueleo_last_excel_filename", "") or "").strip()
     if isinstance(excel_bytes, (bytes, bytearray)) and file_name:
-        st.download_button(
-            "Descargar Excel",
-            data=bytes(excel_bytes),
-            file_name=file_name,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True,
-            key="loqueleo_download_excel_btn",
-        )
+        with st.container(border=True):
+            st.markdown("**Excel listo para descargar**")
+            st.caption(f"Archivo: {file_name}")
+            st.download_button(
+                "Descargar Excel",
+                data=bytes(excel_bytes),
+                file_name=file_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                type="primary",
+                key="loqueleo_download_excel_btn",
+            )
 
-    preview_df = pd.DataFrame(rows[:200])
+    preview_df = pd.DataFrame(rows)
+    preview_df = preview_df.reindex(
+        columns=["Usuario ID", "Nombre", "Cuenta"],
+        fill_value="",
+    ).head(200)
     if not preview_df.empty:
         preview_df.index = range(1, len(preview_df) + 1)
-    st.caption("Vista previa: primeras 200 filas.")
+    st.caption("Vista previa: primeras 200 filas del Excel.")
     st.dataframe(preview_df, use_container_width=True)
 
 

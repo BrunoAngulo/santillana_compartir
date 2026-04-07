@@ -2250,6 +2250,236 @@ def _build_richmondstudio_bulk_class_sync_preview_rows(
     )
     return preview_rows
 
+def _build_richmondstudio_group_labels_from_ids(
+    group_ids: Sequence[object],
+    groups_lookup: Dict[str, Dict[str, object]],
+) -> List[str]:
+    group_by_id = (
+        groups_lookup.get("by_id")
+        if isinstance(groups_lookup.get("by_id"), dict)
+        else {}
+    )
+    labels: List[str] = []
+    seen_labels = set()
+    for item in group_ids or []:
+        group_id = str(item or "").strip()
+        if not group_id:
+            continue
+        label = _richmondstudio_group_label(group_by_id.get(group_id)) or group_id
+        if label in seen_labels:
+            continue
+        seen_labels.add(label)
+        labels.append(label)
+    return labels
+
+def _build_richmondstudio_bulk_class_refresh_preview(
+    rows: List[Dict[str, str]],
+    registered_user_rows: List[Dict[str, object]],
+    groups_lookup: Dict[str, Dict[str, object]],
+) -> Tuple[Dict[str, int], List[Dict[str, object]]]:
+    user_row_by_key: Dict[str, Dict[str, object]] = {}
+    for row in registered_user_rows:
+        if not isinstance(row, dict):
+            continue
+        for raw in (
+            row.get("Email"),
+            row.get("Username"),
+            row.get("Login"),
+            row.get("IDENTIFIER"),
+        ):
+            key = _normalize_compare_text(raw)
+            if key and key not in user_row_by_key:
+                user_row_by_key[key] = row
+
+    pending_existing_by_user_id: Dict[str, Dict[str, object]] = {}
+    pending_create_by_username: Dict[str, Dict[str, object]] = {}
+    preview_rows: List[Dict[str, object]] = []
+    summary = {
+        "input_rows": int(len(rows)),
+        "users_found": 0,
+        "users_to_replace": 0,
+        "users_unchanged": 0,
+        "users_to_create": 0,
+        "error_total": 0,
+    }
+
+    for row in rows:
+        username = str(row.get("Username") or "").strip()
+        first_name = str(row.get("First name") or "").strip()
+        last_name = str(row.get("Last name") or "").strip()
+        level = str(row.get("level") or "").strip()
+        class_code = str(row.get("Class code") or "").strip()
+        class_name = str(row.get("Class name") or "").strip()
+        class_value = class_code or class_name
+        if not username or not class_value:
+            continue
+
+        user_row = user_row_by_key.get(_normalize_compare_text(username)) or {}
+        user_id = str(user_row.get("RS USER ID") or "").strip()
+
+        try:
+            group_meta = _resolve_richmondstudio_group_for_user_row(
+                class_value,
+                groups_lookup,
+            )
+        except Exception as exc:
+            summary["error_total"] += 1
+            preview_rows.append(
+                {
+                    "Username(Email)": username,
+                    "First name": first_name,
+                    "Last name": last_name,
+                    "RS USER ID": user_id,
+                    "Estado actual RS": "",
+                    "Quedara en RS": "",
+                    "Agregar": "",
+                    "Quitar": "",
+                    "Accion": "ERROR",
+                    "Detalle": str(exc),
+                }
+            )
+            continue
+
+        group_id = str(
+            (group_meta.get("id") if isinstance(group_meta, dict) else "") or ""
+        ).strip()
+        if not group_id:
+            summary["error_total"] += 1
+            preview_rows.append(
+                {
+                    "Username(Email)": username,
+                    "First name": first_name,
+                    "Last name": last_name,
+                    "RS USER ID": user_id,
+                    "Estado actual RS": "",
+                    "Quedara en RS": "",
+                    "Agregar": "",
+                    "Quitar": "",
+                    "Accion": "ERROR",
+                    "Detalle": "No se pudo resolver la clase RS.",
+                }
+            )
+            continue
+
+        if user_id:
+            bucket = pending_existing_by_user_id.setdefault(
+                user_id,
+                {
+                    "username": username,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "user_id": user_id,
+                    "current_group_ids": list(user_row.get("_group_ids") or []),
+                    "target_group_ids": [],
+                    "target_group_labels": [],
+                },
+            )
+        else:
+            bucket = pending_create_by_username.setdefault(
+                _normalize_compare_text(username),
+                {
+                    "username": username,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "level": level,
+                    "target_group_ids": [],
+                    "target_group_labels": [],
+                },
+            )
+
+        if group_id not in bucket["target_group_ids"]:
+            bucket["target_group_ids"].append(group_id)
+            bucket["target_group_labels"].append(
+                _richmondstudio_group_label(group_meta) or class_value
+            )
+
+    summary["users_found"] = int(len(pending_existing_by_user_id))
+
+    for pending in pending_existing_by_user_id.values():
+        current_group_ids = [
+            str(item or "").strip()
+            for item in (pending.get("current_group_ids") or [])
+            if str(item or "").strip()
+        ]
+        target_group_ids = [
+            str(item or "").strip()
+            for item in (pending.get("target_group_ids") or [])
+            if str(item or "").strip()
+        ]
+        current_labels = _build_richmondstudio_group_labels_from_ids(
+            current_group_ids,
+            groups_lookup,
+        )
+        target_labels = _build_richmondstudio_group_labels_from_ids(
+            target_group_ids,
+            groups_lookup,
+        )
+        add_labels = _build_richmondstudio_group_labels_from_ids(
+            [group_id for group_id in target_group_ids if group_id not in current_group_ids],
+            groups_lookup,
+        )
+        remove_labels = _build_richmondstudio_group_labels_from_ids(
+            [group_id for group_id in current_group_ids if group_id not in target_group_ids],
+            groups_lookup,
+        )
+        action = "SIN CAMBIOS"
+        detail = "El usuario ya esta exactamente en las clases del archivo."
+        if add_labels or remove_labels:
+            action = "REEMPLAZAR"
+            detail = "Se dejara al usuario solo en las clases del archivo."
+            summary["users_to_replace"] += 1
+        else:
+            summary["users_unchanged"] += 1
+
+        preview_rows.append(
+            {
+                "Username(Email)": str(pending.get("username") or "").strip(),
+                "First name": str(pending.get("first_name") or "").strip(),
+                "Last name": str(pending.get("last_name") or "").strip(),
+                "RS USER ID": str(pending.get("user_id") or "").strip(),
+                "Estado actual RS": " | ".join(current_labels),
+                "Quedara en RS": " | ".join(target_labels),
+                "Agregar": " | ".join(add_labels),
+                "Quitar": " | ".join(remove_labels),
+                "Accion": action,
+                "Detalle": detail,
+            }
+        )
+
+    for pending in pending_create_by_username.values():
+        target_group_ids = [
+            str(item or "").strip()
+            for item in (pending.get("target_group_ids") or [])
+            if str(item or "").strip()
+        ]
+        target_labels = _build_richmondstudio_group_labels_from_ids(
+            target_group_ids,
+            groups_lookup,
+        )
+        summary["users_to_create"] += 1
+        preview_rows.append(
+            {
+                "Username(Email)": str(pending.get("username") or "").strip(),
+                "First name": str(pending.get("first_name") or "").strip(),
+                "Last name": str(pending.get("last_name") or "").strip(),
+                "RS USER ID": "",
+                "Estado actual RS": "",
+                "Quedara en RS": " | ".join(target_labels),
+                "Agregar": " | ".join(target_labels),
+                "Quitar": "",
+                "Accion": "CREAR",
+                "Detalle": "El usuario no existe en RS y se crearia con esas clases.",
+            }
+        )
+
+    preview_rows.sort(
+        key=lambda item: (
+            str(item.get("Accion") or "").upper().startswith("ERROR") is False,
+            _normalize_plain_text(item.get("Username(Email)")),
+        )
+    )
+    return summary, preview_rows
+
 def _sync_richmondstudio_user_classes_from_excel_rows(
     token: str,
     rows: List[Dict[str, str]],
@@ -2588,7 +2818,8 @@ def _render_richmondstudio_class_sync_section(
     st.markdown("**Actualizar clases RS por Excel**")
     st.caption(
         "Sube un Excel con el mismo formato de usuarios RS: Last name, First name, Class, Email, Role y level. "
-        "Si el usuario ya existe, la app agregara las clases del archivo. Si no existe, lo creara como student."
+        "Si el usuario ya existe, la app agregara las clases del archivo. Si no existe, lo creara como student. "
+        "Usa 'Previsualizar refresh RS' para ver como quedaria cada alumno si RS se dejara solo con las clases del archivo."
     )
     rs_class_sync_token = _clean_token_value(rs_token)
     cached_class_sync_token = _clean_token_value(
@@ -2695,6 +2926,11 @@ def _render_richmondstudio_class_sync_section(
             )
         except Exception as exc:
             rs_class_sync_error = str(exc)
+            st.session_state.pop("rs_class_refresh_preview_summary", None)
+            st.session_state.pop("rs_class_refresh_preview_rows", None)
+            st.session_state.pop("rs_class_refresh_preview_bytes", None)
+            st.session_state.pop("rs_class_refresh_preview_upload_name", None)
+            st.session_state.pop("rs_class_refresh_preview_upload_size", None)
             st.error(f"Error en archivo de clases RS: {exc}")
         else:
             rs_class_sync_preview_rows = (
@@ -2713,13 +2949,122 @@ def _render_richmondstudio_class_sync_section(
                     rs_class_sync_preview_rows[:200],
                     use_container_width=True,
                 )
+    else:
+        st.session_state.pop("rs_class_refresh_preview_summary", None)
+        st.session_state.pop("rs_class_refresh_preview_rows", None)
+        st.session_state.pop("rs_class_refresh_preview_bytes", None)
+        st.session_state.pop("rs_class_refresh_preview_upload_name", None)
+        st.session_state.pop("rs_class_refresh_preview_upload_size", None)
 
-    run_rs_class_sync = st.button(
-        "Sincronizar clases RS por Excel",
-        type="primary",
-        key="rs_class_sync_run_btn",
-        use_container_width=True,
+    current_preview_upload_name = str(
+        st.session_state.get("rs_class_refresh_preview_upload_name") or ""
+    ).strip()
+    current_preview_upload_size = int(
+        st.session_state.get("rs_class_refresh_preview_upload_size") or 0
     )
+    if (
+        rs_class_sync_name
+        and (
+            current_preview_upload_name != rs_class_sync_name
+            or current_preview_upload_size != len(rs_class_sync_bytes)
+        )
+    ):
+        st.session_state.pop("rs_class_refresh_preview_summary", None)
+        st.session_state.pop("rs_class_refresh_preview_rows", None)
+        st.session_state.pop("rs_class_refresh_preview_bytes", None)
+        st.session_state.pop("rs_class_refresh_preview_upload_name", None)
+        st.session_state.pop("rs_class_refresh_preview_upload_size", None)
+
+    preview_rs_class_refresh = False
+    action_col_preview, action_col_sync = st.columns(2)
+    with action_col_preview:
+        preview_rs_class_refresh = st.button(
+            "Previsualizar refresh RS",
+            key="rs_class_refresh_preview_btn",
+            use_container_width=True,
+            help=(
+                "Muestra como quedaria cada usuario en RS si se reemplazan sus clases "
+                "actuales y se dejan solo las del archivo."
+            ),
+        )
+    with action_col_sync:
+        run_rs_class_sync = st.button(
+            "Sincronizar clases RS por Excel",
+            type="primary",
+            key="rs_class_sync_run_btn",
+            use_container_width=True,
+        )
+
+    if preview_rs_class_refresh:
+        if not rs_token:
+            st.error("Ingresa el bearer token de Richmond Studio.")
+        elif uploaded_rs_class_sync is None:
+            st.error("Sube el Excel de clases RS.")
+        elif rs_class_sync_error:
+            st.error(
+                f"Corrige el archivo antes de continuar: {rs_class_sync_error}"
+            )
+        elif not rs_class_sync_rows:
+            st.error("No hay filas validas para previsualizar el refresh RS.")
+        else:
+            try:
+                with st.spinner("Construyendo previsualizacion refresh RS..."):
+                    preview_panel_data = _load_richmondstudio_registered_panel_data(
+                        rs_token,
+                        timeout=int(timeout),
+                    )
+                    _store_richmondstudio_registered_panel_data(preview_panel_data)
+                    preview_listing_data = (
+                        preview_panel_data.get("listing_data")
+                        if isinstance(preview_panel_data.get("listing_data"), dict)
+                        else {}
+                    )
+                    preview_registered_user_rows = list(
+                        preview_listing_data.get("registered_user_rows") or []
+                    )
+                    preview_groups_lookup = (
+                        preview_panel_data.get("groups_lookup")
+                        if isinstance(preview_panel_data.get("groups_lookup"), dict)
+                        else {"by_id": {}, "by_code": {}, "by_name": {}}
+                    )
+                    refresh_preview_summary, refresh_preview_rows = (
+                        _build_richmondstudio_bulk_class_refresh_preview(
+                            rs_class_sync_rows,
+                            preview_registered_user_rows,
+                            preview_groups_lookup,
+                        )
+                    )
+            except Exception as exc:
+                st.error(f"No se pudo construir la previsualizacion refresh RS: {exc}")
+            else:
+                st.session_state["rs_class_refresh_preview_summary"] = dict(
+                    refresh_preview_summary
+                )
+                st.session_state["rs_class_refresh_preview_rows"] = list(
+                    refresh_preview_rows
+                )
+                st.session_state["rs_class_refresh_preview_bytes"] = (
+                    _export_simple_excel(
+                        refresh_preview_rows,
+                        sheet_name="preview_refresh_rs",
+                    )
+                    if refresh_preview_rows
+                    else b""
+                )
+                st.session_state["rs_class_refresh_preview_upload_name"] = (
+                    rs_class_sync_name
+                )
+                st.session_state["rs_class_refresh_preview_upload_size"] = int(
+                    len(rs_class_sync_bytes)
+                )
+                st.success(
+                    "Previsualizacion refresh RS lista. "
+                    "Usuarios en RS: {users_found} | Reemplazar: {users_to_replace} | "
+                    "Crear: {users_to_create} | Sin cambios: {users_unchanged} | "
+                    "Errores: {error_total}".format(
+                        **refresh_preview_summary
+                    )
+                )
     if run_rs_class_sync:
         if not rs_token:
             st.error("Ingresa el bearer token de Richmond Studio.")
@@ -2839,6 +3184,41 @@ def _render_richmondstudio_class_sync_section(
     rs_class_sync_result_bytes_cached = (
         st.session_state.get("rs_class_sync_result_bytes") or b""
     )
+    rs_class_refresh_preview_summary_cached = (
+        st.session_state.get("rs_class_refresh_preview_summary") or {}
+    )
+    rs_class_refresh_preview_rows_cached = (
+        st.session_state.get("rs_class_refresh_preview_rows") or []
+    )
+    rs_class_refresh_preview_bytes_cached = (
+        st.session_state.get("rs_class_refresh_preview_bytes") or b""
+    )
+    if rs_class_refresh_preview_summary_cached:
+        st.info(
+            "Previsualizacion refresh RS: Filas {input_rows} | "
+            "Usuarios en RS {users_found} | Reemplazar {users_to_replace} | "
+            "Crear {users_to_create} | Sin cambios {users_unchanged} | "
+            "Errores {error_total}".format(
+                **rs_class_refresh_preview_summary_cached
+            )
+        )
+        if rs_class_refresh_preview_rows_cached:
+            _show_dataframe(
+                rs_class_refresh_preview_rows_cached[:200],
+                use_container_width=True,
+            )
+        if rs_class_refresh_preview_bytes_cached:
+            st.download_button(
+                label="Descargar previsualizacion refresh RS",
+                data=rs_class_refresh_preview_bytes_cached,
+                file_name=_build_richmondstudio_password_update_filename(
+                    "",
+                    prefix="preview_refresh_clases_rs",
+                ),
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="rs_class_refresh_preview_download",
+                use_container_width=True,
+            )
     if rs_class_sync_summary_cached:
         st.info(
             "Ultima actualizacion clases RS: Filas {input_rows} | "

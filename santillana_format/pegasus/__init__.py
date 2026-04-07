@@ -12,6 +12,10 @@ from .alumnos_compare import (
     comparar_plantillas_detalle,
 )
 from .clases_api import listar_y_mapear_clases
+from .clases_api import (
+    GESTION_ESCOLAR_CICLO_ID_DEFAULT,
+    listar_alumnos_por_clase_gestion_escolar,
+)
 from .processor import (
     CODE_COLUMN_NAME,
     OUTPUT_FILENAME,
@@ -37,6 +41,7 @@ __all__ = [
     "COMPARE_MODE_APELLIDOS",
     "COMPARE_MODE_DNI",
     "DEFAULT_EMPRESA_ID",
+    "GESTION_ESCOLAR_CICLO_ID_DEFAULT",
     "OUTPUT_FILENAME",
     "PROFESORES_CICLO_ID_DEFAULT",
     "SHEET_NAME",
@@ -50,6 +55,7 @@ __all__ = [
     "listar_profesores_bd_data",
     "listar_profesores_data",
     "listar_profesores_filters_data",
+    "listar_alumnos_por_clase_gestion_escolar",
     "listar_y_mapear_clases",
     "process_excel",
 ]

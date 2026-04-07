@@ -21,6 +21,11 @@ import pandas as pd
 import requests
 import streamlit as st
 import streamlit.components.v1 as components
+from santillana_format.pegasus import (
+    DEFAULT_EMPRESA_ID,
+    GESTION_ESCOLAR_CICLO_ID_DEFAULT,
+    listar_alumnos_por_clase_gestion_escolar,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
@@ -2481,6 +2486,442 @@ def _build_richmondstudio_bulk_class_refresh_preview(
     )
     return summary, preview_rows
 
+
+def _normalize_compare_id(value: object) -> str:
+    return re.sub(r"[^A-Z0-9]+", "", _normalize_plain_text(value))
+
+
+def _build_richmondstudio_student_lookup(
+    registered_user_rows: List[Dict[str, object]],
+) -> Dict[str, Dict[str, object]]:
+    by_text: Dict[str, Dict[str, object]] = {}
+    by_identifier: Dict[str, Dict[str, object]] = {}
+    for row in registered_user_rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("Role") or "").strip().lower() != "student":
+            continue
+        for raw in (
+            row.get("Email"),
+            row.get("Username"),
+            row.get("Login"),
+        ):
+            key = _normalize_compare_text(raw)
+            if key and key not in by_text:
+                by_text[key] = row
+        identifier_key = _normalize_compare_id(row.get("IDENTIFIER"))
+        if identifier_key and identifier_key not in by_identifier:
+            by_identifier[identifier_key] = row
+    return {
+        "by_text": by_text,
+        "by_identifier": by_identifier,
+    }
+
+
+def _resolve_richmondstudio_student_for_pegasus_row(
+    pegasus_row: Dict[str, object],
+    student_lookup: Dict[str, Dict[str, object]],
+) -> Dict[str, object]:
+    by_text = (
+        student_lookup.get("by_text")
+        if isinstance(student_lookup.get("by_text"), dict)
+        else {}
+    )
+    by_identifier = (
+        student_lookup.get("by_identifier")
+        if isinstance(student_lookup.get("by_identifier"), dict)
+        else {}
+    )
+
+    for raw in (
+        pegasus_row.get("login"),
+        pegasus_row.get("email"),
+    ):
+        key = _normalize_compare_text(raw)
+        if key and key in by_text:
+            return dict(by_text[key])
+
+    identifier_key = _normalize_compare_id(pegasus_row.get("id_oficial"))
+    if identifier_key and identifier_key in by_identifier:
+        return dict(by_identifier[identifier_key])
+
+    return {}
+
+
+def _resolve_richmondstudio_group_for_pegasus_row(
+    pegasus_row: Dict[str, object],
+    groups_lookup: Dict[str, Dict[str, object]],
+) -> Dict[str, object]:
+    candidates: List[str] = []
+    for raw in (
+        pegasus_row.get("clase_codigo"),
+        pegasus_row.get("clase_nombre"),
+        pegasus_row.get("clase"),
+    ):
+        value = str(raw or "").strip()
+        if value and value not in candidates:
+            candidates.append(value)
+
+    if not candidates:
+        raise ValueError("El alumno Pegasus no tiene clase para resolver en RS.")
+
+    errors: List[str] = []
+    for candidate in candidates:
+        try:
+            return _resolve_richmondstudio_group_for_user_row(candidate, groups_lookup)
+        except Exception as exc:
+            error_message = str(exc).strip() or f"Clase no encontrada en RS: {candidate}"
+            if error_message not in errors:
+                errors.append(error_message)
+
+    if len(errors) == 1:
+        raise ValueError(errors[0])
+    raise ValueError(" / ".join(errors))
+
+
+def _build_pegasus_to_richmondstudio_refresh_plan(
+    pegasus_rows: List[Dict[str, object]],
+    registered_user_rows: List[Dict[str, object]],
+    groups_lookup: Dict[str, Dict[str, object]],
+) -> Tuple[Dict[str, int], List[Dict[str, object]], List[Dict[str, object]]]:
+    student_lookup = _build_richmondstudio_student_lookup(registered_user_rows)
+    buckets: Dict[str, Dict[str, object]] = {}
+
+    for pegasus_row in pegasus_rows:
+        if not isinstance(pegasus_row, dict):
+            continue
+        pegasus_login = str(pegasus_row.get("login") or "").strip()
+        pegasus_identifier = str(pegasus_row.get("id_oficial") or "").strip()
+        pegasus_name = str(
+            pegasus_row.get("nombre_completo")
+            or " ".join(
+                part
+                for part in (
+                    str(pegasus_row.get("apellido_paterno") or "").strip(),
+                    str(pegasus_row.get("apellido_materno") or "").strip(),
+                    str(pegasus_row.get("nombre") or "").strip(),
+                )
+                if part
+            )
+        ).strip()
+        rs_user_row = _resolve_richmondstudio_student_for_pegasus_row(
+            pegasus_row,
+            student_lookup,
+        )
+        rs_user_id = str(rs_user_row.get("RS USER ID") or "").strip()
+        bucket_key = (
+            f"matched::{rs_user_id}"
+            if rs_user_id
+            else "missing::{login}::{identifier}::{name}".format(
+                login=_normalize_compare_text(pegasus_login),
+                identifier=_normalize_compare_id(pegasus_identifier),
+                name=_normalize_plain_text(pegasus_name),
+            )
+        )
+        rs_full_name = " ".join(
+            part
+            for part in (
+                str(rs_user_row.get("First name") or "").strip(),
+                str(rs_user_row.get("Last name") or "").strip(),
+            )
+            if part
+        ).strip()
+        if not rs_full_name:
+            rs_full_name = (
+                str(rs_user_row.get("Username") or "").strip()
+                or str(rs_user_row.get("Email") or "").strip()
+            )
+        bucket = buckets.setdefault(
+            bucket_key,
+            {
+                "Pegasus alumno": pegasus_name,
+                "Pegasus login": pegasus_login,
+                "Pegasus DNI": pegasus_identifier,
+                "RS usuario": rs_full_name,
+                "RS USER ID": rs_user_id,
+                "_matched": bool(rs_user_id),
+                "_current_group_ids": list(rs_user_row.get("_group_ids") or []),
+                "_target_group_ids": [],
+                "_errors": [],
+            },
+        )
+        if not str(bucket.get("Pegasus alumno") or "").strip():
+            bucket["Pegasus alumno"] = pegasus_name
+        if not str(bucket.get("Pegasus login") or "").strip():
+            bucket["Pegasus login"] = pegasus_login
+        if not str(bucket.get("Pegasus DNI") or "").strip():
+            bucket["Pegasus DNI"] = pegasus_identifier
+        if not str(bucket.get("RS usuario") or "").strip():
+            bucket["RS usuario"] = rs_full_name
+
+        try:
+            group_meta = _resolve_richmondstudio_group_for_pegasus_row(
+                pegasus_row,
+                groups_lookup,
+            )
+        except Exception as exc:
+            error_message = str(exc).strip() or "No se pudo resolver la clase Pegasus en RS."
+            if error_message not in bucket["_errors"]:
+                bucket["_errors"].append(error_message)
+            continue
+
+        target_group_id = str(
+            (group_meta.get("id") if isinstance(group_meta, dict) else "") or ""
+        ).strip()
+        if not target_group_id:
+            error_message = "No se pudo resolver la clase Pegasus en RS."
+            if error_message not in bucket["_errors"]:
+                bucket["_errors"].append(error_message)
+            continue
+        if target_group_id not in bucket["_target_group_ids"]:
+            bucket["_target_group_ids"].append(target_group_id)
+
+    summary = {
+        "pegasus_rows": int(len(pegasus_rows)),
+        "pegasus_students": int(len(buckets)),
+        "users_found": 0,
+        "users_to_replace": 0,
+        "users_unchanged": 0,
+        "users_not_found": 0,
+        "error_total": 0,
+    }
+    action_rows: List[Dict[str, object]] = []
+    preview_rows: List[Dict[str, object]] = []
+
+    action_priority = {
+        "ERROR": 0,
+        "REEMPLAZAR": 1,
+        "NO ENCONTRADO EN RS": 2,
+        "SIN CAMBIOS": 3,
+    }
+
+    for bucket in buckets.values():
+        current_group_ids = [
+            str(item or "").strip()
+            for item in (bucket.get("_current_group_ids") or [])
+            if str(item or "").strip()
+        ]
+        target_group_ids = [
+            str(item or "").strip()
+            for item in (bucket.get("_target_group_ids") or [])
+            if str(item or "").strip()
+        ]
+        current_labels = _build_richmondstudio_group_labels_from_ids(
+            current_group_ids,
+            groups_lookup,
+        )
+        target_labels = _build_richmondstudio_group_labels_from_ids(
+            target_group_ids,
+            groups_lookup,
+        )
+        add_group_ids = [
+            group_id for group_id in target_group_ids if group_id not in current_group_ids
+        ]
+        remove_group_ids = [
+            group_id for group_id in current_group_ids if group_id not in target_group_ids
+        ]
+        add_labels = _build_richmondstudio_group_labels_from_ids(
+            add_group_ids,
+            groups_lookup,
+        )
+        remove_labels = _build_richmondstudio_group_labels_from_ids(
+            remove_group_ids,
+            groups_lookup,
+        )
+
+        action_code = "SIN CAMBIOS"
+        detail = "El alumno ya esta solo en las clases que dice Pegasus."
+        if not bool(bucket.get("_matched")):
+            summary["users_not_found"] += 1
+            action_code = "NO ENCONTRADO EN RS"
+            detail = (
+                "El alumno aparece en Pegasus pero no se encontro usuario student en RS "
+                "por login o DNI."
+            )
+            if bucket.get("_errors"):
+                detail = "{base} Clases con problema: {errors}".format(
+                    base=detail,
+                    errors=" | ".join(bucket.get("_errors") or []),
+                )
+        elif bucket.get("_errors"):
+            summary["users_found"] += 1
+            summary["error_total"] += 1
+            action_code = "ERROR"
+            detail = "No se aplicaria porque hay clases de Pegasus no resueltas en RS: {errors}".format(
+                errors=" | ".join(bucket.get("_errors") or []),
+            )
+        else:
+            summary["users_found"] += 1
+            if add_group_ids or remove_group_ids:
+                summary["users_to_replace"] += 1
+                action_code = "REEMPLAZAR"
+                detail = "Se dejara al alumno solo en las clases que diga Pegasus."
+            else:
+                summary["users_unchanged"] += 1
+
+        action_row = {
+            "Pegasus alumno": str(bucket.get("Pegasus alumno") or "").strip(),
+            "Pegasus login": str(bucket.get("Pegasus login") or "").strip(),
+            "Pegasus DNI": str(bucket.get("Pegasus DNI") or "").strip(),
+            "RS usuario": str(bucket.get("RS usuario") or "").strip(),
+            "RS USER ID": str(bucket.get("RS USER ID") or "").strip(),
+            "Clases actuales en RS": " | ".join(current_labels),
+            "Clases segun Pegasus": " | ".join(target_labels),
+            "Agregar en RS": " | ".join(add_labels),
+            "Quitar de RS": " | ".join(remove_labels),
+            "Accion sugerida": action_code,
+            "Que pasara": detail,
+            "_action_code": action_code,
+            "_user_id": str(bucket.get("RS USER ID") or "").strip(),
+            "_target_group_ids": list(target_group_ids),
+        }
+        action_rows.append(action_row)
+
+    action_rows.sort(
+        key=lambda row: (
+            action_priority.get(str(row.get("_action_code") or ""), 99),
+            _normalize_plain_text(row.get("Pegasus alumno")),
+            _normalize_plain_text(row.get("Pegasus login")),
+            _normalize_compare_id(row.get("Pegasus DNI")),
+        )
+    )
+    for row in action_rows:
+        action_code = str(row.get("Accion sugerida") or "").strip().upper()
+        if action_code == "SIN CAMBIOS":
+            continue
+        preview_rows.append(
+            {
+                "Alumno Pegasus": row.get("Pegasus alumno") or "",
+                "Login Pegasus": row.get("Pegasus login") or "",
+                "DNI Pegasus": row.get("Pegasus DNI") or "",
+                "Clase Pegasus": row.get("Clases segun Pegasus") or "",
+                "Clases actuales RS": row.get("Clases actuales en RS") or "",
+                "Se quitara de RS": row.get("Quitar de RS") or "",
+                "Accion sugerida": row.get("Accion sugerida") or "",
+                "Que pasara": row.get("Que pasara") or "",
+            }
+        )
+
+    return summary, preview_rows, action_rows
+
+
+def _apply_pegasus_to_richmondstudio_refresh_plan(
+    token: str,
+    action_rows: List[Dict[str, object]],
+    timeout: int = 30,
+    on_status: Optional[Callable[[str], None]] = None,
+) -> Tuple[Dict[str, int], List[Dict[str, object]]]:
+    def _status(message: str) -> None:
+        if callable(on_status):
+            try:
+                on_status(str(message or ""))
+            except Exception:
+                pass
+
+    summary = {
+        "students_total": int(len(action_rows)),
+        "users_found": 0,
+        "users_updated": 0,
+        "users_unchanged": 0,
+        "users_not_found": 0,
+        "error_total": 0,
+    }
+    result_rows: List[Dict[str, object]] = []
+    actionable_rows = [
+        row
+        for row in action_rows
+        if str(row.get("_action_code") or "").strip().upper() == "REEMPLAZAR"
+        and str(row.get("_user_id") or "").strip()
+    ]
+
+    processed_actionable = 0
+    total_actionable = len(actionable_rows)
+    for row in action_rows:
+        public_row = {
+            key: value
+            for key, value in row.items()
+            if not str(key or "").startswith("_")
+        }
+        action_code = str(row.get("_action_code") or "").strip().upper()
+        user_id = str(row.get("_user_id") or "").strip()
+        user_label = str(public_row.get("Pegasus alumno") or "").strip() or str(
+            public_row.get("Pegasus login") or ""
+        ).strip() or user_id
+
+        if action_code == "NO ENCONTRADO EN RS":
+            summary["users_not_found"] += 1
+            public_row["Resultado aplicar"] = "SKIP"
+            public_row["Detalle aplicar"] = str(public_row.get("Que pasara") or "").strip()
+            result_rows.append(public_row)
+            continue
+
+        if action_code == "SIN CAMBIOS":
+            summary["users_found"] += 1
+            summary["users_unchanged"] += 1
+            public_row["Resultado aplicar"] = "SIN CAMBIOS"
+            public_row["Detalle aplicar"] = "El alumno ya estaba alineado con Pegasus."
+            result_rows.append(public_row)
+            continue
+
+        if action_code != "REEMPLAZAR":
+            summary["users_found"] += 1 if user_id else 0
+            summary["error_total"] += 1
+            public_row["Resultado aplicar"] = "ERROR"
+            public_row["Detalle aplicar"] = str(public_row.get("Que pasara") or "").strip()
+            result_rows.append(public_row)
+            continue
+
+        processed_actionable += 1
+        _status(
+            "Refresh Pegasus -> RS {idx}/{total}: {user}".format(
+                idx=processed_actionable,
+                total=max(total_actionable, 1),
+                user=user_label or user_id,
+            )
+        )
+        summary["users_found"] += 1
+        target_group_ids = [
+            str(item or "").strip()
+            for item in (row.get("_target_group_ids") or [])
+            if str(item or "").strip()
+        ]
+        try:
+            detail_body = _fetch_richmondstudio_user_detail(
+                token=token,
+                user_id=user_id,
+                timeout=int(timeout),
+            )
+            payload = _build_richmondstudio_user_patch_payload_from_detail(
+                detail_body,
+                group_ids=target_group_ids,
+            )
+            _update_richmondstudio_user(
+                token=token,
+                user_id=user_id,
+                payload=payload,
+                timeout=int(timeout),
+            )
+        except Exception as exc:
+            summary["error_total"] += 1
+            public_row["Resultado aplicar"] = "ERROR UPDATE"
+            public_row["Detalle aplicar"] = str(exc).strip() or "sin detalle"
+            result_rows.append(public_row)
+            continue
+
+        summary["users_updated"] += 1
+        public_row["Resultado aplicar"] = "ACTUALIZADO"
+        public_row["Detalle aplicar"] = "Se dejo al alumno solo en las clases de Pegasus."
+        result_rows.append(public_row)
+
+    result_rows.sort(
+        key=lambda row: (
+            str(row.get("Resultado aplicar") or "").upper().startswith("ERROR") is False,
+            _normalize_plain_text(row.get("Pegasus alumno")),
+            _normalize_plain_text(row.get("Pegasus login")),
+        )
+    )
+    return summary, result_rows
+
 def _sync_richmondstudio_user_classes_from_excel_rows(
     token: str,
     rows: List[Dict[str, str]],
@@ -3248,6 +3689,335 @@ def _render_richmondstudio_class_sync_section(
                 ),
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 key="rs_class_sync_result_download",
+                use_container_width=True,
+            )
+
+    st.markdown("---")
+    st.markdown("**Refresh Pegasus -> RS (Pegasus manda)**")
+    st.caption(
+        "Lee alumnos por clase desde Pegasus usando el token global y el colegio global seleccionado. "
+        "Luego deja a cada alumno student de RS solo en esas clases. Si en RS esta vinculado a otras clases, las quita."
+    )
+    pegasus_token = _clean_token_value(st.session_state.get("shared_pegasus_token", ""))
+    pegasus_colegio_raw = str(st.session_state.get("shared_colegio_id") or "").strip()
+    pegasus_colegio_id = _safe_int(pegasus_colegio_raw)
+    pegasus_colegio_label = str(
+        st.session_state.get("shared_colegio_label") or pegasus_colegio_raw or ""
+    ).strip()
+    if pegasus_colegio_label:
+        st.caption(f"Colegio Pegasus actual: {pegasus_colegio_label}")
+    if not pegasus_token:
+        st.caption("Falta el token global de Pegasus.")
+    if pegasus_colegio_id is None:
+        st.caption("Falta seleccionar el colegio global de Pegasus.")
+
+    pegasus_refresh_preview, pegasus_refresh_apply = st.columns(2, gap="small")
+    preview_pegasus_refresh = pegasus_refresh_preview.button(
+        "Previsualizar Pegasus -> RS",
+        key="rs_pegasus_refresh_preview_btn",
+        use_container_width=True,
+        help="Muestra en la web de que clases se quitaria y en cuales se quedaria cada alumno segun Pegasus.",
+    )
+    run_pegasus_refresh_apply = pegasus_refresh_apply.button(
+        "Aplicar Pegasus -> RS",
+        type="primary",
+        key="rs_pegasus_refresh_apply_btn",
+        use_container_width=True,
+        help="Reemplaza en RS las clases del alumno y deja solo las que diga Pegasus.",
+    )
+
+    if preview_pegasus_refresh:
+        if not rs_token:
+            st.error("Ingresa el bearer token de Richmond Studio.")
+        elif not pegasus_token:
+            st.error("Falta el token global de Pegasus.")
+        elif pegasus_colegio_id is None:
+            st.error("Falta seleccionar el colegio global de Pegasus.")
+        else:
+            preview_status_placeholder = st.empty()
+            try:
+                with st.spinner("Construyendo previsualizacion Pegasus -> RS..."):
+                    preview_panel_data = _load_richmondstudio_registered_panel_data(
+                        rs_token,
+                        timeout=int(timeout),
+                    )
+                    _store_richmondstudio_registered_panel_data(preview_panel_data)
+                    preview_listing_data = (
+                        preview_panel_data.get("listing_data")
+                        if isinstance(preview_panel_data.get("listing_data"), dict)
+                        else {}
+                    )
+                    preview_registered_user_rows = list(
+                        preview_listing_data.get("registered_user_rows") or []
+                    )
+                    preview_groups_lookup = (
+                        preview_panel_data.get("groups_lookup")
+                        if isinstance(preview_panel_data.get("groups_lookup"), dict)
+                        else {"by_id": {}, "by_code": {}, "by_name": {}}
+                    )
+                    pegasus_rows = listar_alumnos_por_clase_gestion_escolar(
+                        token=pegasus_token,
+                        colegio_id=int(pegasus_colegio_id),
+                        empresa_id=int(DEFAULT_EMPRESA_ID),
+                        ciclo_id=int(GESTION_ESCOLAR_CICLO_ID_DEFAULT),
+                        timeout=int(timeout),
+                        on_log=lambda message: preview_status_placeholder.write(message),
+                    )
+                    if not pegasus_rows:
+                        raise RuntimeError(
+                            "Pegasus no devolvio alumnos por clase para el colegio seleccionado."
+                        )
+                    pegasus_refresh_preview_summary, pegasus_refresh_preview_rows, pegasus_refresh_action_rows = (
+                        _build_pegasus_to_richmondstudio_refresh_plan(
+                            pegasus_rows,
+                            preview_registered_user_rows,
+                            preview_groups_lookup,
+                        )
+                    )
+            except Exception as exc:
+                st.error(f"No se pudo construir la previsualizacion Pegasus -> RS: {exc}")
+            else:
+                st.session_state["rs_pegasus_refresh_preview_summary"] = dict(
+                    pegasus_refresh_preview_summary
+                )
+                st.session_state["rs_pegasus_refresh_preview_rows"] = list(
+                    pegasus_refresh_preview_rows
+                )
+                st.session_state["rs_pegasus_refresh_preview_action_rows"] = list(
+                    pegasus_refresh_action_rows
+                )
+                st.session_state["rs_pegasus_refresh_preview_bytes"] = (
+                    _export_simple_excel(
+                        pegasus_refresh_preview_rows,
+                        sheet_name="preview_pegasus_rs",
+                    )
+                    if pegasus_refresh_preview_rows
+                    else b""
+                )
+                st.success(
+                    "Previsualizacion Pegasus -> RS lista. "
+                    "Alumnos Pegasus: {pegasus_students} | En RS: {users_found} | "
+                    "Reemplazar: {users_to_replace} | No encontrados: {users_not_found} | "
+                    "Sin cambios: {users_unchanged} | Errores: {error_total}".format(
+                        **pegasus_refresh_preview_summary
+                    )
+                )
+            finally:
+                preview_status_placeholder.empty()
+
+    if run_pegasus_refresh_apply:
+        if not rs_token:
+            st.error("Ingresa el bearer token de Richmond Studio.")
+        elif not pegasus_token:
+            st.error("Falta el token global de Pegasus.")
+        elif pegasus_colegio_id is None:
+            st.error("Falta seleccionar el colegio global de Pegasus.")
+        else:
+            st.session_state["rs_pegasus_refresh_pending"] = {
+                "colegio_id": int(pegasus_colegio_id),
+                "colegio_label": pegasus_colegio_label,
+            }
+            _request_richmondstudio_confirmation(
+                "rs_pegasus_refresh_apply",
+                "refresh Pegasus -> RS ({colegio})".format(
+                    colegio=pegasus_colegio_label or f"Colegio {pegasus_colegio_id}"
+                ),
+            )
+
+    run_pegasus_refresh_confirmed = _consume_richmondstudio_confirmed_action(
+        "rs_pegasus_refresh_apply"
+    )
+    if run_pegasus_refresh_confirmed:
+        pending_pegasus_refresh = st.session_state.pop("rs_pegasus_refresh_pending", None)
+        pending_colegio_id = (
+            _safe_int(pending_pegasus_refresh.get("colegio_id"))
+            if isinstance(pending_pegasus_refresh, dict)
+            else None
+        )
+        if not rs_token:
+            st.error("Ingresa el bearer token de Richmond Studio.")
+        elif not pegasus_token:
+            st.error("Falta el token global de Pegasus.")
+        elif pending_colegio_id is None:
+            st.error("No se encontro el colegio Pegasus para aplicar el refresh.")
+        else:
+            apply_status_placeholder = st.empty()
+            try:
+                with st.spinner("Aplicando refresh Pegasus -> RS..."):
+                    refresh_panel_data = _load_richmondstudio_registered_panel_data(
+                        rs_token,
+                        timeout=int(timeout),
+                    )
+                    refresh_listing_data = (
+                        refresh_panel_data.get("listing_data")
+                        if isinstance(refresh_panel_data.get("listing_data"), dict)
+                        else {}
+                    )
+                    refresh_registered_user_rows = list(
+                        refresh_listing_data.get("registered_user_rows") or []
+                    )
+                    refresh_groups_lookup = (
+                        refresh_panel_data.get("groups_lookup")
+                        if isinstance(refresh_panel_data.get("groups_lookup"), dict)
+                        else {"by_id": {}, "by_code": {}, "by_name": {}}
+                    )
+                    pegasus_rows = listar_alumnos_por_clase_gestion_escolar(
+                        token=pegasus_token,
+                        colegio_id=int(pending_colegio_id),
+                        empresa_id=int(DEFAULT_EMPRESA_ID),
+                        ciclo_id=int(GESTION_ESCOLAR_CICLO_ID_DEFAULT),
+                        timeout=int(timeout),
+                        on_log=lambda message: apply_status_placeholder.write(message),
+                    )
+                    if not pegasus_rows:
+                        raise RuntimeError(
+                            "Pegasus no devolvio alumnos por clase para el colegio seleccionado."
+                        )
+                    pegasus_refresh_preview_summary, pegasus_refresh_preview_rows, pegasus_refresh_action_rows = (
+                        _build_pegasus_to_richmondstudio_refresh_plan(
+                            pegasus_rows,
+                            refresh_registered_user_rows,
+                            refresh_groups_lookup,
+                        )
+                    )
+                    pegasus_refresh_result_summary, pegasus_refresh_result_rows = (
+                        _apply_pegasus_to_richmondstudio_refresh_plan(
+                            token=rs_token,
+                            action_rows=pegasus_refresh_action_rows,
+                            timeout=int(timeout),
+                            on_status=lambda message: apply_status_placeholder.write(message),
+                        )
+                    )
+                    refreshed_panel_after_pegasus_sync = (
+                        _load_richmondstudio_registered_panel_data(
+                            rs_token,
+                            timeout=int(timeout),
+                        )
+                    )
+            except Exception as exc:
+                st.error(f"No se pudo aplicar Pegasus -> RS: {exc}")
+            else:
+                apply_status_placeholder.empty()
+                _store_richmondstudio_registered_panel_data(
+                    refreshed_panel_after_pegasus_sync
+                )
+                st.session_state["rs_pegasus_refresh_preview_summary"] = dict(
+                    pegasus_refresh_preview_summary
+                )
+                st.session_state["rs_pegasus_refresh_preview_rows"] = list(
+                    pegasus_refresh_preview_rows
+                )
+                st.session_state["rs_pegasus_refresh_preview_action_rows"] = list(
+                    pegasus_refresh_action_rows
+                )
+                st.session_state["rs_pegasus_refresh_preview_bytes"] = (
+                    _export_simple_excel(
+                        pegasus_refresh_preview_rows,
+                        sheet_name="preview_pegasus_rs",
+                    )
+                    if pegasus_refresh_preview_rows
+                    else b""
+                )
+                st.session_state["rs_pegasus_refresh_result_summary"] = dict(
+                    pegasus_refresh_result_summary
+                )
+                st.session_state["rs_pegasus_refresh_result_rows"] = list(
+                    pegasus_refresh_result_rows
+                )
+                st.session_state["rs_pegasus_refresh_result_bytes"] = (
+                    _export_simple_excel(
+                        pegasus_refresh_result_rows,
+                        sheet_name="resultado_pegasus_rs",
+                    )
+                    if pegasus_refresh_result_rows
+                    else b""
+                )
+                st.success(
+                    "Refresh Pegasus -> RS completado. "
+                    "En RS: {users_found} | Actualizados: {users_updated} | "
+                    "Sin cambios: {users_unchanged} | No encontrados: {users_not_found} | "
+                    "Errores: {error_total}".format(
+                        **pegasus_refresh_result_summary
+                    )
+                )
+            finally:
+                apply_status_placeholder.empty()
+
+    rs_pegasus_refresh_preview_summary_cached = (
+        st.session_state.get("rs_pegasus_refresh_preview_summary") or {}
+    )
+    rs_pegasus_refresh_preview_rows_cached = (
+        st.session_state.get("rs_pegasus_refresh_preview_rows") or []
+    )
+    rs_pegasus_refresh_preview_bytes_cached = (
+        st.session_state.get("rs_pegasus_refresh_preview_bytes") or b""
+    )
+    rs_pegasus_refresh_result_summary_cached = (
+        st.session_state.get("rs_pegasus_refresh_result_summary") or {}
+    )
+    rs_pegasus_refresh_result_rows_cached = (
+        st.session_state.get("rs_pegasus_refresh_result_rows") or []
+    )
+    rs_pegasus_refresh_result_bytes_cached = (
+        st.session_state.get("rs_pegasus_refresh_result_bytes") or b""
+    )
+
+    if rs_pegasus_refresh_preview_summary_cached:
+        st.info(
+            "Previsualizacion Pegasus -> RS: Alumnos Pegasus {pegasus_students} | "
+            "En RS {users_found} | Reemplazar {users_to_replace} | "
+            "No encontrados {users_not_found} | Sin cambios {users_unchanged} | "
+            "Errores {error_total}".format(
+                **rs_pegasus_refresh_preview_summary_cached
+            )
+        )
+        st.caption(
+            "La tabla muestra solo alumnos con algo para revisar o aplicar. "
+            "'Clase Pegasus' es donde debe quedar el alumno, "
+            "'Clases actuales RS' es donde esta hoy en RS, "
+            "y 'Se quitara de RS' muestra exactamente de que clases saldria."
+        )
+        if rs_pegasus_refresh_preview_rows_cached:
+            _show_dataframe(
+                rs_pegasus_refresh_preview_rows_cached[:200],
+                use_container_width=True,
+            )
+        if rs_pegasus_refresh_preview_bytes_cached:
+            st.download_button(
+                label="Descargar previsualizacion Pegasus -> RS",
+                data=rs_pegasus_refresh_preview_bytes_cached,
+                file_name=_build_richmondstudio_password_update_filename(
+                    pegasus_colegio_label or pegasus_colegio_raw,
+                    prefix="preview_pegasus_rs",
+                ),
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="rs_pegasus_refresh_preview_download",
+                use_container_width=True,
+            )
+
+    if rs_pegasus_refresh_result_summary_cached:
+        st.info(
+            "Ultimo refresh Pegasus -> RS: En RS {users_found} | "
+            "Actualizados {users_updated} | Sin cambios {users_unchanged} | "
+            "No encontrados {users_not_found} | Errores {error_total}".format(
+                **rs_pegasus_refresh_result_summary_cached
+            )
+        )
+        if rs_pegasus_refresh_result_rows_cached:
+            _show_dataframe(
+                rs_pegasus_refresh_result_rows_cached[:200],
+                use_container_width=True,
+            )
+        if rs_pegasus_refresh_result_bytes_cached:
+            st.download_button(
+                label="Descargar resultado Pegasus -> RS",
+                data=rs_pegasus_refresh_result_bytes_cached,
+                file_name=_build_richmondstudio_password_update_filename(
+                    pegasus_colegio_label or pegasus_colegio_raw,
+                    prefix="resultado_pegasus_rs",
+                ),
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="rs_pegasus_refresh_result_download",
                 use_container_width=True,
             )
 

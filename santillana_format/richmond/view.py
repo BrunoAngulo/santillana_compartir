@@ -3257,6 +3257,47 @@ def _render_richmondstudio_class_sync_section(
     rs_token: str,
     timeout: int,
 ) -> None:
+    with st.container(border=True):
+        st.markdown("**Refresh Pegasus -> RS (Pegasus manda)**")
+        st.caption(
+            "Usa Pegasus como fuente de verdad. Lee alumnos por clase desde Pegasus y, en RS, "
+            "quita al alumno de las otras clases para dejarlo solo donde corresponde."
+        )
+        quick_pegasus_token = _clean_token_value(
+            st.session_state.get("shared_pegasus_token", "")
+        )
+        quick_pegasus_colegio_raw = str(
+            st.session_state.get("shared_colegio_id") or ""
+        ).strip()
+        quick_pegasus_colegio_label = str(
+            st.session_state.get("shared_colegio_label")
+            or quick_pegasus_colegio_raw
+            or ""
+        ).strip()
+        if quick_pegasus_colegio_label:
+            st.caption(f"Colegio Pegasus actual: {quick_pegasus_colegio_label}")
+        if not quick_pegasus_token:
+            st.caption("Falta el token global de Pegasus.")
+        if _safe_int(quick_pegasus_colegio_raw) is None:
+            st.caption("Falta seleccionar el colegio global de Pegasus.")
+
+        quick_preview_col, quick_apply_col = st.columns(2, gap="small")
+        if quick_preview_col.button(
+            "Previsualizar Pegasus -> RS",
+            key="rs_pegasus_refresh_preview_top_btn",
+            use_container_width=True,
+        ):
+            st.session_state["rs_pegasus_refresh_preview_requested"] = True
+            st.rerun()
+        if quick_apply_col.button(
+            "Aplicar Pegasus -> RS",
+            type="primary",
+            key="rs_pegasus_refresh_apply_top_btn",
+            use_container_width=True,
+        ):
+            st.session_state["rs_pegasus_refresh_apply_requested"] = True
+            st.rerun()
+
     st.markdown("**Actualizar clases RS por Excel**")
     st.caption(
         "Sube un Excel con el mismo formato de usuarios RS: Last name, First name, Class, Email, Role y level. "
@@ -3724,6 +3765,12 @@ def _render_richmondstudio_class_sync_section(
         key="rs_pegasus_refresh_apply_btn",
         use_container_width=True,
         help="Reemplaza en RS las clases del alumno y deja solo las que diga Pegasus.",
+    )
+    preview_pegasus_refresh = preview_pegasus_refresh or bool(
+        st.session_state.pop("rs_pegasus_refresh_preview_requested", False)
+    )
+    run_pegasus_refresh_apply = run_pegasus_refresh_apply or bool(
+        st.session_state.pop("rs_pegasus_refresh_apply_requested", False)
     )
 
     if preview_pegasus_refresh:
@@ -5842,7 +5889,7 @@ def render_richmond_studio_view() -> None:
             "Usuarios RS",
             "CRUD Alumnos RS",
             "Asignar clases a docentes",
-            "Listar alumnos registrados",
+            "Herramientas RS",
         ]
     )
     with tab_rs_clases:
@@ -5878,21 +5925,16 @@ def render_richmond_studio_view() -> None:
                     timeout=int(timeout),
                 )
     with tab_rs_usuarios:
-        if str(st.session_state.get("rs_users_nav") or "").strip() not in {
-            "crear",
-            "clases",
-        }:
-            st.session_state["rs_users_nav"] = "crear"
         rs_users_sidebar_col, rs_users_body_col = st.columns([1.15, 4.85], gap="large")
         with rs_users_sidebar_col:
-            rs_users_view = _render_crud_menu(
-                "Funciones usuarios RS",
-                [
-                    ("crear", "Crear", "Alta masiva de usuarios desde Excel"),
-                    ("clases", "Clases", "Sincroniza clases o crea alumnos"),
-                ],
-                state_key="rs_users_nav",
-            )
+            with st.container(border=True):
+                st.markdown("**Usuarios RS**")
+                st.caption(
+                    "Los dos bloques de esta pestaña se muestran abajo en orden."
+                )
+                st.markdown("**Orden recomendado**")
+                st.caption("1. Crear usuarios desde Excel")
+                st.caption("2. Sincronizar clases y refresh Pegasus -> RS")
         with rs_users_body_col:
             with st.container(border=True):
                 st.markdown("**RS | Crear usuarios desde Excel**")
@@ -6758,15 +6800,15 @@ def render_richmond_studio_view() -> None:
         rs_listado_sidebar_col, rs_listado_body_col = st.columns([1.15, 4.85], gap="large")
         with rs_listado_sidebar_col:
             with st.container(border=True):
-                st.markdown("**Alumnos registrados RS**")
+                st.markdown("**Herramientas RS**")
                 st.caption(
-                    "Desde aqui puedes listar usuarios, revisar suscripciones, gestionar clases y actualizar passwords."
+                    "Este panel concentra listados y tareas de mantenimiento."
                 )
-                st.markdown("**Bloques**")
-                st.caption("Listado y exportaciones")
-                st.caption("Consulta de suscripciones")
-                st.caption("Gestionar clases por usuario")
-                st.caption("Actualizar password")
+                st.markdown("**Orden recomendado**")
+                st.caption("1. Listado y exportaciones")
+                st.caption("2. Suscripciones por vencer")
+                st.caption("3. Gestionar clases por usuario")
+                st.caption("4. Actualizar password masivo")
                 listed_rows = int(st.session_state.get("rs_excel_count") or 0)
                 if listed_rows:
                     st.caption(f"Ultimo listado: {listed_rows} fila(s).")
@@ -6780,6 +6822,10 @@ def render_richmond_studio_view() -> None:
                 expiring_next_year_file_name = (
                     "rs_suscripciones_expiran_"
                     f"{expiring_next_year}.xlsx"
+                )
+                st.markdown("### 1. Listado y exportaciones RS")
+                st.caption(
+                    "Empieza por este bloque. Los demas reutilizan el listado cargado aqui."
                 )
                 st.markdown("**Listar alumnos registrados**")
                 st.caption(
@@ -6852,6 +6898,8 @@ def render_richmond_studio_view() -> None:
                     st.session_state.get("rs_registered_user_rows") or []
                 )
 
+                st.divider()
+                st.markdown("### 2. Suscripciones por vencer")
                 st.markdown(
                     f"**Usuarios con suscripciones que expiran desde {expiring_next_year_label}**"
                 )
@@ -6999,6 +7047,8 @@ def render_richmond_studio_view() -> None:
                             use_container_width=True,
                         )
 
+                st.divider()
+                st.markdown("### 3. Gestionar clases por usuario")
                 st.markdown("**Gestionar clases de usuario RS**")
                 st.caption(
                     "Usa el listado registrado para seleccionar un usuario, reemplazar sus clases, "
@@ -7368,6 +7418,8 @@ def render_richmond_studio_view() -> None:
                             f"quitar todas las clases RS de {selected_name}",
                         )
 
+                st.divider()
+                st.markdown("### 4. Actualizacion masiva de password")
                 st.markdown("**Actualizar password usuarios RS**")
                 st.caption(
                     "Descarga el Excel de todos los usuarios registrados, completa New password(optional) "

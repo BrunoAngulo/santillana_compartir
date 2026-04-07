@@ -4024,6 +4024,43 @@ def _render_richmondstudio_class_sync_section(
             "'Clases actuales RS' es donde esta hoy en RS, "
             "y 'Se quitara de RS' muestra exactamente de que clases saldria."
         )
+        removal_preview_rows = [
+            {
+                "Alumno Pegasus": row.get("Alumno Pegasus") or "",
+                "Login Pegasus": row.get("Login Pegasus") or "",
+                "DNI Pegasus": row.get("DNI Pegasus") or "",
+                "Clase Pegasus": row.get("Clase Pegasus") or "",
+                "Clases actuales RS": row.get("Clases actuales RS") or "",
+                "Se quitara de RS": row.get("Se quitara de RS") or "",
+            }
+            for row in rs_pegasus_refresh_preview_rows_cached
+            if str(row.get("Se quitara de RS") or "").strip()
+        ]
+        if removal_preview_rows:
+            st.markdown("**Solo retiros detectados en RS**")
+            st.caption(
+                "Este bloque es masivo. Solo te dice que alumno se sacara de que clase(s) en RS segun Pegasus."
+            )
+            _show_dataframe(
+                removal_preview_rows[:200],
+                use_container_width=True,
+            )
+            removal_preview_bytes = _export_simple_excel(
+                removal_preview_rows,
+                sheet_name="retiros_pegasus_rs",
+            )
+            st.download_button(
+                label="Descargar solo retiros RS",
+                data=removal_preview_bytes,
+                file_name=_build_richmondstudio_password_update_filename(
+                    pegasus_colegio_label or pegasus_colegio_raw,
+                    prefix="retiros_pegasus_rs",
+                ),
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="rs_pegasus_refresh_removal_preview_download",
+                use_container_width=True,
+            )
+            st.divider()
         if rs_pegasus_refresh_preview_rows_cached:
             _show_dataframe(
                 rs_pegasus_refresh_preview_rows_cached[:200],

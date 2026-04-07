@@ -2330,12 +2330,12 @@ def _build_richmondstudio_bulk_class_refresh_preview(
                     "First name": first_name,
                     "Last name": last_name,
                     "RS USER ID": user_id,
-                    "Estado actual RS": "",
-                    "Quedara en RS": "",
-                    "Agregar": "",
-                    "Quitar": "",
-                    "Accion": "ERROR",
-                    "Detalle": str(exc),
+                    "Clases actuales en RS": "",
+                    "Clases finales segun archivo": "",
+                    "Agregar en RS": "",
+                    "Quitar de RS": "",
+                    "Accion sugerida": "ERROR",
+                    "Que pasara": str(exc),
                 }
             )
             continue
@@ -2351,12 +2351,12 @@ def _build_richmondstudio_bulk_class_refresh_preview(
                     "First name": first_name,
                     "Last name": last_name,
                     "RS USER ID": user_id,
-                    "Estado actual RS": "",
-                    "Quedara en RS": "",
-                    "Agregar": "",
-                    "Quitar": "",
-                    "Accion": "ERROR",
-                    "Detalle": "No se pudo resolver la clase RS.",
+                    "Clases actuales en RS": "",
+                    "Clases finales segun archivo": "",
+                    "Agregar en RS": "",
+                    "Quitar de RS": "",
+                    "Accion sugerida": "ERROR",
+                    "Que pasara": "No se pudo resolver la clase RS.",
                 }
             )
             continue
@@ -2437,12 +2437,12 @@ def _build_richmondstudio_bulk_class_refresh_preview(
                 "First name": str(pending.get("first_name") or "").strip(),
                 "Last name": str(pending.get("last_name") or "").strip(),
                 "RS USER ID": str(pending.get("user_id") or "").strip(),
-                "Estado actual RS": " | ".join(current_labels),
-                "Quedara en RS": " | ".join(target_labels),
-                "Agregar": " | ".join(add_labels),
-                "Quitar": " | ".join(remove_labels),
-                "Accion": action,
-                "Detalle": detail,
+                "Clases actuales en RS": " | ".join(current_labels),
+                "Clases finales segun archivo": " | ".join(target_labels),
+                "Agregar en RS": " | ".join(add_labels),
+                "Quitar de RS": " | ".join(remove_labels),
+                "Accion sugerida": action,
+                "Que pasara": detail,
             }
         )
 
@@ -2463,18 +2463,19 @@ def _build_richmondstudio_bulk_class_refresh_preview(
                 "First name": str(pending.get("first_name") or "").strip(),
                 "Last name": str(pending.get("last_name") or "").strip(),
                 "RS USER ID": "",
-                "Estado actual RS": "",
-                "Quedara en RS": " | ".join(target_labels),
-                "Agregar": " | ".join(target_labels),
-                "Quitar": "",
-                "Accion": "CREAR",
-                "Detalle": "El usuario no existe en RS y se crearia con esas clases.",
+                "Clases actuales en RS": "",
+                "Clases finales segun archivo": " | ".join(target_labels),
+                "Agregar en RS": " | ".join(target_labels),
+                "Quitar de RS": "",
+                "Accion sugerida": "CREAR",
+                "Que pasara": "El usuario no existe en RS y se crearia con esas clases.",
             }
         )
 
     preview_rows.sort(
         key=lambda item: (
-            str(item.get("Accion") or "").upper().startswith("ERROR") is False,
+            str(item.get("Accion sugerida") or "").upper().startswith("ERROR") is False,
+            str(item.get("Accion sugerida") or "").upper() == "SIN CAMBIOS",
             _normalize_plain_text(item.get("Username(Email)")),
         )
     )
@@ -3201,6 +3202,11 @@ def _render_richmondstudio_class_sync_section(
             "Errores {error_total}".format(
                 **rs_class_refresh_preview_summary_cached
             )
+        )
+        st.caption(
+            "Lee la tabla asi: si 'Accion sugerida' es REEMPLAZAR, la columna "
+            "'Quitar de RS' muestra exactamente de que clases saldria el alumno, "
+            "y 'Clases finales segun archivo' muestra donde quedaria al terminar el refresh."
         )
         if rs_class_refresh_preview_rows_cached:
             _show_dataframe(

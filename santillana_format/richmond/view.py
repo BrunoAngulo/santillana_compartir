@@ -3274,12 +3274,26 @@ def _render_richmondstudio_class_sync_section(
             or quick_pegasus_colegio_raw
             or ""
         ).strip()
+        missing_quick_pegasus_token = not bool(quick_pegasus_token)
+        missing_quick_pegasus_colegio = _safe_int(quick_pegasus_colegio_raw) is None
         if quick_pegasus_colegio_label:
             st.caption(f"Colegio Pegasus actual: {quick_pegasus_colegio_label}")
-        if not quick_pegasus_token:
+        if missing_quick_pegasus_token:
             st.caption("Falta el token global de Pegasus.")
-        if _safe_int(quick_pegasus_colegio_raw) is None:
+        if missing_quick_pegasus_colegio:
             st.caption("Falta seleccionar el colegio global de Pegasus.")
+        if missing_quick_pegasus_token or missing_quick_pegasus_colegio:
+            st.warning(
+                "Antes de usar Pegasus -> RS haz esto: "
+                "1) ve a `Procesos Pegasus`, "
+                "2) en `Configuracion global` guarda el token, "
+                "3) selecciona el colegio global, "
+                "4) vuelve a `Richmond Studio`."
+            )
+        if not rs_token:
+            st.info(
+                "Ademas necesitas el bearer token de Richmond Studio para leer usuarios y aplicar cambios en RS."
+            )
 
         quick_preview_col, quick_apply_col = st.columns(2, gap="small")
         if quick_preview_col.button(
@@ -3321,6 +3335,10 @@ def _render_richmondstudio_class_sync_section(
                 )
         except Exception as exc:  # pragma: no cover - UI
             st.error(f"No se pudo preparar la plantilla de clases RS: {exc}")
+            if "401" in str(exc):
+                st.caption(
+                    "Ese 401 es de Richmond Studio: el bearer token de RS falta, esta vencido o no tiene permiso."
+                )
         else:
             _store_richmondstudio_registered_panel_data(panel_data)
             listing_data = (
@@ -3745,12 +3763,19 @@ def _render_richmondstudio_class_sync_section(
     pegasus_colegio_label = str(
         st.session_state.get("shared_colegio_label") or pegasus_colegio_raw or ""
     ).strip()
+    missing_pegasus_token = not bool(pegasus_token)
+    missing_pegasus_colegio = pegasus_colegio_id is None
     if pegasus_colegio_label:
         st.caption(f"Colegio Pegasus actual: {pegasus_colegio_label}")
-    if not pegasus_token:
+    if missing_pegasus_token:
         st.caption("Falta el token global de Pegasus.")
-    if pegasus_colegio_id is None:
+    if missing_pegasus_colegio:
         st.caption("Falta seleccionar el colegio global de Pegasus.")
+    if missing_pegasus_token or missing_pegasus_colegio:
+        st.warning(
+            "Este bloque no usa Excel. Toma directo los alumnos desde Pegasus. "
+            "Primero carga el token global y el colegio global en `Procesos Pegasus` o en `Lectura Tokens`."
+        )
 
     pegasus_refresh_preview, pegasus_refresh_apply = st.columns(2, gap="small")
     preview_pegasus_refresh = pegasus_refresh_preview.button(

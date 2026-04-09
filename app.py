@@ -6533,6 +6533,90 @@ def _profesor_edit_estado_dot_html(activo: bool) -> str:
     )
 
 
+def _profesor_class_level_palette(
+    nivel_id: object = None,
+    nivel_text: object = None,
+) -> Dict[str, str]:
+    nivel_id_int = _safe_int(nivel_id)
+    nivel_norm = _normalize_plain_text(nivel_text)
+    if nivel_id_int == 38 or "INICIAL" in nivel_norm:
+        return {
+            "bg": "#FEF3C7",
+            "border": "#F59E0B",
+            "text": "#92400E",
+        }
+    if nivel_id_int == 39 or "PRIMARIA" in nivel_norm:
+        return {
+            "bg": "#DCFCE7",
+            "border": "#22C55E",
+            "text": "#166534",
+        }
+    if nivel_id_int == 40 or "SECUNDARIA" in nivel_norm:
+        return {
+            "bg": "#DBEAFE",
+            "border": "#3B82F6",
+            "text": "#1D4ED8",
+        }
+    return {
+        "bg": "#F3F4F6",
+        "border": "#9CA3AF",
+        "text": "#374151",
+    }
+
+
+def _build_profesor_class_chip_html(
+    label: object,
+    nivel_id: object = None,
+    nivel_text: object = None,
+) -> str:
+    palette = _profesor_class_level_palette(
+        nivel_id=nivel_id,
+        nivel_text=nivel_text,
+    )
+    return (
+        "<span style='display:inline-flex;align-items:center;"
+        "padding:0.26rem 0.62rem;margin:0 0.38rem 0.38rem 0;"
+        "border-radius:999px;font-size:0.84rem;font-weight:600;"
+        f"background:{palette['bg']};border:1px solid {palette['border']};"
+        f"color:{palette['text']};'>{escape(str(label or '').strip())}</span>"
+    )
+
+
+def _render_profesor_class_chips_html(
+    class_ids: Sequence[object],
+    clases_by_id: Dict[int, Dict[str, object]],
+    empty_text: str = "Sin clases",
+) -> str:
+    chips: List[str] = []
+    seen: Set[int] = set()
+    for raw_clase_id in class_ids or []:
+        clase_id = _safe_int(raw_clase_id)
+        if clase_id is None or int(clase_id) in seen:
+            continue
+        seen.add(int(clase_id))
+        row = clases_by_id.get(int(clase_id)) or {}
+        label = str(
+            row.get("clase_label")
+            or row.get("clase_nombre")
+            or row.get("clase")
+            or f"Clase {int(clase_id)}"
+        ).strip()
+        chips.append(
+            _build_profesor_class_chip_html(
+                label=label,
+                nivel_id=row.get("nivel_id"),
+                nivel_text=row.get("nivel"),
+            )
+        )
+    if not chips:
+        return (
+            "<div style='color:#6B7280;font-size:0.9rem;'>"
+            f"{escape(empty_text)}"
+            "</div>"
+        )
+    return "<div style='display:flex;flex-wrap:wrap;align-items:flex-start;'>" + "".join(chips) + "</div>"
+
+
 def _profesor_edit_level_ids(row: Dict[str, object]) -> List[int]:
     level_ids: Set[int] = set()
 
@@ -10829,6 +10913,12 @@ with tab_crud_profesores:
                         profesor_manual_row = None
 
                     if profesor_manual_row:
+                        current_manual_class_ids = [
+                            int(item)
+                            for item in profesor_manual_row.get("clase_ids_actuales", [])
+                            if int(item) in clases_manual_by_id
+                        ]
+                        clases_options = sorted(clases_manual_by_id.keys())
                         cols_manual_left, cols_manual_right = st.columns(
                             [1.5, 2.5], gap="large"
                         )
@@ -10845,25 +10935,20 @@ with tab_crud_profesores:
                                     ]
                                 )
                             )
-                            clases_actuales_txt = profesor_manual_row.get("clases_actuales") or []
-                            if clases_actuales_txt:
+                            if current_manual_class_ids:
+                                st.markdown("**Clases actuales**")
                                 st.markdown(
-                                    "\n".join(
-                                        f"- {item}" for item in clases_actuales_txt[:20]
-                                    )
+                                    _render_profesor_class_chips_html(
+                                        current_manual_class_ids,
+                                        clases_manual_by_id,
+                                        empty_text="Sin clases actuales",
+                                    ),
+                                    unsafe_allow_html=True,
                                 )
-                                if len(clases_actuales_txt) > 20:
-                                    st.caption(
-                                        f"... y {len(clases_actuales_txt) - 20} mas."
-                                    )
+                            else:
+                                st.caption("Sin clases actuales.")
 
                         with cols_manual_right:
-                            clases_options = sorted(clases_manual_by_id.keys())
-                            current_manual_class_ids = [
-                                int(item)
-                                for item in profesor_manual_row.get("clase_ids_actuales", [])
-                                if int(item) in clases_manual_by_id
-                            ]
                             selected_manual_class_ids = st.multiselect(
                                 "Clases",
                                 options=clases_options,
@@ -10873,6 +10958,15 @@ with tab_crud_profesores:
                                     or f"Clase {clase_id}"
                                 ),
                                 key=f"profesores_manual_clases_{int(profesor_manual_row['persona_id'])}",
+                            )
+                            st.markdown("**Clases seleccionadas**")
+                            st.markdown(
+                                _render_profesor_class_chips_html(
+                                    selected_manual_class_ids,
+                                    clases_manual_by_id,
+                                    empty_text="Sin clases seleccionadas",
+                                ),
+                                unsafe_allow_html=True,
                             )
                             confirm_manual_apply = st.checkbox(
                                 "Confirmar cambios",
@@ -12425,18 +12519,54 @@ with tab_crud_alumnos:
             with st.container(border=True):
                 st.markdown("**Censo activos por varios colegios**")
                 st.caption(
-                    "Escribe los Colegio ID separados por coma, espacio o salto de linea. Se generara un ZIP con una carpeta por colegio y su Excel dentro."
+                    "Busca por nombre y selecciona varios colegios. Se generara un ZIP con una carpeta por colegio y su Excel dentro."
                 )
-                colegios_ids_text = st.text_area(
-                    "Colegios ID",
-                    key="alumnos_censo_activos_multi_ids_text",
-                    placeholder="17170\n17171\n17172",
-                    height=110,
+                colegio_rows_multi = st.session_state.get("shared_colegios_rows") or []
+                colegio_error_multi = str(
+                    st.session_state.get("shared_colegios_error") or ""
+                ).strip()
+                row_by_id_multi = {
+                    int(row["colegio_id"]): row
+                    for row in colegio_rows_multi
+                    if row.get("colegio_id") is not None
+                }
+                selected_multi_key = "alumnos_censo_activos_multi_ids"
+                if selected_multi_key not in st.session_state:
+                    default_multi_ids: List[int] = []
+                    if (
+                        current_otros_colegio_id is not None
+                        and current_otros_colegio_id in row_by_id_multi
+                    ):
+                        default_multi_ids = [int(current_otros_colegio_id)]
+                    st.session_state[selected_multi_key] = default_multi_ids
+                st.multiselect(
+                    "Colegios",
+                    options=sorted(row_by_id_multi.keys(), key=lambda value: str((row_by_id_multi.get(int(value)) or {}).get("label") or "")),
+                    key=selected_multi_key,
+                    format_func=lambda value: str(
+                        (row_by_id_multi.get(int(value)) or {}).get("label")
+                        or f"Colegio {int(value)}"
+                    ),
+                    placeholder=(
+                        "Busca y selecciona uno o varios colegios"
+                        if row_by_id_multi
+                        else "Guarda un token para cargar colegios"
+                    ),
+                    disabled=not bool(row_by_id_multi),
                 )
+                if colegio_error_multi:
+                    st.caption(
+                        f"No se pudo cargar la lista de colegios: {colegio_error_multi}"
+                    )
+                elif not row_by_id_multi:
+                    st.caption(
+                        "Guarda un token en Configuracion global para cargar y buscar colegios."
+                    )
                 run_censo_multi = st.button(
                     "Generar ZIP por colegios",
                     key="alumnos_censo_activos_multi_btn",
                     use_container_width=True,
+                    disabled=not bool(row_by_id_multi),
                 )
                 if run_censo_multi:
                     token = _get_shared_token()
@@ -12445,10 +12575,14 @@ with tab_crud_alumnos:
                             "Falta el token. Configura el token global o PEGASUS_TOKEN."
                         )
                         st.stop()
-                    try:
-                        colegio_ids_multi = _parse_colegio_ids_text(colegios_ids_text)
-                    except ValueError as exc:
-                        st.error(f"Error: {exc}")
+                    colegio_ids_multi_raw = st.session_state.get(selected_multi_key) or []
+                    colegio_ids_multi = [
+                        int(value)
+                        for value in colegio_ids_multi_raw
+                        if _safe_int(value) is not None
+                    ]
+                    if not colegio_ids_multi:
+                        st.error("Selecciona al menos un colegio.")
                         st.stop()
 
                     status_placeholder = st.empty()

@@ -258,6 +258,15 @@ PEGASUS_NIVEL_LABEL_BY_ID = {
     39: "Primaria",
     40: "Secundaria",
 }
+CENSO_ACTIVOS_EXPORT_COLUMNS = [
+    "Nivel",
+    "Grado",
+    "Grupo",
+    "Nombre del alumno",
+    "DNI",
+    "Login",
+    "Password",
+]
 RESTRICTED_SECTIONS_PASSWORD = "Ted2026"
 RESTRICTED_SECTIONS_ENABLED = False
 JIRA_ADMIN_DISPLAY_NAME = "Bruno Ricardo Adrian Angulo Perez"
@@ -1529,6 +1538,16 @@ def _export_simple_excel(rows: List[Dict[str, object]], sheet_name: str = "data"
     return output.getvalue()
 
 
+def _export_censo_activos_excel(rows: List[Dict[str, object]]) -> bytes:
+    output = BytesIO()
+    df = pd.DataFrame(rows)
+    df = df.reindex(columns=CENSO_ACTIVOS_EXPORT_COLUMNS)
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="activos")
+    output.seek(0)
+    return output.getvalue()
+
+
 def _show_dataframe(data: object, use_container_width: bool = True) -> None:
     if isinstance(data, pd.DataFrame):
         df_view = data.copy()
@@ -1581,6 +1600,174 @@ def _normalize_censo_activos_export_rows(
         )
     )
     return normalized
+
+
+def _load_censo_activos_for_colegio(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+    on_status: Optional[Callable[[str], None]] = None,
+) -> Dict[str, object]:
+    def _status(message: str) -> None:
+        if callable(on_status):
+            try:
+                on_status(str(message or "").strip())
+            except Exception:
+                pass
+
+    _status("Leyendo niveles, grados y secciones...")
+    niveles = _fetch_niveles_grados_grupos_censo(
+        token=token,
+        colegio_id=int(colegio_id),
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        timeout=int(timeout),
+    )
+    contexts = _build_contexts_for_nivel_grado(niveles=niveles)
+    rows_activos: List[Dict[str, object]] = []
+    export_rows_activos: List[Dict[str, object]] = []
+    errors_activos: List[str] = []
+
+    _status("Leyendo logins...")
+    try:
+        (
+            login_lookup_by_alumno,
+            login_lookup_by_persona,
+        ) = _fetch_login_password_lookup_censo(
+            token=token,
+            colegio_id=int(colegio_id),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+        )
+    except Exception:
+        login_lookup_by_alumno = {}
+        login_lookup_by_persona = {}
+
+    total_contexts = len(contexts)
+    for idx, ctx in enumerate(contexts, start=1):
+        _status(
+            "[{idx}/{total}] {nivel} | {grado} ({seccion})".format(
+                idx=idx,
+                total=total_contexts,
+                nivel=str(ctx.get("nivel") or "").strip(),
+                grado=str(ctx.get("grado") or "").strip(),
+                seccion=str(ctx.get("seccion") or "").strip(),
+            )
+        )
+        try:
+            alumnos_ctx = _fetch_alumnos_censo(
+                token=token,
+                colegio_id=int(colegio_id),
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                nivel_id=int(ctx.get("nivel_id") or 0),
+                grado_id=int(ctx.get("grado_id") or 0),
+                grupo_id=int(ctx.get("grupo_id") or 0),
+                timeout=int(timeout),
+            )
+        except Exception as exc:
+            errors_activos.append(
+                "Error en {nivel} | {grado} ({seccion}): {err}".format(
+                    nivel=str(ctx.get("nivel") or ""),
+                    grado=str(ctx.get("grado") or ""),
+                    seccion=str(ctx.get("seccion") or ""),
+                    err=str(exc),
+                )
+            )
+            continue
+
+        for item in alumnos_ctx:
+            if not isinstance(item, dict):
+                continue
+            flat = _flatten_censo_alumno_for_auto_plan(item=item, fallback=ctx)
+            if not _to_bool(flat.get("activo")):
+                continue
+            login_txt, _password_txt = _resolve_alumno_login_password(
+                item,
+                login_lookup_by_alumno,
+                login_lookup_by_persona,
+            )
+            row_activo = {
+                "Nivel": flat.get("nivel") or "",
+                "Grado": flat.get("grado") or "",
+                "Grupo": flat.get("seccion_norm") or flat.get("seccion") or "",
+                "Nombre del alumno": flat.get("nombre_completo") or "",
+                "DNI": flat.get("id_oficial") or "",
+                "Login": login_txt,
+                "Password": "",
+            }
+            rows_activos.append(dict(row_activo))
+            export_rows_activos.append(dict(row_activo))
+
+    rows_activos = _normalize_censo_activos_export_rows(rows_activos)
+    export_rows_activos = _normalize_censo_activos_export_rows(export_rows_activos)
+    return {
+        "rows": rows_activos,
+        "export_rows": export_rows_activos,
+        "errors": errors_activos,
+        "contexts_total": total_contexts,
+    }
+
+
+def _parse_colegio_ids_text(
+    raw: object,
+    field_name: str = "Colegios ID",
+) -> List[int]:
+    text = str(raw or "").strip()
+    if not text:
+        raise ValueError(f"{field_name} es obligatorio.")
+    values: List[int] = []
+    seen: Set[int] = set()
+    for token in re.split(r"[\s,;]+", text):
+        token_clean = str(token or "").strip()
+        if not token_clean:
+            continue
+        if not token_clean.isdigit():
+            raise ValueError(
+                f"{field_name} invalido: '{token_clean}'. Usa IDs numericos separados por coma, espacio o salto de linea."
+            )
+        value = int(token_clean)
+        if value <= 0:
+            raise ValueError(f"{field_name} invalido: '{token_clean}'. Debe ser mayor a 0.")
+        if value in seen:
+            continue
+        seen.add(value)
+        values.append(value)
+    if not values:
+        raise ValueError(f"{field_name} es obligatorio.")
+    return values
+
+
+def _sanitize_zip_component(text: object, fallback: str) -> str:
+    raw = str(text or "").strip()
+    if not raw:
+        raw = str(fallback or "").strip()
+    raw = re.sub(r'[<>:"/\\|?*\x00-\x1f]+', " ", raw)
+    raw = re.sub(r"\s+", " ", raw).strip(" .")
+    return raw or str(fallback or "colegio").strip() or "colegio"
+
+
+def _get_colegio_export_base_name(colegio_id: int) -> str:
+    for row in st.session_state.get("shared_colegios_rows") or []:
+        try:
+            row_id = int(row.get("colegio_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if row_id != int(colegio_id):
+            continue
+        colegio_nombre = str(row.get("colegio") or "").strip()
+        if colegio_nombre:
+            return _sanitize_zip_component(
+                f"{colegio_nombre} - {int(colegio_id)}",
+                f"Colegio {int(colegio_id)}",
+            )
+    return _sanitize_zip_component(
+        f"Colegio {int(colegio_id)}",
+        f"Colegio {int(colegio_id)}",
+    )
 
 
 def _parse_colegio_id(raw: object, field_name: str = "Colegio Clave") -> int:
@@ -12128,6 +12315,18 @@ with tab_crud_alumnos:
             censo_colegio_id = _safe_int(
                 st.session_state.get("alumnos_censo_activos_colegio_id")
             )
+            censo_multi_summary_cached = (
+                st.session_state.get("alumnos_censo_activos_multi_summary_rows") or []
+            )
+            censo_multi_errors_cached = (
+                st.session_state.get("alumnos_censo_activos_multi_errors") or []
+            )
+            censo_multi_zip_bytes_cached = (
+                st.session_state.get("alumnos_censo_activos_multi_zip_bytes") or b""
+            )
+            censo_multi_zip_name_cached = str(
+                st.session_state.get("alumnos_censo_activos_multi_zip_name") or ""
+            ).strip()
 
             with st.container(border=True):
                 run_censo_activos = st.button(
@@ -12149,107 +12348,33 @@ with tab_crud_alumnos:
                     except ValueError as exc:
                         st.error(f"Error: {exc}")
                         st.stop()
+                    status_placeholder = st.empty()
 
-                    niveles = _fetch_niveles_grados_grupos_censo(
+                    def _on_censo_status(message: str) -> None:
+                        status_placeholder.caption(str(message or "").strip())
+
+                    censo_payload = _load_censo_activos_for_colegio(
                         token=token,
                         colegio_id=int(colegio_id_int),
                         empresa_id=int(empresa_id),
                         ciclo_id=int(ciclo_id),
                         timeout=int(timeout),
+                        on_status=_on_censo_status,
                     )
-                    contexts = _build_contexts_for_nivel_grado(niveles=niveles)
-                    rows_activos: List[Dict[str, object]] = []
-                    export_rows_activos: List[Dict[str, object]] = []
-                    errors_activos: List[str] = []
-                    try:
-                        (
-                            login_lookup_by_alumno,
-                            login_lookup_by_persona,
-                        ) = _fetch_login_password_lookup_censo(
-                            token=token,
-                            colegio_id=int(colegio_id_int),
-                            empresa_id=int(empresa_id),
-                            ciclo_id=int(ciclo_id),
-                            timeout=int(timeout),
-                        )
-                    except Exception:
-                        login_lookup_by_alumno = {}
-                        login_lookup_by_persona = {}
-                    for ctx in contexts:
-                        try:
-                            alumnos_ctx = _fetch_alumnos_censo(
-                                token=token,
-                                colegio_id=int(colegio_id_int),
-                                empresa_id=int(empresa_id),
-                                ciclo_id=int(ciclo_id),
-                                nivel_id=int(ctx.get("nivel_id") or 0),
-                                grado_id=int(ctx.get("grado_id") or 0),
-                                grupo_id=int(ctx.get("grupo_id") or 0),
-                                timeout=int(timeout),
-                            )
-                        except Exception as exc:  # pragma: no cover - UI
-                            errors_activos.append(
-                                "Error en {nivel} | {grado} ({seccion}): {err}".format(
-                                    nivel=str(ctx.get("nivel") or ""),
-                                    grado=str(ctx.get("grado") or ""),
-                                    seccion=str(ctx.get("seccion") or ""),
-                                    err=str(exc),
-                                )
-                            )
-                            continue
-                        for item in alumnos_ctx:
-                            if not isinstance(item, dict):
-                                continue
-                            flat = _flatten_censo_alumno_for_auto_plan(
-                                item=item, fallback=ctx
-                            )
-                            if not _to_bool(flat.get("activo")):
-                                continue
-                            login_txt, _password_txt = (
-                                _resolve_alumno_login_password(
-                                    item,
-                                    login_lookup_by_alumno,
-                                    login_lookup_by_persona,
-                                )
-                            )
-                            row_activo = {
-                                "Nivel": flat.get("nivel") or "",
-                                "Grado": flat.get("grado") or "",
-                                "Grupo": flat.get("seccion_norm")
-                                or flat.get("seccion")
-                                or "",
-                                "Nombre del alumno": flat.get(
-                                    "nombre_completo"
-                                )
-                                or "",
-                                "DNI": flat.get("id_oficial") or "",
-                                "Login": login_txt,
-                                "Password": "",
-                            }
-                            rows_activos.append(dict(row_activo))
-                            export_rows_activos.append(dict(row_activo))
+                    rows_activos = list(censo_payload.get("rows") or [])
+                    export_rows_activos = list(censo_payload.get("export_rows") or [])
+                    errors_activos = list(censo_payload.get("errors") or [])
 
-                    rows_activos = _normalize_censo_activos_export_rows(
-                        rows_activos
-                    )
-                    export_rows_activos = _normalize_censo_activos_export_rows(
-                        export_rows_activos
-                    )
-                    st.session_state["alumnos_censo_activos_rows"] = (
-                        rows_activos
-                    )
-                    st.session_state["alumnos_censo_activos_export_rows"] = (
-                        export_rows_activos
-                    )
-                    st.session_state["alumnos_censo_activos_errors"] = (
-                        errors_activos
-                    )
+                    st.session_state["alumnos_censo_activos_rows"] = rows_activos
+                    st.session_state["alumnos_censo_activos_export_rows"] = export_rows_activos
+                    st.session_state["alumnos_censo_activos_errors"] = errors_activos
                     st.session_state["alumnos_censo_activos_colegio_id"] = int(
                         colegio_id_int
                     )
                     censo_display_rows = export_rows_activos
                     censo_errors_cached = errors_activos
                     censo_colegio_id = int(colegio_id_int)
+                    status_placeholder.empty()
                     st.success(
                         "Censo cargado. Activos: {total} | Errores de consulta: {errors}".format(
                             total=len(rows_activos),
@@ -12276,10 +12401,7 @@ with tab_crud_alumnos:
                     )
                     result_col_download.download_button(
                         label="Descargar Excel",
-                        data=_export_simple_excel(
-                            censo_display_rows,
-                            sheet_name="activos",
-                        ),
+                        data=_export_censo_activos_excel(censo_display_rows),
                         file_name=f"censo_alumnos_activos_{file_suffix}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         key="alumnos_censo_activos_download",
@@ -12299,6 +12421,192 @@ with tab_crud_alumnos:
                     pending = len(censo_errors_cached) - 40
                     if pending > 0:
                         st.caption(f"... y {pending} errores mas.")
+
+            with st.container(border=True):
+                st.markdown("**Censo activos por varios colegios**")
+                st.caption(
+                    "Escribe los Colegio ID separados por coma, espacio o salto de linea. Se generara un ZIP con una carpeta por colegio y su Excel dentro."
+                )
+                colegios_ids_text = st.text_area(
+                    "Colegios ID",
+                    key="alumnos_censo_activos_multi_ids_text",
+                    placeholder="17170\n17171\n17172",
+                    height=110,
+                )
+                run_censo_multi = st.button(
+                    "Generar ZIP por colegios",
+                    key="alumnos_censo_activos_multi_btn",
+                    use_container_width=True,
+                )
+                if run_censo_multi:
+                    token = _get_shared_token()
+                    if not token:
+                        st.error(
+                            "Falta el token. Configura el token global o PEGASUS_TOKEN."
+                        )
+                        st.stop()
+                    try:
+                        colegio_ids_multi = _parse_colegio_ids_text(colegios_ids_text)
+                    except ValueError as exc:
+                        st.error(f"Error: {exc}")
+                        st.stop()
+
+                    status_placeholder = st.empty()
+                    total_colegios_multi = len(colegio_ids_multi)
+                    summary_rows_multi: List[Dict[str, object]] = []
+                    errors_multi: List[str] = []
+                    zip_buffer = BytesIO()
+                    zip_name_multi = (
+                        f"censo_alumnos_activos_colegios_{date.today().isoformat()}.zip"
+                    )
+                    zip_root_folder = _sanitize_zip_component(
+                        f"censo_alumnos_activos_colegios_{date.today().isoformat()}",
+                        "censo_alumnos_activos_colegios",
+                    )
+
+                    with ZipFile(zip_buffer, "w", ZIP_DEFLATED) as zip_file:
+                        for idx, colegio_id_multi in enumerate(colegio_ids_multi, start=1):
+                            colegio_base_name = _get_colegio_export_base_name(
+                                int(colegio_id_multi)
+                            )
+
+                            def _on_multi_status(
+                                message: str,
+                                current_idx: int = idx,
+                                current_total: int = total_colegios_multi,
+                                colegio_name: str = colegio_base_name,
+                            ) -> None:
+                                status_placeholder.caption(
+                                    "[{idx}/{total}] {colegio}: {message}".format(
+                                        idx=current_idx,
+                                        total=current_total,
+                                        colegio=colegio_name,
+                                        message=str(message or "").strip(),
+                                    )
+                                )
+
+                            try:
+                                payload_multi = _load_censo_activos_for_colegio(
+                                    token=token,
+                                    colegio_id=int(colegio_id_multi),
+                                    empresa_id=int(empresa_id),
+                                    ciclo_id=int(ciclo_id),
+                                    timeout=int(timeout),
+                                    on_status=_on_multi_status,
+                                )
+                                export_rows_multi = list(
+                                    payload_multi.get("export_rows") or []
+                                )
+                                errors_colegio_multi = list(
+                                    payload_multi.get("errors") or []
+                                )
+                                folder_name = colegio_base_name
+                                file_name = f"{colegio_base_name}.xlsx"
+                                zip_path = (
+                                    f"{zip_root_folder}/{folder_name}/{file_name}"
+                                )
+                                zip_file.writestr(
+                                    zip_path,
+                                    _export_censo_activos_excel(export_rows_multi),
+                                )
+                                summary_rows_multi.append(
+                                    {
+                                        "Colegio ID": int(colegio_id_multi),
+                                        "Colegio": colegio_base_name,
+                                        "Activos": len(export_rows_multi),
+                                        "Errores": len(errors_colegio_multi),
+                                        "Archivo": zip_path,
+                                        "Estado": (
+                                            "OK"
+                                            if not errors_colegio_multi
+                                            else "OK con errores"
+                                        ),
+                                    }
+                                )
+                                errors_multi.extend(
+                                    [
+                                        f"Colegio {int(colegio_id_multi)}: {item}"
+                                        for item in errors_colegio_multi
+                                        if str(item or "").strip()
+                                    ]
+                                )
+                            except Exception as exc:
+                                errors_multi.append(
+                                    f"Colegio {int(colegio_id_multi)}: {exc}"
+                                )
+                                summary_rows_multi.append(
+                                    {
+                                        "Colegio ID": int(colegio_id_multi),
+                                        "Colegio": colegio_base_name,
+                                        "Activos": 0,
+                                        "Errores": 1,
+                                        "Archivo": "",
+                                        "Estado": f"ERROR: {exc}",
+                                    }
+                                )
+
+                    zip_buffer.seek(0)
+                    censo_multi_zip_bytes_cached = zip_buffer.getvalue()
+                    censo_multi_zip_name_cached = zip_name_multi
+                    censo_multi_summary_cached = summary_rows_multi
+                    censo_multi_errors_cached = errors_multi
+                    st.session_state["alumnos_censo_activos_multi_zip_bytes"] = (
+                        censo_multi_zip_bytes_cached
+                    )
+                    st.session_state["alumnos_censo_activos_multi_zip_name"] = (
+                        censo_multi_zip_name_cached
+                    )
+                    st.session_state["alumnos_censo_activos_multi_summary_rows"] = (
+                        censo_multi_summary_cached
+                    )
+                    st.session_state["alumnos_censo_activos_multi_errors"] = (
+                        censo_multi_errors_cached
+                    )
+                    status_placeholder.empty()
+                    st.success(
+                        "ZIP listo. Colegios: {total} | Errores acumulados: {errors}".format(
+                            total=len(summary_rows_multi),
+                            errors=len(errors_multi),
+                        )
+                    )
+
+            if censo_multi_summary_cached:
+                with st.container(border=True):
+                    multi_col_text, multi_col_total, multi_col_errors, multi_col_download = st.columns(
+                        [2.2, 1, 1, 1.5], gap="small"
+                    )
+                    with multi_col_text:
+                        st.markdown("**Resultado masivo por colegios**")
+                        st.caption(
+                            "Se genero un Excel por colegio dentro de una carpeta con el mismo nombre."
+                        )
+                    multi_col_total.metric("Colegios", len(censo_multi_summary_cached))
+                    multi_col_errors.metric("Errores", len(censo_multi_errors_cached))
+                    multi_col_download.download_button(
+                        label="Descargar ZIP",
+                        data=censo_multi_zip_bytes_cached,
+                        file_name=(
+                            censo_multi_zip_name_cached
+                            or f"censo_alumnos_activos_colegios_{date.today().isoformat()}.zip"
+                        ),
+                        mime="application/zip",
+                        key="alumnos_censo_activos_multi_download",
+                        use_container_width=True,
+                    )
+                    _show_dataframe(censo_multi_summary_cached, use_container_width=True)
+            if censo_multi_errors_cached:
+                with st.expander(
+                    f"Errores del censo masivo ({len(censo_multi_errors_cached)})",
+                    expanded=False,
+                ):
+                    st.markdown(
+                        "\n".join(
+                            f"- {item}" for item in censo_multi_errors_cached[:80]
+                        )
+                    )
+                    pending_multi = len(censo_multi_errors_cached) - 80
+                    if pending_multi > 0:
+                        st.caption(f"... y {pending_multi} errores mas.")
 
         if alumnos_crud_view == "comparar":
             current_compare_colegio_id = _safe_int(colegio_id_raw)

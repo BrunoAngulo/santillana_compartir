@@ -267,6 +267,12 @@ CENSO_ACTIVOS_EXPORT_COLUMNS = [
     "Login",
     "Password",
 ]
+CENSO_PROFESORES_ACTIVOS_EXPORT_COLUMNS = [
+    "Nombre",
+    "Apellido paterno",
+    "Apellido materno",
+    "Login",
+]
 RESTRICTED_SECTIONS_PASSWORD = "Ted2026"
 RESTRICTED_SECTIONS_ENABLED = False
 JIRA_ADMIN_DISPLAY_NAME = "Bruno Ricardo Adrian Angulo Perez"
@@ -1548,6 +1554,16 @@ def _export_censo_activos_excel(rows: List[Dict[str, object]]) -> bytes:
     return output.getvalue()
 
 
+def _export_censo_profesores_activos_excel(rows: List[Dict[str, object]]) -> bytes:
+    output = BytesIO()
+    df = pd.DataFrame(rows)
+    df = df.reindex(columns=CENSO_PROFESORES_ACTIVOS_EXPORT_COLUMNS)
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="profesores_activos")
+    output.seek(0)
+    return output.getvalue()
+
+
 def _show_dataframe(data: object, use_container_width: bool = True) -> None:
     if isinstance(data, pd.DataFrame):
         df_view = data.copy()
@@ -1709,6 +1725,94 @@ def _load_censo_activos_for_colegio(
         "export_rows": export_rows_activos,
         "errors": errors_activos,
         "contexts_total": total_contexts,
+    }
+
+
+def _normalize_censo_profesores_activos_export_rows(
+    rows: List[Dict[str, object]]
+) -> List[Dict[str, str]]:
+    normalized: List[Dict[str, str]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        normalized.append(
+            {
+                "Nombre": str(row.get("Nombre") or row.get("nombre") or "").strip(),
+                "Apellido paterno": str(
+                    row.get("Apellido paterno")
+                    or row.get("apellido_paterno")
+                    or ""
+                ).strip(),
+                "Apellido materno": str(
+                    row.get("Apellido materno")
+                    or row.get("apellido_materno")
+                    or ""
+                ).strip(),
+                "Login": str(row.get("Login") or row.get("login") or "").strip(),
+            }
+        )
+    normalized.sort(
+        key=lambda row: (
+            str(row.get("Apellido paterno") or "").upper(),
+            str(row.get("Apellido materno") or "").upper(),
+            str(row.get("Nombre") or "").upper(),
+            str(row.get("Login") or "").upper(),
+        )
+    )
+    return normalized
+
+
+def _load_censo_profesores_activos_for_colegio(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+    on_status: Optional[Callable[[str], None]] = None,
+) -> Dict[str, object]:
+    def _status(message: str) -> None:
+        if callable(on_status):
+            try:
+                on_status(str(message or "").strip())
+            except Exception:
+                pass
+
+    _status("Leyendo profesores del colegio...")
+    profesores_rows, summary, errors_raw = listar_profesores_filters_data(
+        token=token,
+        colegio_id=int(colegio_id),
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        timeout=int(timeout),
+    )
+    export_rows: List[Dict[str, object]] = []
+    for row in profesores_rows:
+        if not isinstance(row, dict):
+            continue
+        estado_norm = _normalize_plain_text(row.get("estado"))
+        if estado_norm not in {"ACTIVO", "ACTIVA"}:
+            continue
+        export_rows.append(
+            {
+                "Nombre": str(row.get("nombre") or "").strip(),
+                "Apellido paterno": str(row.get("apellido_paterno") or "").strip(),
+                "Apellido materno": str(row.get("apellido_materno") or "").strip(),
+                "Login": str(row.get("login") or "").strip(),
+            }
+        )
+    normalized_rows = _normalize_censo_profesores_activos_export_rows(export_rows)
+    errors: List[str] = []
+    for item in errors_raw or []:
+        if not isinstance(item, dict):
+            continue
+        err_txt = str(item.get("error") or "").strip()
+        if err_txt:
+            errors.append(err_txt)
+    return {
+        "rows": normalized_rows,
+        "export_rows": normalized_rows,
+        "errors": errors,
+        "summary": dict(summary or {}),
     }
 
 
@@ -12395,6 +12499,20 @@ with tab_crud_alumnos:
                     "alumnos_censo_activos_colegio_id",
                 ):
                     st.session_state.pop(state_key, None)
+            cached_censo_profesores_colegio_id = _safe_int(
+                st.session_state.get("profesores_censo_activos_colegio_id")
+            )
+            if (
+                current_otros_colegio_id is not None
+                and cached_censo_profesores_colegio_id is not None
+                and current_otros_colegio_id != cached_censo_profesores_colegio_id
+            ):
+                for state_key in (
+                    "profesores_censo_activos_rows",
+                    "profesores_censo_activos_errors",
+                    "profesores_censo_activos_colegio_id",
+                ):
+                    st.session_state.pop(state_key, None)
 
             censo_rows_cached = st.session_state.get("alumnos_censo_activos_rows") or []
             censo_export_rows_cached = (
@@ -12408,6 +12526,15 @@ with tab_crud_alumnos:
             )
             censo_colegio_id = _safe_int(
                 st.session_state.get("alumnos_censo_activos_colegio_id")
+            )
+            censo_profesores_rows_cached = (
+                st.session_state.get("profesores_censo_activos_rows") or []
+            )
+            censo_profesores_errors_cached = (
+                st.session_state.get("profesores_censo_activos_errors") or []
+            )
+            censo_profesores_colegio_id = _safe_int(
+                st.session_state.get("profesores_censo_activos_colegio_id")
             )
             censo_multi_summary_cached = (
                 st.session_state.get("alumnos_censo_activos_multi_summary_rows") or []
@@ -12517,9 +12644,111 @@ with tab_crud_alumnos:
                         st.caption(f"... y {pending} errores mas.")
 
             with st.container(border=True):
+                run_censo_profesores_activos = st.button(
+                    "Censo de profesores activos",
+                    type="primary",
+                    key="profesores_censo_activos_load_btn",
+                    use_container_width=True,
+                )
+
+                if run_censo_profesores_activos:
+                    token = _get_shared_token()
+                    if not token:
+                        st.error(
+                            "Falta el token. Configura el token global o PEGASUS_TOKEN."
+                        )
+                        st.stop()
+                    try:
+                        colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                    except ValueError as exc:
+                        st.error(f"Error: {exc}")
+                        st.stop()
+                    status_placeholder = st.empty()
+
+                    def _on_censo_prof_status(message: str) -> None:
+                        status_placeholder.caption(str(message or "").strip())
+
+                    censo_prof_payload = _load_censo_profesores_activos_for_colegio(
+                        token=token,
+                        colegio_id=int(colegio_id_int),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                        on_status=_on_censo_prof_status,
+                    )
+                    censo_profesores_rows_cached = list(
+                        censo_prof_payload.get("export_rows") or []
+                    )
+                    censo_profesores_errors_cached = list(
+                        censo_prof_payload.get("errors") or []
+                    )
+                    st.session_state["profesores_censo_activos_rows"] = (
+                        censo_profesores_rows_cached
+                    )
+                    st.session_state["profesores_censo_activos_errors"] = (
+                        censo_profesores_errors_cached
+                    )
+                    st.session_state["profesores_censo_activos_colegio_id"] = int(
+                        colegio_id_int
+                    )
+                    censo_profesores_colegio_id = int(colegio_id_int)
+                    status_placeholder.empty()
+                    st.success(
+                        "Censo de profesores cargado. Activos: {total} | Errores de consulta: {errors}".format(
+                            total=len(censo_profesores_rows_cached),
+                            errors=len(censo_profesores_errors_cached),
+                        )
+                    )
+
+            if censo_profesores_rows_cached:
+                with st.container(border=True):
+                    prof_col_text, prof_col_rows, prof_col_errors, prof_col_download = st.columns(
+                        [2.4, 1, 1, 1.4], gap="small"
+                    )
+                    with prof_col_text:
+                        st.markdown("**Resultado del censo de profesores**")
+                        st.caption(
+                            "Vista consolidada de profesores activos lista para revisar o exportar."
+                        )
+                    prof_col_rows.metric("Activos", len(censo_profesores_rows_cached))
+                    prof_col_errors.metric("Errores", len(censo_profesores_errors_cached))
+                    file_suffix_prof = (
+                        str(censo_profesores_colegio_id)
+                        if censo_profesores_colegio_id is not None
+                        else "colegio"
+                    )
+                    prof_col_download.download_button(
+                        label="Descargar Excel",
+                        data=_export_censo_profesores_activos_excel(
+                            censo_profesores_rows_cached
+                        ),
+                        file_name=f"censo_profesores_activos_{file_suffix_prof}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="profesores_censo_activos_download",
+                        use_container_width=True,
+                    )
+                    _show_dataframe(
+                        censo_profesores_rows_cached,
+                        use_container_width=True,
+                    )
+            if censo_profesores_errors_cached:
+                with st.expander(
+                    f"Errores de consulta del censo de profesores ({len(censo_profesores_errors_cached)})",
+                    expanded=False,
+                ):
+                    st.markdown(
+                        "\n".join(
+                            f"- {item}" for item in censo_profesores_errors_cached[:40]
+                        )
+                    )
+                    pending_prof = len(censo_profesores_errors_cached) - 40
+                    if pending_prof > 0:
+                        st.caption(f"... y {pending_prof} errores mas.")
+
+            with st.container(border=True):
                 st.markdown("**Censo activos por varios colegios**")
                 st.caption(
-                    "Busca por nombre y selecciona varios colegios. Se generara un ZIP con una carpeta por colegio y su Excel dentro."
+                    "Busca por nombre y selecciona varios colegios. Se generara un ZIP con una carpeta por colegio y dos archivos: alumnos y profesores activos."
                 )
                 colegio_rows_multi = st.session_state.get("shared_colegios_rows") or []
                 colegio_error_multi = str(
@@ -12634,25 +12863,64 @@ with tab_crud_alumnos:
                                 errors_colegio_multi = list(
                                     payload_multi.get("errors") or []
                                 )
+                                payload_profesores_multi = (
+                                    _load_censo_profesores_activos_for_colegio(
+                                        token=token,
+                                        colegio_id=int(colegio_id_multi),
+                                        empresa_id=int(empresa_id),
+                                        ciclo_id=int(ciclo_id),
+                                        timeout=int(timeout),
+                                        on_status=lambda message, idx_now=idx, total_now=total_colegios_multi, colegio_name=colegio_base_name: status_placeholder.caption(
+                                            "[{idx}/{total}] {colegio}: {message}".format(
+                                                idx=idx_now,
+                                                total=total_now,
+                                                colegio=colegio_name,
+                                                message=str(message or "").strip(),
+                                            )
+                                        ),
+                                    )
+                                )
+                                export_rows_profesores_multi = list(
+                                    payload_profesores_multi.get("export_rows") or []
+                                )
+                                errors_profesores_multi = list(
+                                    payload_profesores_multi.get("errors") or []
+                                )
                                 folder_name = colegio_base_name
-                                file_name = f"{colegio_base_name}.xlsx"
-                                zip_path = (
-                                    f"{zip_root_folder}/{folder_name}/{file_name}"
+                                alumnos_file_name = (
+                                    f"censo_alumnos_activos_{colegio_base_name}.xlsx"
+                                )
+                                profesores_file_name = (
+                                    f"censo_profesores_activos_{colegio_base_name}.xlsx"
+                                )
+                                zip_path_alumnos = (
+                                    f"{zip_root_folder}/{folder_name}/{alumnos_file_name}"
+                                )
+                                zip_path_profesores = (
+                                    f"{zip_root_folder}/{folder_name}/{profesores_file_name}"
                                 )
                                 zip_file.writestr(
-                                    zip_path,
+                                    zip_path_alumnos,
                                     _export_censo_activos_excel(export_rows_multi),
+                                )
+                                zip_file.writestr(
+                                    zip_path_profesores,
+                                    _export_censo_profesores_activos_excel(
+                                        export_rows_profesores_multi
+                                    ),
                                 )
                                 summary_rows_multi.append(
                                     {
                                         "Colegio ID": int(colegio_id_multi),
                                         "Colegio": colegio_base_name,
-                                        "Activos": len(export_rows_multi),
-                                        "Errores": len(errors_colegio_multi),
-                                        "Archivo": zip_path,
+                                        "Alumnos activos": len(export_rows_multi),
+                                        "Profesores activos": len(export_rows_profesores_multi),
+                                        "Errores": len(errors_colegio_multi) + len(errors_profesores_multi),
+                                        "Archivo alumnos": zip_path_alumnos,
+                                        "Archivo profesores": zip_path_profesores,
                                         "Estado": (
                                             "OK"
-                                            if not errors_colegio_multi
+                                            if not errors_colegio_multi and not errors_profesores_multi
                                             else "OK con errores"
                                         ),
                                     }
@@ -12664,6 +12932,13 @@ with tab_crud_alumnos:
                                         if str(item or "").strip()
                                     ]
                                 )
+                                errors_multi.extend(
+                                    [
+                                        f"Colegio {int(colegio_id_multi)} (profesores): {item}"
+                                        for item in errors_profesores_multi
+                                        if str(item or "").strip()
+                                    ]
+                                )
                             except Exception as exc:
                                 errors_multi.append(
                                     f"Colegio {int(colegio_id_multi)}: {exc}"
@@ -12672,9 +12947,11 @@ with tab_crud_alumnos:
                                     {
                                         "Colegio ID": int(colegio_id_multi),
                                         "Colegio": colegio_base_name,
-                                        "Activos": 0,
+                                        "Alumnos activos": 0,
+                                        "Profesores activos": 0,
                                         "Errores": 1,
-                                        "Archivo": "",
+                                        "Archivo alumnos": "",
+                                        "Archivo profesores": "",
                                         "Estado": f"ERROR: {exc}",
                                     }
                                 )

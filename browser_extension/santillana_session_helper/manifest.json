@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Santillana Session Helper",
   "version": "0.1.0",
-  "description": "Lee tokens y sesiones de Pegasus, Richmond Studio y Loqueleo desde el navegador.",
+  "description": "Lee tokens y sesiones de Pegasus, Richmond Studio, Loqueleo e IPA desde el navegador.",
   "permissions": [
     "cookies",
     "storage",
@@ -10,6 +10,9 @@
   ],
   "host_permissions": [
     "https://apps.santillanacompartir.com/*",
+    "https://*.santillanacompartir.com/*",
+    "https://*.santillana.com/*",
+    "https://*.santillana.com.pe/*",
     "https://richmondstudio.global/*",
     "https://loqueleodigital.com/*"
   ],

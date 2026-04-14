@@ -23,6 +23,21 @@ const SOURCE_CONFIG = {
     cookiesUrl: "https://loqueleodigital.com/",
     cookieDomain: "loqueleodigital.com",
     sessionCookieName: "_session_id",
+    includeAllDomainCookies: true,
+  },
+  ipa: {
+    id: "ipa",
+    label: "IPA",
+    mode: "cookies",
+    bootstrapUrl: "https://www.santillanacompartir.com/",
+    cookieDomains: [
+      "santillanacompartir.com",
+      "apps.santillanacompartir.com",
+      "https.santillanacompartir.com",
+      "santillana.com",
+      "santillana.com.pe",
+    ],
+    sessionCookieName: "local-santadmin",
   },
 };
 
@@ -156,6 +171,101 @@ async function readLocalStorageSource(source) {
   });
 }
 
+function cookieDedupKey(cookie) {
+  return [
+    String(cookie.name || ""),
+    String(cookie.domain || ""),
+    String(cookie.path || ""),
+    String(cookie.storeId || ""),
+  ].join("|");
+}
+
+async function readCookieSource(source) {
+  try {
+    const cookieName = String(source.sessionCookieName || source.cookieName || "").trim();
+    const includeAllDomainCookies = Boolean(source.includeAllDomainCookies);
+    const cookieDomains = Array.isArray(source.cookieDomains)
+      ? source.cookieDomains
+      : source.cookieDomain
+        ? [source.cookieDomain]
+        : [];
+    const cookieQueries = [];
+    for (const domain of cookieDomains) {
+      const domainText = String(domain || "").trim();
+      if (!domainText) {
+        continue;
+      }
+      const cookieQuery = { domain: domainText };
+      if (cookieName && !includeAllDomainCookies) {
+        cookieQuery.name = cookieName;
+      }
+      cookieQueries.push(
+        chrome.cookies.getAll(cookieQuery)
+      );
+    }
+    if (cookieName && !includeAllDomainCookies) {
+      cookieQueries.push(chrome.cookies.getAll({ name: cookieName }));
+    }
+
+    const cookieGroups = await Promise.all(cookieQueries);
+    const seen = new Set();
+    const cookies = [];
+    for (const cookie of cookieGroups.flat()) {
+      const dedupKey = cookieDedupKey(cookie);
+      if (seen.has(dedupKey)) {
+        continue;
+      }
+      seen.add(dedupKey);
+      cookies.push(cookie);
+    }
+
+    const normalizedCookies = Array.isArray(cookies)
+      ? cookies.map((cookie) => ({
+        name: String(cookie.name || ""),
+        value: String(cookie.value || ""),
+        domain: String(cookie.domain || ""),
+        path: String(cookie.path || ""),
+        secure: Boolean(cookie.secure),
+        httpOnly: Boolean(cookie.httpOnly),
+        session: Boolean(cookie.session),
+        sameSite: String(cookie.sameSite || ""),
+      }))
+      : [];
+    const sessionCookie =
+      normalizedCookies.find((cookie) => cookie.name === cookieName) || null;
+    const sessionValue = sessionCookie ? sessionCookie.value : "";
+    return {
+      id: source.id,
+      label: source.label,
+      sourceType: source.mode,
+      cookieName,
+      sessionId: source.id === "loqueleo" ? sessionValue : "",
+      sessionValue,
+      value: sessionValue,
+      cookieHeader: normalizedCookies
+        .map((cookie) => `${cookie.name}=${cookie.value}`)
+        .join("; "),
+      cookies: normalizedCookies,
+      found: Boolean(sessionValue),
+      error: sessionValue ? "" : `No se encontro la cookie ${cookieName}.`,
+    };
+  } catch (error) {
+    return {
+      id: source.id,
+      label: source.label,
+      sourceType: source.mode,
+      cookieName: String(source.sessionCookieName || source.cookieName || "").trim(),
+      sessionId: "",
+      sessionValue: "",
+      value: "",
+      cookieHeader: "",
+      cookies: [],
+      found: false,
+      error: normalizeError(error),
+    };
+  }
+}
+
 async function readLoqueleoSource(source) {
   try {
     const cookies = await chrome.cookies.getAll({
@@ -210,7 +320,7 @@ async function readSource(sourceId) {
     throw new Error(`Fuente no soportada: ${sourceId}`);
   }
   if (source.mode === "cookies") {
-    return readLoqueleoSource(source);
+    return readCookieSource(source);
   }
   return readLocalStorageSource(source);
 }

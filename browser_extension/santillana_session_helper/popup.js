@@ -14,6 +14,11 @@ const SOURCE_META = {
     primaryField: "sessionId",
     emptyValue: "",
   },
+  ipa: {
+    label: "IPA",
+    primaryField: "sessionValue",
+    emptyValue: "",
+  },
 };
 
 let currentSnapshot = null;
@@ -94,7 +99,7 @@ function renderSource(sourceId, sourceData) {
       : meta.emptyValue;
   valueEl.value = primaryValue;
 
-  if (sourceId === "loqueleo") {
+  if (sourceData?.sourceType === "cookies") {
     const cookies = Array.isArray(sourceData?.cookies) ? sourceData.cookies : [];
     const detailsText = cookies.length
       ? JSON.stringify(cookies, null, 2)
@@ -121,6 +126,7 @@ function renderSnapshot(snapshot) {
   renderSource("pegasus", sources.pegasus);
   renderSource("richmond", sources.richmond);
   renderSource("loqueleo", sources.loqueleo);
+  renderSource("ipa", sources.ipa);
   setStatus(`Última lectura: ${formatDate(snapshot?.readAt)}`);
 }
 

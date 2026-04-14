@@ -42,6 +42,10 @@ except ModuleNotFoundError:
         )
 
 from santillana_format.jira import render_jira_focus_web
+from santillana_format.ipa import (
+    extract_ipa_session_value,
+    render_ipa_view as render_ipa_domain_view,
+)
 from santillana_format.loqueleo import render_loqueleo_view as render_loqueleo_domain_view
 from santillana_format.richmond import (
     read_richmondstudio_browser_token,
@@ -298,6 +302,11 @@ LOQUELEO_SESSION_BRIDGE_COMPONENT = components.declare_component(
     "loqueleo_session_bridge",
     path=str(Path(__file__).resolve().parent / "components" / "loqueleo_session_bridge"),
 )
+IPA_SESSION_BRIDGE_PENDING = "__pending__"
+IPA_SESSION_BRIDGE_COMPONENT = components.declare_component(
+    "ipa_session_bridge",
+    path=str(Path(__file__).resolve().parent / "components" / "ipa_session_bridge"),
+)
 _PARTICIPANTES_SYNC_STATUS_LIMIT = 12
 
 
@@ -361,6 +370,21 @@ def _read_browser_loqueleo_session_id(mode: str = "read", value: object = "") ->
     if str(browser_value or "") == LOQUELEO_SESSION_BRIDGE_PENDING:
         return LOQUELEO_SESSION_BRIDGE_PENDING
     return str(browser_value or "").strip()
+
+
+def _read_browser_ipa_session_value(mode: str = "read", value: object = "") -> str:
+    try:
+        browser_value = IPA_SESSION_BRIDGE_COMPONENT(
+            key="ipa_session_bridge_component",
+            default=IPA_SESSION_BRIDGE_PENDING,
+            mode=str(mode or "read").strip().lower() or "read",
+            value=extract_ipa_session_value(value),
+        )
+    except Exception:
+        return ""
+    if str(browser_value or "") == IPA_SESSION_BRIDGE_PENDING:
+        return IPA_SESSION_BRIDGE_PENDING
+    return extract_ipa_session_value(browser_value)
 
 
 
@@ -818,6 +842,31 @@ def _extract_loqueleo_session_id_from_source(source: object) -> str:
     return ""
 
 
+def _extract_ipa_session_value_from_source(source: object) -> str:
+    if not isinstance(source, dict):
+        return ""
+
+    for key in ("sessionValue", "value", "sessionId"):
+        direct_value = extract_ipa_session_value(source.get(key))
+        if direct_value:
+            return direct_value
+
+    cookie_header = str(source.get("cookieHeader") or "").strip()
+    if "local-santadmin=" in cookie_header:
+        header_value = extract_ipa_session_value(cookie_header)
+        if header_value:
+            return header_value
+
+    cookies = source.get("cookies")
+    if isinstance(cookies, list):
+        for item in cookies:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("name") or "").strip() == "local-santadmin":
+                return extract_ipa_session_value(item.get("value"))
+    return ""
+
+
 def _mask_secret_value(value: object, visible_chars: int = 6) -> str:
     text = str(value or "").strip()
     if not text:
@@ -891,6 +940,26 @@ def _sync_token_reader_bridge_state() -> None:
         st.session_state["loqueleo_session_id"] = browser_loqueleo_session_id
         st.session_state["loqueleo_session_id_input"] = browser_loqueleo_session_id
 
+    ipa_bridge_mode = str(
+        st.session_state.get("ipa_session_bridge_mode") or "read"
+    ).strip().lower() or "read"
+    ipa_bridge_value = extract_ipa_session_value(
+        st.session_state.get("ipa_session_bridge_value", "")
+    )
+    browser_ipa_session_value = _read_browser_ipa_session_value(
+        mode=ipa_bridge_mode,
+        value=ipa_bridge_value,
+    )
+    if ipa_bridge_mode != "read":
+        st.session_state["ipa_session_bridge_mode"] = "read"
+        st.session_state["ipa_session_bridge_value"] = ""
+    if (
+        browser_ipa_session_value not in ("", IPA_SESSION_BRIDGE_PENDING)
+        and not str(st.session_state.get("ipa_session_value", "") or "").strip()
+    ):
+        st.session_state["ipa_session_value"] = browser_ipa_session_value
+        st.session_state["ipa_session_value_input"] = browser_ipa_session_value
+
 
 def _apply_token_snapshot_payload(payload: Dict[str, object]) -> Dict[str, str]:
     read_at = str(payload.get("readAt") or "").strip()
@@ -942,6 +1011,22 @@ def _apply_token_snapshot_payload(payload: Dict[str, object]) -> Dict[str, str]:
     if isinstance(loqueleo_cookie_items, list):
         st.session_state["loqueleo_cookie_items"] = loqueleo_cookie_items
 
+    ipa_source = _extract_snapshot_source(payload, "ipa")
+    ipa_session_value = _extract_ipa_session_value_from_source(ipa_source)
+    ipa_cookie_header = str(ipa_source.get("cookieHeader") or "").strip()
+    ipa_cookie_items = ipa_source.get("cookies")
+    if ipa_session_value:
+        st.session_state["ipa_session_value"] = ipa_session_value
+        st.session_state["ipa_session_value_input"] = ipa_session_value
+        st.session_state["ipa_session_bridge_mode"] = "write"
+        st.session_state["ipa_session_bridge_value"] = ipa_session_value
+        summary["ipa"] = "guardado"
+    else:
+        summary["ipa"] = "sin valor"
+    st.session_state["ipa_cookie_header"] = ipa_cookie_header
+    if isinstance(ipa_cookie_items, list):
+        st.session_state["ipa_cookie_items"] = ipa_cookie_items
+
     if read_at:
         st.session_state["token_reader_last_read_at"] = read_at
     st.session_state["token_reader_last_snapshot_json"] = json.dumps(
@@ -987,6 +1072,17 @@ def _build_token_reader_status_rows() -> List[Dict[str, str]]:
                 str(st.session_state.get("loqueleo_session_id", "") or "").strip()
             ),
         },
+        {
+            "Seccion": "IPA",
+            "Estado": (
+                "Guardado"
+                if str(st.session_state.get("ipa_session_value", "") or "").strip()
+                else "Sin dato"
+            ),
+            "Valor": _mask_secret_value(
+                str(st.session_state.get("ipa_session_value", "") or "").strip()
+            ),
+        },
     ]
 
 
@@ -1006,7 +1102,7 @@ def _render_token_reader_view() -> None:
 
     st.subheader("Lectura Tokens")
     st.caption(
-        "Pega el JSON completo exportado por la extension para guardar Pegasus, Richmond y Loqueleo en esta app."
+        "Pega el JSON completo exportado por la extension para guardar Pegasus, Richmond, Loqueleo e IPA en esta app."
     )
 
     success_notice = str(st.session_state.pop("token_reader_success_notice", "") or "").strip()
@@ -1053,7 +1149,8 @@ def _render_token_reader_view() -> None:
                     "Guardado completado. "
                     f"Pegasus: {summary['pegasus']} | "
                     f"Richmond: {summary['richmond']} | "
-                    f"Loqueleo: {summary['loqueleo']}."
+                    f"Loqueleo: {summary['loqueleo']} | "
+                    f"IPA: {summary['ipa']}."
                 )
             st.rerun()
         if col_load_last.button(
@@ -1079,6 +1176,9 @@ def _render_token_reader_view() -> None:
     ).strip()
     if loqueleo_cookie_header:
         st.caption("Cookie header de Loqueleo guardado en sesion.")
+    ipa_cookie_header = str(st.session_state.get("ipa_cookie_header", "") or "").strip()
+    if ipa_cookie_header:
+        st.caption("Cookie header de IPA guardado en sesion.")
 
 
 @st.cache_data(show_spinner=False)
@@ -1155,6 +1255,7 @@ with menu_main_col:
             "Procesos Pegasus",
             "Richmond Studio",
             "Loqueleo",
+            "IPA",
             "Lectura Tokens",
             "Jira Focus Web",
         ],
@@ -1202,6 +1303,44 @@ if menu_option == "Loqueleo":
     ):
         st.session_state["loqueleo_session_id_input"] = browser_loqueleo_session_id
     render_loqueleo_domain_view()
+    st.stop()
+
+if menu_option == "IPA":
+    ipa_bridge_mode = str(
+        st.session_state.get("ipa_session_bridge_mode") or "read"
+    ).strip().lower() or "read"
+    ipa_bridge_value = extract_ipa_session_value(
+        st.session_state.get("ipa_session_bridge_value", "")
+    )
+    browser_ipa_session_value = _read_browser_ipa_session_value(
+        mode=ipa_bridge_mode,
+        value=ipa_bridge_value,
+    )
+    if ipa_bridge_mode != "read":
+        st.session_state["ipa_session_bridge_mode"] = "read"
+        st.session_state["ipa_session_bridge_value"] = ""
+    if "ipa_session_value" not in st.session_state:
+        if browser_ipa_session_value not in ("", IPA_SESSION_BRIDGE_PENDING):
+            st.session_state["ipa_session_value"] = browser_ipa_session_value
+        else:
+            st.session_state["ipa_session_value"] = ""
+    elif (
+        not str(st.session_state.get("ipa_session_value", "") or "").strip()
+        and browser_ipa_session_value not in ("", IPA_SESSION_BRIDGE_PENDING)
+    ):
+        st.session_state["ipa_session_value"] = browser_ipa_session_value
+    if "ipa_session_value_input" not in st.session_state:
+        st.session_state["ipa_session_value_input"] = str(
+            st.session_state.get("ipa_session_value", "") or ""
+        )
+    elif (
+        not str(st.session_state.get("ipa_session_value_input", "") or "").strip()
+        and browser_ipa_session_value not in ("", IPA_SESSION_BRIDGE_PENDING)
+        and str(st.session_state.get("ipa_session_value", "") or "").strip()
+        == browser_ipa_session_value
+    ):
+        st.session_state["ipa_session_value_input"] = browser_ipa_session_value
+    render_ipa_domain_view()
     st.stop()
 
 if menu_option == "Lectura Tokens":

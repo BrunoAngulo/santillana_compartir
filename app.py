@@ -51,6 +51,10 @@ from santillana_format.richmond import (
     read_richmondstudio_browser_token,
     render_richmond_studio_view,
 )
+from santillana_format.sumun import (
+    generate_sumun_template_from_excel,
+    inspect_sumun_workbook_sheets,
+)
 from santillana_format.pegasus import (
     ALUMNOS_CICLO_ID_DEFAULT,
     CODE_COLUMN_NAME,
@@ -1235,6 +1239,264 @@ def _render_logo_with_hidden_extension_download() -> None:
     )
 
 
+def _render_sumun_template_view() -> None:
+    st.subheader("SUMUN")
+    st.markdown("**Generar plantilla de carga**")
+    st.caption("Sube una matriz SUMUN y genera la plantilla plana de carga.")
+    st.markdown(
+        """
+        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:8px 0 14px 0;">
+          <div style="border-left:6px solid #2f80ed;background:#eef5ff;padding:10px;border-radius:6px;">
+            <b>Azul: contexto</b><br>
+            ITINERARIO, ESTACION, COMPETENCIA, MACROHABILIDAD, MICROHABILIDAD y CONOCIMIENTOS se copian como datos base.
+          </div>
+          <div style="border-left:6px solid #27ae60;background:#eefaf2;padding:10px;border-radius:6px;">
+            <b>Verde: habilidades</b><br>
+            RECORDAR, COMPRENDER, APLICAR, ANALIZAR, EVALUAR y CREAR generan filas nuevas.
+          </div>
+          <div style="border-left:6px solid #f2994a;background:#fff6eb;padding:10px;border-radius:6px;">
+            <b>Naranja: codigos</b><br>
+            El ID se arma con Nivel + Curso + Grado + I + E + MA + MI + ME.
+          </div>
+        </div>
+        <div style="font-size:0.92rem;margin-bottom:12px;">
+          <b>Regla estandar:</b> si ITINERARIO viene como <code>1</code>, la columna ITINERARIO sale como <code>1</code>.
+          Si viene como <code>Itinerario 1. La celula</code>, sale como <code>La celula</code>.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    uploaded_sumun = st.file_uploader(
+        "Excel matriz SUMUN",
+        type=["xlsx"],
+        key="sumun_matrix_upload",
+        help="Puede tener todos los itinerarios en la primera hoja o hitos repartidos en varias hojas.",
+    )
+
+    selected_sumun_sheet_names: List[str] = []
+    if uploaded_sumun is not None:
+        sumun_upload_bytes = uploaded_sumun.getvalue()
+        try:
+            sumun_sheets = inspect_sumun_workbook_sheets(sumun_upload_bytes)
+        except Exception as exc:  # pragma: no cover - UI
+            sumun_sheets = []
+            st.error(f"No se pudieron leer las hojas del Excel: {exc}")
+
+        if sumun_sheets:
+            st.dataframe(
+                [
+                    {
+                        "Indice": item.index,
+                        "Hoja": item.sheet_name,
+                        "Matriz detectada": "Si" if item.detected else "No",
+                        "Filas estimadas": item.estimated_rows,
+                        "Detalle": item.reason,
+                    }
+                    for item in sumun_sheets
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+            sheet_by_index = {item.index: item for item in sumun_sheets}
+            detected_indices = [item.index for item in sumun_sheets if item.detected]
+            if len(sumun_sheets) > 1:
+                sheet_options = ["__detected__", "__all__"] + [
+                    str(item.index) for item in sumun_sheets
+                ]
+
+                def _format_sumun_sheet_option(option: str) -> str:
+                    if option == "__detected__":
+                        return "Todas las hojas detectadas"
+                    if option == "__all__":
+                        return "Todas las hojas"
+                    item = sheet_by_index.get(int(option))
+                    if not item:
+                        return str(option)
+                    return "{idx} - {name}".format(
+                        idx=item.index,
+                        name=item.sheet_name,
+                    )
+
+                selected_sheet_option = st.selectbox(
+                    "Indice de hoja a procesar",
+                    options=sheet_options,
+                    index=0 if detected_indices else 2,
+                    format_func=_format_sumun_sheet_option,
+                    key="sumun_sheet_option",
+                    help="Usa Todas las hojas detectadas cuando el archivo trae varios hitos en hojas distintas.",
+                )
+                if selected_sheet_option == "__detected__":
+                    selected_indices = detected_indices
+                elif selected_sheet_option == "__all__":
+                    selected_indices = [item.index for item in sumun_sheets]
+                else:
+                    selected_indices = [int(selected_sheet_option)]
+            else:
+                selected_indices = [sumun_sheets[0].index]
+                st.caption(
+                    "Solo hay una hoja; se procesara: "
+                    f"{sumun_sheets[0].sheet_name}."
+                )
+            selected_sumun_sheet_names = [
+                sheet_by_index[int(idx)].sheet_name
+                for idx in selected_indices
+                if int(idx) in sheet_by_index
+            ]
+            selected_with_zero_rows = [
+                sheet_by_index[int(idx)].sheet_name
+                for idx in selected_indices
+                if int(idx) in sheet_by_index
+                and not sheet_by_index[int(idx)].estimated_rows
+            ]
+            if selected_with_zero_rows:
+                st.warning(
+                    "Estas hojas seleccionadas no tienen filas estimadas de matriz: "
+                    + ", ".join(selected_with_zero_rows)
+                )
+
+    col_sumun_code, col_sumun_grade, col_sumun_level, col_sumun_area = st.columns(4)
+    sumun_course_code_choice = col_sumun_code.selectbox(
+        "Codigo de curso",
+        options=[
+            "Detectar automaticamente",
+            "COM",
+            "CT",
+            "CCT",
+            "MA",
+            "MAT",
+            "CO",
+            "CCSS",
+            "PS",
+        ],
+        index=0,
+        key="sumun_course_code_combo",
+    )
+    sumun_course_code = (
+        "" if sumun_course_code_choice == "Detectar automaticamente" else sumun_course_code_choice
+    )
+    sumun_grade_choice = col_sumun_grade.selectbox(
+        "Grado",
+        options=["Detectar automaticamente", "1", "2", "3", "4", "5", "6"],
+        index=0,
+        key="sumun_grade_combo",
+    )
+    sumun_grade_raw = (
+        "" if sumun_grade_choice == "Detectar automaticamente" else sumun_grade_choice
+    )
+    sumun_level = col_sumun_level.selectbox(
+        "Nivel",
+        options=["Secundaria", "Primaria"],
+        index=0,
+        key="sumun_level",
+    )
+    sumun_area_choice = col_sumun_area.selectbox(
+        "Area",
+        options=[
+            "Inferir por codigo",
+            "Ciencia y Tecnologia",
+            "Matematica",
+            "Comunicacion",
+            "Ciencias sociales",
+            "Personal Social",
+        ],
+        index=0,
+        key="sumun_area_combo",
+    )
+    sumun_area_by_choice = {
+        "Inferir por codigo": "",
+        "Ciencia y Tecnologia": "Ciencia y Tecnolog\u00eda",
+        "Matematica": "Matem\u00e1tica",
+        "Comunicacion": "Comunicaci\u00f3n",
+        "Ciencias sociales": "Ciencias sociales",
+        "Personal Social": "Personal Social",
+    }
+    sumun_area = sumun_area_by_choice.get(sumun_area_choice, "")
+
+    if st.button("Generar plantilla SUMUN", type="primary", key="sumun_generate_btn"):
+        if uploaded_sumun is None:
+            st.error("Sube un Excel de matriz SUMUN.")
+            st.stop()
+        if not selected_sumun_sheet_names:
+            st.error("Selecciona al menos una hoja para procesar.")
+            st.stop()
+
+        grade_override: Optional[int] = None
+        if sumun_grade_raw.strip():
+            try:
+                grade_override = int(sumun_grade_raw.strip())
+            except ValueError:
+                st.error("El grado debe ser un numero, por ejemplo 1.")
+                st.stop()
+
+        try:
+            output_bytes, summary = generate_sumun_template_from_excel(
+                uploaded_sumun.getvalue(),
+                source_name=uploaded_sumun.name or "matriz_sumun.xlsx",
+                area=sumun_area.strip() or None,
+                grade=grade_override,
+                level=sumun_level,
+                course_code=sumun_course_code.strip() or None,
+                sheet_names=selected_sumun_sheet_names,
+            )
+        except Exception as exc:  # pragma: no cover - UI
+            st.error(f"No se pudo generar la plantilla SUMUN: {exc}")
+            st.stop()
+
+        source_stem = Path(uploaded_sumun.name or "matriz_sumun").stem
+        download_name = f"plantilla_carga_matrices_sumun_{source_stem}.xlsx"
+        st.session_state["sumun_output_bytes"] = output_bytes
+        st.session_state["sumun_output_name"] = download_name
+        st.session_state["sumun_summary"] = summary.to_dict()
+        st.success(
+            "Plantilla lista. Filas: {rows}. Prefijo ID: {prefix}.".format(
+                rows=summary.generated_rows,
+                prefix=summary.prefix,
+            )
+        )
+
+    sumun_output_bytes = st.session_state.get("sumun_output_bytes") or b""
+    sumun_output_name = str(
+        st.session_state.get("sumun_output_name")
+        or "plantilla_carga_matrices_sumun.xlsx"
+    )
+    sumun_summary = st.session_state.get("sumun_summary") or {}
+    if sumun_summary:
+        summary_cols = st.columns(4)
+        summary_cols[0].metric("Filas", int(sumun_summary.get("generated_rows") or 0))
+        summary_cols[1].metric("Prefijo", str(sumun_summary.get("prefix") or ""))
+        summary_cols[2].metric(
+            "Hojas", len(sumun_summary.get("processed_sheets") or [])
+        )
+        summary_cols[3].metric("Micro", int(sumun_summary.get("micro_count") or 0))
+
+        rows_by_sheet = sumun_summary.get("rows_by_sheet") or {}
+        if rows_by_sheet:
+            st.markdown("**Hojas procesadas**")
+            st.dataframe(
+                [
+                    {"Hoja": sheet_name, "Filas generadas": row_count}
+                    for sheet_name, row_count in rows_by_sheet.items()
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+        inherited_rows = sumun_summary.get("nonnumber_station_rows") or []
+        if inherited_rows:
+            st.warning(
+                "Algunas filas tenian estacion no numerada; se heredaron de la estacion anterior: "
+                + ", ".join(map(str, inherited_rows[:20]))
+            )
+
+    if sumun_output_bytes:
+        st.download_button(
+            label="Descargar plantilla SUMUN",
+            data=sumun_output_bytes,
+            file_name=sumun_output_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="sumun_download_btn",
+        )
+
+
 
 
 st.set_page_config(
@@ -1253,6 +1515,7 @@ with menu_main_col:
         "Menu",
         [
             "Procesos Pegasus",
+            "SUMUN",
             "Richmond Studio",
             "Loqueleo",
             "IPA",
@@ -1345,6 +1608,10 @@ if menu_option == "IPA":
 
 if menu_option == "Lectura Tokens":
     _render_token_reader_view()
+    st.stop()
+
+if menu_option == "SUMUN":
+    _render_sumun_template_view()
     st.stop()
 
 if menu_option != "Richmond Studio":
@@ -1479,6 +1746,267 @@ if menu_option != "Richmond Studio":
             )
         else:
             st.caption("No se encontraron colegios para este token.")
+    if False:
+        st.caption("Sube una matriz SUMUN y genera la plantilla plana de carga.")
+        st.markdown(
+            """
+            <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:8px 0 14px 0;">
+              <div style="border-left:6px solid #2f80ed;background:#eef5ff;padding:10px;border-radius:6px;">
+                <b>Azul: contexto</b><br>
+                ITINERARIO, ESTACION, COMPETENCIA, MACROHABILIDAD, MICROHABILIDAD y CONOCIMIENTOS se copian como datos base.
+              </div>
+              <div style="border-left:6px solid #27ae60;background:#eefaf2;padding:10px;border-radius:6px;">
+                <b>Verde: habilidades</b><br>
+                RECORDAR, COMPRENDER, APLICAR, ANALIZAR, EVALUAR y CREAR generan filas nuevas.
+              </div>
+              <div style="border-left:6px solid #f2994a;background:#fff6eb;padding:10px;border-radius:6px;">
+                <b>Naranja: codigos</b><br>
+                El ID se arma con Nivel + Curso + Grado + I + E + MA + MI + ME.
+              </div>
+            </div>
+            <div style="font-size:0.92rem;margin-bottom:12px;">
+              <b>Regla estandar:</b> si ITINERARIO viene como <code>1</code>, la columna ITINERARIO sale como <code>1</code>.
+              Si viene como <code>Itinerario 1. La celula</code>, sale como <code>La celula</code>.
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        uploaded_sumun = st.file_uploader(
+            "Excel matriz SUMUN",
+            type=["xlsx"],
+            key="sumun_matrix_upload",
+            help="Puede tener todos los itinerarios en la primera hoja o hitos repartidos en varias hojas.",
+        )
+
+        selected_sumun_sheet_names: List[str] = []
+        if uploaded_sumun is not None:
+            sumun_upload_bytes = uploaded_sumun.getvalue()
+            try:
+                sumun_sheets = inspect_sumun_workbook_sheets(sumun_upload_bytes)
+            except Exception as exc:  # pragma: no cover - UI
+                sumun_sheets = []
+                st.error(f"No se pudieron leer las hojas del Excel: {exc}")
+
+            if sumun_sheets:
+                st.dataframe(
+                    [
+                        {
+                            "Indice": item.index,
+                            "Hoja": item.sheet_name,
+                            "Matriz detectada": "Si" if item.detected else "No",
+                            "Filas estimadas": item.estimated_rows,
+                            "Detalle": item.reason,
+                        }
+                        for item in sumun_sheets
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                sheet_by_index = {item.index: item for item in sumun_sheets}
+                detected_indices = [
+                    item.index for item in sumun_sheets if item.detected
+                ]
+                if len(sumun_sheets) > 1:
+                    sheet_options = ["__detected__", "__all__"] + [
+                        str(item.index) for item in sumun_sheets
+                    ]
+
+                    def _format_sumun_sheet_option(option: str) -> str:
+                        if option == "__detected__":
+                            return "Todas las hojas detectadas"
+                        if option == "__all__":
+                            return "Todas las hojas"
+                        item = sheet_by_index.get(int(option))
+                        if not item:
+                            return str(option)
+                        return "{idx} - {name}".format(
+                            idx=item.index,
+                            name=item.sheet_name,
+                        )
+
+                    selected_sheet_option = st.selectbox(
+                        "Indice de hoja a procesar",
+                        options=sheet_options,
+                        index=0 if detected_indices else 2,
+                        format_func=_format_sumun_sheet_option,
+                        key="sumun_sheet_option",
+                        help="Usa Todas las hojas detectadas cuando el archivo trae varios hitos en hojas distintas.",
+                    )
+                    if selected_sheet_option == "__detected__":
+                        selected_indices = detected_indices
+                    elif selected_sheet_option == "__all__":
+                        selected_indices = [item.index for item in sumun_sheets]
+                    else:
+                        selected_indices = [int(selected_sheet_option)]
+                else:
+                    selected_indices = [sumun_sheets[0].index]
+                    st.caption(
+                        "Solo hay una hoja; se procesara: "
+                        f"{sumun_sheets[0].sheet_name}."
+                    )
+                selected_sumun_sheet_names = [
+                    sheet_by_index[int(idx)].sheet_name
+                    for idx in selected_indices
+                    if int(idx) in sheet_by_index
+                ]
+                selected_with_zero_rows = [
+                    sheet_by_index[int(idx)].sheet_name
+                    for idx in selected_indices
+                    if int(idx) in sheet_by_index
+                    and not sheet_by_index[int(idx)].estimated_rows
+                ]
+                if selected_with_zero_rows:
+                    st.warning(
+                        "Estas hojas seleccionadas no tienen filas estimadas de matriz: "
+                        + ", ".join(selected_with_zero_rows)
+                    )
+
+        col_sumun_code, col_sumun_grade, col_sumun_level, col_sumun_area = st.columns(4)
+        sumun_course_code_choice = col_sumun_code.selectbox(
+            "Codigo de curso",
+            options=[
+                "Detectar automaticamente",
+                "COM",
+                "CT",
+                "CCT",
+                "MA",
+                "MAT",
+                "CO",
+                "CCSS",
+                "PS",
+            ],
+            index=0,
+            key="sumun_course_code_combo",
+        )
+        sumun_course_code = (
+            "" if sumun_course_code_choice == "Detectar automaticamente" else sumun_course_code_choice
+        )
+        sumun_grade_choice = col_sumun_grade.selectbox(
+            "Grado",
+            options=["Detectar automaticamente", "1", "2", "3", "4", "5", "6"],
+            index=0,
+            key="sumun_grade_combo",
+        )
+        sumun_grade_raw = (
+            "" if sumun_grade_choice == "Detectar automaticamente" else sumun_grade_choice
+        )
+        sumun_level = col_sumun_level.selectbox(
+            "Nivel",
+            options=["Secundaria", "Primaria"],
+            index=0,
+            key="sumun_level",
+        )
+        sumun_area_choice = col_sumun_area.selectbox(
+            "Area",
+            options=[
+                "Inferir por codigo",
+                "Ciencia y Tecnologia",
+                "Matematica",
+                "Comunicacion",
+                "Ciencias sociales",
+                "Personal Social",
+            ],
+            index=0,
+            key="sumun_area_combo",
+        )
+        sumun_area_by_choice = {
+            "Inferir por codigo": "",
+            "Ciencia y Tecnologia": "Ciencia y Tecnolog\u00eda",
+            "Matematica": "Matem\u00e1tica",
+            "Comunicacion": "Comunicaci\u00f3n",
+            "Ciencias sociales": "Ciencias sociales",
+            "Personal Social": "Personal Social",
+        }
+        sumun_area = sumun_area_by_choice.get(sumun_area_choice, "")
+
+        if st.button("Generar plantilla SUMUN", type="primary", key="sumun_generate_btn"):
+            if uploaded_sumun is None:
+                st.error("Sube un Excel de matriz SUMUN.")
+                st.stop()
+            if not selected_sumun_sheet_names:
+                st.error("Selecciona al menos una hoja para procesar.")
+                st.stop()
+
+            grade_override: Optional[int] = None
+            if sumun_grade_raw.strip():
+                try:
+                    grade_override = int(sumun_grade_raw.strip())
+                except ValueError:
+                    st.error("El grado debe ser un numero, por ejemplo 1.")
+                    st.stop()
+
+            try:
+                output_bytes, summary = generate_sumun_template_from_excel(
+                    uploaded_sumun.getvalue(),
+                    source_name=uploaded_sumun.name or "matriz_sumun.xlsx",
+                    area=sumun_area.strip() or None,
+                    grade=grade_override,
+                    level=sumun_level,
+                    course_code=sumun_course_code.strip() or None,
+                    sheet_names=selected_sumun_sheet_names,
+                )
+            except Exception as exc:  # pragma: no cover - UI
+                st.error(f"No se pudo generar la plantilla SUMUN: {exc}")
+                st.stop()
+
+            source_stem = Path(uploaded_sumun.name or "matriz_sumun").stem
+            download_name = f"plantilla_carga_matrices_sumun_{source_stem}.xlsx"
+            st.session_state["sumun_output_bytes"] = output_bytes
+            st.session_state["sumun_output_name"] = download_name
+            st.session_state["sumun_summary"] = summary.to_dict()
+            st.success(
+                "Plantilla lista. Filas: {rows}. Prefijo ID: {prefix}.".format(
+                    rows=summary.generated_rows,
+                    prefix=summary.prefix,
+                )
+            )
+
+        sumun_output_bytes = st.session_state.get("sumun_output_bytes") or b""
+        sumun_output_name = str(
+            st.session_state.get("sumun_output_name")
+            or "plantilla_carga_matrices_sumun.xlsx"
+        )
+        sumun_summary = st.session_state.get("sumun_summary") or {}
+        if sumun_summary:
+            summary_cols = st.columns(4)
+            summary_cols[0].metric(
+                "Filas", int(sumun_summary.get("generated_rows") or 0)
+            )
+            summary_cols[1].metric("Prefijo", str(sumun_summary.get("prefix") or ""))
+            summary_cols[2].metric(
+                "Hojas", len(sumun_summary.get("processed_sheets") or [])
+            )
+            summary_cols[3].metric(
+                "Micro", int(sumun_summary.get("micro_count") or 0)
+            )
+
+            rows_by_sheet = sumun_summary.get("rows_by_sheet") or {}
+            if rows_by_sheet:
+                st.markdown("**Hojas procesadas**")
+                st.dataframe(
+                    [
+                        {"Hoja": sheet_name, "Filas generadas": row_count}
+                        for sheet_name, row_count in rows_by_sheet.items()
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            inherited_rows = sumun_summary.get("nonnumber_station_rows") or []
+            if inherited_rows:
+                st.warning(
+                    "Algunas filas tenian estacion no numerada; se heredaron de la estacion anterior: "
+                    + ", ".join(map(str, inherited_rows[:20]))
+                )
+
+        if sumun_output_bytes:
+            st.download_button(
+                label="Descargar plantilla SUMUN",
+                data=sumun_output_bytes,
+                file_name=sumun_output_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="sumun_download_btn",
+            )
+
     tab_crud_clases, tab_crud_profesores, tab_crud_alumnos = st.tabs(
         [
             "CRUD Clases",
@@ -9588,8 +10116,6 @@ def _render_users_payments_section(
                         st.caption(
                             f"... y {len(results_apply_multi) - 120} filas mas."
                         )
-
-
 with tab_crud_clases:
     if not _restricted_sections_unlocked():
         _render_restricted_blur("CRUD Clases", "clases_1")

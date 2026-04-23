@@ -14,11 +14,6 @@ const SOURCE_META = {
     primaryField: "sessionId",
     emptyValue: "",
   },
-  ipa: {
-    label: "IPA",
-    primaryField: "sessionValue",
-    emptyValue: "",
-  },
 };
 
 let currentSnapshot = null;
@@ -126,7 +121,6 @@ function renderSnapshot(snapshot) {
   renderSource("pegasus", sources.pegasus);
   renderSource("richmond", sources.richmond);
   renderSource("loqueleo", sources.loqueleo);
-  renderSource("ipa", sources.ipa);
   setStatus(`Última lectura: ${formatDate(snapshot?.readAt)}`);
 }
 

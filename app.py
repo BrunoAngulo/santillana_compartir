@@ -42,10 +42,6 @@ except ModuleNotFoundError:
         )
 
 from santillana_format.jira import render_jira_focus_web
-from santillana_format.ipa import (
-    extract_ipa_session_value,
-    render_ipa_view as render_ipa_domain_view,
-)
 from santillana_format.loqueleo import render_loqueleo_view as render_loqueleo_domain_view
 from santillana_format.richmond import (
     read_richmondstudio_browser_token,
@@ -140,6 +136,10 @@ GESTION_ESCOLAR_URL = (
 GESTION_ESCOLAR_ALUMNOS_CLASE_URL = (
     "https://www.uno-internacional.com/pegasus-api/gestionEscolar/empresas/"
     "{empresa_id}/ciclos/{ciclo_id}/clases/{clase_id}/alumnos"
+)
+GESTION_ESCOLAR_STAFF_CLASE_URL = (
+    "https://www.uno-internacional.com/pegasus-api/gestionEscolar/empresas/"
+    "{empresa_id}/ciclos/{ciclo_id}/clases/{clase_id}/staff"
 )
 GESTION_ESCOLAR_CLASE_PARTICIPANTES_URL = (
     "https://www.uno-internacional.com/pegasus-api/gestionEscolar/empresas/"
@@ -306,11 +306,6 @@ LOQUELEO_SESSION_BRIDGE_COMPONENT = components.declare_component(
     "loqueleo_session_bridge",
     path=str(Path(__file__).resolve().parent / "components" / "loqueleo_session_bridge"),
 )
-IPA_SESSION_BRIDGE_PENDING = "__pending__"
-IPA_SESSION_BRIDGE_COMPONENT = components.declare_component(
-    "ipa_session_bridge",
-    path=str(Path(__file__).resolve().parent / "components" / "ipa_session_bridge"),
-)
 _PARTICIPANTES_SYNC_STATUS_LIMIT = 12
 
 
@@ -374,23 +369,6 @@ def _read_browser_loqueleo_session_id(mode: str = "read", value: object = "") ->
     if str(browser_value or "") == LOQUELEO_SESSION_BRIDGE_PENDING:
         return LOQUELEO_SESSION_BRIDGE_PENDING
     return str(browser_value or "").strip()
-
-
-def _read_browser_ipa_session_value(mode: str = "read", value: object = "") -> str:
-    try:
-        browser_value = IPA_SESSION_BRIDGE_COMPONENT(
-            key="ipa_session_bridge_component",
-            default=IPA_SESSION_BRIDGE_PENDING,
-            mode=str(mode or "read").strip().lower() or "read",
-            value=extract_ipa_session_value(value),
-        )
-    except Exception:
-        return ""
-    if str(browser_value or "") == IPA_SESSION_BRIDGE_PENDING:
-        return IPA_SESSION_BRIDGE_PENDING
-    return extract_ipa_session_value(browser_value)
-
-
 
 
 def _get_jira_login_candidates() -> Set[str]:
@@ -846,31 +824,6 @@ def _extract_loqueleo_session_id_from_source(source: object) -> str:
     return ""
 
 
-def _extract_ipa_session_value_from_source(source: object) -> str:
-    if not isinstance(source, dict):
-        return ""
-
-    for key in ("sessionValue", "value", "sessionId"):
-        direct_value = extract_ipa_session_value(source.get(key))
-        if direct_value:
-            return direct_value
-
-    cookie_header = str(source.get("cookieHeader") or "").strip()
-    if "local-santadmin=" in cookie_header:
-        header_value = extract_ipa_session_value(cookie_header)
-        if header_value:
-            return header_value
-
-    cookies = source.get("cookies")
-    if isinstance(cookies, list):
-        for item in cookies:
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("name") or "").strip() == "local-santadmin":
-                return extract_ipa_session_value(item.get("value"))
-    return ""
-
-
 def _mask_secret_value(value: object, visible_chars: int = 6) -> str:
     text = str(value or "").strip()
     if not text:
@@ -944,26 +897,6 @@ def _sync_token_reader_bridge_state() -> None:
         st.session_state["loqueleo_session_id"] = browser_loqueleo_session_id
         st.session_state["loqueleo_session_id_input"] = browser_loqueleo_session_id
 
-    ipa_bridge_mode = str(
-        st.session_state.get("ipa_session_bridge_mode") or "read"
-    ).strip().lower() or "read"
-    ipa_bridge_value = extract_ipa_session_value(
-        st.session_state.get("ipa_session_bridge_value", "")
-    )
-    browser_ipa_session_value = _read_browser_ipa_session_value(
-        mode=ipa_bridge_mode,
-        value=ipa_bridge_value,
-    )
-    if ipa_bridge_mode != "read":
-        st.session_state["ipa_session_bridge_mode"] = "read"
-        st.session_state["ipa_session_bridge_value"] = ""
-    if (
-        browser_ipa_session_value not in ("", IPA_SESSION_BRIDGE_PENDING)
-        and not str(st.session_state.get("ipa_session_value", "") or "").strip()
-    ):
-        st.session_state["ipa_session_value"] = browser_ipa_session_value
-        st.session_state["ipa_session_value_input"] = browser_ipa_session_value
-
 
 def _apply_token_snapshot_payload(payload: Dict[str, object]) -> Dict[str, str]:
     read_at = str(payload.get("readAt") or "").strip()
@@ -1015,22 +948,6 @@ def _apply_token_snapshot_payload(payload: Dict[str, object]) -> Dict[str, str]:
     if isinstance(loqueleo_cookie_items, list):
         st.session_state["loqueleo_cookie_items"] = loqueleo_cookie_items
 
-    ipa_source = _extract_snapshot_source(payload, "ipa")
-    ipa_session_value = _extract_ipa_session_value_from_source(ipa_source)
-    ipa_cookie_header = str(ipa_source.get("cookieHeader") or "").strip()
-    ipa_cookie_items = ipa_source.get("cookies")
-    if ipa_session_value:
-        st.session_state["ipa_session_value"] = ipa_session_value
-        st.session_state["ipa_session_value_input"] = ipa_session_value
-        st.session_state["ipa_session_bridge_mode"] = "write"
-        st.session_state["ipa_session_bridge_value"] = ipa_session_value
-        summary["ipa"] = "guardado"
-    else:
-        summary["ipa"] = "sin valor"
-    st.session_state["ipa_cookie_header"] = ipa_cookie_header
-    if isinstance(ipa_cookie_items, list):
-        st.session_state["ipa_cookie_items"] = ipa_cookie_items
-
     if read_at:
         st.session_state["token_reader_last_read_at"] = read_at
     st.session_state["token_reader_last_snapshot_json"] = json.dumps(
@@ -1076,17 +993,6 @@ def _build_token_reader_status_rows() -> List[Dict[str, str]]:
                 str(st.session_state.get("loqueleo_session_id", "") or "").strip()
             ),
         },
-        {
-            "Seccion": "IPA",
-            "Estado": (
-                "Guardado"
-                if str(st.session_state.get("ipa_session_value", "") or "").strip()
-                else "Sin dato"
-            ),
-            "Valor": _mask_secret_value(
-                str(st.session_state.get("ipa_session_value", "") or "").strip()
-            ),
-        },
     ]
 
 
@@ -1106,7 +1012,7 @@ def _render_token_reader_view() -> None:
 
     st.subheader("Lectura Tokens")
     st.caption(
-        "Pega el JSON completo exportado por la extension para guardar Pegasus, Richmond, Loqueleo e IPA en esta app."
+        "Pega el JSON completo exportado por la extension para guardar Pegasus, Richmond y Loqueleo en esta app."
     )
 
     success_notice = str(st.session_state.pop("token_reader_success_notice", "") or "").strip()
@@ -1153,8 +1059,7 @@ def _render_token_reader_view() -> None:
                     "Guardado completado. "
                     f"Pegasus: {summary['pegasus']} | "
                     f"Richmond: {summary['richmond']} | "
-                    f"Loqueleo: {summary['loqueleo']} | "
-                    f"IPA: {summary['ipa']}."
+                    f"Loqueleo: {summary['loqueleo']}."
                 )
             st.rerun()
         if col_load_last.button(
@@ -1180,9 +1085,6 @@ def _render_token_reader_view() -> None:
     ).strip()
     if loqueleo_cookie_header:
         st.caption("Cookie header de Loqueleo guardado en sesion.")
-    ipa_cookie_header = str(st.session_state.get("ipa_cookie_header", "") or "").strip()
-    if ipa_cookie_header:
-        st.caption("Cookie header de IPA guardado en sesion.")
 
 
 @st.cache_data(show_spinner=False)
@@ -1511,6 +1413,8 @@ with menu_logo_col:
     _render_logo_with_hidden_extension_download()
 with menu_main_col:
     st.markdown("**Menu principal**")
+    if st.session_state.get("main_top_menu") == "IPA":
+        st.session_state["main_top_menu"] = "Procesos Pegasus"
     menu_option = st.radio(
         "Menu",
         [
@@ -1518,7 +1422,6 @@ with menu_main_col:
             "SUMUN",
             "Richmond Studio",
             "Loqueleo",
-            "IPA",
             "Lectura Tokens",
             "Jira Focus Web",
         ],
@@ -1566,44 +1469,6 @@ if menu_option == "Loqueleo":
     ):
         st.session_state["loqueleo_session_id_input"] = browser_loqueleo_session_id
     render_loqueleo_domain_view()
-    st.stop()
-
-if menu_option == "IPA":
-    ipa_bridge_mode = str(
-        st.session_state.get("ipa_session_bridge_mode") or "read"
-    ).strip().lower() or "read"
-    ipa_bridge_value = extract_ipa_session_value(
-        st.session_state.get("ipa_session_bridge_value", "")
-    )
-    browser_ipa_session_value = _read_browser_ipa_session_value(
-        mode=ipa_bridge_mode,
-        value=ipa_bridge_value,
-    )
-    if ipa_bridge_mode != "read":
-        st.session_state["ipa_session_bridge_mode"] = "read"
-        st.session_state["ipa_session_bridge_value"] = ""
-    if "ipa_session_value" not in st.session_state:
-        if browser_ipa_session_value not in ("", IPA_SESSION_BRIDGE_PENDING):
-            st.session_state["ipa_session_value"] = browser_ipa_session_value
-        else:
-            st.session_state["ipa_session_value"] = ""
-    elif (
-        not str(st.session_state.get("ipa_session_value", "") or "").strip()
-        and browser_ipa_session_value not in ("", IPA_SESSION_BRIDGE_PENDING)
-    ):
-        st.session_state["ipa_session_value"] = browser_ipa_session_value
-    if "ipa_session_value_input" not in st.session_state:
-        st.session_state["ipa_session_value_input"] = str(
-            st.session_state.get("ipa_session_value", "") or ""
-        )
-    elif (
-        not str(st.session_state.get("ipa_session_value_input", "") or "").strip()
-        and browser_ipa_session_value not in ("", IPA_SESSION_BRIDGE_PENDING)
-        and str(st.session_state.get("ipa_session_value", "") or "").strip()
-        == browser_ipa_session_value
-    ):
-        st.session_state["ipa_session_value_input"] = browser_ipa_session_value
-    render_ipa_domain_view()
     st.stop()
 
 if menu_option == "Lectura Tokens":
@@ -2007,11 +1872,12 @@ if menu_option != "Richmond Studio":
                 key="sumun_download_btn",
             )
 
-    tab_crud_clases, tab_crud_profesores, tab_crud_alumnos = st.tabs(
+    tab_crud_clases, tab_crud_profesores, tab_crud_alumnos, tab_otras_funcionalidades = st.tabs(
         [
             "CRUD Clases",
             "CRUD Profesores",
             "CRUD Alumnos",
+            "Otras funcionalidades",
         ]
     )
 
@@ -3002,6 +2868,193 @@ def _safe_int(value: object) -> Optional[int]:
         return None
 
 
+def _fetch_profesores_clase_gestion_escolar(
+    token: str,
+    clase_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+) -> List[Dict[str, object]]:
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    url = GESTION_ESCOLAR_STAFF_CLASE_URL.format(
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        clase_id=int(clase_id),
+    )
+    try:
+        response = requests.get(
+            url,
+            headers=headers,
+            params={"rolClave": "PROF"},
+            timeout=int(timeout),
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Error de red: {exc}") from exc
+
+    status_code = response.status_code
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError(f"Respuesta no JSON (status {status_code})") from exc
+
+    if not response.ok:
+        message = payload.get("message") if isinstance(payload, dict) else ""
+        raise RuntimeError(message or f"HTTP {status_code}")
+
+    if not isinstance(payload, dict) or not payload.get("success", False):
+        message = payload.get("message") if isinstance(payload, dict) else "Respuesta invalida"
+        raise RuntimeError(message or "Respuesta invalida")
+
+    data = payload.get("data")
+    raw_rows: List[Dict[str, object]] = []
+    if isinstance(data, list):
+        raw_rows = [item for item in data if isinstance(item, dict)]
+    elif isinstance(data, dict):
+        for key in (
+            "claseStaff",
+            "staff",
+            "personas",
+            "personaRoles",
+            "content",
+            "items",
+            "lista",
+            "data",
+        ):
+            value = data.get(key)
+            if isinstance(value, list):
+                raw_rows = [item for item in value if isinstance(item, dict)]
+                break
+        if not raw_rows and "personaId" in data:
+            raw_rows = [data]
+    else:
+        raise RuntimeError("Campo data no es lista")
+
+    rows: List[Dict[str, object]] = []
+    for item in raw_rows:
+        rol = item.get("rol") if isinstance(item.get("rol"), dict) else {}
+        rol_clave = str(rol.get("rolClave") or "").strip()
+        if rol_clave and rol_clave != "PROF":
+            continue
+        persona = item.get("persona") if isinstance(item.get("persona"), dict) else {}
+        persona_id = _safe_int(item.get("personaId")) or _safe_int(
+            persona.get("personaId")
+        )
+        if persona_id is None:
+            continue
+        persona_login = (
+            persona.get("personaLogin")
+            if isinstance(persona.get("personaLogin"), dict)
+            else {}
+        )
+        nombre = str(persona.get("nombreCompleto") or "").strip()
+        if not nombre:
+            nombre = " ".join(
+                part
+                for part in (
+                    str(persona.get("nombre") or "").strip(),
+                    str(persona.get("apellidoPaterno") or "").strip(),
+                    str(persona.get("apellidoMaterno") or "").strip(),
+                )
+                if part
+            ).strip()
+        rows.append(
+            {
+                "persona_id": int(persona_id),
+                "nombre": nombre or f"Persona {int(persona_id)}",
+                "nombre_base": str(persona.get("nombre") or "").strip(),
+                "apellido_paterno": str(persona.get("apellidoPaterno") or "").strip(),
+                "apellido_materno": str(persona.get("apellidoMaterno") or "").strip(),
+                "login": str(persona_login.get("login") or "").strip(),
+                "dni": str(persona.get("idOficial") or "").strip(),
+                "activo": bool(item.get("activo", True)),
+            }
+        )
+    rows.sort(
+        key=lambda row: (
+            str(row.get("apellido_paterno") or "").upper(),
+            str(row.get("apellido_materno") or "").upper(),
+            str(row.get("nombre") or "").upper(),
+            int(row.get("persona_id") or 0),
+        )
+    )
+    return rows
+
+
+def _assign_profesor_to_clase_web(
+    token: str,
+    clase_id: int,
+    persona_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+) -> Tuple[bool, str]:
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    url = GESTION_ESCOLAR_STAFF_CLASE_URL.format(
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        clase_id=int(clase_id),
+    )
+    payload = {"rolClave": "PROF", "personaId": int(persona_id)}
+    try:
+        response = requests.post(
+            url,
+            headers=headers,
+            json=payload,
+            timeout=int(timeout),
+        )
+    except requests.RequestException as exc:
+        return False, f"Error de red: {exc}"
+
+    status_code = response.status_code
+    try:
+        body = response.json() if response.content else {}
+    except ValueError:
+        body = {}
+
+    if not response.ok:
+        message = str(body.get("message") or "").strip() if isinstance(body, dict) else ""
+        return False, message or f"HTTP {status_code}"
+    if isinstance(body, dict) and body.get("success", True) is False:
+        message = str(body.get("message") or "Respuesta invalida").strip()
+        return False, message
+    return True, ""
+
+
+def _delete_profesor_clase_gestion_escolar(
+    token: str,
+    clase_id: int,
+    persona_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+) -> None:
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    base_url = GESTION_ESCOLAR_STAFF_CLASE_URL.format(
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        clase_id=int(clase_id),
+    )
+    url = f"{base_url}/{int(persona_id)}"
+    try:
+        response = requests.delete(url, headers=headers, timeout=int(timeout))
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Error de red: {exc}") from exc
+
+    status_code = response.status_code
+    try:
+        payload = response.json() if response.content else {}
+    except ValueError:
+        payload = {}
+
+    if not response.ok:
+        message = str(payload.get("message") or "").strip() if isinstance(payload, dict) else ""
+        raise RuntimeError(message or f"HTTP {status_code}")
+
+    if isinstance(payload, dict) and payload.get("success") is False:
+        message = str(payload.get("message") or "Respuesta invalida").strip()
+        raise RuntimeError(message)
+
+
 def _extract_clase_meta(item: Dict[str, object]) -> Optional[Dict[str, object]]:
     base_meta = _extract_clase_base_meta(item)
     if not isinstance(base_meta, dict):
@@ -3063,6 +3116,178 @@ def _is_ingles_por_niveles_class(item: Dict[str, object]) -> bool:
     if "INGLES" in search_text or "ENGLISH" in search_text:
         return True
     return "PAI" in search_text and "EMERGENT" in search_text
+
+
+def _build_clase_participantes_row(item: Dict[str, object]) -> Optional[Dict[str, object]]:
+    base_meta = _extract_clase_base_meta(item)
+    if not isinstance(base_meta, dict):
+        return None
+    clase_nombre = str(item.get("geClase") or "").strip()
+    clase_codigo = str(item.get("geClaseClave") or "").strip()
+    alias = str(item.get("alias") or "").strip()
+    display_name = clase_nombre or alias or clase_codigo or str(
+        base_meta.get("clase_nombre") or ""
+    ).strip()
+    row = {
+        **base_meta,
+        "clase": display_name,
+        "clase_codigo": clase_codigo,
+        "alias": alias,
+        "activo": bool(item.get("activo", False)),
+        "baja": bool(item.get("baja", False)),
+    }
+    row["label"] = _clase_participantes_label(row)
+    return row
+
+
+def _clase_participantes_label(row: Dict[str, object]) -> str:
+    clase = str(row.get("clase") or row.get("clase_nombre") or "").strip()
+    clase_id = _safe_int(row.get("clase_id"))
+    nivel = str(row.get("nivel_nombre") or "").strip()
+    grado = str(row.get("grado_nombre") or "").strip()
+    grupo = str(row.get("grupo_clave_actual") or "").strip()
+    context = " | ".join(part for part in (nivel, grado, grupo) if part)
+    base = clase or f"Clase {clase_id or '-'}"
+    if clase_id is not None:
+        base = f"{base} | ID {int(clase_id)}"
+    if context:
+        base = f"{base} | {context}"
+    return base
+
+
+def _extract_clase_alumno_rows(clase_data: Dict[str, object]) -> List[Dict[str, object]]:
+    clase_alumnos = clase_data.get("claseAlumnos") if isinstance(clase_data, dict) else []
+    if not isinstance(clase_alumnos, list):
+        return []
+    rows: List[Dict[str, object]] = []
+    for entry in clase_alumnos:
+        if not isinstance(entry, dict):
+            continue
+        alumno = entry.get("alumno") if isinstance(entry.get("alumno"), dict) else entry
+        persona = alumno.get("persona") if isinstance(alumno.get("persona"), dict) else {}
+        persona_login = (
+            persona.get("personaLogin")
+            if isinstance(persona.get("personaLogin"), dict)
+            else {}
+        )
+        alumno_id = _safe_int(alumno.get("alumnoId")) or _safe_int(entry.get("alumnoId"))
+        if alumno_id is None:
+            continue
+        nombre = str(persona.get("nombreCompleto") or "").strip()
+        if not nombre:
+            nombre = " ".join(
+                part
+                for part in (
+                    str(persona.get("nombre") or "").strip(),
+                    str(persona.get("apellidoPaterno") or "").strip(),
+                    str(persona.get("apellidoMaterno") or "").strip(),
+                )
+                if part
+            ).strip()
+        rows.append(
+            {
+                "alumno_id": int(alumno_id),
+                "persona_id": (
+                    _safe_int(persona.get("personaId"))
+                    or _safe_int(alumno.get("personaId"))
+                    or _safe_int(entry.get("personaId"))
+                    or ""
+                ),
+                "nombre_completo": nombre or f"Alumno {int(alumno_id)}",
+                "nombre": str(persona.get("nombre") or "").strip(),
+                "apellido_paterno": str(persona.get("apellidoPaterno") or "").strip(),
+                "apellido_materno": str(persona.get("apellidoMaterno") or "").strip(),
+                "dni": str(
+                    persona.get("idOficial")
+                    or alumno.get("idOficial")
+                    or entry.get("idOficial")
+                    or ""
+                ).strip(),
+                "login": str(
+                    persona_login.get("login")
+                    or alumno.get("login")
+                    or entry.get("login")
+                    or ""
+                ).strip(),
+            }
+        )
+    rows.sort(
+        key=lambda row: (
+            str(row.get("apellido_paterno") or "").upper(),
+            str(row.get("apellido_materno") or "").upper(),
+            str(row.get("nombre_completo") or "").upper(),
+            int(row.get("alumno_id") or 0),
+        )
+    )
+    return rows
+
+
+def _load_clase_participantes_detail(
+    token: str,
+    clase_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+) -> Dict[str, object]:
+    errors: List[str] = []
+    alumnos_rows: List[Dict[str, object]] = []
+    profesores_rows: List[Dict[str, object]] = []
+    try:
+        clase_data = _fetch_alumnos_clase_gestion_escolar(
+            token=token,
+            clase_id=int(clase_id),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+        )
+        alumnos_rows = _extract_clase_alumno_rows(clase_data)
+    except Exception as exc:
+        errors.append(f"Alumnos: {exc}")
+    try:
+        profesores_rows = _fetch_profesores_clase_gestion_escolar(
+            token=token,
+            clase_id=int(clase_id),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+        )
+    except Exception as exc:
+        errors.append(f"Profesores: {exc}")
+    return {
+        "alumnos": alumnos_rows,
+        "profesores": profesores_rows,
+        "errors": errors,
+    }
+
+
+def _clase_person_label(row: Dict[str, object], id_key: str) -> str:
+    nombre = str(
+        row.get("nombre_completo")
+        or row.get("nombre")
+        or row.get("label")
+        or ""
+    ).strip()
+    entity_id = _safe_int(row.get(id_key))
+    login = str(row.get("login") or "").strip()
+    dni = str(row.get("dni") or row.get("id_oficial") or "").strip()
+    parts = [nombre or f"ID {entity_id or '-'}"]
+    if entity_id is not None:
+        parts.append(f"ID {int(entity_id)}")
+    if login:
+        parts.append(login)
+    if dni:
+        parts.append(f"DNI {dni}")
+    return " | ".join(parts)
+
+
+def _row_matches_text(row: Dict[str, object], search_text: object, fields: Sequence[str]) -> bool:
+    search_norm = _normalize_compare_text(search_text)
+    if not search_norm:
+        return True
+    haystack = _normalize_compare_text(
+        " ".join(str(row.get(field) or "") for field in fields)
+    )
+    return search_norm in haystack
 
 
 def _participantes_ingles_grade_key(nivel_id: object, grado_id: object) -> str:
@@ -3544,10 +3769,11 @@ def _build_auto_group_rows_for_participantes(
     niveles_data: List[Dict[str, object]],
     exclude_ingles_por_niveles: bool = False,
     ingles_grade_keys: Optional[Set[str]] = None,
-) -> Tuple[List[Dict[str, object]], List[str]]:
+) -> Tuple[List[Dict[str, object]], List[str], List[str]]:
     grupos_por_grado = _build_grupos_disponibles_por_grado(niveles_data)
     rows_auto: List[Dict[str, object]] = []
     warnings_auto: List[str] = []
+    skipped_ingles: List[str] = []
 
     for item in clases:
         if not isinstance(item, dict):
@@ -3582,14 +3808,11 @@ def _build_auto_group_rows_for_participantes(
             and ingles_grade_key
             and ingles_grade_key in (ingles_grade_keys or set())
         ):
-            rows_auto.append(
-                {
-                    **base_meta,
-                    "options": [],
-                    "selected_group_id": base_meta.get("grupo_id_actual"),
-                    "clear_current_students": True,
-                    "clear_reason": "Ingles por niveles",
-                }
+            skipped_ingles.append(
+                "Clase {clase_id} omitida por Ingles por niveles: conserva sus "
+                "alumnos actuales y se administra desde el Excel de ingles.".format(
+                    clase_id=base_meta.get("clase_id") or item.get("geClaseId") or "-"
+                )
             )
             continue
         meta = _extract_clase_meta(item)
@@ -3627,7 +3850,7 @@ def _build_auto_group_rows_for_participantes(
         )
 
     rows_auto.sort(key=_participantes_auto_row_sort_key)
-    return rows_auto, warnings_auto
+    return rows_auto, warnings_auto, skipped_ingles
 
 
 def _resolve_auto_group_selection(
@@ -3933,7 +4156,7 @@ def _run_participantes_sync_job(
         if _is_participantes_sync_job_cancel_requested(job_id):
             raise _ParticipantesSyncCancelled(summary_auto, detail_rows_auto, {})
 
-        rows_auto, warnings_auto = _build_auto_group_rows_for_participantes(
+        rows_auto, warnings_auto, skipped_ingles_auto = _build_auto_group_rows_for_participantes(
             clases=clases,
             niveles_data=niveles_data,
             exclude_ingles_por_niveles=bool(exclude_ingles_por_niveles),
@@ -3954,6 +4177,13 @@ def _run_participantes_sync_job(
                 ingles="Si" if exclude_ingles_por_niveles else "No",
             ),
         )
+        if skipped_ingles_auto:
+            _append_participantes_sync_job_message(
+                job_id,
+                "Clases de Ingles por niveles protegidas={total}. No se vacian ni se sincronizan en la asignacion masiva.".format(
+                    total=len(skipped_ingles_auto)
+                ),
+            )
 
         if rows_auto:
             summary_auto, detail_rows_auto, group_error_lines = _sync_participantes_por_grado_seccion(
@@ -5788,7 +6018,6 @@ def _render_ingles_por_niveles_excel_assignment_block(
                         ),
                     }
                     st.rerun()
-
         if isinstance(result_notice_state, dict) and result_notice_state.get("message"):
             notice_kind = str(result_notice_state.get("kind") or "success").strip().lower()
             notice_message = str(result_notice_state.get("message") or "").strip()
@@ -8651,6 +8880,1225 @@ def _render_crud_menu(
     return str(selected or options[0])
 
 
+def _render_clases_participantes_section(
+    colegio_id_raw: str,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+) -> None:
+    token = _get_shared_token()
+    current_colegio_id = _safe_int(colegio_id_raw)
+    cached_colegio_id = _safe_int(
+        st.session_state.get("clases_participantes_colegio_id")
+    )
+    if (
+        cached_colegio_id is not None
+        and current_colegio_id is not None
+        and int(cached_colegio_id) != int(current_colegio_id)
+    ):
+        for state_key in list(st.session_state.keys()):
+            if str(state_key).startswith("clases_participantes_"):
+                st.session_state.pop(state_key, None)
+
+    def _refresh_detail(clase_id_value: int) -> Dict[str, object]:
+        payload = _load_clase_participantes_detail(
+            token=token,
+            clase_id=int(clase_id_value),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+        )
+        st.session_state["clases_participantes_detail"] = payload
+        st.session_state["clases_participantes_detail_clase_id"] = int(clase_id_value)
+        return payload
+
+    def _clear_action_widgets() -> None:
+        for state_key in (
+            "clases_participantes_remove_alumnos",
+            "clases_participantes_confirm_remove_alumnos",
+            "clases_participantes_add_alumnos",
+            "clases_participantes_remove_profesores",
+            "clases_participantes_confirm_remove_profesores",
+            "clases_participantes_add_profesores",
+        ):
+            st.session_state.pop(state_key, None)
+
+    with st.container(border=True):
+        st.markdown("**Buscar clase y administrar participantes**")
+        st.caption(
+            "Lista alumnos y profesores registrados en una clase. Permite quitar o agregar participantes puntuales."
+        )
+        col_load, col_catalogs, col_clear = st.columns([1.4, 1.4, 1], gap="small")
+        run_load_classes = col_load.button(
+            "Cargar clases",
+            type="primary",
+            key="clases_participantes_load_classes_btn",
+            use_container_width=True,
+        )
+        run_load_catalogs = col_catalogs.button(
+            "Cargar alumnos/docentes",
+            key="clases_participantes_load_catalogs_btn",
+            use_container_width=True,
+        )
+        run_clear = col_clear.button(
+            "Limpiar",
+            key="clases_participantes_clear_btn",
+            use_container_width=True,
+        )
+
+    if run_clear:
+        for state_key in list(st.session_state.keys()):
+            if str(state_key).startswith("clases_participantes_"):
+                st.session_state.pop(state_key, None)
+        st.rerun()
+
+    if run_load_classes:
+        if not token:
+            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+            st.stop()
+        try:
+            colegio_id_int = _parse_colegio_id(colegio_id_raw)
+        except ValueError as exc:
+            st.error(f"Error: {exc}")
+            st.stop()
+        try:
+            with st.spinner("Cargando clases del colegio..."):
+                raw_clases = _fetch_clases_gestion_escolar(
+                    token=token,
+                    colegio_id=int(colegio_id_int),
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                    ordered=True,
+                )
+        except Exception as exc:
+            st.error(f"No se pudieron cargar clases: {exc}")
+            st.stop()
+        class_rows = [
+            row
+            for row in (
+                _build_clase_participantes_row(item)
+                for item in raw_clases
+                if isinstance(item, dict)
+            )
+            if isinstance(row, dict) and _safe_int(row.get("clase_id")) is not None
+        ]
+        class_rows.sort(
+            key=lambda row: (
+                _participantes_nivel_sort_rank(row.get("nivel_nombre")),
+                _participantes_grado_sort_rank(row.get("grado_nombre")),
+                _grupo_sort_key(
+                    str(row.get("grupo_clave_actual") or ""),
+                    str(row.get("grupo_clave_actual") or ""),
+                ),
+                str(row.get("clase") or "").upper(),
+                int(row.get("clase_id") or 0),
+            )
+        )
+        st.session_state["clases_participantes_class_rows"] = class_rows
+        st.session_state["clases_participantes_colegio_id"] = int(colegio_id_int)
+        st.session_state.pop("clases_participantes_detail", None)
+        st.session_state.pop("clases_participantes_detail_clase_id", None)
+        st.success(f"Clases cargadas: {len(class_rows)}")
+
+    if run_load_catalogs:
+        if not token:
+            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+            st.stop()
+        try:
+            colegio_id_int = _parse_colegio_id(colegio_id_raw)
+        except ValueError as exc:
+            st.error(f"Error: {exc}")
+            st.stop()
+        status_box = st.empty()
+        try:
+            status_box.info("Cargando alumnos del colegio...")
+            alumnos_catalog = _fetch_alumnos_catalog_for_manual_move(
+                token=token,
+                colegio_id=int(colegio_id_int),
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                timeout=int(timeout),
+            )
+            status_box.info("Cargando docentes del colegio...")
+            profesores_rows, _summary_prof, profesores_errors = listar_profesores_filters_data(
+                token=token,
+                colegio_id=int(colegio_id_int),
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                timeout=int(timeout),
+            )
+        except Exception as exc:
+            status_box.empty()
+            st.error(f"No se pudieron cargar catalogos: {exc}")
+            st.stop()
+        status_box.empty()
+        alumnos_rows = [
+            row for row in (alumnos_catalog.get("students") or []) if isinstance(row, dict)
+        ]
+        profesores_catalog: List[Dict[str, object]] = []
+        for row in profesores_rows:
+            if not isinstance(row, dict):
+                continue
+            persona_id = _safe_int(row.get("persona_id"))
+            if persona_id is None:
+                continue
+            nombre = " ".join(
+                part
+                for part in (
+                    str(row.get("nombre") or "").strip(),
+                    str(row.get("apellido_paterno") or "").strip(),
+                    str(row.get("apellido_materno") or "").strip(),
+                )
+                if part
+            ).strip()
+            profesores_catalog.append(
+                {
+                    "persona_id": int(persona_id),
+                    "nombre": nombre or f"Persona {int(persona_id)}",
+                    "login": str(row.get("login") or "").strip(),
+                    "dni": str(row.get("dni") or "").strip(),
+                    "email": str(row.get("email") or "").strip(),
+                    "estado": str(row.get("estado") or "").strip(),
+                }
+            )
+        st.session_state["clases_participantes_students_catalog"] = alumnos_rows
+        st.session_state["clases_participantes_professors_catalog"] = profesores_catalog
+        st.session_state["clases_participantes_catalog_errors"] = list(
+            alumnos_catalog.get("errors") or []
+        ) + [
+            str(item)
+            for item in (profesores_errors or [])
+            if str(item or "").strip()
+        ]
+        st.session_state["clases_participantes_colegio_id"] = int(colegio_id_int)
+        st.success(
+            "Catalogos cargados. Alumnos: {alumnos} | Docentes: {profesores}".format(
+                alumnos=len(alumnos_rows),
+                profesores=len(profesores_catalog),
+            )
+        )
+
+    class_rows_state = [
+        row
+        for row in (st.session_state.get("clases_participantes_class_rows") or [])
+        if isinstance(row, dict) and _safe_int(row.get("clase_id")) is not None
+    ]
+    if not class_rows_state:
+        st.info("Carga las clases del colegio para empezar.")
+        return
+
+    class_by_id = {int(row["clase_id"]): row for row in class_rows_state}
+    search_class = st.text_input(
+        "Buscar clase",
+        key="clases_participantes_search_class",
+        placeholder="Nombre, ID, nivel, grado o seccion",
+    )
+    class_options = [
+        int(row["clase_id"])
+        for row in class_rows_state
+        if _row_matches_text(
+            row,
+            search_class,
+            (
+                "clase",
+                "clase_nombre",
+                "clase_codigo",
+                "nivel_nombre",
+                "grado_nombre",
+                "grupo_clave_actual",
+                "clase_id",
+            ),
+        )
+    ]
+    if not class_options:
+        st.warning("No hay clases con ese filtro.")
+        return
+
+    selected_class_key = "clases_participantes_selected_class_id"
+    selected_class_cached = _safe_int(st.session_state.get(selected_class_key))
+    if selected_class_cached is not None and int(selected_class_cached) not in class_options:
+        st.session_state.pop(selected_class_key, None)
+    selected_class_id = st.selectbox(
+        "Clase",
+        options=class_options,
+        index=None,
+        key=selected_class_key,
+        format_func=lambda value: str(
+            (class_by_id.get(int(value)) or {}).get("label") or f"Clase {value}"
+        ),
+    )
+    if selected_class_id is None:
+        st.caption("Selecciona una clase para ver sus participantes.")
+        return
+
+    selected_class_id_int = int(selected_class_id)
+    selected_class_row = class_by_id.get(selected_class_id_int, {})
+    col_detail, col_export = st.columns([2, 1], gap="small")
+    run_load_detail = col_detail.button(
+        "Cargar participantes de la clase",
+        type="primary",
+        key="clases_participantes_load_detail_btn",
+        use_container_width=True,
+    )
+    if run_load_detail:
+        if not token:
+            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+            st.stop()
+        _clear_action_widgets()
+        with st.spinner("Cargando alumnos y profesores de la clase..."):
+            detail_payload = _refresh_detail(selected_class_id_int)
+        if detail_payload.get("errors"):
+            st.warning("Participantes cargados con observaciones.")
+        else:
+            st.success("Participantes cargados.")
+
+    detail_state = st.session_state.get("clases_participantes_detail")
+    detail_class_id = _safe_int(
+        st.session_state.get("clases_participantes_detail_clase_id")
+    )
+    if not isinstance(detail_state, dict) or detail_class_id != selected_class_id_int:
+        st.info("Carga los participantes de la clase seleccionada.")
+        return
+
+    alumnos_current = [
+        row for row in (detail_state.get("alumnos") or []) if isinstance(row, dict)
+    ]
+    profesores_current = [
+        row for row in (detail_state.get("profesores") or []) if isinstance(row, dict)
+    ]
+    detail_errors = [
+        str(item).strip()
+        for item in (detail_state.get("errors") or [])
+        if str(item).strip()
+    ]
+
+    export_rows = [
+        {
+            "Tipo": "Alumno",
+            "ID": row.get("alumno_id", ""),
+            "Nombre": row.get("nombre_completo", ""),
+            "Login": row.get("login", ""),
+            "DNI": row.get("dni", ""),
+        }
+        for row in alumnos_current
+    ] + [
+        {
+            "Tipo": "Profesor",
+            "ID": row.get("persona_id", ""),
+            "Nombre": row.get("nombre", ""),
+            "Login": row.get("login", ""),
+            "DNI": row.get("dni", ""),
+        }
+        for row in profesores_current
+    ]
+    if export_rows:
+        col_export.download_button(
+            "Descargar participantes",
+            data=_export_simple_excel(export_rows, sheet_name="participantes"),
+            file_name=f"participantes_clase_{selected_class_id_int}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="clases_participantes_download",
+            use_container_width=True,
+        )
+
+    st.caption(
+        "Clase: {label} | Alumnos: {alumnos} | Profesores: {profesores}".format(
+            label=str(selected_class_row.get("label") or selected_class_id_int),
+            alumnos=len(alumnos_current),
+            profesores=len(profesores_current),
+        )
+    )
+    if detail_errors:
+        with st.expander(f"Errores de carga ({len(detail_errors)})", expanded=False):
+            st.write("\n".join(f"- {item}" for item in detail_errors))
+
+    notice = st.session_state.pop("clases_participantes_notice", None)
+    if isinstance(notice, dict):
+        notice_type = str(notice.get("type") or "info").strip().lower()
+        message = str(notice.get("message") or "").strip()
+        if message:
+            if notice_type == "success":
+                st.success(message)
+            elif notice_type == "warning":
+                st.warning(message)
+            elif notice_type == "error":
+                st.error(message)
+            else:
+                st.info(message)
+
+    students_catalog = [
+        row
+        for row in (st.session_state.get("clases_participantes_students_catalog") or [])
+        if isinstance(row, dict) and _safe_int(row.get("alumno_id")) is not None
+    ]
+    professors_catalog = [
+        row
+        for row in (st.session_state.get("clases_participantes_professors_catalog") or [])
+        if isinstance(row, dict) and _safe_int(row.get("persona_id")) is not None
+    ]
+    catalog_errors = [
+        str(item).strip()
+        for item in (st.session_state.get("clases_participantes_catalog_errors") or [])
+        if str(item).strip()
+    ]
+    if catalog_errors:
+        with st.expander(
+            f"Observaciones de catalogos ({len(catalog_errors)})",
+            expanded=False,
+        ):
+            st.write("\n".join(f"- {item}" for item in catalog_errors[:60]))
+            pending = len(catalog_errors) - 60
+            if pending > 0:
+                st.caption(f"... y {pending} observaciones mas.")
+
+    tab_alumnos, tab_profesores = st.tabs(["Alumnos", "Profesores"])
+
+    with tab_alumnos:
+        alumnos_by_id = {
+            int(row["alumno_id"]): row
+            for row in alumnos_current
+            if _safe_int(row.get("alumno_id")) is not None
+        }
+        if alumnos_current:
+            _show_dataframe(
+                [
+                    {
+                        "Alumno ID": row.get("alumno_id", ""),
+                        "Persona ID": row.get("persona_id", ""),
+                        "Alumno": row.get("nombre_completo", ""),
+                        "Login": row.get("login", ""),
+                        "DNI": row.get("dni", ""),
+                    }
+                    for row in alumnos_current
+                ],
+                use_container_width=True,
+            )
+        else:
+            st.caption("La clase no tiene alumnos cargados.")
+
+        remove_alumno_ids = st.multiselect(
+            "Alumnos a quitar",
+            options=sorted(alumnos_by_id.keys()),
+            key="clases_participantes_remove_alumnos",
+            format_func=lambda value: _clase_person_label(
+                alumnos_by_id.get(int(value), {}),
+                "alumno_id",
+            ),
+            placeholder="Selecciona alumnos registrados en la clase",
+        )
+        confirm_remove_alumnos = st.checkbox(
+            "Confirmo quitar los alumnos seleccionados de esta clase.",
+            key="clases_participantes_confirm_remove_alumnos",
+        )
+        if st.button(
+            "Quitar alumnos",
+            key="clases_participantes_remove_alumnos_btn",
+            disabled=not bool(remove_alumno_ids),
+            use_container_width=True,
+        ):
+            if not token:
+                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                st.stop()
+            if not confirm_remove_alumnos:
+                st.error("Confirma la accion antes de quitar alumnos.")
+                st.stop()
+            ok_count = 0
+            errors: List[str] = []
+            for alumno_id in remove_alumno_ids:
+                try:
+                    _delete_alumno_clase_gestion_escolar(
+                        token=token,
+                        clase_id=selected_class_id_int,
+                        alumno_id=int(alumno_id),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                    )
+                    ok_count += 1
+                except Exception as exc:
+                    errors.append(f"Alumno {int(alumno_id)}: {exc}")
+            _refresh_detail(selected_class_id_int)
+            _clear_action_widgets()
+            st.session_state["clases_participantes_notice"] = {
+                "type": "warning" if errors else "success",
+                "message": "Alumnos quitados: {ok}. Errores: {err}".format(
+                    ok=ok_count,
+                    err=len(errors),
+                )
+                + ((" | " + " | ".join(errors[:3])) if errors else ""),
+            }
+            st.rerun()
+
+        st.divider()
+        st.markdown("**Agregar alumnos**")
+        if not students_catalog:
+            st.caption("Carga alumnos/docentes para buscar alumnos del colegio.")
+        else:
+            current_alumno_ids = set(alumnos_by_id.keys())
+            search_add_student = st.text_input(
+                "Buscar alumno para agregar",
+                key="clases_participantes_search_add_student",
+                placeholder="Nombre, login, DNI o alumno ID",
+            )
+            candidates_students = [
+                row
+                for row in students_catalog
+                if int(row.get("alumno_id")) not in current_alumno_ids
+                and _row_matches_text(
+                    row,
+                    search_add_student,
+                    (
+                        "alumno_id",
+                        "persona_id",
+                        "nombre_completo",
+                        "nombre",
+                        "apellido_paterno",
+                        "apellido_materno",
+                        "login",
+                        "id_oficial",
+                    ),
+                )
+            ][:250]
+            candidate_students_by_id = {
+                int(row["alumno_id"]): row
+                for row in candidates_students
+                if _safe_int(row.get("alumno_id")) is not None
+            }
+            add_alumno_ids = st.multiselect(
+                "Alumnos a agregar",
+                options=sorted(candidate_students_by_id.keys()),
+                key="clases_participantes_add_alumnos",
+                format_func=lambda value: _clase_person_label(
+                    candidate_students_by_id.get(int(value), {}),
+                    "alumno_id",
+                ),
+                placeholder="Filtra y selecciona alumnos",
+            )
+            if st.button(
+                "Agregar alumnos",
+                key="clases_participantes_add_alumnos_btn",
+                disabled=not bool(add_alumno_ids),
+                use_container_width=True,
+            ):
+                if not token:
+                    st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                    st.stop()
+                ok_count = 0
+                same_count = 0
+                errors: List[str] = []
+                for alumno_id in add_alumno_ids:
+                    if int(alumno_id) in current_alumno_ids:
+                        same_count += 1
+                        continue
+                    ok, msg = _asignar_alumno_a_clase_web(
+                        token=token,
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        clase_id=selected_class_id_int,
+                        alumno_id=int(alumno_id),
+                        timeout=int(timeout),
+                    )
+                    if ok:
+                        ok_count += 1
+                    else:
+                        errors.append(f"Alumno {int(alumno_id)}: {msg}")
+                _refresh_detail(selected_class_id_int)
+                _clear_action_widgets()
+                st.session_state["clases_participantes_notice"] = {
+                    "type": "warning" if errors else "success",
+                    "message": "Alumnos agregados: {ok} | Ya estaban: {same} | Errores: {err}".format(
+                        ok=ok_count,
+                        same=same_count,
+                        err=len(errors),
+                    )
+                    + ((" | " + " | ".join(errors[:3])) if errors else ""),
+                }
+                st.rerun()
+
+    with tab_profesores:
+        profesores_by_id = {
+            int(row["persona_id"]): row
+            for row in profesores_current
+            if _safe_int(row.get("persona_id")) is not None
+        }
+        if profesores_current:
+            _show_dataframe(
+                [
+                    {
+                        "Persona ID": row.get("persona_id", ""),
+                        "Profesor": row.get("nombre", ""),
+                        "Login": row.get("login", ""),
+                        "DNI": row.get("dni", ""),
+                        "Activo": "Si" if bool(row.get("activo", True)) else "No",
+                    }
+                    for row in profesores_current
+                ],
+                use_container_width=True,
+            )
+        else:
+            st.caption("La clase no tiene profesores cargados.")
+
+        remove_profesor_ids = st.multiselect(
+            "Profesores a quitar",
+            options=sorted(profesores_by_id.keys()),
+            key="clases_participantes_remove_profesores",
+            format_func=lambda value: _clase_person_label(
+                profesores_by_id.get(int(value), {}),
+                "persona_id",
+            ),
+            placeholder="Selecciona profesores registrados en la clase",
+        )
+        confirm_remove_profesores = st.checkbox(
+            "Confirmo quitar los profesores seleccionados de esta clase.",
+            key="clases_participantes_confirm_remove_profesores",
+        )
+        if st.button(
+            "Quitar profesores",
+            key="clases_participantes_remove_profesores_btn",
+            disabled=not bool(remove_profesor_ids),
+            use_container_width=True,
+        ):
+            if not token:
+                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                st.stop()
+            if not confirm_remove_profesores:
+                st.error("Confirma la accion antes de quitar profesores.")
+                st.stop()
+            ok_count = 0
+            errors: List[str] = []
+            for persona_id in remove_profesor_ids:
+                try:
+                    _delete_profesor_clase_gestion_escolar(
+                        token=token,
+                        clase_id=selected_class_id_int,
+                        persona_id=int(persona_id),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                    )
+                    ok_count += 1
+                except Exception as exc:
+                    errors.append(f"Profesor {int(persona_id)}: {exc}")
+            _refresh_detail(selected_class_id_int)
+            _clear_action_widgets()
+            st.session_state["clases_participantes_notice"] = {
+                "type": "warning" if errors else "success",
+                "message": "Profesores quitados: {ok}. Errores: {err}".format(
+                    ok=ok_count,
+                    err=len(errors),
+                )
+                + ((" | " + " | ".join(errors[:3])) if errors else ""),
+            }
+            st.rerun()
+
+        st.divider()
+        st.markdown("**Agregar profesores**")
+        if not professors_catalog:
+            st.caption("Carga alumnos/docentes para buscar docentes del colegio.")
+        else:
+            current_profesor_ids = set(profesores_by_id.keys())
+            search_add_profesor = st.text_input(
+                "Buscar profesor para agregar",
+                key="clases_participantes_search_add_profesor",
+                placeholder="Nombre, login, DNI, email o persona ID",
+            )
+            candidates_profesores = [
+                row
+                for row in professors_catalog
+                if int(row.get("persona_id")) not in current_profesor_ids
+                and _row_matches_text(
+                    row,
+                    search_add_profesor,
+                    ("persona_id", "nombre", "login", "dni", "email", "estado"),
+                )
+            ][:250]
+            candidate_profesores_by_id = {
+                int(row["persona_id"]): row
+                for row in candidates_profesores
+                if _safe_int(row.get("persona_id")) is not None
+            }
+            add_profesor_ids = st.multiselect(
+                "Profesores a agregar",
+                options=sorted(candidate_profesores_by_id.keys()),
+                key="clases_participantes_add_profesores",
+                format_func=lambda value: _clase_person_label(
+                    candidate_profesores_by_id.get(int(value), {}),
+                    "persona_id",
+                ),
+                placeholder="Filtra y selecciona profesores",
+            )
+            if st.button(
+                "Agregar profesores",
+                key="clases_participantes_add_profesores_btn",
+                disabled=not bool(add_profesor_ids),
+                use_container_width=True,
+            ):
+                if not token:
+                    st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                    st.stop()
+                ok_count = 0
+                same_count = 0
+                errors: List[str] = []
+                for persona_id in add_profesor_ids:
+                    if int(persona_id) in current_profesor_ids:
+                        same_count += 1
+                        continue
+                    ok, msg = _assign_profesor_to_clase_web(
+                        token=token,
+                        clase_id=selected_class_id_int,
+                        persona_id=int(persona_id),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                    )
+                    if ok:
+                        ok_count += 1
+                    else:
+                        errors.append(f"Profesor {int(persona_id)}: {msg}")
+                _refresh_detail(selected_class_id_int)
+                _clear_action_widgets()
+                st.session_state["clases_participantes_notice"] = {
+                    "type": "warning" if errors else "success",
+                    "message": "Profesores agregados: {ok} | Ya estaban: {same} | Errores: {err}".format(
+                        ok=ok_count,
+                        same=same_count,
+                        err=len(errors),
+                    )
+                    + ((" | " + " | ".join(errors[:3])) if errors else ""),
+                }
+                st.rerun()
+
+
+def _render_alumnos_global_login_search_section(
+    colegio_id_raw: str,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+) -> None:
+    with st.container(border=True):
+        st.markdown("**Buscar alumno por login en colegios**")
+        st.caption(
+            "Consulta el catalogo de colegios del token global y busca coincidencias de login."
+        )
+
+        token_for_catalog = _get_shared_token()
+        if token_for_catalog:
+            _ensure_shared_colegios_loaded(
+                token=token_for_catalog,
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                timeout=int(timeout),
+            )
+
+        colegio_rows = [
+            row
+            for row in (st.session_state.get("shared_colegios_rows") or [])
+            if isinstance(row, dict) and _safe_int(row.get("colegio_id")) is not None
+        ]
+        current_colegio_id = _safe_int(colegio_id_raw)
+        row_by_id = {
+            int(row["colegio_id"]): row
+            for row in colegio_rows
+            if _safe_int(row.get("colegio_id")) is not None
+        }
+        if current_colegio_id is not None and int(current_colegio_id) not in row_by_id:
+            manual_row = {
+                "colegio_id": int(current_colegio_id),
+                "colegio": f"Colegio {int(current_colegio_id)}",
+                "label": f"Colegio {int(current_colegio_id)}",
+            }
+            colegio_rows.append(manual_row)
+            row_by_id[int(current_colegio_id)] = manual_row
+
+        login_col, mode_col, scope_col = st.columns([2.1, 1.1, 1.4], gap="small")
+        login_value = login_col.text_input(
+            "Login",
+            key="alumnos_global_login_value",
+            placeholder="Ejemplo: lnjmf90942147",
+        )
+        match_mode = mode_col.selectbox(
+            "Coincidencia",
+            options=["exact", "contains"],
+            key="alumnos_global_login_match_mode",
+            format_func=lambda value: (
+                "Exacta" if str(value) == "exact" else "Contiene"
+            ),
+        )
+        scope_value = scope_col.selectbox(
+            "Alcance",
+            options=["all", "selected", "current"],
+            key="alumnos_global_login_scope",
+            format_func=lambda value: {
+                "all": "Todos los colegios",
+                "selected": "Colegios seleccionados",
+                "current": "Colegio actual",
+            }.get(str(value), str(value)),
+        )
+
+        colegio_options = sorted(
+            row_by_id.keys(),
+            key=lambda value: str((row_by_id.get(int(value)) or {}).get("label") or ""),
+        )
+        if scope_value == "selected":
+            st.multiselect(
+                "Colegios",
+                options=colegio_options,
+                key="alumnos_global_login_selected_ids",
+                format_func=lambda value: str(
+                    (row_by_id.get(int(value)) or {}).get("label")
+                    or f"Colegio {int(value)}"
+                ),
+                placeholder=(
+                    "Busca y selecciona colegios"
+                    if colegio_options
+                    else "No hay colegios cargados"
+                ),
+            )
+
+        fallback_enabled = st.checkbox(
+            "Si falla la consulta rapida, reintentar por nivel/grado/seccion",
+            value=False,
+            key="alumnos_global_login_fallback",
+        )
+        if fallback_enabled:
+            st.caption(
+                "El respaldo es mas lento porque recorre secciones del colegio cuando alumnosByFilters falla."
+            )
+
+        run_col, clear_col = st.columns([2, 1], gap="small")
+        run_search = run_col.button(
+            "Buscar login",
+            type="primary",
+            key="alumnos_global_login_run_btn",
+            use_container_width=True,
+            disabled=not bool(row_by_id),
+        )
+        clear_results = clear_col.button(
+            "Limpiar",
+            key="alumnos_global_login_clear_btn",
+            use_container_width=True,
+        )
+
+        colegio_error = str(st.session_state.get("shared_colegios_error") or "").strip()
+        if colegio_error:
+            st.warning(f"No se pudo cargar la lista global de colegios: {colegio_error}")
+        elif row_by_id:
+            st.caption(f"Colegios disponibles para buscar: {len(row_by_id)}")
+        else:
+            st.info("Guarda un token global para cargar los colegios.")
+
+    if clear_results:
+        for state_key in (
+            "alumnos_global_login_result",
+            "alumnos_global_login_error",
+        ):
+            st.session_state.pop(state_key, None)
+        st.rerun()
+
+    if run_search:
+        token = _get_shared_token()
+        if not token:
+            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+            st.stop()
+
+        selected_ids: List[int] = []
+        if scope_value == "all":
+            selected_ids = list(colegio_options)
+        elif scope_value == "current":
+            if current_colegio_id is None:
+                st.error("No hay colegio actual seleccionado.")
+                st.stop()
+            selected_ids = [int(current_colegio_id)]
+        else:
+            selected_ids = [
+                int(value)
+                for value in (
+                    st.session_state.get("alumnos_global_login_selected_ids") or []
+                )
+                if _safe_int(value) is not None
+            ]
+
+        if not selected_ids:
+            st.error("Selecciona al menos un colegio.")
+            st.stop()
+
+        progress_bar = st.progress(0)
+        status_box = st.empty()
+
+        def _on_global_login_status(idx: int, total: int, message: str) -> None:
+            progress_bar.progress(min(1.0, max(0.0, idx / max(total, 1))))
+            status_box.caption(f"[{idx}/{total}] {message}")
+
+        try:
+            with st.spinner("Buscando login en colegios..."):
+                result = _search_alumno_login_global(
+                    token=token,
+                    login=str(login_value or "").strip(),
+                    colegio_rows=colegio_rows,
+                    colegio_ids=selected_ids,
+                    match_mode=str(match_mode or "exact"),
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                    use_fallback=bool(fallback_enabled),
+                    on_status=_on_global_login_status,
+                )
+        except Exception as exc:
+            st.session_state["alumnos_global_login_error"] = str(exc)
+            progress_bar.empty()
+            status_box.empty()
+            st.error(f"No se pudo buscar el login: {exc}")
+            st.stop()
+
+        progress_bar.empty()
+        status_box.empty()
+        st.session_state["alumnos_global_login_result"] = result
+        st.session_state.pop("alumnos_global_login_error", None)
+        st.success(
+            "Busqueda lista. Coincidencias: {matches} | Colegios consultados: {schools}".format(
+                matches=len(result.get("matches") or []),
+                schools=int(result.get("colegios_consultados") or 0),
+            )
+        )
+
+    result_error = str(st.session_state.get("alumnos_global_login_error") or "").strip()
+    if result_error:
+        st.error(result_error)
+
+    result_cached = st.session_state.get("alumnos_global_login_result")
+    if isinstance(result_cached, dict) and result_cached:
+        matches_cached = list(result_cached.get("matches") or [])
+        errors_cached = list(result_cached.get("errors") or [])
+        with st.container(border=True):
+            metric_cols = st.columns(4)
+            metric_cols[0].metric("Coincidencias", len(matches_cached))
+            metric_cols[1].metric(
+                "Colegios",
+                int(result_cached.get("colegios_consultados") or 0),
+            )
+            metric_cols[2].metric(
+                "Alumnos revisados",
+                int(result_cached.get("alumnos_revisados") or 0),
+            )
+            metric_cols[3].metric("Errores", len(errors_cached))
+
+            if matches_cached:
+                st.download_button(
+                    label="Descargar resultado",
+                    data=_export_simple_excel(matches_cached, sheet_name="login_global"),
+                    file_name="busqueda_login_alumnos_colegios.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="alumnos_global_login_download",
+                    use_container_width=True,
+                )
+                _show_dataframe(matches_cached, use_container_width=True)
+            else:
+                st.info("No se encontraron alumnos con ese login.")
+
+            if errors_cached:
+                with st.expander(
+                    f"Errores u observaciones ({len(errors_cached)})",
+                    expanded=False,
+                ):
+                    st.write("\n".join(f"- {item}" for item in errors_cached[:80]))
+                    pending = len(errors_cached) - 80
+                    if pending > 0:
+                        st.caption(f"... y {pending} errores mas.")
+
+
+def _render_otras_funcionalidades_view() -> None:
+    st.subheader("Otras funcionalidades")
+    st.caption("Procesos transversales que no pertenecen a un CRUD puntual.")
+
+    token = _get_shared_token()
+    empresa_id = DEFAULT_EMPRESA_ID
+    ciclo_id = ALUMNOS_CICLO_ID_DEFAULT
+    timeout = 30
+    colegio_id_raw = str(st.session_state.get("shared_colegio_id", "") or "").strip()
+    current_colegio_id = _safe_int(colegio_id_raw)
+
+    if token:
+        _ensure_shared_colegios_loaded(
+            token=token,
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+        )
+
+    _render_alumnos_global_login_search_section(
+        colegio_id_raw=colegio_id_raw,
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        timeout=int(timeout),
+    )
+
+    with st.container(border=True):
+        st.markdown("**Censo activos por varios colegios**")
+        st.caption(
+            "Selecciona colegios y genera un ZIP masivo. Puedes descargar solo alumnos o solo docentes."
+        )
+        colegio_rows_multi = st.session_state.get("shared_colegios_rows") or []
+        colegio_error_multi = str(
+            st.session_state.get("shared_colegios_error") or ""
+        ).strip()
+        row_by_id_multi = {
+            int(row["colegio_id"]): row
+            for row in colegio_rows_multi
+            if isinstance(row, dict) and row.get("colegio_id") is not None
+        }
+        selected_multi_key = "otras_censo_activos_multi_ids"
+        if selected_multi_key not in st.session_state:
+            default_multi_ids: List[int] = []
+            if (
+                current_colegio_id is not None
+                and int(current_colegio_id) in row_by_id_multi
+            ):
+                default_multi_ids = [int(current_colegio_id)]
+            st.session_state[selected_multi_key] = default_multi_ids
+
+        st.multiselect(
+            "Colegios",
+            options=sorted(
+                row_by_id_multi.keys(),
+                key=lambda value: str((row_by_id_multi.get(int(value)) or {}).get("label") or ""),
+            ),
+            key=selected_multi_key,
+            format_func=lambda value: str(
+                (row_by_id_multi.get(int(value)) or {}).get("label")
+                or f"Colegio {int(value)}"
+            ),
+            placeholder=(
+                "Busca y selecciona uno o varios colegios"
+                if row_by_id_multi
+                else "Guarda un token para cargar colegios"
+            ),
+            disabled=not bool(row_by_id_multi),
+        )
+        if colegio_error_multi:
+            st.caption(f"No se pudo cargar la lista de colegios: {colegio_error_multi}")
+        elif not row_by_id_multi:
+            st.caption("Guarda un token en Configuracion global para cargar colegios.")
+
+        action_cols = st.columns(2, gap="small")
+        run_censo_alumnos_multi = action_cols[0].button(
+            "Censo de alumnos",
+            type="primary",
+            key="otras_censo_alumnos_multi_btn",
+            use_container_width=True,
+            disabled=not bool(row_by_id_multi),
+        )
+        run_censo_docentes_multi = action_cols[1].button(
+            "Censo de docentes",
+            type="primary",
+            key="otras_censo_docentes_multi_btn",
+            use_container_width=True,
+            disabled=not bool(row_by_id_multi),
+        )
+
+    if run_censo_alumnos_multi or run_censo_docentes_multi:
+        if not token:
+            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+            st.stop()
+        colegio_ids_multi_raw = st.session_state.get(selected_multi_key) or []
+        colegio_ids_multi = [
+            int(value)
+            for value in colegio_ids_multi_raw
+            if _safe_int(value) is not None
+        ]
+        if not colegio_ids_multi:
+            st.error("Selecciona al menos un colegio.")
+            st.stop()
+
+        censo_kind = "alumnos" if run_censo_alumnos_multi else "docentes"
+        status_placeholder = st.empty()
+        total_colegios_multi = len(colegio_ids_multi)
+        summary_rows_multi: List[Dict[str, object]] = []
+        errors_multi: List[str] = []
+        zip_buffer = BytesIO()
+        zip_name_multi = (
+            f"censo_{censo_kind}_activos_colegios_{date.today().isoformat()}.zip"
+        )
+        zip_root_folder = _sanitize_zip_component(
+            f"censo_{censo_kind}_activos_colegios_{date.today().isoformat()}",
+            f"censo_{censo_kind}_activos_colegios",
+        )
+
+        with ZipFile(zip_buffer, "w", ZIP_DEFLATED) as zip_file:
+            for idx, colegio_id_multi in enumerate(colegio_ids_multi, start=1):
+                colegio_base_name = _get_colegio_export_base_name(int(colegio_id_multi))
+
+                def _on_multi_status(
+                    message: str,
+                    current_idx: int = idx,
+                    current_total: int = total_colegios_multi,
+                    colegio_name: str = colegio_base_name,
+                ) -> None:
+                    status_placeholder.caption(
+                        "[{idx}/{total}] {colegio}: {message}".format(
+                            idx=current_idx,
+                            total=current_total,
+                            colegio=colegio_name,
+                            message=str(message or "").strip(),
+                        )
+                    )
+
+                try:
+                    if censo_kind == "alumnos":
+                        payload_multi = _load_censo_activos_for_colegio(
+                            token=token,
+                            colegio_id=int(colegio_id_multi),
+                            empresa_id=int(empresa_id),
+                            ciclo_id=int(ciclo_id),
+                            timeout=int(timeout),
+                            on_status=_on_multi_status,
+                        )
+                        export_rows_multi = list(payload_multi.get("export_rows") or [])
+                        errors_colegio_multi = list(payload_multi.get("errors") or [])
+                        file_name = f"censo_alumnos_activos_{colegio_base_name}.xlsx"
+                        zip_path = f"{zip_root_folder}/{colegio_base_name}/{file_name}"
+                        zip_file.writestr(
+                            zip_path,
+                            _export_censo_activos_excel(export_rows_multi),
+                        )
+                        summary_rows_multi.append(
+                            {
+                                "Colegio ID": int(colegio_id_multi),
+                                "Colegio": colegio_base_name,
+                                "Alumnos activos": len(export_rows_multi),
+                                "Errores": len(errors_colegio_multi),
+                                "Archivo": zip_path,
+                                "Estado": (
+                                    "OK" if not errors_colegio_multi else "OK con errores"
+                                ),
+                            }
+                        )
+                    else:
+                        payload_multi = _load_censo_profesores_activos_for_colegio(
+                            token=token,
+                            colegio_id=int(colegio_id_multi),
+                            empresa_id=int(empresa_id),
+                            ciclo_id=int(ciclo_id),
+                            timeout=int(timeout),
+                            on_status=_on_multi_status,
+                        )
+                        export_rows_multi = list(payload_multi.get("export_rows") or [])
+                        errors_colegio_multi = list(payload_multi.get("errors") or [])
+                        file_name = f"censo_docentes_activos_{colegio_base_name}.xlsx"
+                        zip_path = f"{zip_root_folder}/{colegio_base_name}/{file_name}"
+                        zip_file.writestr(
+                            zip_path,
+                            _export_censo_profesores_activos_excel(export_rows_multi),
+                        )
+                        summary_rows_multi.append(
+                            {
+                                "Colegio ID": int(colegio_id_multi),
+                                "Colegio": colegio_base_name,
+                                "Docentes activos": len(export_rows_multi),
+                                "Errores": len(errors_colegio_multi),
+                                "Archivo": zip_path,
+                                "Estado": (
+                                    "OK" if not errors_colegio_multi else "OK con errores"
+                                ),
+                            }
+                        )
+                    errors_multi.extend(
+                        [
+                            f"Colegio {int(colegio_id_multi)}: {item}"
+                            for item in errors_colegio_multi
+                            if str(item or "").strip()
+                        ]
+                    )
+                except Exception as exc:
+                    errors_multi.append(f"Colegio {int(colegio_id_multi)}: {exc}")
+                    summary_rows_multi.append(
+                        {
+                            "Colegio ID": int(colegio_id_multi),
+                            "Colegio": colegio_base_name,
+                            (
+                                "Alumnos activos"
+                                if censo_kind == "alumnos"
+                                else "Docentes activos"
+                            ): 0,
+                            "Errores": 1,
+                            "Archivo": "",
+                            "Estado": f"ERROR: {exc}",
+                        }
+                    )
+
+        zip_buffer.seek(0)
+        st.session_state["otras_censo_activos_multi_zip_bytes"] = zip_buffer.getvalue()
+        st.session_state["otras_censo_activos_multi_zip_name"] = zip_name_multi
+        st.session_state["otras_censo_activos_multi_summary_rows"] = summary_rows_multi
+        st.session_state["otras_censo_activos_multi_errors"] = errors_multi
+        st.session_state["otras_censo_activos_multi_kind"] = censo_kind
+        status_placeholder.empty()
+        st.success(
+            "ZIP de {kind} listo. Colegios: {total} | Errores acumulados: {errors}".format(
+                kind="alumnos" if censo_kind == "alumnos" else "docentes",
+                total=len(summary_rows_multi),
+                errors=len(errors_multi),
+            )
+        )
+
+    censo_multi_summary_cached = (
+        st.session_state.get("otras_censo_activos_multi_summary_rows") or []
+    )
+    censo_multi_errors_cached = (
+        st.session_state.get("otras_censo_activos_multi_errors") or []
+    )
+    censo_multi_zip_bytes_cached = (
+        st.session_state.get("otras_censo_activos_multi_zip_bytes") or b""
+    )
+    censo_multi_zip_name_cached = str(
+        st.session_state.get("otras_censo_activos_multi_zip_name") or ""
+    ).strip()
+    censo_multi_kind_cached = str(
+        st.session_state.get("otras_censo_activos_multi_kind") or ""
+    ).strip()
+    if censo_multi_summary_cached:
+        with st.container(border=True):
+            multi_col_text, multi_col_total, multi_col_errors, multi_col_download = st.columns(
+                [2.2, 1, 1, 1.5], gap="small"
+            )
+            with multi_col_text:
+                st.markdown("**Resultado masivo por colegios**")
+                st.caption(
+                    "Tipo: {kind}. Se genero un Excel por colegio dentro del ZIP.".format(
+                        kind=(
+                            "alumnos"
+                            if censo_multi_kind_cached == "alumnos"
+                            else "docentes"
+                        )
+                    )
+                )
+            multi_col_total.metric("Colegios", len(censo_multi_summary_cached))
+            multi_col_errors.metric("Errores", len(censo_multi_errors_cached))
+            multi_col_download.download_button(
+                label="Descargar ZIP",
+                data=censo_multi_zip_bytes_cached,
+                file_name=(
+                    censo_multi_zip_name_cached
+                    or f"censo_activos_colegios_{date.today().isoformat()}.zip"
+                ),
+                mime="application/zip",
+                key="otras_censo_activos_multi_download",
+                use_container_width=True,
+            )
+            _show_dataframe(censo_multi_summary_cached, use_container_width=True)
+    if censo_multi_errors_cached:
+        with st.expander(
+            f"Errores del censo masivo ({len(censo_multi_errors_cached)})",
+            expanded=False,
+        ):
+            st.markdown(
+                "\n".join(f"- {item}" for item in censo_multi_errors_cached[:80])
+            )
+            pending_multi = len(censo_multi_errors_cached) - 80
+            if pending_multi > 0:
+                st.caption(f"... y {pending_multi} errores mas.")
+
+
 def _manual_move_alumno_option_label(row: Dict[str, object]) -> str:
     nombre = str(row.get("nombre_completo") or "").strip()
     if not nombre:
@@ -8944,6 +10392,231 @@ def _fetch_alumnos_catalog_for_manual_move(
         "niveles": niveles,
         "students": students,
         "errors": errors,
+    }
+
+
+def _normalize_login_search_key(value: object) -> str:
+    return _normalize_compare_id(value)
+
+
+def _alumno_login_matches_search(
+    login: object,
+    target_key: str,
+    match_mode: str,
+) -> bool:
+    candidate_key = _normalize_login_search_key(login)
+    if not candidate_key or not target_key:
+        return False
+    if str(match_mode or "").strip().lower() == "contains":
+        return target_key in candidate_key
+    return candidate_key == target_key
+
+
+def _format_global_alumno_match(
+    student: Dict[str, object],
+    colegio_row: Dict[str, object],
+) -> Dict[str, object]:
+    colegio_id = _safe_int(colegio_row.get("colegio_id"))
+    colegio_name = str(colegio_row.get("colegio") or "").strip()
+    if not colegio_name:
+        colegio_name = str(colegio_row.get("label") or "").strip()
+    nombre_completo = str(student.get("nombre_completo") or "").strip()
+    if not nombre_completo:
+        nombre_completo = " ".join(
+            part
+            for part in (
+                str(student.get("nombre") or "").strip(),
+                str(student.get("apellido_paterno") or "").strip(),
+                str(student.get("apellido_materno") or "").strip(),
+            )
+            if part
+        ).strip()
+    return {
+        "Colegio ID": int(colegio_id) if colegio_id is not None else "",
+        "Colegio": colegio_name,
+        "Alumno ID": student.get("alumno_id") or "",
+        "Persona ID": student.get("persona_id") or "",
+        "Alumno": nombre_completo,
+        "DNI": str(student.get("id_oficial") or "").strip(),
+        "Login": str(student.get("login") or "").strip(),
+        "Nivel": str(student.get("nivel") or "").strip(),
+        "Grado": str(student.get("grado") or "").strip(),
+        "Seccion": str(
+            student.get("seccion_norm") or student.get("seccion") or ""
+        ).strip(),
+        "Activo": "Si" if _to_bool(student.get("activo")) else "No",
+        "Con pago": "Si" if _to_bool(student.get("con_pago")) else "No",
+    }
+
+
+def _search_alumno_login_in_colegio(
+    token: str,
+    colegio_row: Dict[str, object],
+    login_key: str,
+    match_mode: str,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+    use_fallback: bool = False,
+) -> Tuple[List[Dict[str, object]], List[str], int]:
+    colegio_id = _safe_int(colegio_row.get("colegio_id"))
+    if colegio_id is None:
+        return [], ["Colegio sin ID valido."], 0
+
+    colegio_label = str(
+        colegio_row.get("label")
+        or colegio_row.get("colegio")
+        or f"Colegio {int(colegio_id)}"
+    ).strip()
+    errors: List[str] = []
+    matches: List[Dict[str, object]] = []
+    scanned = 0
+    login_lookup_by_alumno: Dict[str, Dict[str, str]] = {}
+    login_lookup_by_persona: Dict[str, Dict[str, str]] = {}
+    try:
+        (
+            login_lookup_by_alumno,
+            login_lookup_by_persona,
+        ) = _fetch_login_password_lookup_censo(
+            token=token,
+            colegio_id=int(colegio_id),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+        )
+    except Exception as exc:
+        errors.append(f"{colegio_label}: no se pudo leer plantilla de logins: {exc}")
+
+    try:
+        alumnos_raw = _fetch_alumnos_censo_by_filters(
+            token=token,
+            colegio_id=int(colegio_id),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+        )
+        scanned = len(alumnos_raw)
+        for item in alumnos_raw:
+            if not isinstance(item, dict):
+                continue
+            flat = _flatten_censo_alumno_for_auto_plan(item=item, fallback={})
+            login_txt, password_txt = _resolve_alumno_login_password(
+                item,
+                login_lookup_by_alumno,
+                login_lookup_by_persona,
+            )
+            if login_txt and not str(flat.get("login") or "").strip():
+                flat["login"] = login_txt
+            if password_txt and not str(flat.get("password") or "").strip():
+                flat["password"] = password_txt
+            if _alumno_login_matches_search(flat.get("login"), login_key, match_mode):
+                matches.append(_format_global_alumno_match(flat, colegio_row))
+        return matches, errors, scanned
+    except Exception as exc:
+        errors.append(f"{colegio_label}: alumnosByFilters fallo: {exc}")
+
+    if not use_fallback:
+        return matches, errors, scanned
+
+    try:
+        catalog = _fetch_alumnos_catalog_for_manual_move(
+            token=token,
+            colegio_id=int(colegio_id),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+        )
+    except Exception as exc:
+        errors.append(f"{colegio_label}: respaldo por secciones fallo: {exc}")
+        return matches, errors, scanned
+
+    students = [
+        row for row in (catalog.get("students") or []) if isinstance(row, dict)
+    ]
+    scanned = max(scanned, len(students))
+    for item in catalog.get("errors") or []:
+        if str(item or "").strip():
+            errors.append(f"{colegio_label}: {item}")
+    for flat in students:
+        if _alumno_login_matches_search(flat.get("login"), login_key, match_mode):
+            matches.append(_format_global_alumno_match(flat, colegio_row))
+    return matches, errors, scanned
+
+
+def _search_alumno_login_global(
+    token: str,
+    login: str,
+    colegio_rows: List[Dict[str, object]],
+    colegio_ids: List[int],
+    match_mode: str,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+    use_fallback: bool = False,
+    on_status: Optional[Callable[[int, int, str], None]] = None,
+) -> Dict[str, object]:
+    login_key = _normalize_login_search_key(login)
+    if not login_key:
+        raise ValueError("Ingresa un login para buscar.")
+
+    wanted_ids = {int(value) for value in colegio_ids if _safe_int(value) is not None}
+    rows_by_id = {
+        int(row["colegio_id"]): row
+        for row in colegio_rows
+        if isinstance(row, dict) and _safe_int(row.get("colegio_id")) is not None
+    }
+    rows_to_scan = [
+        rows_by_id[int(colegio_id)]
+        for colegio_id in sorted(
+            wanted_ids,
+            key=lambda value: str((rows_by_id.get(int(value)) or {}).get("label") or ""),
+        )
+        if int(colegio_id) in rows_by_id
+    ]
+    if not rows_to_scan:
+        raise ValueError("Selecciona al menos un colegio valido para buscar.")
+
+    matches: List[Dict[str, object]] = []
+    errors: List[str] = []
+    scanned_students = 0
+    total = len(rows_to_scan)
+    for idx, colegio_row in enumerate(rows_to_scan, start=1):
+        colegio_label = str(
+            colegio_row.get("label")
+            or colegio_row.get("colegio")
+            or colegio_row.get("colegio_id")
+            or ""
+        ).strip()
+        if callable(on_status):
+            on_status(idx, total, f"Consultando {colegio_label}")
+        colegio_matches, colegio_errors, colegio_scanned = _search_alumno_login_in_colegio(
+            token=token,
+            colegio_row=colegio_row,
+            login_key=login_key,
+            match_mode=match_mode,
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+            use_fallback=bool(use_fallback),
+        )
+        matches.extend(colegio_matches)
+        errors.extend(colegio_errors)
+        scanned_students += int(colegio_scanned or 0)
+
+    matches.sort(
+        key=lambda row: (
+            str(row.get("Colegio") or "").upper(),
+            str(row.get("Alumno") or "").upper(),
+            str(row.get("Login") or "").upper(),
+        )
+    )
+    return {
+        "matches": matches,
+        "errors": errors,
+        "colegios_consultados": total,
+        "alumnos_revisados": scanned_students,
+        "login_buscado": str(login or "").strip(),
+        "match_mode": str(match_mode or "exact"),
     }
 
 
@@ -10766,6 +12439,7 @@ with tab_crud_clases:
                 [
                     ("crear", "Crear", "Genera clases desde Excel"),
                     ("gestion", "Gestion", "Lista, vacia o elimina clases"),
+                    ("participantes", "Participantes", "Busca una clase y administra alumnos/docentes"),
                     ("otros", "Asignacion de clases a usuarios", "Asignacion de clases a usuarios"),
                 ],
                 state_key="clases_crud_nav",
@@ -10846,6 +12520,13 @@ with tab_crud_clases:
             if clases_crud_view == "gestion":
                 st.markdown("**2) Gestion de clases**")
                 _render_clases_gestion_section()
+            if clases_crud_view == "participantes":
+                _render_clases_participantes_section(
+                    colegio_id_raw=colegio_id_raw,
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                )
             if clases_crud_view == "otros":
                 _render_asignacion_clases_usuarios_section()
 with tab_crud_profesores:
@@ -13121,14 +14802,16 @@ with tab_crud_alumnos:
         and loaded_alumnos_edit_colegio_id != current_alumnos_edit_colegio_id
     ):
         _clear_alumnos_edit_state()
-    if str(st.session_state.get("alumnos_crud_nav") or "").strip() == "mover":
+    alumnos_nav_current = str(st.session_state.get("alumnos_crud_nav") or "").strip()
+    if alumnos_nav_current == "mover":
         st.session_state["alumnos_crud_nav"] = "editar"
+    elif alumnos_nav_current in {"otros", "buscar_login"}:
+        st.session_state["alumnos_crud_nav"] = "comparar"
     alumnos_nav_col, alumnos_body_col = st.columns([1.15, 4.85], gap="large")
     with alumnos_nav_col:
         alumnos_crud_view = _render_crud_menu(
             "Funciones de alumnos",
             [
-                ("otros", "Otros", "Censo de alumnos activos"),
                 ("comparar", "Comparar", "Compara BD vs actualizada y descarga plantilla"),
                 ("editar", "Editar", "Edita datos y mueve de seccion"),
                 ("crear", "Crear", "Crea alumno nuevo"),
@@ -13410,7 +15093,7 @@ with tab_crud_alumnos:
                     if pending_prof > 0:
                         st.caption(f"... y {pending_prof} errores mas.")
 
-            with st.container(border=True):
+            if False:
                 st.markdown("**Censo activos por varios colegios**")
                 st.caption(
                     "Busca por nombre y selecciona varios colegios. Se generara un ZIP con una carpeta por colegio y dos archivos: alumnos y profesores activos."
@@ -13646,7 +15329,7 @@ with tab_crud_alumnos:
                         )
                     )
 
-            if censo_multi_summary_cached:
+            if False and censo_multi_summary_cached:
                 with st.container(border=True):
                     multi_col_text, multi_col_total, multi_col_errors, multi_col_download = st.columns(
                         [2.2, 1, 1, 1.5], gap="small"
@@ -13670,7 +15353,7 @@ with tab_crud_alumnos:
                         use_container_width=True,
                     )
                     _show_dataframe(censo_multi_summary_cached, use_container_width=True)
-            if censo_multi_errors_cached:
+            if False and censo_multi_errors_cached:
                 with st.expander(
                     f"Errores del censo masivo ({len(censo_multi_errors_cached)})",
                     expanded=False,
@@ -13715,59 +15398,53 @@ with tab_crud_alumnos:
             with st.container(border=True):
                 st.markdown("**2) Comparar Plantilla_BD vs Plantilla_Actualizada**")
                 st.caption("Genera altas, match e inactivados.")
-                compare_top_cols = st.columns([1.2, 1.1, 2.7], gap="small")
-                if compare_top_cols[0].button(
-                    "Preparar plantilla",
-                    key="alumnos_descargar",
-                    use_container_width=True,
-                ):
+                if not (plantilla_bytes_cached and plantilla_file_name_cached):
                     token = _get_shared_token()
-                    if not token:
-                        st.error(
-                            "Falta el token. Configura el token global o PEGASUS_TOKEN."
-                        )
-                        st.stop()
-                    try:
-                        colegio_id_int = _parse_colegio_id(colegio_id_raw)
-                    except ValueError as exc:
-                        st.error(f"Error: {exc}")
-                        st.stop()
-                    try:
-                        with st.spinner("Descargando plantilla..."):
-                            output_bytes, summary = (
-                                descargar_plantilla_edicion_masiva(
-                                    token=token,
-                                    colegio_id=colegio_id_int,
-                                    empresa_id=int(empresa_id),
-                                    ciclo_id=int(ciclo_id),
-                                    timeout=int(timeout),
+                    if token:
+                        try:
+                            colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                        except ValueError as exc:
+                            st.warning(f"No se puede preparar la plantilla: {exc}")
+                        else:
+                            try:
+                                with st.spinner("Preparando plantilla para descarga..."):
+                                    output_bytes, summary = (
+                                        descargar_plantilla_edicion_masiva(
+                                            token=token,
+                                            colegio_id=colegio_id_int,
+                                            empresa_id=int(empresa_id),
+                                            ciclo_id=int(ciclo_id),
+                                            timeout=int(timeout),
+                                        )
+                                    )
+                            except Exception as exc:  # pragma: no cover - UI
+                                st.warning(f"No se pudo preparar la plantilla: {exc}")
+                            else:
+                                file_name = (
+                                    f"plantilla_edicion_alumnos_{colegio_id_int}.xlsx"
                                 )
-                            )
-                    except Exception as exc:  # pragma: no cover - UI
-                        st.error(f"Error: {exc}")
-                        st.stop()
-
-                    file_name = f"plantilla_edicion_alumnos_{colegio_id_int}.xlsx"
-                    st.session_state["alumnos_plantilla_edicion_bytes"] = (
-                        output_bytes
-                    )
-                    st.session_state["alumnos_plantilla_edicion_name"] = file_name
-                    st.session_state["alumnos_plantilla_edicion_summary"] = dict(
-                        summary
-                    )
-                    st.session_state["alumnos_plantilla_edicion_colegio_id"] = int(
-                        colegio_id_int
-                    )
-                    plantilla_bytes_cached = output_bytes
-                    plantilla_file_name_cached = file_name
-                    plantilla_summary_cached = dict(summary)
-                    st.success(
-                        "Plantilla lista. Alumnos: {total}.".format(
-                            total=int(summary.get("alumnos_total", 0))
+                                st.session_state["alumnos_plantilla_edicion_bytes"] = (
+                                    output_bytes
+                                )
+                                st.session_state["alumnos_plantilla_edicion_name"] = (
+                                    file_name
+                                )
+                                st.session_state["alumnos_plantilla_edicion_summary"] = (
+                                    dict(summary)
+                                )
+                                st.session_state[
+                                    "alumnos_plantilla_edicion_colegio_id"
+                                ] = int(colegio_id_int)
+                                plantilla_bytes_cached = output_bytes
+                                plantilla_file_name_cached = file_name
+                                plantilla_summary_cached = dict(summary)
+                    else:
+                        st.caption(
+                            "Configura el token global para habilitar la descarga de plantilla."
                         )
-                    )
 
-                compare_top_cols[1].download_button(
+                compare_top_cols = st.columns([1.4, 2.6], gap="small")
+                compare_top_cols[0].download_button(
                     label="Descargar plantilla",
                     data=plantilla_bytes_cached,
                     file_name=plantilla_file_name_cached or "plantilla_edicion_alumnos.xlsx",
@@ -13777,8 +15454,8 @@ with tab_crud_alumnos:
                     disabled=not bool(plantilla_bytes_cached and plantilla_file_name_cached),
                 )
                 if plantilla_bytes_cached and plantilla_file_name_cached:
-                    compare_top_cols[2].caption(
-                        "Ultima plantilla preparada: {total} alumno(s).".format(
+                    compare_top_cols[1].caption(
+                        "Plantilla lista para descargar: {total} alumno(s).".format(
                             total=int(
                                 plantilla_summary_cached.get("alumnos_total", 0)
                             )
@@ -14646,7 +16323,13 @@ with tab_crud_alumnos:
                             if isinstance(current_alumno_detail.get("persona"), dict)
                             else {}
                         )
-                        detail_header_cols = st.columns([8.4, 1.6], gap="small")
+                        alumno_activo_raw = (
+                            current_alumno_detail.get("activo")
+                            if current_alumno_detail.get("activo") is not None
+                            else alumno_edit_row.get("activo")
+                        )
+                        current_alumno_activo = _to_bool(alumno_activo_raw)
+                        detail_header_cols = st.columns([7.1, 1.5, 1.4], gap="small")
                         with detail_header_cols[0]:
                             st.caption(
                                 "Alumno ID: {alumno_id} | Persona ID: {persona_id} | {nivel} | {grado} | {seccion}".format(
@@ -14666,6 +16349,80 @@ with tab_crud_alumnos:
                                 )
                             )
                         with detail_header_cols[1]:
+                            status_cols = st.columns([0.28, 0.72], gap="small")
+                            status_cols[0].markdown(
+                                _profesor_edit_estado_dot_html(current_alumno_activo),
+                                unsafe_allow_html=True,
+                            )
+                            toggle_alumno_estado = status_cols[1].button(
+                                "Activo" if current_alumno_activo else "Inactivo",
+                                key=f"alumnos_edit_estado_toggle_{int(alumno_edit_context['alumno_id'])}",
+                                type="tertiary",
+                                help=(
+                                    "Inactivar alumno"
+                                    if current_alumno_activo
+                                    else "Activar alumno"
+                                ),
+                                use_container_width=True,
+                            )
+                            if toggle_alumno_estado:
+                                token = _get_shared_token()
+                                if not token:
+                                    st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                                    st.stop()
+                                try:
+                                    colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                                except ValueError as exc:
+                                    st.error(f"Error: {exc}")
+                                    st.stop()
+
+                                target_alumno_activo = not bool(current_alumno_activo)
+                                with st.spinner("Actualizando estado del alumno..."):
+                                    estado_ok, estado_msg = _set_alumno_activo_web(
+                                        token=token,
+                                        colegio_id=int(colegio_id_int),
+                                        empresa_id=int(empresa_id),
+                                        ciclo_id=int(ciclo_id),
+                                        nivel_id=int(alumno_edit_context["nivel_id"]),
+                                        grado_id=int(alumno_edit_context["grado_id"]),
+                                        grupo_id=int(alumno_edit_context["grupo_id"]),
+                                        alumno_id=int(alumno_edit_context["alumno_id"]),
+                                        activo=1 if target_alumno_activo else 0,
+                                        observaciones="",
+                                        timeout=int(timeout),
+                                    )
+                                if not estado_ok:
+                                    st.error(
+                                        "No se pudo actualizar el estado del alumno: {msg}".format(
+                                            msg=estado_msg or "sin detalle"
+                                        )
+                                    )
+                                    st.stop()
+
+                                refresh_warning = _refresh_alumnos_edit_catalog_and_detail(
+                                    token=token,
+                                    colegio_id=int(colegio_id_int),
+                                    empresa_id=int(empresa_id),
+                                    ciclo_id=int(ciclo_id),
+                                    timeout=int(timeout),
+                                    alumno_id=int(alumno_edit_context["alumno_id"]),
+                                    fallback_context=dict(alumno_edit_context),
+                                )
+                                st.session_state["alumnos_edit_notice"] = {
+                                    "type": "warning" if refresh_warning else "success",
+                                    "message": (
+                                        "Alumno {estado}.{warning}".format(
+                                            estado=(
+                                                "activado"
+                                                if target_alumno_activo
+                                                else "inactivado"
+                                            ),
+                                            warning=refresh_warning,
+                                        )
+                                    ).strip(),
+                                }
+                                st.rerun()
+                        with detail_header_cols[2]:
                             if st.button(
                                 "->",
                                 key=f"alumnos_edit_move_open_btn_{int(alumno_edit_context['alumno_id'])}",
@@ -15542,4 +17299,7 @@ with tab_crud_alumnos:
                         ).strip(),
                     }
                     st.rerun()
+
+with tab_otras_funcionalidades:
+    _render_otras_funcionalidades_view()
 

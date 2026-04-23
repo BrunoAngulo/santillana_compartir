@@ -25,20 +25,6 @@ const SOURCE_CONFIG = {
     sessionCookieName: "_session_id",
     includeAllDomainCookies: true,
   },
-  ipa: {
-    id: "ipa",
-    label: "IPA",
-    mode: "cookies",
-    bootstrapUrl: "https://www.santillanacompartir.com/",
-    cookieDomains: [
-      "santillanacompartir.com",
-      "apps.santillanacompartir.com",
-      "https.santillanacompartir.com",
-      "santillana.com",
-      "santillana.com.pe",
-    ],
-    sessionCookieName: "local-santadmin",
-  },
 };
 
 function normalizeError(error) {

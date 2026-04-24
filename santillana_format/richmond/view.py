@@ -1011,6 +1011,34 @@ def _richmondstudio_subscription_rows_expiring_in_year(
         rows.append(dict(row))
     return rows
 
+def _build_richmondstudio_expiring_subscription_report_row(
+    row: Dict[str, object],
+) -> Dict[str, str]:
+    first_name = str(row.get("First name") or "").strip()
+    last_name = str(row.get("Last name") or "").strip()
+    user_name = " ".join(part for part in (first_name, last_name) if part).strip()
+    if not user_name:
+        user_name = str(row.get("Username") or "").strip()
+
+    class_names = str(row.get("CLASS NAMES") or "").strip()
+    if not class_names:
+        class_names = str(row.get("Class name") or "").strip()
+
+    classes_count = str(row.get("Classes count") or "").strip()
+    if not classes_count and class_names:
+        classes_count = str(
+            len([item for item in class_names.split("|") if str(item).strip()])
+        )
+
+    return {
+        "USER NAME": user_name,
+        "Email": str(row.get("Email") or "").strip(),
+        "Role": str(row.get("Role") or "").strip(),
+        "level": str(row.get("level") or "").strip(),
+        "CLASSES COUNT": classes_count,
+        "CLASS NAMES": class_names,
+    }
+
 def _list_richmondstudio_users_with_subscriptions_expiring_in_year(
     token: str,
     rows: List[Dict[str, object]],
@@ -1088,80 +1116,16 @@ def _list_richmondstudio_users_with_subscriptions_expiring_in_year(
 
             summary["matched_total"] += 1
             summary["subscriptions_total"] += int(len(matching_subscription_rows))
-
-            expiration_dates_raw = [
-                str(item.get("expiration_date") or "").strip()
-                for item in matching_subscription_rows
-                if str(item.get("expiration_date") or "").strip()
-            ]
-            expiration_dates = [
-                _richmondstudio_date_display(item)
-                for item in sorted(set(expiration_dates_raw))
-                if str(item).strip()
-            ]
-            product_names = sorted(
-                {
-                    str(item.get("product_name") or "").strip()
-                    for item in matching_subscription_rows
-                    if str(item.get("product_name") or "").strip()
-                }
-            )
-            subscription_ids = [
-                str(item.get("id") or "").strip()
-                for item in matching_subscription_rows
-                if str(item.get("id") or "").strip()
-            ]
-
             result_rows.append(
-                {
-                    "RS USER ID": user_id,
-                    "USER NAME": user_name,
-                    "Username": str(row.get("Username") or "").strip(),
-                    "Email": str(row.get("Email") or "").strip(),
-                    "Role": str(row.get("Role") or "").strip(),
-                    "IDENTIFIER": str(row.get("IDENTIFIER") or "").strip(),
-                    "level": str(row.get("level") or "").strip(),
-                    "CLASSES COUNT": str(row.get("Classes count") or "").strip(),
-                    "CLASS NAMES": str(row.get("CLASS NAMES") or "").strip(),
-                    "CLASS CODES": str(row.get("CLASS CODES") or "").strip(),
-                    "SUBSCRIPTIONS EXPIRING": str(len(matching_subscription_rows)),
-                    "EXPIRATION DATES": " | ".join(expiration_dates),
-                    "PRODUCT NAMES": " | ".join(product_names),
-                    "SUBSCRIPTION IDS": " | ".join(subscription_ids),
-                    "createdAt": str(row.get("createdAt") or "").strip(),
-                    "lastSignInAt": str(row.get("lastSignInAt") or "").strip(),
-                    "STATUS": "COINCIDE",
-                    "DETAIL": (
-                        "Tiene {count} suscripcion(es) con expirationDate en {year}.".format(
-                            count=len(matching_subscription_rows),
-                            year=target_year_int,
-                        )
-                    ),
-                }
+                _build_richmondstudio_expiring_subscription_report_row(row)
             )
         except Exception as exc:
             summary["error_total"] += 1
-            result_rows.append(
-                {
-                    "RS USER ID": user_id,
-                    "USER NAME": user_name,
-                    "Username": str(row.get("Username") or "").strip(),
-                    "Email": str(row.get("Email") or "").strip(),
-                    "Role": str(row.get("Role") or "").strip(),
-                    "IDENTIFIER": str(row.get("IDENTIFIER") or "").strip(),
-                    "level": str(row.get("level") or "").strip(),
-                    "CLASSES COUNT": str(row.get("Classes count") or "").strip(),
-                    "CLASS NAMES": str(row.get("CLASS NAMES") or "").strip(),
-                    "CLASS CODES": str(row.get("CLASS CODES") or "").strip(),
-                    "SUBSCRIPTIONS EXPIRING": "0",
-                    "EXPIRATION DATES": "",
-                    "PRODUCT NAMES": "",
-                    "SUBSCRIPTION IDS": "",
-                    "createdAt": str(row.get("createdAt") or "").strip(),
-                    "lastSignInAt": str(row.get("lastSignInAt") or "").strip(),
-                    "STATUS": "ERROR",
-                    "DETAIL": str(exc).strip() or "sin detalle",
-                }
+            _status(
+                "Error revisando suscripciones RS para {user}: {detail}".format(
+                    user=user_name or user_id or "(sin usuario)",
+                    detail=str(exc).strip() or "sin detalle",
+                )
             )
         finally:
             _progress(idx_row, total_rows)
@@ -1169,9 +1133,8 @@ def _list_richmondstudio_users_with_subscriptions_expiring_in_year(
     result_rows = sorted(
         result_rows,
         key=lambda item: (
-            str(item.get("STATUS") or "").upper() == "ERROR",
-            -int(_safe_int(item.get("SUBSCRIPTIONS EXPIRING")) or 0),
             str(item.get("USER NAME") or "").lower(),
+            str(item.get("Email") or "").lower(),
         ),
     )
     return summary, result_rows
@@ -6966,7 +6929,7 @@ def render_richmond_studio_view() -> None:
                     f"**Usuarios con suscripciones que expiran desde {expiring_next_year_label}**"
                 )
                 st.caption(
-                    "Consulta los usuarios RS que tengan al menos una suscripcion con expirationDate en el proximo ano."
+                    "Genera un reporte resumido de usuarios RS con suscripcion que expira el proximo ano: USER NAME, Email, Role, level, CLASSES COUNT y CLASS NAMES."
                 )
                 if st.button(
                     f"Listar suscripciones que expiran en {expiring_next_year}",

@@ -3100,10 +3100,20 @@ def _extract_clase_base_meta(item: Dict[str, object]) -> Optional[Dict[str, obje
 
 
 def _is_santillana_inclusiva_class(item: Dict[str, object]) -> bool:
-    ge_clase = _normalize_plain_text(item.get("geClase"))
-    ge_clase_clave = _normalize_plain_text(item.get("geClaseClave"))
+    search_text = " ".join(
+        part
+        for part in (
+            _normalize_plain_text(item.get("geClase")),
+            _normalize_plain_text(item.get("geClaseClave")),
+            _normalize_plain_text(item.get("clase")),
+            _normalize_plain_text(item.get("clase_codigo")),
+            _normalize_plain_text(item.get("clase_nombre")),
+            _normalize_plain_text(item.get("alias")),
+        )
+        if part
+    )
     target = "SANTILLANA INCLUSIVA"
-    return target in ge_clase or target in ge_clase_clave
+    return target in search_text
 
 
 def _is_ingles_por_niveles_class(item: Dict[str, object]) -> bool:
@@ -4807,6 +4817,7 @@ def _build_clases_destino_for_plan(
     grado_id: int,
     grupo_destino_id: int,
     seccion_destino: str,
+    exclude_santillana_inclusiva: bool = False,
 ) -> List[Dict[str, object]]:
     seccion_norm = _normalize_seccion_key(seccion_destino)
     clases: List[Dict[str, object]] = []
@@ -4823,6 +4834,8 @@ def _build_clases_destino_for_plan(
             if int(clase_grupo_id) != int(grupo_destino_id):
                 continue
         elif seccion_norm and clase_seccion != seccion_norm:
+            continue
+        if exclude_santillana_inclusiva and _is_santillana_inclusiva_class(clase):
             continue
         if int(clase_id) in seen:
             continue
@@ -6409,6 +6422,7 @@ def _build_auto_move_simulation(
                 grado_id=int(grado_id),
                 grupo_destino_id=int(grupo_destino_id),
                 seccion_destino=seccion_destino,
+                exclude_santillana_inclusiva=True,
             )
 
         comparacion = ""
@@ -8129,6 +8143,7 @@ def _assign_alumno_to_matching_classes_for_context(
         grado_id=int(grado_id),
         grupo_destino_id=int(grupo_id),
         seccion_destino=str(seccion or ""),
+        exclude_santillana_inclusiva=True,
     )
     target_total = len(target_classes)
     _status(f"Clases destino detectadas: {target_total}.")
@@ -10723,6 +10738,7 @@ def _apply_single_alumno_move_and_reassign(
         grado_id=int(nuevo_grado_id),
         grupo_destino_id=int(nuevo_grupo_id),
         seccion_destino=str(nueva_seccion or ""),
+        exclude_santillana_inclusiva=True,
     )
     _status(
         "Clases origen detectadas: {source} | Clases destino detectadas: {target}".format(

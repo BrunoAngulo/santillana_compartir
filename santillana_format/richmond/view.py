@@ -1839,6 +1839,20 @@ def _build_richmondstudio_class_users_output_filename(
         return f"usuarios_RS_{class_clean}.xlsx"
     return "usuarios_RS_clase.xlsx"
 
+
+def _build_richmondstudio_class_participants_report_output_filename(
+    institution_name: object,
+    class_count: int,
+) -> str:
+    institution_raw = str(institution_name or "").strip()
+    institution_clean = re.sub(r'[\\/:*?"<>|]+', " ", institution_raw)
+    institution_clean = re.sub(r"\s+", " ", institution_clean).strip()
+    class_count_txt = max(int(class_count or 0), 1)
+    if institution_clean:
+        return f"participantes_RS_{institution_clean}_{class_count_txt}_clases.xlsx"
+    return f"participantes_RS_{class_count_txt}_clases.xlsx"
+
+
 def _build_richmondstudio_users_export_rows(
     rows: List[Dict[str, object]]
 ) -> List[Dict[str, str]]:
@@ -1888,6 +1902,78 @@ def _build_richmondstudio_class_users_export_rows(
                 "lastSignInAt": str(row.get("lastSignInAt") or "").strip(),
             }
         )
+    return export_rows
+
+
+def _build_richmondstudio_class_participants_report_rows(
+    groups: List[Dict[str, object]],
+    registered_user_rows: List[Dict[str, object]],
+) -> List[Dict[str, str]]:
+    users_by_group_id: Dict[str, List[Dict[str, object]]] = {}
+    for row in registered_user_rows:
+        if not isinstance(row, dict):
+            continue
+        for group_id in list(row.get("_group_ids") or []):
+            group_id_txt = str(group_id or "").strip()
+            if not group_id_txt:
+                continue
+            users_by_group_id.setdefault(group_id_txt, []).append(dict(row))
+
+    export_rows: List[Dict[str, str]] = []
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        group_id_txt = str(group.get("ID") or "").strip()
+        class_name_txt = str(group.get("Class name") or "").strip()
+        class_code_txt = str(group.get("Code") or "").strip()
+        class_grade_txt = str(group.get("Grade") or "").strip()
+        matching_users = list(users_by_group_id.get(group_id_txt) or [])
+        matching_users.sort(
+            key=lambda row: (
+                str(row.get("Last name") or "").lower(),
+                str(row.get("First name") or "").lower(),
+                str(row.get("Login") or row.get("Username") or "").lower(),
+            )
+        )
+        if not matching_users:
+            export_rows.append(
+                {
+                    "Class name": class_name_txt,
+                    "Class code": class_code_txt,
+                    "Grade": class_grade_txt,
+                    "RS USER ID": "",
+                    "First name": "",
+                    "Last name": "",
+                    "Email": "",
+                    "Login": "",
+                    "Role": "",
+                    "IDENTIFIER": "",
+                    "level": "",
+                    "createdAt": "",
+                    "lastSignInAt": "",
+                    "Detalle": "Sin participantes",
+                }
+            )
+            continue
+        for row in matching_users:
+            export_rows.append(
+                {
+                    "Class name": class_name_txt,
+                    "Class code": class_code_txt,
+                    "Grade": class_grade_txt,
+                    "RS USER ID": str(row.get("RS USER ID") or "").strip(),
+                    "First name": str(row.get("First name") or "").strip(),
+                    "Last name": str(row.get("Last name") or "").strip(),
+                    "Email": str(row.get("Email") or "").strip(),
+                    "Login": str(row.get("Login") or row.get("Username") or "").strip(),
+                    "Role": str(row.get("Role") or "").strip(),
+                    "IDENTIFIER": str(row.get("IDENTIFIER") or "").strip(),
+                    "level": str(row.get("level") or row.get("Level") or "").strip(),
+                    "createdAt": str(row.get("createdAt") or "").strip(),
+                    "lastSignInAt": str(row.get("lastSignInAt") or "").strip(),
+                    "Detalle": "",
+                }
+            )
     return export_rows
 
 def _build_richmondstudio_password_update_filename(
@@ -5635,6 +5721,112 @@ def _render_richmondstudio_classes_manage_panel(
                     else:
                         st.info(
                             "Carga usuarios RS para preparar el Excel de la clase seleccionada."
+                        )
+
+                st.divider()
+                st.markdown("**Descargar reporte de participantes por clases**")
+                report_group_select_key = "rs_rs_groups_report_class_ids"
+                selected_report_group_ids = list(
+                    st.multiselect(
+                        "Clases para descargar participantes",
+                        options=export_group_options,
+                        key=report_group_select_key,
+                        format_func=lambda value: "{name} | {code} | Users {users}".format(
+                            name=str(
+                                (export_group_by_id.get(str(value)) or {}).get("Class name") or value
+                            ).strip(),
+                            code=str(
+                                (export_group_by_id.get(str(value)) or {}).get("Code") or "-"
+                            ).strip(),
+                            users=int(
+                                (export_group_by_id.get(str(value)) or {}).get("Users") or 0
+                            ),
+                        ),
+                        placeholder="Selecciona una o varias clases",
+                    )
+                    or []
+                )
+                selected_report_group_rows = [
+                    dict(export_group_by_id.get(str(group_id)) or {})
+                    for group_id in selected_report_group_ids
+                    if str(group_id or "").strip()
+                    and isinstance(export_group_by_id.get(str(group_id)), dict)
+                ]
+                if selected_report_group_rows:
+                    selected_report_total_users = sum(
+                        int(row.get("Users") or 0)
+                        for row in selected_report_group_rows
+                        if isinstance(row, dict)
+                    )
+                    st.caption(
+                        "Clases seleccionadas: {classes} | Users relacionados: {users}".format(
+                            classes=len(selected_report_group_rows),
+                            users=selected_report_total_users,
+                        )
+                    )
+                    registered_user_rows_cached_report = [
+                        row
+                        for row in (st.session_state.get("rs_registered_user_rows") or [])
+                        if isinstance(row, dict)
+                    ]
+                    col_prepare_report, col_download_report = st.columns(
+                        [1, 1.2], gap="small"
+                    )
+                    run_prepare_report = col_prepare_report.button(
+                        "Cargar usuarios RS para reporte",
+                        key="rs_rs_groups_prepare_report_export_btn",
+                        use_container_width=True,
+                    )
+                    if run_prepare_report:
+                        if not rs_token:
+                            st.error("Ingresa el bearer token de Richmond Studio.")
+                        else:
+                            try:
+                                with st.spinner(
+                                    "Consultando usuarios registrados de Richmond Studio..."
+                                ):
+                                    panel_data = _load_richmondstudio_registered_panel_data(
+                                        rs_token,
+                                        timeout=int(timeout),
+                                    )
+                                _store_richmondstudio_registered_panel_data(panel_data)
+                            except Exception as exc:  # pragma: no cover - UI
+                                st.error(f"Error RS: {exc}")
+                            else:
+                                st.success("Usuarios RS cargados para reporte por clases.")
+                                st.rerun()
+
+                    if registered_user_rows_cached_report:
+                        institution_name_for_report = str(
+                            st.session_state.get("rs_registered_institution_name") or ""
+                        ).strip()
+                        report_rows = _build_richmondstudio_class_participants_report_rows(
+                            selected_report_group_rows,
+                            registered_user_rows_cached_report,
+                        )
+                        report_bytes = _export_simple_excel(
+                            report_rows,
+                            sheet_name="participants_by_class",
+                        )
+                        col_download_report.download_button(
+                            "Descargar reporte de participantes",
+                            data=report_bytes,
+                            file_name=_build_richmondstudio_class_participants_report_output_filename(
+                                institution_name_for_report,
+                                len(selected_report_group_rows),
+                            ),
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="rs_rs_groups_download_participants_report_btn",
+                            use_container_width=True,
+                        )
+                        _show_dataframe(report_rows[:200], use_container_width=True)
+                        if len(report_rows) > 200:
+                            st.caption(
+                                f"Mostrando 200 de {len(report_rows)} fila(s) del reporte."
+                            )
+                    else:
+                        st.info(
+                            "Carga usuarios RS para preparar el reporte de las clases seleccionadas."
                         )
 
             col_rs_update, col_rs_delete = st.columns([1, 1], gap="small")

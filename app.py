@@ -4883,6 +4883,467 @@ def _clear_ingles_por_niveles_assignment_state() -> None:
             st.session_state.pop(state_key, None)
 
 
+def _set_ingles_por_niveles_result_notice(kind: str, message: str) -> None:
+    st.session_state["clases_auto_group_ingles_excel_result_notice"] = {
+        "kind": str(kind or "success").strip().lower() or "success",
+        "message": str(message or "").strip(),
+    }
+
+
+def _set_participantes_ingles_grade_selection(
+    selected_keys: Sequence[object],
+    grade_options: Optional[Sequence[Dict[str, object]]] = None,
+) -> None:
+    normalized_keys: List[str] = []
+    seen_keys: Set[str] = set()
+    for value in (selected_keys or []):
+        key = str(value or "").strip()
+        if not key or key in seen_keys:
+            continue
+        seen_keys.add(key)
+        normalized_keys.append(key)
+
+    st.session_state["clases_auto_group_ingles_grade_selected_keys"] = list(
+        normalized_keys
+    )
+
+    options_source = (
+        list(grade_options)
+        if isinstance(grade_options, (list, tuple))
+        else list(st.session_state.get("clases_auto_group_ingles_grade_options") or [])
+    )
+    for option in options_source:
+        if not isinstance(option, dict):
+            continue
+        option_key = str(option.get("key") or "").strip()
+        if not option_key:
+            continue
+        st.session_state[_participantes_ingles_grade_checkbox_key(option_key)] = (
+            option_key in seen_keys
+        )
+
+
+def _format_participantes_ingles_grade_label(
+    option_row: Dict[str, object],
+    include_class_count: bool = True,
+) -> str:
+    label = (
+        f"{str(option_row.get('nivel_nombre') or '').strip() or '-'} | "
+        f"{str(option_row.get('grado_nombre') or '').strip() or '-'}"
+    )
+    if not include_class_count:
+        return label
+    class_names = (
+        option_row.get("class_names")
+        if isinstance(option_row.get("class_names"), list)
+        else []
+    )
+    if class_names:
+        return f"{label} ({len(class_names)} clase(s))"
+    return label
+
+
+def _fetch_alumnos_context_catalog_for_ingles_detection(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+    on_status: Optional[Callable[[str], None]] = None,
+) -> Dict[str, object]:
+    def _status(message: str) -> None:
+        if callable(on_status):
+            try:
+                on_status(str(message or ""))
+            except Exception:
+                pass
+
+    niveles = _fetch_niveles_grados_grupos_censo(
+        token=token,
+        colegio_id=int(colegio_id),
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        timeout=int(timeout),
+    )
+    contexts = _build_contexts_for_nivel_grado(niveles=niveles)
+    if not contexts:
+        raise RuntimeError("No hay niveles/grados/secciones configurados para este colegio.")
+
+    alumnos_raw: List[Dict[str, object]] = []
+    errors: List[str] = []
+    _status("Consultando alumnos del colegio para validar Ingles por niveles...")
+    try:
+        alumnos_ctx = _fetch_alumnos_censo_by_filters(
+            token=token,
+            colegio_id=int(colegio_id),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+        )
+        for item in alumnos_ctx:
+            if not isinstance(item, dict):
+                continue
+            alumnos_raw.append(_flatten_censo_alumno_for_auto_plan(item=item, fallback={}))
+    except Exception as exc:
+        errors.append(f"alumnosByFilters: {exc}")
+        total_contexts = len(contexts)
+        for idx_ctx, ctx in enumerate(contexts, start=1):
+            _status(
+                "Respaldo alumnos {idx}/{total} | nivelId={nivel} gradoId={grado} grupoId={grupo}".format(
+                    idx=idx_ctx,
+                    total=total_contexts,
+                    nivel=ctx.get("nivel_id"),
+                    grado=ctx.get("grado_id"),
+                    grupo=ctx.get("grupo_id"),
+                )
+            )
+            try:
+                alumnos_ctx = _fetch_alumnos_censo(
+                    token=token,
+                    colegio_id=int(colegio_id),
+                    nivel_id=int(ctx["nivel_id"]),
+                    grado_id=int(ctx["grado_id"]),
+                    grupo_id=int(ctx["grupo_id"]),
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                )
+            except Exception as inner_exc:
+                errors.append(
+                    "nivelId={nivel} gradoId={grado} grupoId={grupo}: {err}".format(
+                        nivel=ctx.get("nivel_id"),
+                        grado=ctx.get("grado_id"),
+                        grupo=ctx.get("grupo_id"),
+                        err=inner_exc,
+                    )
+                )
+                continue
+            for item in alumnos_ctx:
+                if not isinstance(item, dict):
+                    continue
+                alumnos_raw.append(
+                    _flatten_censo_alumno_for_auto_plan(item=item, fallback=ctx)
+                )
+
+    students = _dedupe_and_sort_censo_students(alumnos_raw)
+    return {
+        "students": students,
+        "errors": errors,
+    }
+
+
+def _detect_ingles_por_niveles_behavior(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+    on_status: Optional[Callable[[str], None]] = None,
+) -> Dict[str, object]:
+    def _status(message: str) -> None:
+        if callable(on_status):
+            try:
+                on_status(str(message or ""))
+            except Exception:
+                pass
+
+    _status("Listando clases del colegio...")
+    clases = _fetch_clases_gestion_escolar(
+        token=token,
+        colegio_id=int(colegio_id),
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        timeout=int(timeout),
+        ordered=True,
+    )
+    english_classes = [
+        item
+        for item in clases
+        if isinstance(item, dict) and _is_ingles_por_niveles_class(item)
+    ]
+    grade_options = _build_ingles_grade_options_for_participantes(clases)
+    if not english_classes:
+        return {
+            "detected": False,
+            "error": "",
+            "grade_options": grade_options,
+            "affected_grade_keys": [],
+            "affected_grade_labels": [],
+            "evidence_rows": [],
+            "evidence_total": 0,
+        }
+
+    students_catalog = _fetch_alumnos_context_catalog_for_ingles_detection(
+        token=token,
+        colegio_id=int(colegio_id),
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        timeout=int(timeout),
+        on_status=on_status,
+    )
+    students = [
+        row
+        for row in (students_catalog.get("students") or [])
+        if isinstance(row, dict) and _safe_int(row.get("alumno_id")) is not None
+    ]
+    if not students:
+        raise RuntimeError(
+            "No se pudieron leer los alumnos del colegio para validar Ingles por niveles."
+        )
+
+    student_by_id = {
+        int(row["alumno_id"]): row
+        for row in students
+        if _safe_int(row.get("alumno_id")) is not None
+    }
+    grade_option_by_key = {
+        str(option.get("key") or "").strip(): option
+        for option in grade_options
+        if isinstance(option, dict) and str(option.get("key") or "").strip()
+    }
+    affected_grade_keys: Set[str] = set()
+    evidence_rows: List[Dict[str, object]] = []
+    evidence_total = 0
+    class_errors: List[str] = []
+    total_english_classes = len(english_classes)
+
+    for idx_class, item in enumerate(english_classes, start=1):
+        meta = _extract_clase_base_meta(item)
+        if not isinstance(meta, dict):
+            continue
+        clase_id = _safe_int(meta.get("clase_id"))
+        if clase_id is None:
+            continue
+        class_label = str(meta.get("clase_nombre") or f"Clase {int(clase_id)}").strip()
+        _status(
+            "Validando clases de Ingles {idx}/{total}: {clase}".format(
+                idx=idx_class,
+                total=total_english_classes,
+                clase=class_label or "-",
+            )
+        )
+        try:
+            class_data = _fetch_alumnos_clase_gestion_escolar(
+                token=token,
+                clase_id=int(clase_id),
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                timeout=int(timeout),
+            )
+        except Exception as exc:
+            class_errors.append(f"Clase {int(clase_id)}: {exc}")
+            continue
+
+        class_nivel_id = _safe_int(meta.get("nivel_id"))
+        class_grado_id = _safe_int(meta.get("grado_id"))
+        class_grupo_id = _safe_int(meta.get("grupo_id_actual"))
+        class_nivel = str(meta.get("nivel_nombre") or "").strip()
+        class_grado = str(meta.get("grado_nombre") or "").strip()
+        class_seccion = str(meta.get("grupo_clave_actual") or "").strip()
+        class_seccion_norm = _normalize_seccion_key(class_seccion)
+        option_key = _participantes_ingles_option_key_from_meta(meta)
+
+        for member in _extract_clase_alumno_rows(class_data):
+            alumno_id = _safe_int(member.get("alumno_id"))
+            if alumno_id is None:
+                continue
+            student = student_by_id.get(int(alumno_id))
+            if not isinstance(student, dict):
+                continue
+
+            student_nivel_id = _safe_int(student.get("nivel_id"))
+            student_grado_id = _safe_int(student.get("grado_id"))
+            student_grupo_id = _safe_int(student.get("grupo_id"))
+            student_nivel = str(student.get("nivel") or "").strip()
+            student_grado = str(student.get("grado") or "").strip()
+            student_seccion = str(
+                student.get("seccion_norm") or student.get("seccion") or ""
+            ).strip()
+            student_seccion_norm = _normalize_seccion_key(student_seccion)
+
+            nivel_diff = (
+                class_nivel_id is not None
+                and student_nivel_id is not None
+                and int(class_nivel_id) != int(student_nivel_id)
+            )
+            grado_diff = (
+                class_grado_id is not None
+                and student_grado_id is not None
+                and int(class_grado_id) != int(student_grado_id)
+            )
+            seccion_diff = False
+            if class_grupo_id is not None and student_grupo_id is not None:
+                seccion_diff = int(class_grupo_id) != int(student_grupo_id)
+            elif class_seccion_norm and student_seccion_norm:
+                seccion_diff = class_seccion_norm != student_seccion_norm
+
+            if not (nivel_diff or grado_diff or seccion_diff):
+                continue
+
+            mismatch_parts: List[str] = []
+            if nivel_diff or grado_diff:
+                mismatch_parts.append("otro grado")
+            if seccion_diff:
+                mismatch_parts.append("otra seccion")
+            evidence_total += 1
+            if option_key:
+                affected_grade_keys.add(option_key)
+            if len(evidence_rows) >= 40:
+                continue
+            evidence_rows.append(
+                {
+                    "Alumno": str(
+                        student.get("nombre_completo")
+                        or member.get("nombre_completo")
+                        or f"Alumno {int(alumno_id)}"
+                    ).strip(),
+                    "Clase ingles": class_label,
+                    "Curso ingles": " | ".join(
+                        part for part in (class_nivel, class_grado, class_seccion) if part
+                    ),
+                    "Alumno base": " | ".join(
+                        part
+                        for part in (student_nivel, student_grado, student_seccion)
+                        if part
+                    ),
+                    "Diferencia": " y ".join(mismatch_parts),
+                }
+            )
+
+    affected_grade_keys_sorted = [
+        option_key
+        for option_key in grade_option_by_key.keys()
+        if option_key in affected_grade_keys
+    ]
+    affected_grade_labels = [
+        _format_participantes_ingles_grade_label(
+            grade_option_by_key[option_key],
+            include_class_count=False,
+        )
+        for option_key in affected_grade_keys_sorted
+        if option_key in grade_option_by_key
+    ]
+
+    if evidence_total:
+        return {
+            "detected": True,
+            "error": "",
+            "grade_options": grade_options,
+            "affected_grade_keys": affected_grade_keys_sorted,
+            "affected_grade_labels": affected_grade_labels,
+            "evidence_rows": evidence_rows,
+            "evidence_total": int(evidence_total),
+            "class_errors": class_errors[:12],
+        }
+
+    if class_errors:
+        return {
+            "detected": False,
+            "error": (
+                "No se pudo validar Ingles por niveles en {count} clase(s) de Ingles. "
+                "Reintenta antes de actualizar la asignacion."
+            ).format(count=len(class_errors)),
+            "grade_options": grade_options,
+            "affected_grade_keys": [],
+            "affected_grade_labels": [],
+            "evidence_rows": [],
+            "evidence_total": 0,
+            "class_errors": class_errors[:12],
+        }
+
+    return {
+        "detected": False,
+        "error": "",
+        "grade_options": grade_options,
+        "affected_grade_keys": [],
+        "affected_grade_labels": [],
+        "evidence_rows": [],
+        "evidence_total": 0,
+        "class_errors": [],
+    }
+
+
+@st.dialog("Ingles por niveles detectado", width="large")
+def _show_ingles_por_niveles_detected_dialog() -> None:
+    payload = (
+        dict(st.session_state.get("clases_auto_group_ingles_detected_dialog") or {})
+        if isinstance(st.session_state.get("clases_auto_group_ingles_detected_dialog"), dict)
+        else {}
+    )
+    if not payload:
+        return
+
+    st.warning(
+        "Este colegio lleva ingles por niveles. Debes seleccionar los grados que llevan "
+        "para que no se mezcle y no se cambie al alumno de seccion."
+    )
+
+    affected_grade_labels = [
+        str(item).strip()
+        for item in list(payload.get("affected_grade_labels") or [])
+        if str(item).strip()
+    ]
+    if affected_grade_labels:
+        st.markdown("**Grados detectados**")
+        st.markdown("\n".join(f"- {item}" for item in affected_grade_labels))
+
+    evidence_rows = [
+        row for row in list(payload.get("evidence_rows") or []) if isinstance(row, dict)
+    ]
+    evidence_total = int(_safe_int(payload.get("evidence_total")) or len(evidence_rows))
+    if evidence_rows:
+        st.markdown("**Ejemplos detectados**")
+        _show_dataframe(evidence_rows[:12], use_container_width=True)
+        if evidence_total > len(evidence_rows):
+            st.caption(
+                f"Mostrando {len(evidence_rows)} de {evidence_total} coincidencia(s)."
+            )
+
+    class_errors = [
+        str(item).strip()
+        for item in list(payload.get("class_errors") or [])
+        if str(item).strip()
+    ]
+    if class_errors:
+        with st.expander(f"Observaciones de lectura ({len(class_errors)})"):
+            st.write("\n".join(f"- {item}" for item in class_errors))
+
+    col_enable, col_close = st.columns([1.7, 1], gap="small")
+    if col_enable.button(
+        "Activar ingles por niveles",
+        key="clases_auto_group_ingles_detected_enable_btn",
+        use_container_width=True,
+    ):
+        suggested_grade_keys = list(payload.get("affected_grade_keys") or [])
+        grade_options = [
+            row for row in list(payload.get("grade_options") or []) if isinstance(row, dict)
+        ]
+        scope = payload.get("scope")
+        st.session_state["clases_auto_group_exclude_ingles_checkbox"] = True
+        if scope is not None:
+            st.session_state["clases_auto_group_ingles_grades_scope"] = scope
+        st.session_state["clases_auto_group_ingles_grade_options"] = list(grade_options)
+        st.session_state["clases_auto_group_ingles_grade_error"] = ""
+        _set_participantes_ingles_grade_selection(
+            suggested_grade_keys,
+            grade_options=grade_options,
+        )
+        st.session_state.pop("clases_auto_group_ingles_detected_dialog", None)
+        _set_ingles_por_niveles_result_notice(
+            "warning",
+            "Se detecto Ingles por niveles. Revisa los grados sugeridos antes de actualizar.",
+        )
+        st.rerun()
+
+    if col_close.button(
+        "Cerrar",
+        key="clases_auto_group_ingles_detected_close_btn",
+        use_container_width=True,
+    ):
+        st.session_state.pop("clases_auto_group_ingles_detected_dialog", None)
+        st.rerun()
+
+
 def _load_ingles_assignment_rows_from_excel(excel_bytes: bytes) -> List[Dict[str, object]]:
     try:
         df = pd.read_excel(BytesIO(excel_bytes), dtype=str)
@@ -5845,6 +6306,86 @@ def _apply_ingles_assignment_preview_rows(
     return results
 
 
+def _apply_ingles_assignment_for_selected_grades(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+    preview_rows: List[Dict[str, object]],
+    selected_ingles_grade_keys: Sequence[object],
+    status_placeholder: object = None,
+) -> Tuple[bool, str]:
+    rows_to_apply = _filter_ingles_assignment_rows_by_selected_ingles_grades(
+        preview_rows,
+        selected_ingles_grade_keys,
+        include_unresolved=False,
+    )
+    if not rows_to_apply:
+        return (
+            False,
+            "No hay filas de Ingles por niveles para los grados seleccionados arriba.",
+        )
+
+    on_status = None
+    if status_placeholder is not None:
+        on_status = lambda message: status_placeholder.write(str(message or ""))
+
+    try:
+        with st.spinner("Aplicando asignacion de ingles..."):
+            apply_rows = _apply_ingles_assignment_preview_rows(
+                token=token,
+                colegio_id=int(colegio_id),
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                timeout=int(timeout),
+                preview_rows=rows_to_apply,
+                on_status=on_status,
+            )
+    except Exception as exc:
+        if status_placeholder is not None:
+            try:
+                status_placeholder.empty()
+            except Exception:
+                pass
+        return False, f"No se pudo aplicar la asignacion: {exc}"
+
+    if status_placeholder is not None:
+        try:
+            status_placeholder.empty()
+        except Exception:
+            pass
+
+    st.session_state["clases_auto_group_ingles_excel_apply_rows"] = apply_rows
+    ok_count = sum(
+        1
+        for row in apply_rows
+        if str(row.get("Resultado aplicar") or "").strip() == "OK"
+    )
+    same_count = sum(
+        1
+        for row in apply_rows
+        if str(row.get("Resultado aplicar") or "").strip() == "Sin cambios"
+    )
+    err_count = sum(
+        1
+        for row in apply_rows
+        if str(row.get("Resultado aplicar") or "").strip() == "Error"
+    )
+    if err_count:
+        _set_ingles_por_niveles_result_notice(
+            "warning",
+            "Asignacion aplicada con observaciones. "
+            f"OK={ok_count} | Sin cambios={same_count} | Error={err_count}",
+        )
+    else:
+        _set_ingles_por_niveles_result_notice(
+            "success",
+            f"Asignacion aplicada. OK={ok_count} | Sin cambios={same_count}",
+        )
+    return True, ""
+
+
 def _build_ingles_assignment_apply_display_rows(
     rows: List[Dict[str, object]]
 ) -> List[Dict[str, object]]:
@@ -5938,18 +6479,12 @@ def _render_ingles_por_niveles_excel_assignment_block(
             "clases_auto_group_ingles_excel_result_notice"
         ) or {}
 
-        col_analyze, col_apply = st.columns([1.4, 1.4], gap="small")
-        run_analyze = col_analyze.button(
+        run_analyze = st.button(
             "Buscar alumnos y clases",
             key="clases_auto_group_ingles_excel_analyze_btn",
             use_container_width=True,
         )
-        run_apply = col_apply.button(
-            "Aplicar ingles de grados seleccionados",
-            key="clases_auto_group_ingles_excel_apply_btn",
-            use_container_width=True,
-            disabled=not bool(preview_rows_state),
-        )
+        st.caption("La asignacion final se ejecuta desde el boton `Actualizar asignacion`.")
 
         if run_analyze:
             if not token:
@@ -6109,69 +6644,6 @@ def _render_ingles_por_niveles_excel_assignment_block(
                 )
             else:
                 st.info("No hay filas para los grados seleccionados.")
-
-        if run_apply:
-            if not token:
-                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-            elif not preview_rows_state:
-                st.error("Primero analiza el Excel para generar la vista previa.")
-            else:
-                rows_to_apply = _filter_ingles_assignment_rows_by_selected_ingles_grades(
-                    preview_rows_state,
-                    selected_ingles_grade_keys,
-                    include_unresolved=False,
-                )
-                if not rows_to_apply:
-                    st.error(
-                        "No hay filas de Ingles por niveles para los grados seleccionados arriba."
-                    )
-                else:
-                    status_placeholder = st.empty()
-                    try:
-                        with st.spinner("Aplicando asignacion de ingles..."):
-                            apply_rows = _apply_ingles_assignment_preview_rows(
-                                token=token,
-                                colegio_id=int(colegio_id),
-                                empresa_id=int(empresa_id),
-                                ciclo_id=int(ciclo_id),
-                                timeout=int(timeout),
-                                preview_rows=rows_to_apply,
-                                on_status=lambda message: status_placeholder.write(message),
-                            )
-                    except Exception as exc:
-                        status_placeholder.empty()
-                        st.error(f"No se pudo aplicar la asignacion: {exc}")
-                    else:
-                        status_placeholder.empty()
-                        st.session_state[
-                            "clases_auto_group_ingles_excel_apply_rows"
-                        ] = apply_rows
-                        ok_count = sum(
-                            1
-                            for row in apply_rows
-                            if str(row.get("Resultado aplicar") or "").strip() == "OK"
-                        )
-                        same_count = sum(
-                            1
-                            for row in apply_rows
-                            if str(row.get("Resultado aplicar") or "").strip()
-                            == "Sin cambios"
-                        )
-                        err_count = sum(
-                            1
-                            for row in apply_rows
-                            if str(row.get("Resultado aplicar") or "").strip() == "Error"
-                        )
-                        if err_count:
-                            st.warning(
-                                f"Asignacion aplicada con observaciones. "
-                                f"OK={ok_count} | Sin cambios={same_count} | Error={err_count}"
-                            )
-                        else:
-                            st.success(
-                                f"Asignacion aplicada. OK={ok_count} | Sin cambios={same_count}"
-                            )
-                        apply_rows_state = apply_rows
 
         if apply_rows_state:
             st.caption(f"Resultado de aplicacion: {len(apply_rows_state)} fila(s)")
@@ -11882,6 +12354,7 @@ with tab_crud_clases:
                     "clases_auto_group_ingles_grade_options",
                     "clases_auto_group_ingles_grade_error",
                     "clases_auto_group_ingles_grade_selected_keys",
+                    "clases_auto_group_ingles_detected_dialog",
                 ):
                     st.session_state.pop(state_key, None)
                 _clear_ingles_por_niveles_assignment_state()
@@ -11993,19 +12466,9 @@ with tab_crud_clases:
                             option_row = ingles_grade_option_by_key.get(
                                 str(option_key), {}
                             )
-                            class_names = (
-                                option_row.get("class_names")
-                                if isinstance(option_row.get("class_names"), list)
-                                else []
+                            checkbox_label = _format_participantes_ingles_grade_label(
+                                option_row
                             )
-                            checkbox_label = (
-                                f"{str(option_row.get('nivel_nombre') or '').strip() or '-'} | "
-                                f"{str(option_row.get('grado_nombre') or '').strip() or '-'}"
-                            )
-                            if class_names:
-                                checkbox_label = (
-                                    f"{checkbox_label} ({len(class_names)} clase(s))"
-                                )
                             checkbox_key = _participantes_ingles_grade_checkbox_key(
                                 option_key
                             )
@@ -12063,22 +12526,133 @@ with tab_crud_clases:
                     elif colegio_id_int is None:
                         st.error("Ingresa un Colegio Clave (global) valido.")
                     else:
-                        current_job_id = _start_participantes_sync_job(
-                            token=token,
-                            colegio_id=int(colegio_id_int),
-                            empresa_id=int(empresa_id),
-                            ciclo_id=int(ciclo_id),
-                            timeout=int(timeout),
-                            exclude_ingles_por_niveles=bool(
-                                exclude_ingles_por_niveles
-                            ),
-                            ingles_grade_keys=selected_ingles_grade_keys,
-                        )
-                        st.session_state["clases_auto_group_job_id"] = current_job_id
-                        st.session_state["clases_auto_group_polling_job_id"] = (
-                            current_job_id
-                        )
-                        st.rerun()
+                        can_start_sync = True
+                        if not exclude_ingles_por_niveles:
+                            detection_status_placeholder = st.empty()
+                            try:
+                                with st.spinner(
+                                    "Validando comportamiento de Ingles por niveles..."
+                                ):
+                                    detection_result = _detect_ingles_por_niveles_behavior(
+                                        token=token,
+                                        colegio_id=int(colegio_id_int),
+                                        empresa_id=int(empresa_id),
+                                        ciclo_id=int(ciclo_id),
+                                        timeout=int(timeout),
+                                        on_status=lambda message: detection_status_placeholder.write(
+                                            str(message or "")
+                                        ),
+                                    )
+                            except Exception as exc:
+                                detection_status_placeholder.empty()
+                                st.error(
+                                    "No se pudo validar Ingles por niveles antes de actualizar: "
+                                    f"{exc}"
+                                )
+                                can_start_sync = False
+                            else:
+                                detection_status_placeholder.empty()
+                                detected_grade_options = [
+                                    row
+                                    for row in list(
+                                        detection_result.get("grade_options") or []
+                                    )
+                                    if isinstance(row, dict)
+                                ]
+                                if current_ingles_scope is not None:
+                                    st.session_state[
+                                        "clases_auto_group_ingles_grades_scope"
+                                    ] = current_ingles_scope
+                                    st.session_state[
+                                        "clases_auto_group_ingles_grade_options"
+                                    ] = list(detected_grade_options)
+                                    st.session_state[
+                                        "clases_auto_group_ingles_grade_error"
+                                    ] = ""
+                                detection_error = str(
+                                    detection_result.get("error") or ""
+                                ).strip()
+                                if detection_result.get("detected"):
+                                    st.session_state[
+                                        "clases_auto_group_ingles_detected_dialog"
+                                    ] = {
+                                        "scope": current_ingles_scope,
+                                        "grade_options": list(detected_grade_options),
+                                        "affected_grade_keys": list(
+                                            detection_result.get("affected_grade_keys") or []
+                                        ),
+                                        "affected_grade_labels": list(
+                                            detection_result.get("affected_grade_labels") or []
+                                        ),
+                                        "evidence_rows": list(
+                                            detection_result.get("evidence_rows") or []
+                                        ),
+                                        "evidence_total": int(
+                                            _safe_int(
+                                                detection_result.get("evidence_total")
+                                            )
+                                            or 0
+                                        ),
+                                        "class_errors": list(
+                                            detection_result.get("class_errors") or []
+                                        ),
+                                    }
+                                    can_start_sync = False
+                                elif detection_error:
+                                    st.error(detection_error)
+                                    can_start_sync = False
+                        if (
+                            can_start_sync
+                            and
+                            exclude_ingles_por_niveles
+                            and selected_ingles_grade_keys
+                        ):
+                            preview_rows_for_apply = list(
+                                st.session_state.get(
+                                    "clases_auto_group_ingles_excel_preview_rows"
+                                )
+                                or []
+                            )
+                            if preview_rows_for_apply:
+                                apply_status_placeholder = st.empty()
+                                apply_ok, apply_error = (
+                                    _apply_ingles_assignment_for_selected_grades(
+                                        token=token,
+                                        colegio_id=int(colegio_id_int),
+                                        empresa_id=int(empresa_id),
+                                        ciclo_id=int(ciclo_id),
+                                        timeout=int(timeout),
+                                        preview_rows=preview_rows_for_apply,
+                                        selected_ingles_grade_keys=selected_ingles_grade_keys,
+                                        status_placeholder=apply_status_placeholder,
+                                    )
+                                )
+                                if not apply_ok:
+                                    st.error(apply_error)
+                                    can_start_sync = False
+                            else:
+                                _set_ingles_por_niveles_result_notice(
+                                    "warning",
+                                    "No se aplico Excel de ingles. Las clases de Ingles "
+                                    "de los grados seleccionados se conservaran sin cambios.",
+                                )
+                        if can_start_sync:
+                            current_job_id = _start_participantes_sync_job(
+                                token=token,
+                                colegio_id=int(colegio_id_int),
+                                empresa_id=int(empresa_id),
+                                ciclo_id=int(ciclo_id),
+                                timeout=int(timeout),
+                                exclude_ingles_por_niveles=bool(
+                                    exclude_ingles_por_niveles
+                                ),
+                                ingles_grade_keys=selected_ingles_grade_keys,
+                            )
+                            st.session_state["clases_auto_group_job_id"] = current_job_id
+                            st.session_state["clases_auto_group_polling_job_id"] = (
+                                current_job_id
+                            )
+                            st.rerun()
 
                 if run_cancelar_participantes_auto:
                     if _request_cancel_participantes_sync_job(current_job_id):
@@ -12089,6 +12663,12 @@ with tab_crud_clases:
                         st.rerun()
                     else:
                         st.info("No hay un proceso activo para cancelar.")
+
+                if isinstance(
+                    st.session_state.get("clases_auto_group_ingles_detected_dialog"),
+                    dict,
+                ):
+                    _show_ingles_por_niveles_detected_dialog()
 
                 if colegio_error:
                     st.caption(f"Colegio actual invalido: {colegio_error}")

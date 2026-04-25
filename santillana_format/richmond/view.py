@@ -1617,6 +1617,7 @@ def _store_richmondstudio_registered_panel_data(
     st.session_state["rs_excel_count"] = int(len(rows_rs))
     st.session_state["rs_registered_user_rows"] = rs_registered_user_rows
     st.session_state["rs_registered_groups_lookup"] = groups_lookup
+    st.session_state["rs_registered_institution_name"] = institution_name
     st.session_state["rs_password_update_template_bytes"] = (
         _export_simple_excel(
             rs_password_template_rows,
@@ -1640,6 +1641,9 @@ def _store_richmondstudio_registered_panel_data(
         "rs_expiring_next_year_summary",
         "rs_expiring_next_year_rows",
         "rs_expiring_next_year_bytes",
+        "rs_class_users_export_bytes",
+        "rs_class_users_export_filename",
+        "rs_class_users_export_group_id",
     ):
         st.session_state.pop(state_key, None)
 
@@ -1817,6 +1821,23 @@ def _build_richmondstudio_users_output_filename(institution_name: object) -> str
         return f"alumnos_RS_{cleaned}.xlsx"
     return "alumnos_RS.xlsx"
 
+def _build_richmondstudio_class_users_output_filename(
+    class_name: object,
+    class_code: object,
+    institution_name: object = "",
+) -> str:
+    institution_raw = str(institution_name or "").strip()
+    class_raw = str(class_code or "").strip() or str(class_name or "").strip() or "clase_rs"
+    institution_clean = re.sub(r'[\\/:*?"<>|]+', " ", institution_raw)
+    institution_clean = re.sub(r"\s+", " ", institution_clean).strip()
+    class_clean = re.sub(r'[\\/:*?"<>|]+', " ", class_raw)
+    class_clean = re.sub(r"\s+", "_", class_clean).strip("_ ")
+    if institution_clean and class_clean:
+        return f"usuarios_RS_{institution_clean}_{class_clean}.xlsx"
+    if class_clean:
+        return f"usuarios_RS_{class_clean}.xlsx"
+    return "usuarios_RS_clase.xlsx"
+
 def _build_richmondstudio_users_export_rows(
     rows: List[Dict[str, object]]
 ) -> List[Dict[str, str]]:
@@ -1834,6 +1855,36 @@ def _build_richmondstudio_users_export_rows(
                 "level": str(row.get("level") or row.get("Level") or "").strip(),
                 "Login": str(row.get("Login") or "").strip(),
                 "Password": str(row.get("Password") or "").strip(),
+            }
+        )
+    return export_rows
+
+def _build_richmondstudio_class_users_export_rows(
+    rows: List[Dict[str, object]],
+    class_name: object,
+    class_code: object,
+) -> List[Dict[str, str]]:
+    class_name_txt = str(class_name or "").strip()
+    class_code_txt = str(class_code or "").strip()
+    export_rows: List[Dict[str, str]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        export_rows.append(
+            {
+                "RS USER ID": str(row.get("RS USER ID") or "").strip(),
+                "First name": str(row.get("First name") or "").strip(),
+                "Last name": str(row.get("Last name") or "").strip(),
+                "Email": str(row.get("Email") or "").strip(),
+                "Login": str(row.get("Login") or "").strip(),
+                "Username": str(row.get("Username") or "").strip(),
+                "Role": str(row.get("Role") or "").strip(),
+                "IDENTIFIER": str(row.get("IDENTIFIER") or "").strip(),
+                "level": str(row.get("level") or row.get("Level") or "").strip(),
+                "Class name": class_name_txt or str(row.get("Class name") or "").strip(),
+                "Class code": class_code_txt or str(row.get("Class code") or "").strip(),
+                "createdAt": str(row.get("createdAt") or "").strip(),
+                "lastSignInAt": str(row.get("lastSignInAt") or "").strip(),
             }
         )
     return export_rows
@@ -5273,6 +5324,12 @@ def _render_richmondstudio_classes_manage_panel(
                     )
                 )
             )
+            for state_key in (
+                "rs_class_users_export_bytes",
+                "rs_class_users_export_filename",
+                "rs_class_users_export_group_id",
+            ):
+                st.session_state.pop(state_key, None)
             st.success(f"Clases RS cargadas: {len(rs_group_rows)}.")
 
         rs_loaded_rows = _normalize_richmondstudio_loaded_rows(
@@ -5409,6 +5466,175 @@ def _render_richmondstudio_classes_manage_panel(
                         merged_rows.append(dict(row))
                 rs_loaded_rows = _normalize_richmondstudio_loaded_rows(merged_rows)
                 st.session_state["rs_groups_loaded_rows"] = rs_loaded_rows
+
+            export_candidate_rows: List[Dict[str, object]] = []
+            for row in rs_loaded_rows:
+                class_name_txt = str(row.get("Class name") or "")
+                code_txt = str(row.get("Code") or "")
+                level_txt = str(row.get("Test level") or "")
+                iread_txt = _richmondstudio_display_bool(row.get("iRead"))
+                hay_texto = not rs_filter_text_norm or (
+                    rs_filter_text_norm in class_name_txt.lower()
+                    or rs_filter_text_norm in code_txt.lower()
+                )
+                hay_level = rs_filter_level == "Todos" or level_txt == rs_filter_level
+                hay_iread = rs_filter_iread == "Todos" or iread_txt == rs_filter_iread
+                if hay_texto and hay_level and hay_iread:
+                    export_candidate_rows.append(dict(row))
+
+            if export_candidate_rows:
+                st.markdown("**Descargar usuarios registrados por clase**")
+                export_group_by_id = {
+                    str(row.get("ID") or "").strip(): row
+                    for row in export_candidate_rows
+                    if str(row.get("ID") or "").strip()
+                }
+                export_group_options = list(export_group_by_id.keys())
+                export_group_select_key = "rs_rs_groups_export_class_id"
+                current_export_group_id = str(
+                    st.session_state.get(export_group_select_key) or ""
+                ).strip()
+                if current_export_group_id and current_export_group_id not in export_group_options:
+                    st.session_state.pop(export_group_select_key, None)
+
+                selected_export_group_id = st.selectbox(
+                    "Clase para descargar usuarios",
+                    options=export_group_options,
+                    index=None,
+                    key=export_group_select_key,
+                    format_func=lambda value: "{name} | {code} | Users {users}".format(
+                        name=str(
+                            (export_group_by_id.get(str(value)) or {}).get("Class name") or value
+                        ).strip(),
+                        code=str(
+                            (export_group_by_id.get(str(value)) or {}).get("Code") or "-"
+                        ).strip(),
+                        users=int(
+                            (export_group_by_id.get(str(value)) or {}).get("Users") or 0
+                        ),
+                    ),
+                )
+
+                if selected_export_group_id:
+                    selected_export_row = export_group_by_id.get(
+                        str(selected_export_group_id), {}
+                    )
+                    selected_export_group_id_txt = str(
+                        selected_export_group_id or ""
+                    ).strip()
+                    selected_class_name = str(
+                        selected_export_row.get("Class name") or ""
+                    ).strip()
+                    selected_class_code = str(
+                        selected_export_row.get("Code") or ""
+                    ).strip()
+                    selected_users_count = int(selected_export_row.get("Users") or 0)
+                    st.caption(
+                        "Clase seleccionada: {name} | Code: {code} | Users relacionados: {users}".format(
+                            name=selected_class_name or "-",
+                            code=selected_class_code or "-",
+                            users=selected_users_count,
+                        )
+                    )
+
+                    registered_user_rows_cached = [
+                        row
+                        for row in (st.session_state.get("rs_registered_user_rows") or [])
+                        if isinstance(row, dict)
+                    ]
+                    matching_registered_users = [
+                        dict(row)
+                        for row in registered_user_rows_cached
+                        if selected_export_group_id_txt
+                        in {
+                            str(group_id or "").strip()
+                            for group_id in list(row.get("_group_ids") or [])
+                            if str(group_id or "").strip()
+                        }
+                    ]
+                    matching_registered_users.sort(
+                        key=lambda row: (
+                            str(row.get("Last name") or "").lower(),
+                            str(row.get("First name") or "").lower(),
+                            str(row.get("Login") or "").lower(),
+                        )
+                    )
+
+                    col_prepare_export, col_download_export = st.columns(
+                        [1, 1.2], gap="small"
+                    )
+                    run_prepare_class_export = col_prepare_export.button(
+                        "Cargar usuarios RS para exportar",
+                        key="rs_rs_groups_prepare_users_export_btn",
+                        use_container_width=True,
+                    )
+                    if run_prepare_class_export:
+                        if not rs_token:
+                            st.error("Ingresa el bearer token de Richmond Studio.")
+                        else:
+                            try:
+                                with st.spinner(
+                                    "Consultando usuarios registrados de Richmond Studio..."
+                                ):
+                                    panel_data = _load_richmondstudio_registered_panel_data(
+                                        rs_token,
+                                        timeout=int(timeout),
+                                    )
+                                _store_richmondstudio_registered_panel_data(panel_data)
+                            except Exception as exc:  # pragma: no cover - UI
+                                st.error(f"Error RS: {exc}")
+                            else:
+                                st.success("Usuarios RS cargados para exportacion por clase.")
+                                st.rerun()
+
+                    if matching_registered_users:
+                        institution_name_for_export = str(
+                            st.session_state.get("rs_registered_institution_name") or ""
+                        ).strip()
+                        export_rows = _build_richmondstudio_class_users_export_rows(
+                            matching_registered_users,
+                            class_name=selected_class_name,
+                            class_code=selected_class_code,
+                        )
+                        export_bytes = _export_simple_excel(
+                            export_rows,
+                            sheet_name="class_users",
+                        )
+                        col_download_export.download_button(
+                            "Descargar usuarios de la clase",
+                            data=export_bytes,
+                            file_name=_build_richmondstudio_class_users_output_filename(
+                                selected_class_name,
+                                selected_class_code,
+                                institution_name_for_export,
+                            ),
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="rs_rs_groups_download_users_export_btn",
+                            use_container_width=True,
+                        )
+                        preview_rows = [
+                            {
+                                "First name": row.get("First name", ""),
+                                "Last name": row.get("Last name", ""),
+                                "Email": row.get("Email", ""),
+                                "Login": row.get("Login", ""),
+                                "Role": row.get("Role", ""),
+                                "IDENTIFIER": row.get("IDENTIFIER", ""),
+                                "level": row.get("level", ""),
+                            }
+                            for row in matching_registered_users[:80]
+                        ]
+                        _show_dataframe(preview_rows, use_container_width=True)
+                        if len(matching_registered_users) > 80:
+                            st.caption(
+                                f"Mostrando 80 de {len(matching_registered_users)} usuario(s)."
+                            )
+                    elif selected_users_count <= 0:
+                        st.info("La clase no tiene usuarios registrados.")
+                    else:
+                        st.info(
+                            "Carga usuarios RS para preparar el Excel de la clase seleccionada."
+                        )
 
             col_rs_update, col_rs_delete = st.columns([1, 1], gap="small")
             run_rs_groups_update = col_rs_update.button(
@@ -5785,6 +6011,1598 @@ def _render_richmondstudio_classes_create_panel(
                     st.error("No se pudo crear ninguna clase RS.")
                 _show_dataframe(resultados_rs, use_container_width=True)
 
+
+def _render_richmondstudio_users_create_panel(
+    rs_token: str,
+    timeout: int,
+) -> None:
+    with st.container(border=True):
+        st.markdown("**RS | Crear usuarios desde Excel**")
+        uploaded_rs_users_bytes = b""
+        uploaded_rs_users_excel = None
+        rs_user_import_rows: List[Dict[str, object]] = []
+        rs_user_import_error = ""
+        run_rs_users_create = False
+
+        if "rs_users_import_excel_version" not in st.session_state:
+            st.session_state["rs_users_import_excel_version"] = 0
+        if not st.session_state.get("rs_users_create_output_bytes"):
+            st.session_state["rs_users_create_download_only"] = False
+
+        rs_users_download_only = bool(
+            st.session_state.get("rs_users_create_download_only")
+        ) and bool(st.session_state.get("rs_users_create_output_bytes"))
+
+        if not rs_users_download_only:
+            st.caption(
+                "Sube un Excel con columnas Last name, First name, Class, Email, Role y level. "
+                "La clase se resuelve contra /api/groups y cada usuario se crea con una "
+                "peticion individual a /api/users. level acepta: preschool, primary, secondary, adult."
+            )
+            template_rs_users_bytes = _export_simple_excel(
+                _richmondstudio_user_import_template_rows(),
+                sheet_name="rs_users_import",
+            )
+            col_rs_users_template, col_rs_users_file = st.columns([1, 2], gap="small")
+            col_rs_users_template.download_button(
+                label="Descargar plantilla",
+                data=template_rs_users_bytes,
+                file_name="plantilla_usuarios_rs.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="rs_users_import_template_download",
+                use_container_width=True,
+            )
+            uploaded_rs_users_excel = col_rs_users_file.file_uploader(
+                "Excel de usuarios RS",
+                type=["xlsx"],
+                key=(
+                    "rs_users_import_excel_"
+                    f"{int(st.session_state.get('rs_users_import_excel_version', 0))}"
+                ),
+                help=(
+                    "Columnas esperadas: "
+                    f"{RICHMONDSTUDIO_USER_IMPORT_LAST_NAME}, "
+                    f"{RICHMONDSTUDIO_USER_IMPORT_FIRST_NAME}, "
+                    f"{RICHMONDSTUDIO_USER_IMPORT_CLASS_NAME}, "
+                    f"{RICHMONDSTUDIO_USER_IMPORT_EMAIL}, "
+                    f"{RICHMONDSTUDIO_USER_IMPORT_ROLE}, "
+                    f"{RICHMONDSTUDIO_USER_IMPORT_LEVEL}. "
+                    "Valores validos de level: preschool, primary, secondary, adult."
+                ),
+            )
+
+            if uploaded_rs_users_excel is not None:
+                uploaded_rs_users_bytes = uploaded_rs_users_excel.getvalue()
+                try:
+                    rs_user_import_rows = _load_richmondstudio_user_rows_from_excel(
+                        uploaded_rs_users_bytes
+                    )
+                except Exception as exc:
+                    rs_user_import_error = str(exc)
+                    st.error(f"Error en Excel RS: {exc}")
+                else:
+                    st.caption(f"Filas detectadas para crear: {len(rs_user_import_rows)}")
+                    preview_rows = [
+                        {
+                            RICHMONDSTUDIO_USER_IMPORT_LAST_NAME: row.get(
+                                RICHMONDSTUDIO_USER_IMPORT_LAST_NAME
+                            ),
+                            RICHMONDSTUDIO_USER_IMPORT_FIRST_NAME: row.get(
+                                RICHMONDSTUDIO_USER_IMPORT_FIRST_NAME
+                            ),
+                            RICHMONDSTUDIO_USER_IMPORT_CLASS_NAME: row.get(
+                                RICHMONDSTUDIO_USER_IMPORT_CLASS_NAME
+                            ),
+                            RICHMONDSTUDIO_USER_IMPORT_EMAIL: row.get(
+                                RICHMONDSTUDIO_USER_IMPORT_EMAIL
+                            ),
+                            RICHMONDSTUDIO_USER_IMPORT_ROLE: row.get(
+                                RICHMONDSTUDIO_USER_IMPORT_ROLE
+                            ),
+                            RICHMONDSTUDIO_USER_IMPORT_LEVEL: row.get(
+                                RICHMONDSTUDIO_USER_IMPORT_LEVEL
+                            ),
+                        }
+                        for row in rs_user_import_rows[:100]
+                    ]
+                    if preview_rows:
+                        _show_dataframe(preview_rows, use_container_width=True)
+
+            run_rs_users_create = st.button(
+                "Crear usuarios RS",
+                type="primary",
+                key="rs_users_create_btn",
+                use_container_width=True,
+            )
+        run_rs_users_create_confirmed = _consume_richmondstudio_confirmed_action(
+            "rs_users_create"
+        )
+
+        if run_rs_users_create:
+            if not rs_token:
+                st.error("Ingresa el bearer token de Richmond Studio.")
+            elif uploaded_rs_users_excel is None:
+                st.error("Sube el Excel de usuarios RS.")
+            elif rs_user_import_error:
+                st.error(f"Corrige el Excel antes de continuar: {rs_user_import_error}")
+            else:
+                if not rs_user_import_rows and uploaded_rs_users_bytes:
+                    try:
+                        rs_user_import_rows = _load_richmondstudio_user_rows_from_excel(
+                            uploaded_rs_users_bytes
+                        )
+                    except Exception as exc:
+                        st.error(f"Error en Excel RS: {exc}")
+                        rs_user_import_rows = []
+
+                if rs_user_import_rows:
+                    _request_richmondstudio_confirmation(
+                        "rs_users_create",
+                        f"crear {len(rs_user_import_rows)} usuarios RS",
+                    )
+
+        if run_rs_users_create_confirmed:
+            if not rs_token:
+                st.error("Ingresa el bearer token de Richmond Studio.")
+            elif uploaded_rs_users_excel is None:
+                st.error("Sube el Excel de usuarios RS.")
+            elif rs_user_import_error:
+                st.error(f"Corrige el Excel antes de continuar: {rs_user_import_error}")
+            else:
+                if not rs_user_import_rows and uploaded_rs_users_bytes:
+                    try:
+                        rs_user_import_rows = _load_richmondstudio_user_rows_from_excel(
+                            uploaded_rs_users_bytes
+                        )
+                    except Exception as exc:
+                        st.error(f"Error en Excel RS: {exc}")
+                        rs_user_import_rows = []
+
+                if rs_user_import_rows:
+                    institution_name_for_file = ""
+                    try:
+                        current_context_users = _fetch_richmondstudio_current_user_context(
+                            rs_token,
+                            timeout=int(timeout),
+                        )
+                    except Exception:
+                        current_context_users = {}
+                    institution_name_for_file = str(
+                        current_context_users.get("institution_name") or ""
+                    ).strip()
+
+                    try:
+                        with st.spinner("Consultando clases RS..."):
+                            rs_groups_for_users = _fetch_richmondstudio_groups(
+                                rs_token,
+                                timeout=int(timeout),
+                                include_users=False,
+                            )
+                    except Exception as exc:  # pragma: no cover - UI
+                        st.error(f"Error RS: {exc}")
+                    else:
+                        groups_lookup = _build_richmondstudio_groups_lookup(
+                            rs_groups_for_users
+                        )
+                        resultados_rs_users: List[Dict[str, object]] = []
+                        ok_rs_users = 0
+                        err_rs_users = 0
+                        progress_rs_users = st.progress(0)
+                        status_rs_users = st.empty()
+
+                        total_rows = len(rs_user_import_rows)
+                        for idx_rs_user, row in enumerate(rs_user_import_rows, start=1):
+                            first_name = str(
+                                row.get(RICHMONDSTUDIO_USER_IMPORT_FIRST_NAME) or ""
+                            ).strip()
+                            last_name = str(
+                                row.get(RICHMONDSTUDIO_USER_IMPORT_LAST_NAME) or ""
+                            ).strip()
+                            class_name_requested = str(
+                                row.get(RICHMONDSTUDIO_USER_IMPORT_CLASS_NAME) or ""
+                            ).strip()
+                            email = str(
+                                row.get(RICHMONDSTUDIO_USER_IMPORT_EMAIL) or ""
+                            ).strip()
+                            role_raw = str(
+                                row.get(RICHMONDSTUDIO_USER_IMPORT_ROLE) or ""
+                            ).strip()
+                            level_raw = str(
+                                row.get(RICHMONDSTUDIO_USER_IMPORT_LEVEL) or ""
+                            ).strip()
+                            row_number = int(row.get("_row_number") or idx_rs_user + 1)
+                            display_name = " ".join(
+                                part for part in (first_name, last_name) if part
+                            ).strip() or email or f"fila {row_number}"
+
+                            try:
+                                status_rs_users.write(
+                                    f"Creando {idx_rs_user}/{total_rows}: {display_name}"
+                                )
+                                group_meta = _resolve_richmondstudio_group_for_user_row(
+                                    class_name_requested,
+                                    groups_lookup,
+                                )
+                                payload_rs_user = _build_richmondstudio_user_payload(
+                                    row,
+                                    group_meta=group_meta,
+                                )
+                                created_rs_user = _create_richmondstudio_user(
+                                    rs_token,
+                                    payload_rs_user,
+                                    timeout=int(timeout),
+                                )
+                                created_meta = _extract_richmondstudio_user_create_result(
+                                    created_rs_user,
+                                    fallback_email=email,
+                                )
+                                password_txt = str(
+                                    created_meta.get("password") or ""
+                                ).strip()
+                                detalle_txt = "Creado correctamente."
+                                if not password_txt:
+                                    detalle_txt = (
+                                        "Creado, pero RS no devolvio password."
+                                    )
+                                resultados_rs_users.append(
+                                    {
+                                        "Row": row_number,
+                                        "Last name": last_name,
+                                        "First name": first_name,
+                                        "Class": str(
+                                            (
+                                                group_meta.get("class_name")
+                                                if isinstance(group_meta, dict)
+                                                else class_name_requested
+                                            )
+                                            or ""
+                                        ).strip(),
+                                        "Email": email,
+                                        "Role": _normalize_richmondstudio_user_role(
+                                            role_raw
+                                        ),
+                                        "level": _normalize_richmondstudio_user_level(
+                                            level_raw
+                                        ),
+                                        "Login": str(
+                                            created_meta.get("login") or email
+                                        ).strip(),
+                                        "Password": password_txt,
+                                        "RS User ID": str(
+                                            created_meta.get("user_id") or ""
+                                        ).strip(),
+                                        "Resultado": "OK",
+                                        "Detalle": detalle_txt,
+                                    }
+                                )
+                                ok_rs_users += 1
+                            except Exception as exc:  # pragma: no cover - UI
+                                resultados_rs_users.append(
+                                    {
+                                        "Row": row_number,
+                                        "Last name": last_name,
+                                        "First name": first_name,
+                                        "Class": class_name_requested,
+                                        "Email": email,
+                                        "Role": role_raw,
+                                        "level": level_raw,
+                                        "Login": email,
+                                        "Password": "",
+                                        "RS User ID": "",
+                                        "Resultado": "Error",
+                                        "Detalle": str(exc),
+                                    }
+                                )
+                                err_rs_users += 1
+
+                            progress_rs_users.progress(
+                                int((idx_rs_user / total_rows) * 100)
+                            )
+
+                        status_rs_users.empty()
+                        progress_rs_users.empty()
+                        st.session_state["rs_users_create_output_rows"] = (
+                            resultados_rs_users
+                        )
+                        st.session_state["rs_users_create_output_bytes"] = (
+                            _export_simple_excel(
+                                _build_richmondstudio_users_export_rows(
+                                    resultados_rs_users
+                                ),
+                                sheet_name="usuarios_rs",
+                            )
+                        )
+                        st.session_state["rs_users_create_output_count"] = int(
+                            len(resultados_rs_users)
+                        )
+                        st.session_state["rs_users_create_output_filename"] = (
+                            _build_richmondstudio_users_output_filename(
+                                institution_name_for_file
+                            )
+                        )
+                        rs_password_template_rows = (
+                            _build_richmondstudio_password_update_template_rows(
+                                resultados_rs_users
+                            )
+                        )
+                        st.session_state["rs_users_password_template_bytes"] = (
+                            _export_simple_excel(
+                                rs_password_template_rows,
+                                sheet_name="password_update_rs",
+                            )
+                            if rs_password_template_rows
+                            else b""
+                        )
+                        st.session_state["rs_users_password_template_filename"] = (
+                            _build_richmondstudio_password_update_filename(
+                                institution_name_for_file,
+                                prefix="plantilla_password_rs",
+                            )
+                        )
+
+                        if ok_rs_users and not err_rs_users:
+                            st.session_state["rs_users_create_download_only"] = True
+                            st.session_state["rs_users_import_excel_version"] = int(
+                                st.session_state.get("rs_users_import_excel_version", 0)
+                            ) + 1
+                            st.rerun()
+                        elif ok_rs_users and err_rs_users:
+                            st.session_state["rs_users_create_download_only"] = False
+                            st.warning(
+                                f"Resultado parcial RS: OK {ok_rs_users} | Error {err_rs_users}."
+                            )
+                        else:
+                            st.session_state["rs_users_create_download_only"] = False
+                            st.error("No se pudo crear ningun usuario RS.")
+
+                        if resultados_rs_users:
+                            _show_dataframe(
+                                resultados_rs_users[:200],
+                                use_container_width=True,
+                            )
+
+        if st.session_state.get("rs_users_create_output_bytes"):
+            col_rs_users_download_a, col_rs_users_download_b = st.columns(
+                2, gap="small"
+            )
+            col_rs_users_download_a.download_button(
+                label="Descargar resultado usuarios RS",
+                data=st.session_state["rs_users_create_output_bytes"],
+                file_name=str(
+                    st.session_state.get("rs_users_create_output_filename")
+                    or "alumnos_RS.xlsx"
+                ).strip()
+                or "alumnos_RS.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="rs_users_create_output_download",
+                use_container_width=True,
+            )
+            if st.session_state.get("rs_users_password_template_bytes"):
+                col_rs_users_download_b.download_button(
+                    label="Descargar plantilla password RS (creados)",
+                    data=st.session_state["rs_users_password_template_bytes"],
+                    file_name=str(
+                        st.session_state.get(
+                            "rs_users_password_template_filename"
+                        )
+                        or "plantilla_password_rs.xlsx"
+                    ).strip()
+                    or "plantilla_password_rs.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="rs_users_password_template_download",
+                    use_container_width=True,
+                )
+
+
+def _render_richmondstudio_teachers_manage_panel(
+    rs_token: str,
+    timeout: int,
+) -> None:
+    with st.container(border=True):
+        st.markdown("**Gestion de docentes RS**")
+        st.caption(
+            "Carga docentes de Richmond Studio y revisa el listado antes de editar o crear."
+        )
+
+        run_rs_teachers_load = st.button(
+            "Cargar docentes RS",
+            key="rs_teachers_load_btn",
+            use_container_width=True,
+        )
+        if run_rs_teachers_load:
+            if not rs_token:
+                st.error("Ingresa el bearer token de Richmond Studio.")
+            else:
+                try:
+                    with st.spinner("Consultando docentes RS..."):
+                        teacher_panel_data = _load_richmondstudio_teacher_panel_data(
+                            rs_token,
+                            timeout=int(timeout),
+                        )
+                except Exception as exc:  # pragma: no cover - UI
+                    st.error(f"Error RS: {exc}")
+                else:
+                    st.session_state["rs_teachers_loaded_rows"] = (
+                        teacher_panel_data.get("rows") or []
+                    )
+                    st.session_state["rs_teachers_groups_lookup"] = (
+                        teacher_panel_data.get("groups_lookup")
+                        if isinstance(
+                            teacher_panel_data.get("groups_lookup"), dict
+                        )
+                        else {"by_id": {}, "by_name": {}}
+                    )
+                    st.session_state["rs_teachers_form_loaded_user_id"] = ""
+
+        teacher_rows = [
+            dict(row)
+            for row in st.session_state.get("rs_teachers_loaded_rows") or []
+            if isinstance(row, dict)
+        ]
+        if teacher_rows:
+            teacher_search = st.text_input(
+                "Filtrar docentes RS",
+                key="rs_teacher_search_text",
+                placeholder="Nombre, email o clase",
+            )
+            teacher_search_norm = _normalize_plain_text(teacher_search)
+            filtered_teacher_rows = []
+            for row in teacher_rows:
+                haystack = " ".join(
+                    [
+                        str(row.get("Docente") or ""),
+                        str(row.get("Email") or ""),
+                        str(row.get("Clases") or ""),
+                    ]
+                )
+                if teacher_search_norm and (
+                    teacher_search_norm not in _normalize_plain_text(haystack)
+                ):
+                    continue
+                filtered_teacher_rows.append(
+                    {
+                        "Docente": str(row.get("Docente") or "").strip(),
+                        "Email": str(row.get("Email") or "").strip(),
+                        "Grupos": int(row.get("Grupos") or 0),
+                        "Clases": str(row.get("Clases") or "").strip(),
+                    }
+                )
+            st.caption(
+                f"Mostrando {len(filtered_teacher_rows)} de {len(teacher_rows)} docentes RS."
+            )
+            if filtered_teacher_rows:
+                _show_dataframe(filtered_teacher_rows, use_container_width=True)
+        else:
+            st.caption("Aun no has cargado docentes RS.")
+
+
+def _render_richmondstudio_teachers_form_panel(
+    rs_token: str,
+    timeout: int,
+) -> None:
+    with st.container(border=True):
+        st.markdown("**Formulario docente RS**")
+        st.caption(
+            "Crea docentes nuevos o edita docentes ya cargados y sincroniza sus clases."
+        )
+
+        teacher_notice = str(
+            st.session_state.pop("rs_teacher_save_notice", "") or ""
+        ).strip()
+        teacher_meta = st.session_state.pop("rs_teacher_save_meta", None)
+        if teacher_notice:
+            st.success(teacher_notice)
+        if isinstance(teacher_meta, dict):
+            login_txt = str(teacher_meta.get("login") or "").strip()
+            password_txt = str(teacher_meta.get("password") or "").strip()
+            if login_txt or password_txt:
+                parts = []
+                if login_txt:
+                    parts.append(f"Login: {login_txt}")
+                if password_txt:
+                    parts.append(f"Password: {password_txt}")
+                st.caption(" | ".join(parts))
+
+        teacher_rows = [
+            dict(row)
+            for row in st.session_state.get("rs_teachers_loaded_rows") or []
+            if isinstance(row, dict)
+        ]
+        groups_lookup = (
+            st.session_state.get("rs_teachers_groups_lookup")
+            if isinstance(st.session_state.get("rs_teachers_groups_lookup"), dict)
+            else {"by_id": {}, "by_name": {}}
+        )
+        groups_by_id = (
+            groups_lookup.get("by_id")
+            if isinstance(groups_lookup.get("by_id"), dict)
+            else {}
+        )
+        group_options = sorted(
+            list(groups_by_id.keys()),
+            key=lambda group_id: _richmondstudio_group_label(
+                groups_by_id.get(group_id)
+            ).upper(),
+        )
+        valid_group_ids = set(group_options)
+
+        if not teacher_rows:
+            st.caption(
+                "Usa `Gestion` para cargar docentes RS si quieres editar uno existente."
+            )
+
+        teacher_rows_by_id = {
+            str(row.get("ID") or "").strip(): row
+            for row in teacher_rows
+            if str(row.get("ID") or "").strip()
+        }
+        teacher_option_labels = {"__new__": "+ Nuevo docente"}
+        for teacher_id, row in teacher_rows_by_id.items():
+            teacher_label = str(row.get("Docente") or "").strip()
+            teacher_email = str(row.get("Email") or "").strip()
+            if teacher_email:
+                teacher_option_labels[teacher_id] = (
+                    f"{teacher_label} | {teacher_email}"
+                ).strip(" |")
+            else:
+                teacher_option_labels[teacher_id] = teacher_label or teacher_id
+
+        teacher_select_options = ["__new__"] + list(teacher_rows_by_id.keys())
+        if (
+            str(st.session_state.get("rs_teacher_selected_user_id") or "").strip()
+            not in teacher_select_options
+        ):
+            st.session_state["rs_teacher_selected_user_id"] = "__new__"
+
+        selected_teacher_id = st.selectbox(
+            "Docente RS",
+            options=teacher_select_options,
+            key="rs_teacher_selected_user_id",
+            format_func=lambda value: teacher_option_labels.get(
+                str(value or "").strip(),
+                str(value or "").strip(),
+            ),
+        )
+
+        current_loaded_teacher_id = str(
+            st.session_state.get("rs_teachers_form_loaded_user_id") or ""
+        ).strip()
+        selected_teacher_id = str(selected_teacher_id or "").strip()
+        if current_loaded_teacher_id != selected_teacher_id:
+            selected_teacher_row = (
+                teacher_rows_by_id.get(selected_teacher_id)
+                if selected_teacher_id != "__new__"
+                else None
+            )
+            current_group_ids = []
+            if isinstance(selected_teacher_row, dict):
+                for item in selected_teacher_row.get("_group_ids") or []:
+                    group_id = str(item or "").strip()
+                    if group_id and group_id in valid_group_ids:
+                        current_group_ids.append(group_id)
+            st.session_state["rs_teacher_first_name"] = str(
+                (
+                    selected_teacher_row.get("First name")
+                    if isinstance(selected_teacher_row, dict)
+                    else ""
+                )
+                or ""
+            ).strip()
+            st.session_state["rs_teacher_last_name"] = str(
+                (
+                    selected_teacher_row.get("Last name")
+                    if isinstance(selected_teacher_row, dict)
+                    else ""
+                )
+                or ""
+            ).strip()
+            st.session_state["rs_teacher_email"] = str(
+                (
+                    selected_teacher_row.get("Email")
+                    if isinstance(selected_teacher_row, dict)
+                    else ""
+                )
+                or ""
+            ).strip()
+            st.session_state["rs_teacher_group_ids"] = current_group_ids
+            st.session_state["rs_teacher_hidden_teachermatic"] = bool(
+                (
+                    selected_teacher_row.get("Teachermatic")
+                    if isinstance(selected_teacher_row, dict)
+                    else False
+                )
+            )
+            st.session_state["rs_teachers_form_loaded_user_id"] = selected_teacher_id
+
+        is_existing_teacher = selected_teacher_id != "__new__"
+        col_rs_teacher_a, col_rs_teacher_b = st.columns(2, gap="small")
+        col_rs_teacher_a.text_input(
+            "First name",
+            key="rs_teacher_first_name",
+        )
+        col_rs_teacher_b.text_input(
+            "Last name",
+            key="rs_teacher_last_name",
+        )
+        st.text_input(
+            "Email",
+            key="rs_teacher_email",
+        )
+        st.multiselect(
+            "Clases RS",
+            options=group_options,
+            key="rs_teacher_group_ids",
+            format_func=lambda group_id: _richmondstudio_group_label(
+                groups_by_id.get(str(group_id or "").strip())
+            )
+            or str(group_id or "").strip(),
+            placeholder="Selecciona una o varias clases",
+        )
+
+        run_rs_teacher_save = st.button(
+            "Actualizar docente RS" if is_existing_teacher else "Crear docente RS",
+            type="primary",
+            key="rs_teacher_save_btn",
+            use_container_width=True,
+        )
+        run_rs_teacher_create_confirmed = _consume_richmondstudio_confirmed_action(
+            "rs_teacher_create"
+        )
+        run_rs_teacher_update_confirmed = _consume_richmondstudio_confirmed_action(
+            "rs_teacher_update"
+        )
+
+        if run_rs_teacher_save:
+            teacher_first_name = str(
+                st.session_state.get("rs_teacher_first_name") or ""
+            ).strip()
+            teacher_last_name = str(
+                st.session_state.get("rs_teacher_last_name") or ""
+            ).strip()
+            teacher_email = str(
+                st.session_state.get("rs_teacher_email") or ""
+            ).strip()
+            teacher_group_ids = list(
+                st.session_state.get("rs_teacher_group_ids") or []
+            )
+            teacher_teachermatic = bool(
+                st.session_state.get("rs_teacher_hidden_teachermatic")
+            )
+            teacher_action_key = (
+                "rs_teacher_update" if is_existing_teacher else "rs_teacher_create"
+            )
+            teacher_action_label = (
+                f"actualizar docente RS: {teacher_first_name} {teacher_last_name}".strip()
+                if is_existing_teacher
+                else f"crear docente RS: {teacher_first_name} {teacher_last_name}".strip()
+            )
+
+            try:
+                _build_richmondstudio_teacher_payload(
+                    first_name=teacher_first_name,
+                    last_name=teacher_last_name,
+                    email=teacher_email,
+                    group_ids=teacher_group_ids,
+                    user_id=selected_teacher_id if is_existing_teacher else "",
+                    teachermatic=teacher_teachermatic if is_existing_teacher else None,
+                )
+            except Exception as exc:
+                st.error(str(exc))
+            else:
+                st.session_state["rs_teacher_pending_save"] = {
+                    "mode": "update" if is_existing_teacher else "create",
+                    "user_id": selected_teacher_id if is_existing_teacher else "",
+                    "first_name": teacher_first_name,
+                    "last_name": teacher_last_name,
+                    "email": teacher_email,
+                    "group_ids": teacher_group_ids,
+                    "teachermatic": teacher_teachermatic,
+                }
+                _request_richmondstudio_confirmation(
+                    teacher_action_key,
+                    teacher_action_label,
+                )
+
+        confirmed_teacher_mode = ""
+        if run_rs_teacher_create_confirmed:
+            confirmed_teacher_mode = "create"
+        elif run_rs_teacher_update_confirmed:
+            confirmed_teacher_mode = "update"
+
+        if confirmed_teacher_mode:
+            teacher_pending_save = st.session_state.pop(
+                "rs_teacher_pending_save",
+                None,
+            )
+            if not isinstance(teacher_pending_save, dict):
+                st.error("No se encontro el borrador del docente RS.")
+            elif str(teacher_pending_save.get("mode") or "").strip() != confirmed_teacher_mode:
+                st.error("La confirmacion no coincide con la accion del docente RS.")
+            elif not rs_token:
+                st.error("Ingresa el bearer token de Richmond Studio.")
+            else:
+                try:
+                    with st.spinner("Guardando docente RS..."):
+                        if confirmed_teacher_mode == "update":
+                            teacher_detail = _fetch_richmondstudio_user_detail(
+                                rs_token,
+                                str(teacher_pending_save.get("user_id") or "").strip(),
+                                timeout=int(timeout),
+                            )
+                            teacher_detail_data = (
+                                teacher_detail.get("data")
+                                if isinstance(teacher_detail.get("data"), dict)
+                                else {}
+                            )
+                            subscription_ids = _richmondstudio_relationship_ids(
+                                teacher_detail_data,
+                                "subscriptions",
+                            )
+                            teacher_payload = _build_richmondstudio_teacher_payload(
+                                first_name=teacher_pending_save.get("first_name"),
+                                last_name=teacher_pending_save.get("last_name"),
+                                email=teacher_pending_save.get("email"),
+                                group_ids=teacher_pending_save.get("group_ids") or [],
+                                user_id=teacher_pending_save.get("user_id"),
+                                teachermatic=bool(
+                                    teacher_pending_save.get("teachermatic")
+                                ),
+                                subscription_ids=subscription_ids,
+                            )
+                            _update_richmondstudio_user(
+                                rs_token,
+                                str(teacher_pending_save.get("user_id") or "").strip(),
+                                teacher_payload,
+                                timeout=int(timeout),
+                            )
+                            teacher_result_meta = {
+                                "user_id": str(
+                                    teacher_pending_save.get("user_id") or ""
+                                ).strip(),
+                            }
+                        else:
+                            teacher_payload = _build_richmondstudio_teacher_payload(
+                                first_name=teacher_pending_save.get("first_name"),
+                                last_name=teacher_pending_save.get("last_name"),
+                                email=teacher_pending_save.get("email"),
+                                group_ids=teacher_pending_save.get("group_ids") or [],
+                            )
+                            created_teacher = _create_richmondstudio_user(
+                                rs_token,
+                                teacher_payload,
+                                timeout=int(timeout),
+                            )
+                            teacher_result_meta = (
+                                _extract_richmondstudio_user_create_result(
+                                    created_teacher,
+                                    fallback_email=teacher_pending_save.get("email"),
+                                )
+                            )
+
+                        refreshed_teacher_panel = (
+                            _load_richmondstudio_teacher_panel_data(
+                                rs_token,
+                                timeout=int(timeout),
+                            )
+                        )
+                except Exception as exc:  # pragma: no cover - UI
+                    st.error(f"Error RS: {exc}")
+                else:
+                    refreshed_rows = (
+                        refreshed_teacher_panel.get("rows") or []
+                        if isinstance(refreshed_teacher_panel, dict)
+                        else []
+                    )
+                    st.session_state["rs_teachers_loaded_rows"] = refreshed_rows
+                    st.session_state["rs_teachers_groups_lookup"] = (
+                        refreshed_teacher_panel.get("groups_lookup")
+                        if isinstance(
+                            refreshed_teacher_panel.get("groups_lookup"), dict
+                        )
+                        else {"by_id": {}, "by_name": {}}
+                    )
+
+                    target_teacher_id = str(
+                        teacher_result_meta.get("user_id") or ""
+                    ).strip()
+                    if not target_teacher_id:
+                        pending_email_norm = _normalize_compare_text(
+                            teacher_pending_save.get("email")
+                        )
+                        pending_first_name_norm = _normalize_compare_text(
+                            teacher_pending_save.get("first_name")
+                        )
+                        pending_last_name_norm = _normalize_compare_text(
+                            teacher_pending_save.get("last_name")
+                        )
+                        for item in refreshed_rows:
+                            if not isinstance(item, dict):
+                                continue
+                            same_email = (
+                                _normalize_compare_text(item.get("Email"))
+                                == pending_email_norm
+                            )
+                            same_first_name = (
+                                _normalize_compare_text(item.get("First name"))
+                                == pending_first_name_norm
+                            )
+                            same_last_name = (
+                                _normalize_compare_text(item.get("Last name"))
+                                == pending_last_name_norm
+                            )
+                            if same_email and same_first_name and same_last_name:
+                                target_teacher_id = str(item.get("ID") or "").strip()
+                                if target_teacher_id:
+                                    break
+
+                    if target_teacher_id:
+                        st.session_state["rs_teacher_selected_user_id"] = (
+                            target_teacher_id
+                        )
+                    else:
+                        st.session_state["rs_teacher_selected_user_id"] = "__new__"
+                    st.session_state["rs_teachers_form_loaded_user_id"] = ""
+                    st.session_state["rs_teacher_save_notice"] = (
+                        "Docente RS actualizado correctamente."
+                        if confirmed_teacher_mode == "update"
+                        else "Docente RS creado correctamente."
+                    )
+                    st.session_state["rs_teacher_save_meta"] = teacher_result_meta
+                    st.rerun()
+
+
+def _render_richmondstudio_tools_listing_panel(
+    rs_token: str,
+    timeout: int,
+) -> None:
+    with st.container(border=True):
+        st.markdown("### 1. Listado y exportaciones RS")
+        st.caption(
+            "Empieza por este bloque. Los demas reutilizan el listado cargado aqui."
+        )
+        st.markdown("**Listar alumnos registrados**")
+        st.caption(
+            "Richmond Studio: CLASS NAME, CLASS CODE, STUDENT NAME, IDENTIFIER, createdAt y lastSignInAt. Solo roles student/teacher."
+        )
+        run_rs_excel = st.button(
+            "Listar alumnos registrados",
+            type="primary",
+            key="rs_rs_excel_generate",
+        )
+
+        if run_rs_excel:
+            if not rs_token:
+                st.error("Ingresa el bearer token de Richmond Studio.")
+                st.stop()
+            try:
+                with st.spinner("Consultando Richmond Studio..."):
+                    rs_registered_panel_data = _load_richmondstudio_registered_panel_data(
+                        rs_token,
+                        timeout=int(timeout),
+                    )
+            except Exception as exc:  # pragma: no cover - UI
+                st.error(f"Error: {exc}")
+                st.stop()
+
+            registered_panel_state = _store_richmondstudio_registered_panel_data(
+                rs_registered_panel_data
+            )
+            listing_data = (
+                registered_panel_state.get("listing_data")
+                if isinstance(registered_panel_state.get("listing_data"), dict)
+                else {}
+            )
+            rows_rs = list(registered_panel_state.get("rows") or [])
+            excluded_roles = (
+                registered_panel_state.get("excluded_roles")
+                if isinstance(registered_panel_state.get("excluded_roles"), dict)
+                else {}
+            )
+            st.success(
+                "Listado RS listo. Filas: {filas} | Usuarios validos: {validos}/{total}.".format(
+                    filas=len(rows_rs),
+                    validos=int(listing_data.get("valid_users_count") or 0),
+                    total=int(listing_data.get("total_users_count") or 0),
+                )
+            )
+            if excluded_roles:
+                excluded_txt = ", ".join(
+                    f"{role}: {count}"
+                    for role, count in sorted(
+                        excluded_roles.items(),
+                        key=lambda item: item[0],
+                    )
+                )
+                st.caption(f"Roles excluidos: {excluded_txt}")
+            if rows_rs:
+                _show_dataframe(rows_rs[:200], use_container_width=True)
+
+        if st.session_state.get("rs_excel_bytes"):
+            col_rs_download_a, col_rs_download_b = st.columns(2, gap="small")
+            col_rs_download_a.download_button(
+                label="Descargar listado RS",
+                data=st.session_state["rs_excel_bytes"],
+                file_name="excel_rs.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="rs_rs_excel_download",
+                use_container_width=True,
+            )
+            if st.session_state.get("rs_password_update_template_bytes"):
+                col_rs_download_b.download_button(
+                    label="Descargar todos los usuarios para actualizar",
+                    data=st.session_state["rs_password_update_template_bytes"],
+                    file_name=str(
+                        st.session_state.get(
+                            "rs_password_update_template_filename"
+                        )
+                        or "plantilla_password_rs.xlsx"
+                    ).strip()
+                    or "plantilla_password_rs.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="rs_password_update_template_download_list",
+                    use_container_width=True,
+                )
+
+
+def _render_richmondstudio_tools_expiring_panel(
+    rs_token: str,
+    timeout: int,
+) -> None:
+    with st.container(border=True):
+        expiring_next_year = int(date.today().year + 1)
+        expiring_next_year_label = f"01/01/{expiring_next_year}"
+        expiring_next_year_sheet = f"subscriptions_expiring_{expiring_next_year}"
+        expiring_next_year_file_name = (
+            "rs_suscripciones_expiran_"
+            f"{expiring_next_year}.xlsx"
+        )
+        registered_user_rows_cached = list(
+            st.session_state.get("rs_registered_user_rows") or []
+        )
+
+        st.markdown("### 2. Suscripciones por vencer")
+        st.markdown(
+            f"**Usuarios con suscripciones que expiran desde {expiring_next_year_label}**"
+        )
+        st.caption(
+            "Genera un reporte resumido de usuarios RS con suscripcion que expira el proximo ano: USER NAME, Email, Role, level, CLASSES COUNT y CLASS NAMES."
+        )
+        if st.button(
+            f"Listar suscripciones que expiran en {expiring_next_year}",
+            key="rs_expiring_next_year_list_btn",
+            use_container_width=True,
+        ):
+            if not rs_token:
+                st.error("Ingresa el bearer token de Richmond Studio.")
+            elif not registered_user_rows_cached:
+                st.warning(
+                    "Primero ejecuta `Listar alumnos registrados` para cargar usuarios RS."
+                )
+            else:
+                status_placeholder = st.empty()
+                progress_placeholder = st.empty()
+                progress_bar = progress_placeholder.progress(0)
+                try:
+                    expiring_summary, expiring_rows = (
+                        _list_richmondstudio_users_with_subscriptions_expiring_in_year(
+                            token=rs_token,
+                            rows=registered_user_rows_cached,
+                            timeout=int(timeout),
+                            target_year=int(expiring_next_year),
+                            on_status=lambda message: status_placeholder.write(
+                                message
+                            ),
+                            on_progress=lambda current, total: progress_bar.progress(
+                                min(
+                                    100,
+                                    max(
+                                        0,
+                                        int(
+                                            (float(current) / max(int(total), 1))
+                                            * 100
+                                        ),
+                                    ),
+                                )
+                            ),
+                        )
+                    )
+                except Exception as exc:  # pragma: no cover - UI
+                    status_placeholder.empty()
+                    progress_placeholder.empty()
+                    st.error(f"Error RS: {exc}")
+                else:
+                    status_placeholder.empty()
+                    progress_placeholder.empty()
+                    st.session_state["rs_expiring_next_year_summary"] = dict(
+                        expiring_summary
+                    )
+                    st.session_state["rs_expiring_next_year_rows"] = list(
+                        expiring_rows
+                    )
+                    st.session_state["rs_expiring_next_year_bytes"] = (
+                        _export_simple_excel(
+                            expiring_rows,
+                            sheet_name=expiring_next_year_sheet,
+                        )
+                        if expiring_rows
+                        else b""
+                    )
+                    st.success(
+                        "Consulta de suscripciones RS completada. "
+                        "Usuarios revisados: {processed_total}/{eligible_total} | "
+                        "Usuarios con coincidencia: {matched_total} | "
+                        "Suscripciones detectadas: {subscriptions_total} | "
+                        "Errores: {error_total}.".format(
+                            **expiring_summary
+                        )
+                    )
+
+        expiring_summary_cached = (
+            st.session_state.get("rs_expiring_next_year_summary") or {}
+        )
+        expiring_rows_cached = (
+            st.session_state.get("rs_expiring_next_year_rows") or []
+        )
+        expiring_bytes_cached = (
+            st.session_state.get("rs_expiring_next_year_bytes") or b""
+        )
+        if expiring_summary_cached:
+            st.markdown(
+                f"**Resultado suscripciones que expiran desde {expiring_next_year_label}**"
+            )
+            st.info(
+                "Usuarios revisados: {processed_total}/{eligible_total} | "
+                "Usuarios con coincidencia: {matched_total} | "
+                "Suscripciones detectadas: {subscriptions_total} | "
+                "Errores: {error_total}".format(
+                    **expiring_summary_cached
+                )
+            )
+            if expiring_rows_cached:
+                _show_dataframe(
+                    expiring_rows_cached[:200],
+                    use_container_width=True,
+                )
+            else:
+                st.caption(
+                    f"No se encontraron suscripciones con expirationDate en {expiring_next_year}."
+                )
+            if expiring_bytes_cached:
+                st.download_button(
+                    label=(
+                        "Descargar usuarios con suscripciones que expiran en "
+                        f"{expiring_next_year}"
+                    ),
+                    data=expiring_bytes_cached,
+                    file_name=expiring_next_year_file_name,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="rs_expiring_next_year_download",
+                    use_container_width=True,
+                )
+
+
+def _render_richmondstudio_tools_user_classes_panel(
+    rs_token: str,
+    timeout: int,
+) -> None:
+    with st.container(border=True):
+        st.markdown("### 3. Gestionar clases por usuario")
+        st.markdown("**Gestionar clases de usuario RS**")
+        st.caption(
+            "Usa el listado registrado para seleccionar un usuario, reemplazar sus clases, "
+            "quitar algunas o dejarlo sin clases."
+        )
+
+        run_rs_user_classes_replace_confirmed = _consume_richmondstudio_confirmed_action(
+            "rs_user_classes_replace"
+        )
+        run_rs_user_classes_remove_confirmed = _consume_richmondstudio_confirmed_action(
+            "rs_user_classes_remove"
+        )
+        run_rs_user_classes_clear_confirmed = _consume_richmondstudio_confirmed_action(
+            "rs_user_classes_clear"
+        )
+
+        rs_user_classes_notice = str(
+            st.session_state.pop("rs_user_classes_notice", "") or ""
+        ).strip()
+        if rs_user_classes_notice:
+            st.success(rs_user_classes_notice)
+
+        registered_user_rows_cached = [
+            dict(row)
+            for row in st.session_state.get("rs_registered_user_rows") or []
+            if isinstance(row, dict)
+        ]
+        registered_groups_lookup = (
+            st.session_state.get("rs_registered_groups_lookup")
+            if isinstance(
+                st.session_state.get("rs_registered_groups_lookup"), dict
+            )
+            else {"by_id": {}, "by_name": {}}
+        )
+        registered_groups_by_id = (
+            registered_groups_lookup.get("by_id")
+            if isinstance(registered_groups_lookup.get("by_id"), dict)
+            else {}
+        )
+        registered_user_rows_by_id = {
+            str(row.get("RS USER ID") or "").strip(): row
+            for row in registered_user_rows_cached
+            if str(row.get("RS USER ID") or "").strip()
+        }
+        registered_user_options = list(registered_user_rows_by_id.keys())
+        registered_group_options = sorted(
+            list(registered_groups_by_id.keys()),
+            key=lambda group_id: _richmondstudio_group_label(
+                registered_groups_by_id.get(group_id)
+            ).upper(),
+        )
+        valid_registered_group_ids = set(registered_group_options)
+        confirmed_user_classes_mode = ""
+        if run_rs_user_classes_replace_confirmed:
+            confirmed_user_classes_mode = "replace"
+        elif run_rs_user_classes_remove_confirmed:
+            confirmed_user_classes_mode = "remove"
+        elif run_rs_user_classes_clear_confirmed:
+            confirmed_user_classes_mode = "clear"
+
+        if confirmed_user_classes_mode:
+            pending_user_classes = st.session_state.pop(
+                "rs_user_classes_pending_action",
+                None,
+            )
+            if not isinstance(pending_user_classes, dict):
+                st.error("No se encontro el borrador de clases RS del usuario.")
+            elif (
+                str(pending_user_classes.get("mode") or "").strip()
+                != confirmed_user_classes_mode
+            ):
+                st.error(
+                    "La confirmacion no coincide con la accion de clases RS."
+                )
+            elif not rs_token:
+                st.error("Ingresa el bearer token de Richmond Studio.")
+            else:
+                target_user_id = str(
+                    pending_user_classes.get("user_id") or ""
+                ).strip()
+                try:
+                    with st.spinner("Actualizando clases del usuario en RS..."):
+                        detail_body = _fetch_richmondstudio_user_detail(
+                            rs_token,
+                            target_user_id,
+                            timeout=int(timeout),
+                        )
+                        detail_data = (
+                            detail_body.get("data")
+                            if isinstance(detail_body.get("data"), dict)
+                            else {}
+                        )
+                        current_group_ids = _richmondstudio_relationship_ids(
+                            detail_data,
+                            "groups",
+                        )
+                        final_group_ids = list(current_group_ids)
+                        if confirmed_user_classes_mode == "replace":
+                            final_group_ids = [
+                                str(group_id or "").strip()
+                                for group_id in (
+                                    pending_user_classes.get("target_group_ids")
+                                    or []
+                                )
+                                if str(group_id or "").strip()
+                            ]
+                        elif confirmed_user_classes_mode == "remove":
+                            remove_group_ids = {
+                                str(group_id or "").strip()
+                                for group_id in (
+                                    pending_user_classes.get("remove_group_ids")
+                                    or []
+                                )
+                                if str(group_id or "").strip()
+                            }
+                            final_group_ids = [
+                                group_id
+                                for group_id in current_group_ids
+                                if group_id not in remove_group_ids
+                            ]
+                        elif confirmed_user_classes_mode == "clear":
+                            final_group_ids = []
+
+                        payload_user_classes = (
+                            _build_richmondstudio_user_patch_payload_from_detail(
+                                detail_body,
+                                group_ids=final_group_ids,
+                            )
+                        )
+                        _update_richmondstudio_user(
+                            rs_token,
+                            target_user_id,
+                            payload_user_classes,
+                            timeout=int(timeout),
+                        )
+                        refreshed_registered_panel_data = (
+                            _load_richmondstudio_registered_panel_data(
+                                rs_token,
+                                timeout=int(timeout),
+                            )
+                        )
+                except Exception as exc:  # pragma: no cover - UI
+                    st.error(f"Error RS: {exc}")
+                else:
+                    _store_richmondstudio_registered_panel_data(
+                        refreshed_registered_panel_data
+                    )
+                    st.session_state["rs_user_classes_selected_user_id"] = (
+                        target_user_id
+                    )
+                    st.session_state["rs_user_classes_form_loaded_user_id"] = ""
+                    st.session_state["rs_user_classes_remove_group_ids"] = []
+                    action_label = (
+                        "Clases del usuario RS actualizadas correctamente."
+                        if confirmed_user_classes_mode == "replace"
+                        else (
+                            "Clases seleccionadas removidas correctamente."
+                            if confirmed_user_classes_mode == "remove"
+                            else "Todas las clases del usuario fueron removidas."
+                        )
+                    )
+                    st.session_state["rs_user_classes_notice"] = action_label
+                    st.rerun()
+
+        if not registered_user_rows_cached:
+            st.caption(
+                "Primero ejecuta `Listar alumnos registrados` para cargar usuarios y clases."
+            )
+        else:
+            current_selected_user_id = str(
+                st.session_state.get("rs_user_classes_selected_user_id") or ""
+            ).strip()
+            if current_selected_user_id not in registered_user_rows_by_id:
+                current_selected_user_id = registered_user_options[0]
+                st.session_state["rs_user_classes_selected_user_id"] = (
+                    current_selected_user_id
+                )
+
+            user_option_labels: Dict[str, str] = {}
+            for user_id, row in registered_user_rows_by_id.items():
+                full_name = " ".join(
+                    part
+                    for part in (
+                        str(row.get("First name") or "").strip(),
+                        str(row.get("Last name") or "").strip(),
+                    )
+                    if part
+                ).strip()
+                login_txt = str(row.get("Username") or row.get("Login") or "").strip()
+                identifier_txt = str(row.get("IDENTIFIER") or "").strip()
+                role_txt = str(row.get("Role") or "").strip().lower() or "user"
+                classes_txt = str(row.get("Classes count") or "0").strip() or "0"
+                main_label = full_name or login_txt or identifier_txt or user_id
+                extra_label = login_txt or identifier_txt
+                if extra_label:
+                    user_option_labels[user_id] = (
+                        f"{main_label} | {extra_label} | {role_txt} | {classes_txt} clase(s)"
+                    )
+                else:
+                    user_option_labels[user_id] = (
+                        f"{main_label} | {role_txt} | {classes_txt} clase(s)"
+                    )
+
+            selected_user_id = str(
+                st.selectbox(
+                    "Usuario RS",
+                    options=registered_user_options,
+                    key="rs_user_classes_selected_user_id",
+                    format_func=lambda user_id: user_option_labels.get(
+                        str(user_id or "").strip(),
+                        str(user_id or "").strip(),
+                    ),
+                )
+                or ""
+            ).strip()
+            selected_user_row = (
+                registered_user_rows_by_id.get(selected_user_id) or {}
+            )
+
+            loaded_user_id = str(
+                st.session_state.get("rs_user_classes_form_loaded_user_id") or ""
+            ).strip()
+            if loaded_user_id != selected_user_id:
+                current_group_ids = []
+                for item in selected_user_row.get("_group_ids") or []:
+                    group_id = str(item or "").strip()
+                    if group_id and group_id in valid_registered_group_ids:
+                        current_group_ids.append(group_id)
+                st.session_state["rs_user_classes_target_group_ids"] = current_group_ids
+                st.session_state["rs_user_classes_remove_group_ids"] = []
+                st.session_state["rs_user_classes_form_loaded_user_id"] = (
+                    selected_user_id
+                )
+
+            current_group_ids = []
+            for item in selected_user_row.get("_group_ids") or []:
+                group_id = str(item or "").strip()
+                if group_id and group_id in valid_registered_group_ids:
+                    current_group_ids.append(group_id)
+
+            selected_name = " ".join(
+                part
+                for part in (
+                    str(selected_user_row.get("First name") or "").strip(),
+                    str(selected_user_row.get("Last name") or "").strip(),
+                )
+                if part
+            ).strip()
+            if not selected_name:
+                selected_name = (
+                    str(selected_user_row.get("Username") or "").strip()
+                    or str(selected_user_row.get("IDENTIFIER") or "").strip()
+                    or selected_user_id
+                )
+
+            current_group_labels = [
+                _richmondstudio_group_label(registered_groups_by_id.get(group_id))
+                or group_id
+                for group_id in current_group_ids
+            ]
+            st.caption(
+                "Seleccionado: {name} | Email: {email} | Role: {role} | Clases actuales: {classes}".format(
+                    name=selected_name or "(sin nombre)",
+                    email=str(
+                        selected_user_row.get("Email")
+                        or selected_user_row.get("Username")
+                        or ""
+                    ).strip()
+                    or "(sin email)",
+                    role=str(selected_user_row.get("Role") or "").strip() or "-",
+                    classes=(
+                        " | ".join(current_group_labels)
+                        if current_group_labels
+                        else "sin clases"
+                    ),
+                )
+            )
+
+            st.multiselect(
+                "Clases finales del usuario",
+                options=registered_group_options,
+                key="rs_user_classes_target_group_ids",
+                format_func=lambda group_id: _richmondstudio_group_label(
+                    registered_groups_by_id.get(str(group_id or "").strip())
+                )
+                or str(group_id or "").strip(),
+                placeholder="Selecciona una o varias clases",
+            )
+            st.multiselect(
+                "Clases actuales a quitar",
+                options=current_group_ids,
+                key="rs_user_classes_remove_group_ids",
+                format_func=lambda group_id: _richmondstudio_group_label(
+                    registered_groups_by_id.get(str(group_id or "").strip())
+                )
+                or str(group_id or "").strip(),
+                placeholder="Marca una o varias clases actuales",
+                disabled=not bool(current_group_ids),
+            )
+
+            (
+                col_rs_user_classes_a,
+                col_rs_user_classes_b,
+                col_rs_user_classes_c,
+            ) = st.columns(3, gap="small")
+            run_rs_user_classes_replace = col_rs_user_classes_a.button(
+                "Guardar clases RS",
+                type="primary",
+                key="rs_user_classes_replace_btn",
+                use_container_width=True,
+            )
+            run_rs_user_classes_remove = col_rs_user_classes_b.button(
+                "Quitar clases marcadas",
+                key="rs_user_classes_remove_btn",
+                use_container_width=True,
+            )
+            run_rs_user_classes_clear = col_rs_user_classes_c.button(
+                "Quitar todas las clases",
+                key="rs_user_classes_clear_btn",
+                use_container_width=True,
+            )
+
+            if run_rs_user_classes_replace:
+                replace_group_ids = [
+                    str(group_id or "").strip()
+                    for group_id in (
+                        st.session_state.get("rs_user_classes_target_group_ids")
+                        or []
+                    )
+                    if str(group_id or "").strip()
+                ]
+                st.session_state["rs_user_classes_pending_action"] = {
+                    "mode": "replace",
+                    "user_id": selected_user_id,
+                    "target_group_ids": replace_group_ids,
+                }
+                _request_richmondstudio_confirmation(
+                    "rs_user_classes_replace",
+                    (
+                        f"actualizar clases RS de {selected_name} "
+                        f"({len(replace_group_ids)} clase(s) finales)"
+                    ),
+                )
+
+            if run_rs_user_classes_remove:
+                remove_group_ids = [
+                    str(group_id or "").strip()
+                    for group_id in (
+                        st.session_state.get("rs_user_classes_remove_group_ids")
+                        or []
+                    )
+                    if str(group_id or "").strip()
+                ]
+                if not remove_group_ids:
+                    st.error("Selecciona al menos una clase actual para quitar.")
+                else:
+                    st.session_state["rs_user_classes_pending_action"] = {
+                        "mode": "remove",
+                        "user_id": selected_user_id,
+                        "remove_group_ids": remove_group_ids,
+                    }
+                    _request_richmondstudio_confirmation(
+                        "rs_user_classes_remove",
+                        (
+                            f"quitar {len(remove_group_ids)} clase(s) RS de "
+                            f"{selected_name}"
+                        ),
+                    )
+
+            if run_rs_user_classes_clear:
+                st.session_state["rs_user_classes_pending_action"] = {
+                    "mode": "clear",
+                    "user_id": selected_user_id,
+                }
+                _request_richmondstudio_confirmation(
+                    "rs_user_classes_clear",
+                    f"quitar todas las clases RS de {selected_name}",
+                )
+
+
+def _render_richmondstudio_tools_password_panel(
+    rs_token: str,
+    timeout: int,
+) -> None:
+    with st.container(border=True):
+        st.markdown("### 4. Actualizacion masiva de password")
+        st.markdown("**Actualizar password usuarios RS**")
+        st.caption(
+            "Descarga el Excel de todos los usuarios registrados, completa New password(optional) "
+            "y vuelve a subirlo. La app lo convierte a CSV y lo envia al endpoint bulk de RS."
+        )
+        run_rs_password_update_confirmed = _consume_richmondstudio_confirmed_action(
+            "rs_users_password_update"
+        )
+
+        uploaded_rs_password_update = st.file_uploader(
+            "Plantilla de actualizacion password RS",
+            type=["xlsx", "csv", "txt"],
+            key="rs_password_update_upload_file",
+            help=(
+                "Columnas esperadas: Username(Email), New last name(optional), "
+                "New first name(optional), New class code(optional), "
+                "New password(optional), Keep in classes(optional)."
+            ),
+        )
+        rs_password_update_bytes = b""
+        rs_password_update_name = ""
+        rs_password_update_rows: List[Dict[str, str]] = []
+        rs_password_update_error = ""
+        if uploaded_rs_password_update is not None:
+            rs_password_update_bytes = uploaded_rs_password_update.getvalue()
+            rs_password_update_name = str(
+                uploaded_rs_password_update.name or "password_update_rs.xlsx"
+            ).strip()
+            try:
+                rs_password_update_rows = _load_richmondstudio_bulk_user_update_rows(
+                    rs_password_update_bytes,
+                    rs_password_update_name,
+                )
+            except Exception as exc:
+                rs_password_update_error = str(exc)
+                st.error(f"Error en plantilla RS: {exc}")
+            else:
+                preview_rows = _build_richmondstudio_bulk_user_update_preview_rows(
+                    rs_password_update_rows
+                )
+                actionable_count = sum(
+                    1
+                    for row in rs_password_update_rows
+                    if str(row.get("Username") or "").strip()
+                    and str(row.get("New password") or "").strip()
+                )
+                st.caption(
+                    "Filas cargadas: {total} | Listas para actualizar: {actionable}".format(
+                        total=len(rs_password_update_rows),
+                        actionable=actionable_count,
+                    )
+                )
+                if preview_rows:
+                    _show_dataframe(preview_rows[:200], use_container_width=True)
+
+        run_rs_password_update = st.button(
+            "Actualizar passwords RS",
+            type="primary",
+            key="rs_password_update_run_btn",
+            use_container_width=True,
+        )
+        if run_rs_password_update:
+            if not rs_token:
+                st.error("Ingresa el bearer token de Richmond Studio.")
+            elif uploaded_rs_password_update is None:
+                st.error("Sube la plantilla de actualizacion password RS.")
+            elif rs_password_update_error:
+                st.error(
+                    f"Corrige la plantilla antes de continuar: {rs_password_update_error}"
+                )
+            else:
+                actionable_count = sum(
+                    1
+                    for row in rs_password_update_rows
+                    if str(row.get("Username") or "").strip()
+                    and str(row.get("New password") or "").strip()
+                )
+                if not actionable_count:
+                    st.error(
+                        "No hay filas con Username y New password para actualizar."
+                    )
+                else:
+                    st.session_state["rs_password_update_upload_bytes"] = (
+                        rs_password_update_bytes
+                    )
+                    st.session_state["rs_password_update_upload_name"] = (
+                        rs_password_update_name
+                    )
+                    _request_richmondstudio_confirmation(
+                        "rs_users_password_update",
+                        f"actualizar password de {actionable_count} usuarios RS",
+                    )
+
+        if run_rs_password_update_confirmed:
+            stored_upload_bytes = bytes(
+                st.session_state.get("rs_password_update_upload_bytes") or b""
+            )
+            stored_upload_name = str(
+                st.session_state.get("rs_password_update_upload_name") or ""
+            ).strip()
+            if not rs_token:
+                st.error("Ingresa el bearer token de Richmond Studio.")
+            elif not stored_upload_bytes:
+                st.error("No se encontro la plantilla cargada para actualizar.")
+            else:
+                try:
+                    rows_to_update = _load_richmondstudio_bulk_user_update_rows(
+                        stored_upload_bytes,
+                        stored_upload_name or "password_update_rs.xlsx",
+                    )
+                    actionable_rows = [
+                        row
+                        for row in rows_to_update
+                        if str(row.get("Username") or "").strip()
+                        and str(row.get("New password") or "").strip()
+                    ]
+                    response_message = _submit_richmondstudio_bulk_user_update(
+                        rs_token,
+                        actionable_rows,
+                        timeout=max(120, int(timeout)),
+                    )
+                except Exception as exc:
+                    st.error(f"No se pudo actualizar passwords RS: {exc}")
+                else:
+                    st.success(
+                        "Actualizacion bulk RS enviada correctamente. "
+                        f"Filas procesadas: {len(actionable_rows)} | Respuesta: {response_message}"
+                    )
+
+
 def render_richmond_studio_view() -> None:
     timeout = 30
     st.session_state["rs_timeout"] = int(timeout)
@@ -5950,852 +7768,77 @@ def render_richmond_studio_view() -> None:
                     timeout=int(timeout),
                 )
     with tab_rs_usuarios:
+        if str(st.session_state.get("rs_users_nav") or "").strip() not in {
+            "crear",
+            "sincronizar",
+        }:
+            st.session_state["rs_users_nav"] = "crear"
+
         rs_users_sidebar_col, rs_users_body_col = st.columns([1.15, 4.85], gap="large")
         with rs_users_sidebar_col:
-            with st.container(border=True):
-                st.markdown("**Usuarios RS**")
-                st.caption(
-                    "Los dos bloques de esta pestaña se muestran abajo en orden."
-                )
-                st.markdown("**Orden recomendado**")
-                st.caption("1. Crear usuarios desde Excel")
-                st.caption("2. Sincronizar clases y refresh Pegasus -> RS")
+            rs_users_view = _render_crud_menu(
+                "Funciones de usuarios RS",
+                [
+                    (
+                        "crear",
+                        "Crear",
+                        "Crea usuarios masivamente desde Excel",
+                    ),
+                    (
+                        "sincronizar",
+                        "Sincronizar",
+                        "Sincroniza clases y refresh Pegasus -> RS",
+                    ),
+                ],
+                state_key="rs_users_nav",
+            )
         with rs_users_body_col:
-            with st.container(border=True):
-                st.markdown("**RS | Crear usuarios desde Excel**")
-                uploaded_rs_users_bytes = b""
-                uploaded_rs_users_excel = None
-                rs_user_import_rows: List[Dict[str, object]] = []
-                rs_user_import_error = ""
-                run_rs_users_create = False
-
-                if "rs_users_import_excel_version" not in st.session_state:
-                    st.session_state["rs_users_import_excel_version"] = 0
-                if not st.session_state.get("rs_users_create_output_bytes"):
-                    st.session_state["rs_users_create_download_only"] = False
-
-                rs_users_download_only = bool(
-                    st.session_state.get("rs_users_create_download_only")
-                ) and bool(st.session_state.get("rs_users_create_output_bytes"))
-
-                if not rs_users_download_only:
-                    st.caption(
-                        "Sube un Excel con columnas Last name, First name, Class, Email, Role y level. "
-                        "La clase se resuelve contra /api/groups y cada usuario se crea con una "
-                        "peticion individual a /api/users. level acepta: preschool, primary, secondary, adult."
-                    )
-                    template_rs_users_bytes = _export_simple_excel(
-                        _richmondstudio_user_import_template_rows(),
-                        sheet_name="rs_users_import",
-                    )
-                    col_rs_users_template, col_rs_users_file = st.columns([1, 2], gap="small")
-                    col_rs_users_template.download_button(
-                        label="Descargar plantilla",
-                        data=template_rs_users_bytes,
-                        file_name="plantilla_usuarios_rs.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="rs_users_import_template_download",
-                        use_container_width=True,
-                    )
-                    uploaded_rs_users_excel = col_rs_users_file.file_uploader(
-                        "Excel de usuarios RS",
-                        type=["xlsx"],
-                        key=(
-                            "rs_users_import_excel_"
-                            f"{int(st.session_state.get('rs_users_import_excel_version', 0))}"
-                        ),
-                        help=(
-                            "Columnas esperadas: "
-                            f"{RICHMONDSTUDIO_USER_IMPORT_LAST_NAME}, "
-                            f"{RICHMONDSTUDIO_USER_IMPORT_FIRST_NAME}, "
-                            f"{RICHMONDSTUDIO_USER_IMPORT_CLASS_NAME}, "
-                            f"{RICHMONDSTUDIO_USER_IMPORT_EMAIL}, "
-                            f"{RICHMONDSTUDIO_USER_IMPORT_ROLE}, "
-                            f"{RICHMONDSTUDIO_USER_IMPORT_LEVEL}. "
-                            "Valores validos de level: preschool, primary, secondary, adult."
-                        ),
-                    )
-
-                    if uploaded_rs_users_excel is not None:
-                        uploaded_rs_users_bytes = uploaded_rs_users_excel.getvalue()
-                        try:
-                            rs_user_import_rows = _load_richmondstudio_user_rows_from_excel(
-                                uploaded_rs_users_bytes
-                            )
-                        except Exception as exc:
-                            rs_user_import_error = str(exc)
-                            st.error(f"Error en Excel RS: {exc}")
-                        else:
-                            st.caption(f"Filas detectadas para crear: {len(rs_user_import_rows)}")
-                            preview_rows = [
-                                {
-                                    RICHMONDSTUDIO_USER_IMPORT_LAST_NAME: row.get(
-                                        RICHMONDSTUDIO_USER_IMPORT_LAST_NAME
-                                    ),
-                                    RICHMONDSTUDIO_USER_IMPORT_FIRST_NAME: row.get(
-                                        RICHMONDSTUDIO_USER_IMPORT_FIRST_NAME
-                                    ),
-                                    RICHMONDSTUDIO_USER_IMPORT_CLASS_NAME: row.get(
-                                        RICHMONDSTUDIO_USER_IMPORT_CLASS_NAME
-                                    ),
-                                    RICHMONDSTUDIO_USER_IMPORT_EMAIL: row.get(
-                                        RICHMONDSTUDIO_USER_IMPORT_EMAIL
-                                    ),
-                                    RICHMONDSTUDIO_USER_IMPORT_ROLE: row.get(
-                                        RICHMONDSTUDIO_USER_IMPORT_ROLE
-                                    ),
-                                    RICHMONDSTUDIO_USER_IMPORT_LEVEL: row.get(
-                                        RICHMONDSTUDIO_USER_IMPORT_LEVEL
-                                    ),
-                                }
-                                for row in rs_user_import_rows[:100]
-                            ]
-                            if preview_rows:
-                                _show_dataframe(preview_rows, use_container_width=True)
-
-                    run_rs_users_create = st.button(
-                        "Crear usuarios RS",
-                        type="primary",
-                        key="rs_users_create_btn",
-                        use_container_width=True,
-                    )
-                run_rs_users_create_confirmed = _consume_richmondstudio_confirmed_action(
-                    "rs_users_create"
+            if rs_users_view == "crear":
+                _render_richmondstudio_users_create_panel(
+                    rs_token=rs_token,
+                    timeout=int(timeout),
                 )
-
-                if run_rs_users_create:
-                    if not rs_token:
-                        st.error("Ingresa el bearer token de Richmond Studio.")
-                    elif uploaded_rs_users_excel is None:
-                        st.error("Sube el Excel de usuarios RS.")
-                    elif rs_user_import_error:
-                        st.error(f"Corrige el Excel antes de continuar: {rs_user_import_error}")
-                    else:
-                        if not rs_user_import_rows and uploaded_rs_users_bytes:
-                            try:
-                                rs_user_import_rows = _load_richmondstudio_user_rows_from_excel(
-                                    uploaded_rs_users_bytes
-                                )
-                            except Exception as exc:
-                                st.error(f"Error en Excel RS: {exc}")
-                                rs_user_import_rows = []
-
-                        if rs_user_import_rows:
-                            _request_richmondstudio_confirmation(
-                                "rs_users_create",
-                                f"crear {len(rs_user_import_rows)} usuarios RS",
-                            )
-
-                if run_rs_users_create_confirmed:
-                    if not rs_token:
-                        st.error("Ingresa el bearer token de Richmond Studio.")
-                    elif uploaded_rs_users_excel is None:
-                        st.error("Sube el Excel de usuarios RS.")
-                    elif rs_user_import_error:
-                        st.error(f"Corrige el Excel antes de continuar: {rs_user_import_error}")
-                    else:
-                        if not rs_user_import_rows and uploaded_rs_users_bytes:
-                            try:
-                                rs_user_import_rows = _load_richmondstudio_user_rows_from_excel(
-                                    uploaded_rs_users_bytes
-                                )
-                            except Exception as exc:
-                                st.error(f"Error en Excel RS: {exc}")
-                                rs_user_import_rows = []
-
-                        if rs_user_import_rows:
-                            institution_name_for_file = ""
-                            try:
-                                current_context_users = _fetch_richmondstudio_current_user_context(
-                                    rs_token,
-                                    timeout=int(timeout),
-                                )
-                            except Exception:
-                                current_context_users = {}
-                            institution_name_for_file = str(
-                                current_context_users.get("institution_name") or ""
-                            ).strip()
-
-                            try:
-                                with st.spinner("Consultando clases RS..."):
-                                    rs_groups_for_users = _fetch_richmondstudio_groups(
-                                        rs_token,
-                                        timeout=int(timeout),
-                                        include_users=False,
-                                    )
-                            except Exception as exc:  # pragma: no cover - UI
-                                st.error(f"Error RS: {exc}")
-                            else:
-                                groups_lookup = _build_richmondstudio_groups_lookup(
-                                    rs_groups_for_users
-                                )
-                                resultados_rs_users: List[Dict[str, object]] = []
-                                ok_rs_users = 0
-                                err_rs_users = 0
-                                progress_rs_users = st.progress(0)
-                                status_rs_users = st.empty()
-
-                                total_rows = len(rs_user_import_rows)
-                                for idx_rs_user, row in enumerate(rs_user_import_rows, start=1):
-                                    first_name = str(
-                                        row.get(RICHMONDSTUDIO_USER_IMPORT_FIRST_NAME) or ""
-                                    ).strip()
-                                    last_name = str(
-                                        row.get(RICHMONDSTUDIO_USER_IMPORT_LAST_NAME) or ""
-                                    ).strip()
-                                    class_name_requested = str(
-                                        row.get(RICHMONDSTUDIO_USER_IMPORT_CLASS_NAME) or ""
-                                    ).strip()
-                                    email = str(
-                                        row.get(RICHMONDSTUDIO_USER_IMPORT_EMAIL) or ""
-                                    ).strip()
-                                    role_raw = str(
-                                        row.get(RICHMONDSTUDIO_USER_IMPORT_ROLE) or ""
-                                    ).strip()
-                                    level_raw = str(
-                                        row.get(RICHMONDSTUDIO_USER_IMPORT_LEVEL) or ""
-                                    ).strip()
-                                    row_number = int(row.get("_row_number") or idx_rs_user + 1)
-                                    display_name = " ".join(
-                                        part for part in (first_name, last_name) if part
-                                    ).strip() or email or f"fila {row_number}"
-
-                                    try:
-                                        status_rs_users.write(
-                                            f"Creando {idx_rs_user}/{total_rows}: {display_name}"
-                                        )
-                                        group_meta = _resolve_richmondstudio_group_for_user_row(
-                                            class_name_requested,
-                                            groups_lookup,
-                                        )
-                                        payload_rs_user = _build_richmondstudio_user_payload(
-                                            row,
-                                            group_meta=group_meta,
-                                        )
-                                        created_rs_user = _create_richmondstudio_user(
-                                            rs_token,
-                                            payload_rs_user,
-                                            timeout=int(timeout),
-                                        )
-                                        created_meta = _extract_richmondstudio_user_create_result(
-                                            created_rs_user,
-                                            fallback_email=email,
-                                        )
-                                        password_txt = str(
-                                            created_meta.get("password") or ""
-                                        ).strip()
-                                        detalle_txt = "Creado correctamente."
-                                        if not password_txt:
-                                            detalle_txt = (
-                                                "Creado, pero RS no devolvio password."
-                                            )
-                                        resultados_rs_users.append(
-                                            {
-                                                "Row": row_number,
-                                                "Last name": last_name,
-                                                "First name": first_name,
-                                                "Class": str(
-                                                    (
-                                                        group_meta.get("class_name")
-                                                        if isinstance(group_meta, dict)
-                                                        else class_name_requested
-                                                    )
-                                                    or ""
-                                                ).strip(),
-                                                "Email": email,
-                                                "Role": _normalize_richmondstudio_user_role(
-                                                    role_raw
-                                                ),
-                                                "level": _normalize_richmondstudio_user_level(
-                                                    level_raw
-                                                ),
-                                                "Login": str(
-                                                    created_meta.get("login") or email
-                                                ).strip(),
-                                                "Password": password_txt,
-                                                "RS User ID": str(
-                                                    created_meta.get("user_id") or ""
-                                                ).strip(),
-                                                "Resultado": "OK",
-                                                "Detalle": detalle_txt,
-                                            }
-                                        )
-                                        ok_rs_users += 1
-                                    except Exception as exc:  # pragma: no cover - UI
-                                        resultados_rs_users.append(
-                                            {
-                                                "Row": row_number,
-                                                "Last name": last_name,
-                                                "First name": first_name,
-                                                "Class": class_name_requested,
-                                                "Email": email,
-                                                "Role": role_raw,
-                                                "level": level_raw,
-                                                "Login": email,
-                                                "Password": "",
-                                                "RS User ID": "",
-                                                "Resultado": "Error",
-                                                "Detalle": str(exc),
-                                            }
-                                        )
-                                        err_rs_users += 1
-
-                                    progress_rs_users.progress(
-                                        int((idx_rs_user / total_rows) * 100)
-                                    )
-
-                                status_rs_users.empty()
-                                progress_rs_users.empty()
-                                st.session_state["rs_users_create_output_rows"] = (
-                                    resultados_rs_users
-                                )
-                                st.session_state["rs_users_create_output_bytes"] = (
-                                    _export_simple_excel(
-                                        _build_richmondstudio_users_export_rows(
-                                            resultados_rs_users
-                                        ),
-                                        sheet_name="usuarios_rs",
-                                    )
-                                )
-                                st.session_state["rs_users_create_output_count"] = int(
-                                    len(resultados_rs_users)
-                                )
-                                st.session_state["rs_users_create_output_filename"] = (
-                                    _build_richmondstudio_users_output_filename(
-                                        institution_name_for_file
-                                    )
-                                )
-                                rs_password_template_rows = (
-                                    _build_richmondstudio_password_update_template_rows(
-                                        resultados_rs_users
-                                    )
-                                )
-                                st.session_state["rs_users_password_template_bytes"] = (
-                                    _export_simple_excel(
-                                        rs_password_template_rows,
-                                        sheet_name="password_update_rs",
-                                    )
-                                    if rs_password_template_rows
-                                    else b""
-                                )
-                                st.session_state["rs_users_password_template_filename"] = (
-                                    _build_richmondstudio_password_update_filename(
-                                        institution_name_for_file,
-                                        prefix="plantilla_password_rs",
-                                    )
-                                )
-
-                                if ok_rs_users and not err_rs_users:
-                                    st.session_state["rs_users_create_download_only"] = True
-                                    st.session_state["rs_users_import_excel_version"] = int(
-                                        st.session_state.get("rs_users_import_excel_version", 0)
-                                    ) + 1
-                                    st.rerun()
-                                elif ok_rs_users and err_rs_users:
-                                    st.session_state["rs_users_create_download_only"] = False
-                                    st.warning(
-                                        "Resultado parcial RS: "
-                                        f"OK {ok_rs_users} | Error {err_rs_users}."
-                                    )
-                                else:
-                                    st.session_state["rs_users_create_download_only"] = False
-                                    st.error("No se pudo crear ningun usuario RS.")
-
-                                if resultados_rs_users:
-                                    _show_dataframe(
-                                        resultados_rs_users[:200],
-                                        use_container_width=True,
-                                    )
-
-                if st.session_state.get("rs_users_create_output_bytes"):
-                    col_rs_users_download_a, col_rs_users_download_b = st.columns(
-                        2, gap="small"
-                    )
-                    col_rs_users_download_a.download_button(
-                        label="Descargar resultado usuarios RS",
-                        data=st.session_state["rs_users_create_output_bytes"],
-                        file_name=str(
-                            st.session_state.get("rs_users_create_output_filename")
-                            or "alumnos_RS.xlsx"
-                        ).strip()
-                        or "alumnos_RS.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="rs_users_create_output_download",
-                        use_container_width=True,
-                    )
-                    if st.session_state.get("rs_users_password_template_bytes"):
-                        col_rs_users_download_b.download_button(
-                            label="Descargar plantilla password RS (creados)",
-                            data=st.session_state["rs_users_password_template_bytes"],
-                            file_name=str(
-                                st.session_state.get(
-                                    "rs_users_password_template_filename"
-                                )
-                                or "plantilla_password_rs.xlsx"
-                            ).strip()
-                            or "plantilla_password_rs.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="rs_users_password_template_download",
-                            use_container_width=True,
-                        )
-            with st.container(border=True):
+            if rs_users_view == "sincronizar":
                 _render_richmondstudio_class_sync_section(
                     rs_token=rs_token,
                     timeout=int(timeout),
                 )
-
     with tab_rs_docentes:
+        if str(st.session_state.get("rs_teachers_nav") or "").strip() not in {
+            "gestion",
+            "formulario",
+        }:
+            st.session_state["rs_teachers_nav"] = "gestion"
+
         rs_docentes_sidebar_col, rs_docentes_body_col = st.columns([1.15, 4.85], gap="large")
         with rs_docentes_sidebar_col:
-            with st.container(border=True):
-                st.markdown("**Docentes RS**")
-                st.caption(
-                    "Carga, crea o edita docentes y sincroniza sus clases desde un solo panel."
-                )
-                st.markdown("**Bloques**")
-                st.caption("Carga y listado de docentes")
-                st.caption("Formulario de creacion o edicion")
-                loaded_teachers = len(st.session_state.get("rs_teachers_loaded_rows") or [])
-                if loaded_teachers:
-                    st.caption(f"Docentes cargados: {loaded_teachers}")
-        with rs_docentes_body_col:
-            with st.container(border=True):
-                st.markdown("**Asignar clases a docentes**")
-                st.caption(
-                    "Carga docentes y clases de Richmond Studio para crear o editar docentes y sincronizar sus clases."
-                )
-
-                teacher_notice = str(
-                    st.session_state.pop("rs_teacher_save_notice", "") or ""
-                ).strip()
-                teacher_meta = st.session_state.pop("rs_teacher_save_meta", None)
-                if teacher_notice:
-                    st.success(teacher_notice)
-                if isinstance(teacher_meta, dict):
-                    login_txt = str(teacher_meta.get("login") or "").strip()
-                    password_txt = str(teacher_meta.get("password") or "").strip()
-                    if login_txt or password_txt:
-                        parts = []
-                        if login_txt:
-                            parts.append(f"Login: {login_txt}")
-                        if password_txt:
-                            parts.append(f"Password: {password_txt}")
-                        st.caption(" | ".join(parts))
-
-                if "rs_teachers_loaded_rows" not in st.session_state:
-                    st.session_state["rs_teachers_loaded_rows"] = []
-                if "rs_teachers_groups_lookup" not in st.session_state:
-                    st.session_state["rs_teachers_groups_lookup"] = {
-                        "by_id": {},
-                        "by_name": {},
-                    }
-
-                run_rs_teachers_load = st.button(
-                    "Cargar docentes RS",
-                    key="rs_teachers_load_btn",
-                    use_container_width=True,
-                )
-                if run_rs_teachers_load:
-                    if not rs_token:
-                        st.error("Ingresa el bearer token de Richmond Studio.")
-                    else:
-                        try:
-                            with st.spinner("Consultando docentes RS..."):
-                                teacher_panel_data = _load_richmondstudio_teacher_panel_data(
-                                    rs_token,
-                                    timeout=int(timeout),
-                                )
-                        except Exception as exc:  # pragma: no cover - UI
-                            st.error(f"Error RS: {exc}")
-                        else:
-                            st.session_state["rs_teachers_loaded_rows"] = (
-                                teacher_panel_data.get("rows") or []
-                            )
-                            st.session_state["rs_teachers_groups_lookup"] = (
-                                teacher_panel_data.get("groups_lookup")
-                                if isinstance(
-                                    teacher_panel_data.get("groups_lookup"), dict
-                                )
-                                else {"by_id": {}, "by_name": {}}
-                            )
-                            st.session_state["rs_teachers_form_loaded_user_id"] = ""
-
-                teacher_rows = [
-                    dict(row)
-                    for row in st.session_state.get("rs_teachers_loaded_rows") or []
-                    if isinstance(row, dict)
-                ]
-                groups_lookup = (
-                    st.session_state.get("rs_teachers_groups_lookup")
-                    if isinstance(st.session_state.get("rs_teachers_groups_lookup"), dict)
-                    else {"by_id": {}, "by_name": {}}
-                )
-                groups_by_id = (
-                    groups_lookup.get("by_id")
-                    if isinstance(groups_lookup.get("by_id"), dict)
-                    else {}
-                )
-                group_options = sorted(
-                    list(groups_by_id.keys()),
-                    key=lambda group_id: _richmondstudio_group_label(
-                        groups_by_id.get(group_id)
-                    ).upper(),
-                )
-                valid_group_ids = set(group_options)
-
-                teacher_rows_by_id = {
-                    str(row.get("ID") or "").strip(): row
-                    for row in teacher_rows
-                    if str(row.get("ID") or "").strip()
-                }
-                teacher_option_labels = {"__new__": "+ Nuevo docente"}
-                for teacher_id, row in teacher_rows_by_id.items():
-                    teacher_label = str(row.get("Docente") or "").strip()
-                    teacher_email = str(row.get("Email") or "").strip()
-                    if teacher_email:
-                        teacher_option_labels[teacher_id] = (
-                            f"{teacher_label} | {teacher_email}"
-                        ).strip(" |")
-                    else:
-                        teacher_option_labels[teacher_id] = teacher_label or teacher_id
-
-                if teacher_rows:
-                    teacher_search = st.text_input(
-                        "Filtrar docentes RS",
-                        key="rs_teacher_search_text",
-                        placeholder="Nombre, email o clase",
-                    )
-                    teacher_search_norm = _normalize_plain_text(teacher_search)
-                    filtered_teacher_rows = []
-                    for row in teacher_rows:
-                        haystack = " ".join(
-                            [
-                                str(row.get("Docente") or ""),
-                                str(row.get("Email") or ""),
-                                str(row.get("Clases") or ""),
-                            ]
-                        )
-                        if teacher_search_norm and (
-                            teacher_search_norm not in _normalize_plain_text(haystack)
-                        ):
-                            continue
-                        filtered_teacher_rows.append(
-                            {
-                                "Docente": str(row.get("Docente") or "").strip(),
-                                "Email": str(row.get("Email") or "").strip(),
-                                "Grupos": int(row.get("Grupos") or 0),
-                                "Clases": str(row.get("Clases") or "").strip(),
-                            }
-                        )
-                    st.caption(
-                        f"Mostrando {len(filtered_teacher_rows)} de {len(teacher_rows)} docentes RS."
-                    )
-                    if filtered_teacher_rows:
-                        _show_dataframe(filtered_teacher_rows, use_container_width=True)
-
-                teacher_select_options = ["__new__"] + list(teacher_rows_by_id.keys())
-                if (
-                    str(st.session_state.get("rs_teacher_selected_user_id") or "").strip()
-                    not in teacher_select_options
-                ):
-                    st.session_state["rs_teacher_selected_user_id"] = "__new__"
-
-                selected_teacher_id = st.selectbox(
-                    "Docente RS",
-                    options=teacher_select_options,
-                    key="rs_teacher_selected_user_id",
-                    format_func=lambda value: teacher_option_labels.get(
-                        str(value or "").strip(),
-                        str(value or "").strip(),
+            rs_docentes_view = _render_crud_menu(
+                "Funciones de docentes RS",
+                [
+                    (
+                        "gestion",
+                        "Gestion",
+                        "Carga y revisa docentes antes de editar",
                     ),
+                    (
+                        "formulario",
+                        "Formulario",
+                        "Crea o edita docentes y sus clases",
+                    ),
+                ],
+                state_key="rs_teachers_nav",
+            )
+        with rs_docentes_body_col:
+            if rs_docentes_view == "gestion":
+                _render_richmondstudio_teachers_manage_panel(
+                    rs_token=rs_token,
+                    timeout=int(timeout),
                 )
-
-                current_loaded_teacher_id = str(
-                    st.session_state.get("rs_teachers_form_loaded_user_id") or ""
-                ).strip()
-                selected_teacher_id = str(selected_teacher_id or "").strip()
-                if current_loaded_teacher_id != selected_teacher_id:
-                    selected_teacher_row = (
-                        teacher_rows_by_id.get(selected_teacher_id)
-                        if selected_teacher_id != "__new__"
-                        else None
-                    )
-                    current_group_ids = []
-                    if isinstance(selected_teacher_row, dict):
-                        for item in selected_teacher_row.get("_group_ids") or []:
-                            group_id = str(item or "").strip()
-                            if group_id and group_id in valid_group_ids:
-                                current_group_ids.append(group_id)
-                    st.session_state["rs_teacher_first_name"] = str(
-                        (
-                            selected_teacher_row.get("First name")
-                            if isinstance(selected_teacher_row, dict)
-                            else ""
-                        )
-                        or ""
-                    ).strip()
-                    st.session_state["rs_teacher_last_name"] = str(
-                        (
-                            selected_teacher_row.get("Last name")
-                            if isinstance(selected_teacher_row, dict)
-                            else ""
-                        )
-                        or ""
-                    ).strip()
-                    st.session_state["rs_teacher_email"] = str(
-                        (
-                            selected_teacher_row.get("Email")
-                            if isinstance(selected_teacher_row, dict)
-                            else ""
-                        )
-                        or ""
-                    ).strip()
-                    st.session_state["rs_teacher_group_ids"] = current_group_ids
-                    st.session_state["rs_teacher_hidden_teachermatic"] = bool(
-                        (
-                            selected_teacher_row.get("Teachermatic")
-                            if isinstance(selected_teacher_row, dict)
-                            else False
-                        )
-                    )
-                    st.session_state["rs_teachers_form_loaded_user_id"] = selected_teacher_id
-
-                is_existing_teacher = selected_teacher_id != "__new__"
-                col_rs_teacher_a, col_rs_teacher_b = st.columns(2, gap="small")
-                col_rs_teacher_a.text_input(
-                    "First name",
-                    key="rs_teacher_first_name",
+            if rs_docentes_view == "formulario":
+                _render_richmondstudio_teachers_form_panel(
+                    rs_token=rs_token,
+                    timeout=int(timeout),
                 )
-                col_rs_teacher_b.text_input(
-                    "Last name",
-                    key="rs_teacher_last_name",
-                )
-                st.text_input(
-                    "Email",
-                    key="rs_teacher_email",
-                )
-                st.multiselect(
-                    "Clases RS",
-                    options=group_options,
-                    key="rs_teacher_group_ids",
-                    format_func=lambda group_id: _richmondstudio_group_label(
-                        groups_by_id.get(str(group_id or "").strip())
-                    )
-                    or str(group_id or "").strip(),
-                    placeholder="Selecciona una o varias clases",
-                )
-
-                run_rs_teacher_save = st.button(
-                    "Actualizar docente RS" if is_existing_teacher else "Crear docente RS",
-                    type="primary",
-                    key="rs_teacher_save_btn",
-                    use_container_width=True,
-                )
-                run_rs_teacher_create_confirmed = _consume_richmondstudio_confirmed_action(
-                    "rs_teacher_create"
-                )
-                run_rs_teacher_update_confirmed = _consume_richmondstudio_confirmed_action(
-                    "rs_teacher_update"
-                )
-
-                if run_rs_teacher_save:
-                    teacher_first_name = str(
-                        st.session_state.get("rs_teacher_first_name") or ""
-                    ).strip()
-                    teacher_last_name = str(
-                        st.session_state.get("rs_teacher_last_name") or ""
-                    ).strip()
-                    teacher_email = str(
-                        st.session_state.get("rs_teacher_email") or ""
-                    ).strip()
-                    teacher_group_ids = list(
-                        st.session_state.get("rs_teacher_group_ids") or []
-                    )
-                    teacher_teachermatic = bool(
-                        st.session_state.get("rs_teacher_hidden_teachermatic")
-                    )
-                    teacher_action_key = (
-                        "rs_teacher_update" if is_existing_teacher else "rs_teacher_create"
-                    )
-                    teacher_action_label = (
-                        f"actualizar docente RS: {teacher_first_name} {teacher_last_name}".strip()
-                        if is_existing_teacher
-                        else f"crear docente RS: {teacher_first_name} {teacher_last_name}".strip()
-                    )
-
-                    try:
-                        _build_richmondstudio_teacher_payload(
-                            first_name=teacher_first_name,
-                            last_name=teacher_last_name,
-                            email=teacher_email,
-                            group_ids=teacher_group_ids,
-                            user_id=selected_teacher_id if is_existing_teacher else "",
-                            teachermatic=teacher_teachermatic if is_existing_teacher else None,
-                        )
-                    except Exception as exc:
-                        st.error(str(exc))
-                    else:
-                        st.session_state["rs_teacher_pending_save"] = {
-                            "mode": "update" if is_existing_teacher else "create",
-                            "user_id": selected_teacher_id if is_existing_teacher else "",
-                            "first_name": teacher_first_name,
-                            "last_name": teacher_last_name,
-                            "email": teacher_email,
-                            "group_ids": teacher_group_ids,
-                            "teachermatic": teacher_teachermatic,
-                        }
-                        _request_richmondstudio_confirmation(
-                            teacher_action_key,
-                            teacher_action_label,
-                        )
-
-                confirmed_teacher_mode = ""
-                if run_rs_teacher_create_confirmed:
-                    confirmed_teacher_mode = "create"
-                elif run_rs_teacher_update_confirmed:
-                    confirmed_teacher_mode = "update"
-
-                if confirmed_teacher_mode:
-                    teacher_pending_save = st.session_state.pop(
-                        "rs_teacher_pending_save",
-                        None,
-                    )
-                    if not isinstance(teacher_pending_save, dict):
-                        st.error("No se encontro el borrador del docente RS.")
-                    elif str(teacher_pending_save.get("mode") or "").strip() != confirmed_teacher_mode:
-                        st.error("La confirmacion no coincide con la accion del docente RS.")
-                    elif not rs_token:
-                        st.error("Ingresa el bearer token de Richmond Studio.")
-                    else:
-                        try:
-                            with st.spinner("Guardando docente RS..."):
-                                if confirmed_teacher_mode == "update":
-                                    teacher_detail = _fetch_richmondstudio_user_detail(
-                                        rs_token,
-                                        str(teacher_pending_save.get("user_id") or "").strip(),
-                                        timeout=int(timeout),
-                                    )
-                                    teacher_detail_data = (
-                                        teacher_detail.get("data")
-                                        if isinstance(teacher_detail.get("data"), dict)
-                                        else {}
-                                    )
-                                    subscription_ids = _richmondstudio_relationship_ids(
-                                        teacher_detail_data,
-                                        "subscriptions",
-                                    )
-                                    teacher_payload = _build_richmondstudio_teacher_payload(
-                                        first_name=teacher_pending_save.get("first_name"),
-                                        last_name=teacher_pending_save.get("last_name"),
-                                        email=teacher_pending_save.get("email"),
-                                        group_ids=teacher_pending_save.get("group_ids") or [],
-                                        user_id=teacher_pending_save.get("user_id"),
-                                        teachermatic=bool(
-                                            teacher_pending_save.get("teachermatic")
-                                        ),
-                                        subscription_ids=subscription_ids,
-                                    )
-                                    _update_richmondstudio_user(
-                                        rs_token,
-                                        str(teacher_pending_save.get("user_id") or "").strip(),
-                                        teacher_payload,
-                                        timeout=int(timeout),
-                                    )
-                                    teacher_result_meta = {
-                                        "user_id": str(
-                                            teacher_pending_save.get("user_id") or ""
-                                        ).strip(),
-                                    }
-                                else:
-                                    teacher_payload = _build_richmondstudio_teacher_payload(
-                                        first_name=teacher_pending_save.get("first_name"),
-                                        last_name=teacher_pending_save.get("last_name"),
-                                        email=teacher_pending_save.get("email"),
-                                        group_ids=teacher_pending_save.get("group_ids") or [],
-                                    )
-                                    created_teacher = _create_richmondstudio_user(
-                                        rs_token,
-                                        teacher_payload,
-                                        timeout=int(timeout),
-                                    )
-                                    teacher_result_meta = (
-                                        _extract_richmondstudio_user_create_result(
-                                            created_teacher,
-                                            fallback_email=teacher_pending_save.get("email"),
-                                        )
-                                    )
-
-                                refreshed_teacher_panel = (
-                                    _load_richmondstudio_teacher_panel_data(
-                                        rs_token,
-                                        timeout=int(timeout),
-                                    )
-                                )
-                        except Exception as exc:  # pragma: no cover - UI
-                            st.error(f"Error RS: {exc}")
-                        else:
-                            refreshed_rows = (
-                                refreshed_teacher_panel.get("rows") or []
-                                if isinstance(refreshed_teacher_panel, dict)
-                                else []
-                            )
-                            st.session_state["rs_teachers_loaded_rows"] = refreshed_rows
-                            st.session_state["rs_teachers_groups_lookup"] = (
-                                refreshed_teacher_panel.get("groups_lookup")
-                                if isinstance(
-                                    refreshed_teacher_panel.get("groups_lookup"), dict
-                                )
-                                else {"by_id": {}, "by_name": {}}
-                            )
-
-                            target_teacher_id = str(
-                                teacher_result_meta.get("user_id") or ""
-                            ).strip()
-                            if not target_teacher_id:
-                                pending_email_norm = _normalize_compare_text(
-                                    teacher_pending_save.get("email")
-                                )
-                                pending_first_name_norm = _normalize_compare_text(
-                                    teacher_pending_save.get("first_name")
-                                )
-                                pending_last_name_norm = _normalize_compare_text(
-                                    teacher_pending_save.get("last_name")
-                                )
-                                for item in refreshed_rows:
-                                    if not isinstance(item, dict):
-                                        continue
-                                    same_email = (
-                                        _normalize_compare_text(item.get("Email"))
-                                        == pending_email_norm
-                                    )
-                                    same_first_name = (
-                                        _normalize_compare_text(item.get("First name"))
-                                        == pending_first_name_norm
-                                    )
-                                    same_last_name = (
-                                        _normalize_compare_text(item.get("Last name"))
-                                        == pending_last_name_norm
-                                    )
-                                    if same_email and same_first_name and same_last_name:
-                                        target_teacher_id = str(item.get("ID") or "").strip()
-                                        if target_teacher_id:
-                                            break
-
-                            if target_teacher_id:
-                                st.session_state["rs_teacher_selected_user_id"] = (
-                                    target_teacher_id
-                                )
-                            else:
-                                st.session_state["rs_teacher_selected_user_id"] = "__new__"
-                            st.session_state["rs_teachers_form_loaded_user_id"] = ""
-                            st.session_state["rs_teacher_save_notice"] = (
-                                "Docente RS actualizado correctamente."
-                                if confirmed_teacher_mode == "update"
-                                else "Docente RS creado correctamente."
-                            )
-                            st.session_state["rs_teacher_save_meta"] = teacher_result_meta
-                            st.rerun()
-
     with tab_rs_alumnos:
         if str(st.session_state.get("rs_students_crud_nav") or "").strip() not in {
             "password",
@@ -6822,753 +7865,62 @@ def render_richmond_studio_view() -> None:
                 )
 
     with tab_rs_excel:
-        rs_listado_sidebar_col, rs_listado_body_col = st.columns([1.15, 4.85], gap="large")
-        with rs_listado_sidebar_col:
-            with st.container(border=True):
-                st.markdown("**Herramientas RS**")
-                st.caption(
-                    "Este panel concentra listados y tareas de mantenimiento."
-                )
-                st.markdown("**Orden recomendado**")
-                st.caption("1. Listado y exportaciones")
-                st.caption("2. Suscripciones por vencer")
-                st.caption("3. Gestionar clases por usuario")
-                st.caption("4. Actualizar password masivo")
-                listed_rows = int(st.session_state.get("rs_excel_count") or 0)
-                if listed_rows:
-                    st.caption(f"Ultimo listado: {listed_rows} fila(s).")
-        with rs_listado_body_col:
-            with st.container(border=True):
-                expiring_next_year = int(date.today().year + 1)
-                expiring_next_year_label = f"01/01/{expiring_next_year}"
-                expiring_next_year_sheet = (
-                    f"subscriptions_expiring_{expiring_next_year}"
-                )
-                expiring_next_year_file_name = (
-                    "rs_suscripciones_expiran_"
-                    f"{expiring_next_year}.xlsx"
-                )
-                st.markdown("### 1. Listado y exportaciones RS")
-                st.caption(
-                    "Empieza por este bloque. Los demas reutilizan el listado cargado aqui."
-                )
-                st.markdown("**Listar alumnos registrados**")
-                st.caption(
-                    "Richmond Studio: CLASS NAME, CLASS CODE, STUDENT NAME, IDENTIFIER, createdAt y lastSignInAt. Solo roles student/teacher."
-                )
-                run_rs_user_classes_replace_confirmed = _consume_richmondstudio_confirmed_action(
-                    "rs_user_classes_replace"
-                )
-                run_rs_user_classes_remove_confirmed = _consume_richmondstudio_confirmed_action(
-                    "rs_user_classes_remove"
-                )
-                run_rs_user_classes_clear_confirmed = _consume_richmondstudio_confirmed_action(
-                    "rs_user_classes_clear"
-                )
-                run_rs_password_update_confirmed = _consume_richmondstudio_confirmed_action(
-                    "rs_users_password_update"
-                )
-                run_rs_excel = st.button(
-                    "Listar alumnos registrados",
-                    type="primary",
-                    key="rs_rs_excel_generate",
-                )
+        if str(st.session_state.get("rs_tools_nav") or "").strip() not in {
+            "listado",
+            "suscripciones",
+            "clases_usuario",
+            "password",
+        }:
+            st.session_state["rs_tools_nav"] = "listado"
 
-                if run_rs_excel:
-                    if not rs_token:
-                        st.error("Ingresa el bearer token de Richmond Studio.")
-                        st.stop()
-                    try:
-                        with st.spinner("Consultando Richmond Studio..."):
-                            rs_registered_panel_data = (
-                                _load_richmondstudio_registered_panel_data(
-                                    rs_token,
-                                    timeout=int(timeout),
-                                )
-                            )
-                    except Exception as exc:  # pragma: no cover - UI
-                        st.error(f"Error: {exc}")
-                        st.stop()
-
-                    registered_panel_state = _store_richmondstudio_registered_panel_data(
-                        rs_registered_panel_data
-                    )
-                    listing_data = (
-                        registered_panel_state.get("listing_data")
-                        if isinstance(registered_panel_state.get("listing_data"), dict)
-                        else {}
-                    )
-                    rows_rs = list(registered_panel_state.get("rows") or [])
-                    excluded_roles = (
-                        registered_panel_state.get("excluded_roles")
-                        if isinstance(registered_panel_state.get("excluded_roles"), dict)
-                        else {}
-                    )
-                    st.success(
-                        "Listado RS listo. Filas: {filas} | Usuarios validos: {validos}/{total}.".format(
-                            filas=len(rows_rs),
-                            validos=int(listing_data.get("valid_users_count") or 0),
-                            total=int(listing_data.get("total_users_count") or 0),
-                        )
-                    )
-                    if excluded_roles:
-                        excluded_txt = ", ".join(
-                            f"{role}: {count}"
-                            for role, count in sorted(excluded_roles.items(), key=lambda item: item[0])
-                        )
-                        st.caption(f"Roles excluidos: {excluded_txt}")
-                    if rows_rs:
-                        _show_dataframe(rows_rs[:200], use_container_width=True)
-                registered_user_rows_cached = list(
-                    st.session_state.get("rs_registered_user_rows") or []
-                )
-
-                st.divider()
-                st.markdown("### 2. Suscripciones por vencer")
-                st.markdown(
-                    f"**Usuarios con suscripciones que expiran desde {expiring_next_year_label}**"
-                )
-                st.caption(
-                    "Genera un reporte resumido de usuarios RS con suscripcion que expira el proximo ano: USER NAME, Email, Role, level, CLASSES COUNT y CLASS NAMES."
-                )
-                if st.button(
-                    f"Listar suscripciones que expiran en {expiring_next_year}",
-                    key="rs_expiring_next_year_list_btn",
-                    use_container_width=True,
-                ):
-                    if not rs_token:
-                        st.error("Ingresa el bearer token de Richmond Studio.")
-                    elif not registered_user_rows_cached:
-                        st.warning(
-                            "Primero ejecuta `Listar alumnos registrados` para cargar usuarios RS."
-                        )
-                    else:
-                        status_placeholder = st.empty()
-                        progress_placeholder = st.empty()
-                        progress_bar = progress_placeholder.progress(0)
-                        try:
-                            expiring_summary, expiring_rows = (
-                                _list_richmondstudio_users_with_subscriptions_expiring_in_year(
-                                    token=rs_token,
-                                    rows=registered_user_rows_cached,
-                                    timeout=int(timeout),
-                                    target_year=int(expiring_next_year),
-                                    on_status=lambda message: status_placeholder.write(
-                                        message
-                                    ),
-                                    on_progress=lambda current, total: progress_bar.progress(
-                                        min(
-                                            100,
-                                            max(
-                                                0,
-                                                int(
-                                                    (float(current) / max(int(total), 1))
-                                                    * 100
-                                                ),
-                                            ),
-                                        )
-                                    ),
-                                )
-                            )
-                        except Exception as exc:  # pragma: no cover - UI
-                            status_placeholder.empty()
-                            progress_placeholder.empty()
-                            st.error(f"Error RS: {exc}")
-                        else:
-                            status_placeholder.empty()
-                            progress_placeholder.empty()
-                            st.session_state["rs_expiring_next_year_summary"] = dict(
-                                expiring_summary
-                            )
-                            st.session_state["rs_expiring_next_year_rows"] = list(
-                                expiring_rows
-                            )
-                            st.session_state["rs_expiring_next_year_bytes"] = (
-                                _export_simple_excel(
-                                    expiring_rows,
-                                    sheet_name=expiring_next_year_sheet,
-                                )
-                                if expiring_rows
-                                else b""
-                            )
-                            st.success(
-                                "Consulta de suscripciones RS completada. "
-                                "Usuarios revisados: {processed_total}/{eligible_total} | "
-                                "Usuarios con coincidencia: {matched_total} | "
-                                "Suscripciones detectadas: {subscriptions_total} | "
-                                "Errores: {error_total}.".format(
-                                    **expiring_summary
-                                )
-                            )
-
-                expiring_summary_cached = (
-                    st.session_state.get("rs_expiring_next_year_summary") or {}
-                )
-                expiring_rows_cached = (
-                    st.session_state.get("rs_expiring_next_year_rows") or []
-                )
-                expiring_bytes_cached = (
-                    st.session_state.get("rs_expiring_next_year_bytes") or b""
-                )
-                if expiring_summary_cached:
-                    st.markdown(
-                        f"**Resultado suscripciones que expiran desde {expiring_next_year_label}**"
-                    )
-                    st.info(
-                        "Usuarios revisados: {processed_total}/{eligible_total} | "
-                        "Usuarios con coincidencia: {matched_total} | "
-                        "Suscripciones detectadas: {subscriptions_total} | "
-                        "Errores: {error_total}".format(
-                            **expiring_summary_cached
-                        )
-                    )
-                    if expiring_rows_cached:
-                        _show_dataframe(
-                            expiring_rows_cached[:200],
-                            use_container_width=True,
-                        )
-                    else:
-                        st.caption(
-                            f"No se encontraron suscripciones con expirationDate en {expiring_next_year}."
-                        )
-                    if expiring_bytes_cached:
-                        st.download_button(
-                            label=(
-                                "Descargar usuarios con suscripciones que expiran en "
-                                f"{expiring_next_year}"
-                            ),
-                            data=expiring_bytes_cached,
-                            file_name=expiring_next_year_file_name,
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="rs_expiring_next_year_download",
-                            use_container_width=True,
-                        )
-
-                if st.session_state.get("rs_excel_bytes"):
-                    col_rs_download_a, col_rs_download_b = st.columns(
-                        2, gap="small"
-                    )
-                    col_rs_download_a.download_button(
-                        label="Descargar listado RS",
-                        data=st.session_state["rs_excel_bytes"],
-                        file_name="excel_rs.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key="rs_rs_excel_download",
-                        use_container_width=True,
-                    )
-                    if st.session_state.get("rs_password_update_template_bytes"):
-                        col_rs_download_b.download_button(
-                            label="Descargar todos los usuarios para actualizar",
-                            data=st.session_state["rs_password_update_template_bytes"],
-                            file_name=str(
-                                st.session_state.get(
-                                    "rs_password_update_template_filename"
-                                )
-                                or "plantilla_password_rs.xlsx"
-                            ).strip()
-                            or "plantilla_password_rs.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="rs_password_update_template_download_list",
-                            use_container_width=True,
-                        )
-
-                st.divider()
-                st.markdown("### 3. Gestionar clases por usuario")
-                st.markdown("**Gestionar clases de usuario RS**")
-                st.caption(
-                    "Usa el listado registrado para seleccionar un usuario, reemplazar sus clases, "
-                    "quitar algunas o dejarlo sin clases."
-                )
-
-                rs_user_classes_notice = str(
-                    st.session_state.pop("rs_user_classes_notice", "") or ""
-                ).strip()
-                if rs_user_classes_notice:
-                    st.success(rs_user_classes_notice)
-
-                registered_user_rows_cached = [
-                    dict(row)
-                    for row in st.session_state.get("rs_registered_user_rows") or []
-                    if isinstance(row, dict)
-                ]
-                registered_groups_lookup = (
-                    st.session_state.get("rs_registered_groups_lookup")
-                    if isinstance(
-                        st.session_state.get("rs_registered_groups_lookup"), dict
-                    )
-                    else {"by_id": {}, "by_name": {}}
-                )
-                registered_groups_by_id = (
-                    registered_groups_lookup.get("by_id")
-                    if isinstance(registered_groups_lookup.get("by_id"), dict)
-                    else {}
-                )
-                registered_user_rows_by_id = {
-                    str(row.get("RS USER ID") or "").strip(): row
-                    for row in registered_user_rows_cached
-                    if str(row.get("RS USER ID") or "").strip()
-                }
-                registered_user_options = list(registered_user_rows_by_id.keys())
-                registered_group_options = sorted(
-                    list(registered_groups_by_id.keys()),
-                    key=lambda group_id: _richmondstudio_group_label(
-                        registered_groups_by_id.get(group_id)
-                    ).upper(),
-                )
-                valid_registered_group_ids = set(registered_group_options)
-                confirmed_user_classes_mode = ""
-                if run_rs_user_classes_replace_confirmed:
-                    confirmed_user_classes_mode = "replace"
-                elif run_rs_user_classes_remove_confirmed:
-                    confirmed_user_classes_mode = "remove"
-                elif run_rs_user_classes_clear_confirmed:
-                    confirmed_user_classes_mode = "clear"
-
-                if confirmed_user_classes_mode:
-                    pending_user_classes = st.session_state.pop(
-                        "rs_user_classes_pending_action",
-                        None,
-                    )
-                    if not isinstance(pending_user_classes, dict):
-                        st.error("No se encontro el borrador de clases RS del usuario.")
-                    elif (
-                        str(pending_user_classes.get("mode") or "").strip()
-                        != confirmed_user_classes_mode
-                    ):
-                        st.error(
-                            "La confirmacion no coincide con la accion de clases RS."
-                        )
-                    elif not rs_token:
-                        st.error("Ingresa el bearer token de Richmond Studio.")
-                    else:
-                        target_user_id = str(
-                            pending_user_classes.get("user_id") or ""
-                        ).strip()
-                        try:
-                            with st.spinner("Actualizando clases del usuario en RS..."):
-                                detail_body = _fetch_richmondstudio_user_detail(
-                                    rs_token,
-                                    target_user_id,
-                                    timeout=int(timeout),
-                                )
-                                detail_data = (
-                                    detail_body.get("data")
-                                    if isinstance(detail_body.get("data"), dict)
-                                    else {}
-                                )
-                                current_group_ids = _richmondstudio_relationship_ids(
-                                    detail_data,
-                                    "groups",
-                                )
-                                final_group_ids = list(current_group_ids)
-                                if confirmed_user_classes_mode == "replace":
-                                    final_group_ids = [
-                                        str(group_id or "").strip()
-                                        for group_id in (
-                                            pending_user_classes.get("target_group_ids")
-                                            or []
-                                        )
-                                        if str(group_id or "").strip()
-                                    ]
-                                elif confirmed_user_classes_mode == "remove":
-                                    remove_group_ids = {
-                                        str(group_id or "").strip()
-                                        for group_id in (
-                                            pending_user_classes.get("remove_group_ids")
-                                            or []
-                                        )
-                                        if str(group_id or "").strip()
-                                    }
-                                    final_group_ids = [
-                                        group_id
-                                        for group_id in current_group_ids
-                                        if group_id not in remove_group_ids
-                                    ]
-                                elif confirmed_user_classes_mode == "clear":
-                                    final_group_ids = []
-
-                                payload_user_classes = (
-                                    _build_richmondstudio_user_patch_payload_from_detail(
-                                        detail_body,
-                                        group_ids=final_group_ids,
-                                    )
-                                )
-                                _update_richmondstudio_user(
-                                    rs_token,
-                                    target_user_id,
-                                    payload_user_classes,
-                                    timeout=int(timeout),
-                                )
-                                refreshed_registered_panel_data = (
-                                    _load_richmondstudio_registered_panel_data(
-                                        rs_token,
-                                        timeout=int(timeout),
-                                    )
-                                )
-                        except Exception as exc:  # pragma: no cover - UI
-                            st.error(f"Error RS: {exc}")
-                        else:
-                            _store_richmondstudio_registered_panel_data(
-                                refreshed_registered_panel_data
-                            )
-                            st.session_state["rs_user_classes_selected_user_id"] = (
-                                target_user_id
-                            )
-                            st.session_state["rs_user_classes_form_loaded_user_id"] = ""
-                            st.session_state["rs_user_classes_remove_group_ids"] = []
-                            action_label = (
-                                "Clases del usuario RS actualizadas correctamente."
-                                if confirmed_user_classes_mode == "replace"
-                                else (
-                                    "Clases seleccionadas removidas correctamente."
-                                    if confirmed_user_classes_mode == "remove"
-                                    else "Todas las clases del usuario fueron removidas."
-                                )
-                            )
-                            st.session_state["rs_user_classes_notice"] = action_label
-                            st.rerun()
-
-                if not registered_user_rows_cached:
-                    st.caption(
-                        "Primero ejecuta `Listar alumnos registrados` para cargar usuarios y clases."
-                    )
-                else:
-                    current_selected_user_id = str(
-                        st.session_state.get("rs_user_classes_selected_user_id") or ""
-                    ).strip()
-                    if current_selected_user_id not in registered_user_rows_by_id:
-                        current_selected_user_id = registered_user_options[0]
-                        st.session_state["rs_user_classes_selected_user_id"] = (
-                            current_selected_user_id
-                        )
-
-                    user_option_labels: Dict[str, str] = {}
-                    for user_id, row in registered_user_rows_by_id.items():
-                        full_name = " ".join(
-                            part
-                            for part in (
-                                str(row.get("First name") or "").strip(),
-                                str(row.get("Last name") or "").strip(),
-                            )
-                            if part
-                        ).strip()
-                        login_txt = str(row.get("Username") or row.get("Login") or "").strip()
-                        identifier_txt = str(row.get("IDENTIFIER") or "").strip()
-                        role_txt = str(row.get("Role") or "").strip().lower() or "user"
-                        classes_txt = str(row.get("Classes count") or "0").strip() or "0"
-                        main_label = full_name or login_txt or identifier_txt or user_id
-                        extra_label = login_txt or identifier_txt
-                        if extra_label:
-                            user_option_labels[user_id] = (
-                                f"{main_label} | {extra_label} | {role_txt} | {classes_txt} clase(s)"
-                            )
-                        else:
-                            user_option_labels[user_id] = (
-                                f"{main_label} | {role_txt} | {classes_txt} clase(s)"
-                            )
-
-                    selected_user_id = str(
-                        st.selectbox(
-                            "Usuario RS",
-                            options=registered_user_options,
-                            key="rs_user_classes_selected_user_id",
-                            format_func=lambda user_id: user_option_labels.get(
-                                str(user_id or "").strip(),
-                                str(user_id or "").strip(),
-                            ),
-                        )
-                        or ""
-                    ).strip()
-                    selected_user_row = (
-                        registered_user_rows_by_id.get(selected_user_id) or {}
-                    )
-
-                    loaded_user_id = str(
-                        st.session_state.get("rs_user_classes_form_loaded_user_id") or ""
-                    ).strip()
-                    if loaded_user_id != selected_user_id:
-                        current_group_ids = []
-                        for item in selected_user_row.get("_group_ids") or []:
-                            group_id = str(item or "").strip()
-                            if group_id and group_id in valid_registered_group_ids:
-                                current_group_ids.append(group_id)
-                        st.session_state["rs_user_classes_target_group_ids"] = current_group_ids
-                        st.session_state["rs_user_classes_remove_group_ids"] = []
-                        st.session_state["rs_user_classes_form_loaded_user_id"] = (
-                            selected_user_id
-                        )
-
-                    current_group_ids = []
-                    for item in selected_user_row.get("_group_ids") or []:
-                        group_id = str(item or "").strip()
-                        if group_id and group_id in valid_registered_group_ids:
-                            current_group_ids.append(group_id)
-
-                    selected_name = " ".join(
-                        part
-                        for part in (
-                            str(selected_user_row.get("First name") or "").strip(),
-                            str(selected_user_row.get("Last name") or "").strip(),
-                        )
-                        if part
-                    ).strip()
-                    if not selected_name:
-                        selected_name = (
-                            str(selected_user_row.get("Username") or "").strip()
-                            or str(selected_user_row.get("IDENTIFIER") or "").strip()
-                            or selected_user_id
-                        )
-
-                    current_group_labels = [
-                        _richmondstudio_group_label(registered_groups_by_id.get(group_id))
-                        or group_id
-                        for group_id in current_group_ids
-                    ]
-                    st.caption(
-                        "Seleccionado: {name} | Email: {email} | Role: {role} | Clases actuales: {classes}".format(
-                            name=selected_name or "(sin nombre)",
-                            email=str(
-                                selected_user_row.get("Email")
-                                or selected_user_row.get("Username")
-                                or ""
-                            ).strip()
-                            or "(sin email)",
-                            role=str(selected_user_row.get("Role") or "").strip() or "-",
-                            classes=(
-                                " | ".join(current_group_labels)
-                                if current_group_labels
-                                else "sin clases"
-                            ),
-                        )
-                    )
-
-                    st.multiselect(
-                        "Clases finales del usuario",
-                        options=registered_group_options,
-                        key="rs_user_classes_target_group_ids",
-                        format_func=lambda group_id: _richmondstudio_group_label(
-                            registered_groups_by_id.get(str(group_id or "").strip())
-                        )
-                        or str(group_id or "").strip(),
-                        placeholder="Selecciona una o varias clases",
-                    )
-                    st.multiselect(
-                        "Clases actuales a quitar",
-                        options=current_group_ids,
-                        key="rs_user_classes_remove_group_ids",
-                        format_func=lambda group_id: _richmondstudio_group_label(
-                            registered_groups_by_id.get(str(group_id or "").strip())
-                        )
-                        or str(group_id or "").strip(),
-                        placeholder="Marca una o varias clases actuales",
-                        disabled=not bool(current_group_ids),
-                    )
-
+        rs_tools_sidebar_col, rs_tools_body_col = st.columns([1.15, 4.85], gap="large")
+        with rs_tools_sidebar_col:
+            rs_tools_view = _render_crud_menu(
+                "Funciones de herramientas RS",
+                [
                     (
-                        col_rs_user_classes_a,
-                        col_rs_user_classes_b,
-                        col_rs_user_classes_c,
-                    ) = st.columns(3, gap="small")
-                    run_rs_user_classes_replace = col_rs_user_classes_a.button(
-                        "Guardar clases RS",
-                        type="primary",
-                        key="rs_user_classes_replace_btn",
-                        use_container_width=True,
-                    )
-                    run_rs_user_classes_remove = col_rs_user_classes_b.button(
-                        "Quitar clases marcadas",
-                        key="rs_user_classes_remove_btn",
-                        use_container_width=True,
-                    )
-                    run_rs_user_classes_clear = col_rs_user_classes_c.button(
-                        "Quitar todas las clases",
-                        key="rs_user_classes_clear_btn",
-                        use_container_width=True,
-                    )
-
-                    if run_rs_user_classes_replace:
-                        replace_group_ids = [
-                            str(group_id or "").strip()
-                            for group_id in (
-                                st.session_state.get("rs_user_classes_target_group_ids")
-                                or []
-                            )
-                            if str(group_id or "").strip()
-                        ]
-                        st.session_state["rs_user_classes_pending_action"] = {
-                            "mode": "replace",
-                            "user_id": selected_user_id,
-                            "target_group_ids": replace_group_ids,
-                        }
-                        _request_richmondstudio_confirmation(
-                            "rs_user_classes_replace",
-                            (
-                                f"actualizar clases RS de {selected_name} "
-                                f"({len(replace_group_ids)} clase(s) finales)"
-                            ),
-                        )
-
-                    if run_rs_user_classes_remove:
-                        remove_group_ids = [
-                            str(group_id or "").strip()
-                            for group_id in (
-                                st.session_state.get("rs_user_classes_remove_group_ids")
-                                or []
-                            )
-                            if str(group_id or "").strip()
-                        ]
-                        if not remove_group_ids:
-                            st.error("Selecciona al menos una clase actual para quitar.")
-                        else:
-                            st.session_state["rs_user_classes_pending_action"] = {
-                                "mode": "remove",
-                                "user_id": selected_user_id,
-                                "remove_group_ids": remove_group_ids,
-                            }
-                            _request_richmondstudio_confirmation(
-                                "rs_user_classes_remove",
-                                (
-                                    f"quitar {len(remove_group_ids)} clase(s) RS de "
-                                    f"{selected_name}"
-                                ),
-                            )
-
-                    if run_rs_user_classes_clear:
-                        st.session_state["rs_user_classes_pending_action"] = {
-                            "mode": "clear",
-                            "user_id": selected_user_id,
-                        }
-                        _request_richmondstudio_confirmation(
-                            "rs_user_classes_clear",
-                            f"quitar todas las clases RS de {selected_name}",
-                        )
-
-                st.divider()
-                st.markdown("### 4. Actualizacion masiva de password")
-                st.markdown("**Actualizar password usuarios RS**")
-                st.caption(
-                    "Descarga el Excel de todos los usuarios registrados, completa New password(optional) "
-                    "y vuelve a subirlo. La app lo convierte a CSV y lo envia al endpoint bulk de RS."
-                )
-                uploaded_rs_password_update = st.file_uploader(
-                    "Plantilla de actualizacion password RS",
-                    type=["xlsx", "csv", "txt"],
-                    key="rs_password_update_upload_file",
-                    help=(
-                        "Columnas esperadas: Username(Email), New last name(optional), "
-                        "New first name(optional), New class code(optional), "
-                        "New password(optional), Keep in classes(optional)."
+                        "listado",
+                        "Listado",
+                        "Carga y exporta el listado base de usuarios",
                     ),
+                    (
+                        "suscripciones",
+                        "Suscripciones",
+                        "Revisa usuarios con vencimientos proximos",
+                    ),
+                    (
+                        "clases_usuario",
+                        "Clases usuario",
+                        "Administra las clases de un usuario RS",
+                    ),
+                    (
+                        "password",
+                        "Password",
+                        "Actualiza passwords de forma masiva",
+                    ),
+                ],
+                state_key="rs_tools_nav",
+            )
+        with rs_tools_body_col:
+            if rs_tools_view == "listado":
+                _render_richmondstudio_tools_listing_panel(
+                    rs_token=rs_token,
+                    timeout=int(timeout),
                 )
-                rs_password_update_bytes = b""
-                rs_password_update_name = ""
-                rs_password_update_rows: List[Dict[str, str]] = []
-                rs_password_update_error = ""
-                if uploaded_rs_password_update is not None:
-                    rs_password_update_bytes = uploaded_rs_password_update.getvalue()
-                    rs_password_update_name = str(
-                        uploaded_rs_password_update.name or "password_update_rs.xlsx"
-                    ).strip()
-                    try:
-                        rs_password_update_rows = _load_richmondstudio_bulk_user_update_rows(
-                            rs_password_update_bytes,
-                            rs_password_update_name,
-                        )
-                    except Exception as exc:
-                        rs_password_update_error = str(exc)
-                        st.error(f"Error en plantilla RS: {exc}")
-                    else:
-                        preview_rows = _build_richmondstudio_bulk_user_update_preview_rows(
-                            rs_password_update_rows
-                        )
-                        actionable_count = sum(
-                            1
-                            for row in rs_password_update_rows
-                            if str(row.get("Username") or "").strip()
-                            and str(row.get("New password") or "").strip()
-                        )
-                        st.caption(
-                            "Filas cargadas: {total} | Listas para actualizar: {actionable}".format(
-                                total=len(rs_password_update_rows),
-                                actionable=actionable_count,
-                            )
-                        )
-                        if preview_rows:
-                            _show_dataframe(preview_rows[:200], use_container_width=True)
-
-                run_rs_password_update = st.button(
-                    "Actualizar passwords RS",
-                    type="primary",
-                    key="rs_password_update_run_btn",
-                    use_container_width=True,
+            if rs_tools_view == "suscripciones":
+                _render_richmondstudio_tools_expiring_panel(
+                    rs_token=rs_token,
+                    timeout=int(timeout),
                 )
-                if run_rs_password_update:
-                    if not rs_token:
-                        st.error("Ingresa el bearer token de Richmond Studio.")
-                    elif uploaded_rs_password_update is None:
-                        st.error("Sube la plantilla de actualizacion password RS.")
-                    elif rs_password_update_error:
-                        st.error(
-                            f"Corrige la plantilla antes de continuar: {rs_password_update_error}"
-                        )
-                    else:
-                        actionable_count = sum(
-                            1
-                            for row in rs_password_update_rows
-                            if str(row.get("Username") or "").strip()
-                            and str(row.get("New password") or "").strip()
-                        )
-                        if not actionable_count:
-                            st.error(
-                                "No hay filas con Username y New password para actualizar."
-                            )
-                        else:
-                            st.session_state["rs_password_update_upload_bytes"] = (
-                                rs_password_update_bytes
-                            )
-                            st.session_state["rs_password_update_upload_name"] = (
-                                rs_password_update_name
-                            )
-                            _request_richmondstudio_confirmation(
-                                "rs_users_password_update",
-                                f"actualizar password de {actionable_count} usuarios RS",
-                            )
-
-                if run_rs_password_update_confirmed:
-                    stored_upload_bytes = bytes(
-                        st.session_state.get("rs_password_update_upload_bytes") or b""
-                    )
-                    stored_upload_name = str(
-                        st.session_state.get("rs_password_update_upload_name") or ""
-                    ).strip()
-                    if not rs_token:
-                        st.error("Ingresa el bearer token de Richmond Studio.")
-                    elif not stored_upload_bytes:
-                        st.error("No se encontro la plantilla cargada para actualizar.")
-                    else:
-                        try:
-                            rows_to_update = _load_richmondstudio_bulk_user_update_rows(
-                                stored_upload_bytes,
-                                stored_upload_name or "password_update_rs.xlsx",
-                            )
-                            actionable_rows = [
-                                row
-                                for row in rows_to_update
-                                if str(row.get("Username") or "").strip()
-                                and str(row.get("New password") or "").strip()
-                            ]
-                            response_message = _submit_richmondstudio_bulk_user_update(
-                                rs_token,
-                                actionable_rows,
-                                timeout=max(120, int(timeout)),
-                            )
-                        except Exception as exc:
-                            st.error(f"No se pudo actualizar passwords RS: {exc}")
-                        else:
-                            st.success(
-                                "Actualizacion bulk RS enviada correctamente. "
-                                f"Filas procesadas: {len(actionable_rows)} | Respuesta: {response_message}"
-                            )
-
+            if rs_tools_view == "clases_usuario":
+                _render_richmondstudio_tools_user_classes_panel(
+                    rs_token=rs_token,
+                    timeout=int(timeout),
+                )
+            if rs_tools_view == "password":
+                _render_richmondstudio_tools_password_panel(
+                    rs_token=rs_token,
+                    timeout=int(timeout),
+                )
     if isinstance(st.session_state.get("rs_pending_confirmation"), dict):
         _render_richmondstudio_confirmation_dialog()

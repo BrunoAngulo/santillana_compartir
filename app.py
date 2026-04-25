@@ -3138,11 +3138,17 @@ def _build_clase_participantes_row(item: Dict[str, object]) -> Optional[Dict[str
     display_name = clase_nombre or alias or clase_codigo or str(
         base_meta.get("clase_nombre") or ""
     ).strip()
+    tipo = "Regular"
+    if _is_santillana_inclusiva_class(item):
+        tipo = "Santillana Inclusiva"
+    elif _is_ingles_por_niveles_class(item):
+        tipo = "Ingles por niveles"
     row = {
         **base_meta,
         "clase": display_name,
         "clase_codigo": clase_codigo,
         "alias": alias,
+        "tipo": tipo,
         "activo": bool(item.get("activo", False)),
         "baja": bool(item.get("baja", False)),
     }
@@ -3153,11 +3159,14 @@ def _build_clase_participantes_row(item: Dict[str, object]) -> Optional[Dict[str
 def _clase_participantes_label(row: Dict[str, object]) -> str:
     clase = str(row.get("clase") or row.get("clase_nombre") or "").strip()
     clase_id = _safe_int(row.get("clase_id"))
+    tipo = str(row.get("tipo") or "").strip()
     nivel = str(row.get("nivel_nombre") or "").strip()
     grado = str(row.get("grado_nombre") or "").strip()
     grupo = str(row.get("grupo_clave_actual") or "").strip()
     context = " | ".join(part for part in (nivel, grado, grupo) if part)
     base = clase or f"Clase {clase_id or '-'}"
+    if tipo:
+        base = f"{tipo} | {base}"
     if clase_id is not None:
         base = f"{base} | ID {int(clase_id)}"
     if context:
@@ -9410,57 +9419,15 @@ def _render_clases_participantes_section(
         ):
             st.session_state.pop(state_key, None)
 
-    with st.container(border=True):
-        st.markdown("**Buscar clase y administrar participantes**")
-        st.caption(
-            "Lista alumnos y profesores registrados en una clase. Permite quitar o agregar participantes puntuales."
+    def _load_class_rows_for_current_colegio(colegio_id_int: int) -> List[Dict[str, object]]:
+        raw_clases = _fetch_clases_gestion_escolar(
+            token=token,
+            colegio_id=int(colegio_id_int),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+            ordered=True,
         )
-        col_load, col_catalogs, col_clear = st.columns([1.4, 1.4, 1], gap="small")
-        run_load_classes = col_load.button(
-            "Cargar clases",
-            type="primary",
-            key="clases_participantes_load_classes_btn",
-            use_container_width=True,
-        )
-        run_load_catalogs = col_catalogs.button(
-            "Cargar alumnos/docentes",
-            key="clases_participantes_load_catalogs_btn",
-            use_container_width=True,
-        )
-        run_clear = col_clear.button(
-            "Limpiar",
-            key="clases_participantes_clear_btn",
-            use_container_width=True,
-        )
-
-    if run_clear:
-        for state_key in list(st.session_state.keys()):
-            if str(state_key).startswith("clases_participantes_"):
-                st.session_state.pop(state_key, None)
-        st.rerun()
-
-    if run_load_classes:
-        if not token:
-            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-            st.stop()
-        try:
-            colegio_id_int = _parse_colegio_id(colegio_id_raw)
-        except ValueError as exc:
-            st.error(f"Error: {exc}")
-            st.stop()
-        try:
-            with st.spinner("Cargando clases del colegio..."):
-                raw_clases = _fetch_clases_gestion_escolar(
-                    token=token,
-                    colegio_id=int(colegio_id_int),
-                    empresa_id=int(empresa_id),
-                    ciclo_id=int(ciclo_id),
-                    timeout=int(timeout),
-                    ordered=True,
-                )
-        except Exception as exc:
-            st.error(f"No se pudieron cargar clases: {exc}")
-            st.stop()
         class_rows = [
             row
             for row in (
@@ -9472,6 +9439,7 @@ def _render_clases_participantes_section(
         ]
         class_rows.sort(
             key=lambda row: (
+                str(row.get("tipo") or "").upper(),
                 _participantes_nivel_sort_rank(row.get("nivel_nombre")),
                 _participantes_grado_sort_rank(row.get("grado_nombre")),
                 _grupo_sort_key(
@@ -9486,40 +9454,23 @@ def _render_clases_participantes_section(
         st.session_state["clases_participantes_colegio_id"] = int(colegio_id_int)
         st.session_state.pop("clases_participantes_detail", None)
         st.session_state.pop("clases_participantes_detail_clase_id", None)
-        st.success(f"Clases cargadas: {len(class_rows)}")
+        return class_rows
 
-    if run_load_catalogs:
-        if not token:
-            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-            st.stop()
-        try:
-            colegio_id_int = _parse_colegio_id(colegio_id_raw)
-        except ValueError as exc:
-            st.error(f"Error: {exc}")
-            st.stop()
-        status_box = st.empty()
-        try:
-            status_box.info("Cargando alumnos del colegio...")
-            alumnos_catalog = _fetch_alumnos_catalog_for_manual_move(
-                token=token,
-                colegio_id=int(colegio_id_int),
-                empresa_id=int(empresa_id),
-                ciclo_id=int(ciclo_id),
-                timeout=int(timeout),
-            )
-            status_box.info("Cargando docentes del colegio...")
-            profesores_rows, _summary_prof, profesores_errors = listar_profesores_filters_data(
-                token=token,
-                colegio_id=int(colegio_id_int),
-                empresa_id=int(empresa_id),
-                ciclo_id=int(ciclo_id),
-                timeout=int(timeout),
-            )
-        except Exception as exc:
-            status_box.empty()
-            st.error(f"No se pudieron cargar catalogos: {exc}")
-            st.stop()
-        status_box.empty()
+    def _load_catalogs_for_current_colegio(colegio_id_int: int) -> Tuple[List[Dict[str, object]], List[Dict[str, object]], List[str]]:
+        alumnos_catalog = _fetch_alumnos_catalog_for_manual_move(
+            token=token,
+            colegio_id=int(colegio_id_int),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+        )
+        profesores_rows, _summary_prof, profesores_errors = listar_profesores_filters_data(
+            token=token,
+            colegio_id=int(colegio_id_int),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+        )
         alumnos_rows = [
             row for row in (alumnos_catalog.get("students") or []) if isinstance(row, dict)
         ]
@@ -9549,22 +9500,30 @@ def _render_clases_participantes_section(
                     "estado": str(row.get("estado") or "").strip(),
                 }
             )
-        st.session_state["clases_participantes_students_catalog"] = alumnos_rows
-        st.session_state["clases_participantes_professors_catalog"] = profesores_catalog
-        st.session_state["clases_participantes_catalog_errors"] = list(
-            alumnos_catalog.get("errors") or []
-        ) + [
+        catalog_errors = list(alumnos_catalog.get("errors") or []) + [
             str(item)
             for item in (profesores_errors or [])
             if str(item or "").strip()
         ]
+        st.session_state["clases_participantes_students_catalog"] = alumnos_rows
+        st.session_state["clases_participantes_professors_catalog"] = profesores_catalog
+        st.session_state["clases_participantes_catalog_errors"] = catalog_errors
         st.session_state["clases_participantes_colegio_id"] = int(colegio_id_int)
-        st.success(
-            "Catalogos cargados. Alumnos: {alumnos} | Docentes: {profesores}".format(
-                alumnos=len(alumnos_rows),
-                profesores=len(profesores_catalog),
-            )
+        return alumnos_rows, profesores_catalog, catalog_errors
+
+    with st.container(border=True):
+        st.markdown("**Participantes por clase**")
+        st.caption(
+            "Selecciona una clase del combo para ver y administrar alumnos y profesores."
         )
+    if not token:
+        st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+        return
+    try:
+        colegio_id_int = _parse_colegio_id(colegio_id_raw)
+    except ValueError as exc:
+        st.error(f"Error: {exc}")
+        return
 
     class_rows_state = [
         row
@@ -9572,35 +9531,19 @@ def _render_clases_participantes_section(
         if isinstance(row, dict) and _safe_int(row.get("clase_id")) is not None
     ]
     if not class_rows_state:
-        st.info("Carga las clases del colegio para empezar.")
+        try:
+            with st.spinner("Cargando clases del colegio..."):
+                class_rows_state = _load_class_rows_for_current_colegio(colegio_id_int)
+        except Exception as exc:
+            st.error(f"No se pudieron cargar clases: {exc}")
+            return
+
+    if not class_rows_state:
+        st.info("No se encontraron clases para este colegio.")
         return
 
     class_by_id = {int(row["clase_id"]): row for row in class_rows_state}
-    search_class = st.text_input(
-        "Buscar clase",
-        key="clases_participantes_search_class",
-        placeholder="Nombre, ID, nivel, grado o seccion",
-    )
-    class_options = [
-        int(row["clase_id"])
-        for row in class_rows_state
-        if _row_matches_text(
-            row,
-            search_class,
-            (
-                "clase",
-                "clase_nombre",
-                "clase_codigo",
-                "nivel_nombre",
-                "grado_nombre",
-                "grupo_clave_actual",
-                "clase_id",
-            ),
-        )
-    ]
-    if not class_options:
-        st.warning("No hay clases con ese filtro.")
-        return
+    class_options = [int(row["clase_id"]) for row in class_rows_state]
 
     selected_class_key = "clases_participantes_selected_class_id"
     selected_class_cached = _safe_int(st.session_state.get(selected_class_key))
@@ -9621,32 +9564,44 @@ def _render_clases_participantes_section(
 
     selected_class_id_int = int(selected_class_id)
     selected_class_row = class_by_id.get(selected_class_id_int, {})
-    col_detail, col_export = st.columns([2, 1], gap="small")
-    run_load_detail = col_detail.button(
-        "Cargar participantes de la clase",
-        type="primary",
-        key="clases_participantes_load_detail_btn",
-        use_container_width=True,
-    )
-    if run_load_detail:
-        if not token:
-            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-            st.stop()
-        _clear_action_widgets()
-        with st.spinner("Cargando alumnos y profesores de la clase..."):
-            detail_payload = _refresh_detail(selected_class_id_int)
-        if detail_payload.get("errors"):
-            st.warning("Participantes cargados con observaciones.")
-        else:
-            st.success("Participantes cargados.")
-
     detail_state = st.session_state.get("clases_participantes_detail")
     detail_class_id = _safe_int(
         st.session_state.get("clases_participantes_detail_clase_id")
     )
     if not isinstance(detail_state, dict) or detail_class_id != selected_class_id_int:
-        st.info("Carga los participantes de la clase seleccionada.")
-        return
+        _clear_action_widgets()
+        with st.spinner("Cargando alumnos y profesores de la clase..."):
+            detail_payload = _refresh_detail(selected_class_id_int)
+        detail_state = detail_payload
+        detail_class_id = selected_class_id_int
+
+    students_catalog = [
+        row
+        for row in (st.session_state.get("clases_participantes_students_catalog") or [])
+        if isinstance(row, dict) and _safe_int(row.get("alumno_id")) is not None
+    ]
+    professors_catalog = [
+        row
+        for row in (st.session_state.get("clases_participantes_professors_catalog") or [])
+        if isinstance(row, dict) and _safe_int(row.get("persona_id")) is not None
+    ]
+    if not students_catalog and not professors_catalog:
+        try:
+            with st.spinner("Cargando catalogos del colegio..."):
+                (
+                    students_catalog,
+                    professors_catalog,
+                    _catalog_errors_loaded,
+                ) = _load_catalogs_for_current_colegio(colegio_id_int)
+        except Exception as exc:
+            st.session_state["clases_participantes_catalog_errors"] = [str(exc)]
+            students_catalog = []
+            professors_catalog = []
+
+    col_info, col_export = st.columns([2, 1], gap="small")
+    col_info.caption(
+        "Ordenado por tipo, nivel, grado y seccion. La seleccion carga participantes automaticamente."
+    )
 
     alumnos_current = [
         row for row in (detail_state.get("alumnos") or []) if isinstance(row, dict)
@@ -9714,16 +9669,6 @@ def _render_clases_participantes_section(
             else:
                 st.info(message)
 
-    students_catalog = [
-        row
-        for row in (st.session_state.get("clases_participantes_students_catalog") or [])
-        if isinstance(row, dict) and _safe_int(row.get("alumno_id")) is not None
-    ]
-    professors_catalog = [
-        row
-        for row in (st.session_state.get("clases_participantes_professors_catalog") or [])
-        if isinstance(row, dict) and _safe_int(row.get("persona_id")) is not None
-    ]
     catalog_errors = [
         str(item).strip()
         for item in (st.session_state.get("clases_participantes_catalog_errors") or [])
@@ -9820,7 +9765,7 @@ def _render_clases_participantes_section(
         st.divider()
         st.markdown("**Agregar alumnos**")
         if not students_catalog:
-            st.caption("Carga alumnos/docentes para buscar alumnos del colegio.")
+            st.caption("No se pudieron cargar los alumnos del colegio para esta vista.")
         else:
             current_alumno_ids = set(alumnos_by_id.keys())
             search_add_student = st.text_input(
@@ -9982,7 +9927,7 @@ def _render_clases_participantes_section(
         st.divider()
         st.markdown("**Agregar profesores**")
         if not professors_catalog:
-            st.caption("Carga alumnos/docentes para buscar docentes del colegio.")
+            st.caption("No se pudieron cargar los docentes del colegio para esta vista.")
         else:
             current_profesor_ids = set(profesores_by_id.keys())
             search_add_profesor = st.text_input(

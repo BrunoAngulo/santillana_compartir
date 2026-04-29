@@ -6488,12 +6488,23 @@ def _render_ingles_por_niveles_excel_assignment_block(
             "clases_auto_group_ingles_excel_result_notice"
         ) or {}
 
-        run_analyze = st.button(
+        action_col_analyze, action_col_apply = st.columns(2, gap="small")
+        run_analyze = action_col_analyze.button(
             "Buscar alumnos y clases",
             key="clases_auto_group_ingles_excel_analyze_btn",
             use_container_width=True,
         )
-        st.caption("La asignacion final se ejecuta desde el boton `Actualizar asignacion`.")
+        run_apply_only = action_col_apply.button(
+            "Aplicar solo ingles",
+            key="clases_auto_group_ingles_excel_apply_only_btn",
+            use_container_width=True,
+            disabled=not bool(preview_rows_state),
+        )
+        st.caption(
+            "`Buscar alumnos y clases` prepara la vista previa. "
+            "`Aplicar solo ingles` ejecuta solo el Excel de ingles. "
+            "`Actualizar asignacion` aplica ingles y luego corre la sincronizacion masiva."
+        )
 
         if run_analyze:
             if not token:
@@ -6575,6 +6586,29 @@ def _render_ingles_por_niveles_excel_assignment_block(
                         ),
                     }
                     st.rerun()
+        if run_apply_only:
+            if not token:
+                st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+            elif not selected_ingles_grade_keys:
+                st.error("Selecciona uno o mas grados de ingles arriba.")
+            elif not preview_rows_state:
+                st.error("Primero pulsa `Buscar alumnos y clases`.")
+            else:
+                apply_status_placeholder = st.empty()
+                apply_ok, apply_error = _apply_ingles_assignment_for_selected_grades(
+                    token=token,
+                    colegio_id=int(colegio_id),
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                    preview_rows=list(preview_rows_state),
+                    selected_ingles_grade_keys=selected_ingles_grade_keys,
+                    status_placeholder=apply_status_placeholder,
+                )
+                if apply_ok:
+                    st.rerun()
+                else:
+                    st.error(apply_error)
         if isinstance(result_notice_state, dict) and result_notice_state.get("message"):
             notice_kind = str(result_notice_state.get("kind") or "success").strip().lower()
             notice_message = str(result_notice_state.get("message") or "").strip()

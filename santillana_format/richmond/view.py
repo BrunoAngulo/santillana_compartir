@@ -5570,7 +5570,7 @@ def _render_richmondstudio_classes_manage_panel(
                     export_candidate_rows.append(dict(row))
 
             if export_candidate_rows:
-                st.markdown("**Descargar usuarios registrados por clase**")
+                st.markdown("**Descargar usuarios registrados de una sola clase**")
                 export_group_by_id = {
                     str(row.get("ID") or "").strip(): row
                     for row in export_candidate_rows
@@ -5585,7 +5585,7 @@ def _render_richmondstudio_classes_manage_panel(
                     st.session_state.pop(export_group_select_key, None)
 
                 selected_export_group_id = st.selectbox(
-                    "Clase para descargar usuarios",
+                    "Clase individual para descargar usuarios",
                     options=export_group_options,
                     index=None,
                     key=export_group_select_key,
@@ -5724,11 +5724,11 @@ def _render_richmondstudio_classes_manage_panel(
                         )
 
                 st.divider()
-                st.markdown("**Descargar reporte de participantes por clases**")
+                st.markdown("**Descargar reporte de participantes por varias clases**")
                 report_group_select_key = "rs_rs_groups_report_class_ids"
                 selected_report_group_ids = list(
                     st.multiselect(
-                        "Clases para descargar participantes",
+                        "Clases para descargar participantes (multiple)",
                         options=export_group_options,
                         key=report_group_select_key,
                         format_func=lambda value: "{name} | {code} | Users {users}".format(

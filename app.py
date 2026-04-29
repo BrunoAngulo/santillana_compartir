@@ -11,7 +11,7 @@ from datetime import date, datetime
 from html import escape
 from io import BytesIO, StringIO
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 from urllib.parse import unquote, urljoin
 from uuid import uuid4
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -3116,13 +3116,32 @@ def _is_santillana_inclusiva_class(item: Dict[str, object]) -> bool:
     return target in search_text
 
 
+def _iter_ingles_class_search_values(item: Dict[str, object]) -> Iterable[str]:
+    for value in (
+        item.get("geClase"),
+        item.get("geClaseClave"),
+        item.get("alias"),
+    ):
+        text = _normalize_plain_text(value)
+        if text:
+            yield text
+
+    clase_materias = item.get("claseMaterias") if isinstance(item.get("claseMaterias"), list) else []
+    for entry in clase_materias:
+        if not isinstance(entry, dict):
+            continue
+        materia = entry.get("materia") if isinstance(entry.get("materia"), dict) else {}
+        for value in (
+            materia.get("materia"),
+            materia.get("materiaClave"),
+        ):
+            text = _normalize_plain_text(value)
+            if text:
+                yield text
+
+
 def _is_ingles_por_niveles_class(item: Dict[str, object]) -> bool:
-    ge_clase = _normalize_plain_text(item.get("geClase"))
-    ge_clase_clave = _normalize_plain_text(item.get("geClaseClave"))
-    alias = _normalize_plain_text(item.get("alias"))
-    search_text = " ".join(
-        part for part in (ge_clase, ge_clase_clave, alias) if part
-    )
+    search_text = " ".join(_iter_ingles_class_search_values(item))
     if "INGLES" in search_text or "ENGLISH" in search_text:
         return True
     return "PAI" in search_text and "EMERGENT" in search_text
@@ -3365,6 +3384,90 @@ def _build_ingles_grade_options_for_participantes(
         class_names = option.get("class_names")
         if isinstance(class_names, list):
             class_names.sort(key=lambda value: _normalize_compare_text(value))
+    options.sort(
+        key=lambda row: (
+            _participantes_nivel_sort_rank(row.get("nivel_nombre")),
+            _participantes_grado_sort_rank(row.get("grado_nombre")),
+            _normalize_compare_text(row.get("grado_nombre")),
+        )
+    )
+    return options
+
+
+def _build_ingles_grade_catalog_options_for_participantes(
+    niveles_data: List[Dict[str, object]],
+    detected_options: Optional[Sequence[Dict[str, object]]] = None,
+) -> List[Dict[str, object]]:
+    detected_by_key: Dict[str, Dict[str, object]] = {}
+    for option in detected_options or []:
+        if not isinstance(option, dict):
+            continue
+        option_key = str(option.get("key") or "").strip()
+        if not option_key:
+            continue
+        class_names = sorted(
+            {
+                str(item).strip()
+                for item in list(option.get("class_names") or [])
+                if str(item).strip()
+            },
+            key=lambda value: _normalize_compare_text(value),
+        )
+        detected_by_key[option_key] = {
+            "key": option_key,
+            "nivel_id": _safe_int(option.get("nivel_id")),
+            "grado_id": _safe_int(option.get("grado_id")),
+            "nivel_nombre": str(option.get("nivel_nombre") or "").strip(),
+            "grado_nombre": str(option.get("grado_nombre") or "").strip(),
+            "class_names": class_names,
+        }
+
+    options_by_key: Dict[str, Dict[str, object]] = {}
+    for nivel_entry in niveles_data:
+        if not isinstance(nivel_entry, dict):
+            continue
+        nivel = nivel_entry.get("nivel") if isinstance(nivel_entry.get("nivel"), dict) else {}
+        nivel_id = _safe_int(nivel.get("nivelId"))
+        if nivel_id is None:
+            continue
+        nivel_nombre = str(nivel.get("nivel") or "").strip()
+        grados = nivel_entry.get("grados") or []
+        if not isinstance(grados, list):
+            continue
+        for grado_entry in grados:
+            if not isinstance(grado_entry, dict):
+                continue
+            grado = grado_entry.get("grado") if isinstance(grado_entry.get("grado"), dict) else {}
+            grado_id = _safe_int(grado.get("gradoId"))
+            if grado_id is None:
+                continue
+            option_key = _participantes_ingles_grade_key(nivel_id, grado_id)
+            if not option_key:
+                continue
+            detected_option = detected_by_key.get(option_key) or {}
+            options_by_key.setdefault(
+                option_key,
+                {
+                    "key": option_key,
+                    "nivel_id": int(nivel_id),
+                    "grado_id": int(grado_id),
+                    "nivel_nombre": str(
+                        detected_option.get("nivel_nombre") or nivel_nombre
+                    ).strip(),
+                    "grado_nombre": str(
+                        detected_option.get("grado_nombre")
+                        or grado.get("grado")
+                        or grado.get("gradoClave")
+                        or ""
+                    ).strip(),
+                    "class_names": list(detected_option.get("class_names") or []),
+                },
+            )
+
+    for option_key, option in detected_by_key.items():
+        options_by_key.setdefault(option_key, dict(option))
+
+    options = list(options_by_key.values())
     options.sort(
         key=lambda row: (
             _participantes_nivel_sort_rank(row.get("nivel_nombre")),
@@ -3788,6 +3891,7 @@ def _build_auto_group_rows_for_participantes(
     niveles_data: List[Dict[str, object]],
     exclude_ingles_por_niveles: bool = False,
     ingles_grade_keys: Optional[Set[str]] = None,
+    ingles_class_ids: Optional[Set[int]] = None,
 ) -> Tuple[List[Dict[str, object]], List[str], List[str]]:
     grupos_por_grado = _build_grupos_disponibles_por_grado(niveles_data)
     rows_auto: List[Dict[str, object]] = []
@@ -3821,16 +3925,25 @@ def _build_auto_group_rows_for_participantes(
             )
             continue
         ingles_grade_key = _participantes_ingles_option_key_from_meta(base_meta)
+        clase_id = _safe_int(base_meta.get("clase_id")) or _safe_int(item.get("geClaseId"))
         if (
             exclude_ingles_por_niveles
-            and _is_ingles_por_niveles_class(item)
-            and ingles_grade_key
-            and ingles_grade_key in (ingles_grade_keys or set())
+            and (
+                (
+                    _is_ingles_por_niveles_class(item)
+                    and ingles_grade_key
+                    and ingles_grade_key in (ingles_grade_keys or set())
+                )
+                or (
+                    clase_id is not None
+                    and int(clase_id) in (ingles_class_ids or set())
+                )
+            )
         ):
             skipped_ingles.append(
                 "Clase {clase_id} omitida por Ingles por niveles: conserva sus "
                 "alumnos actuales y se administra desde el Excel de ingles.".format(
-                    clase_id=base_meta.get("clase_id") or item.get("geClaseId") or "-"
+                    clase_id=clase_id or base_meta.get("clase_id") or item.get("geClaseId") or "-"
                 )
             )
             continue
@@ -4144,6 +4257,7 @@ def _run_participantes_sync_job(
     timeout: int,
     exclude_ingles_por_niveles: bool,
     ingles_grade_keys: Tuple[str, ...],
+    ingles_class_ids: Tuple[int, ...],
 ) -> None:
     _set_participantes_sync_job(job_id, state="running")
     _append_participantes_sync_job_message(job_id, "Preparando sincronizacion automatica...")
@@ -4180,6 +4294,11 @@ def _run_participantes_sync_job(
             niveles_data=niveles_data,
             exclude_ingles_por_niveles=bool(exclude_ingles_por_niveles),
             ingles_grade_keys={str(item) for item in ingles_grade_keys if str(item).strip()},
+            ingles_class_ids={
+                int(item)
+                for item in ingles_class_ids
+                if _safe_int(item) is not None
+            },
         )
         summary_auto = _make_participantes_sync_summary(len(rows_auto))
         _set_participantes_sync_job(
@@ -4272,12 +4391,18 @@ def _start_participantes_sync_job(
     timeout: int,
     exclude_ingles_por_niveles: bool = False,
     ingles_grade_keys: Optional[Sequence[str]] = None,
+    ingles_class_ids: Optional[Sequence[object]] = None,
 ) -> str:
     scope = (int(empresa_id), int(ciclo_id), int(colegio_id))
     ingles_grade_keys_tuple = tuple(
         str(item).strip()
         for item in (ingles_grade_keys or [])
         if str(item).strip()
+    )
+    ingles_class_ids_tuple = tuple(
+        int(_safe_int(item))
+        for item in (ingles_class_ids or [])
+        if _safe_int(item) is not None
     )
     state_store = _get_participantes_sync_state()
     lock = state_store["lock"]
@@ -4307,6 +4432,7 @@ def _start_participantes_sync_job(
             "cancel_requested": False,
             "exclude_ingles_por_niveles": bool(exclude_ingles_por_niveles),
             "ingles_grade_keys": list(ingles_grade_keys_tuple),
+            "ingles_class_ids": list(ingles_class_ids_tuple),
             "status_messages": [],
             "summary": _make_participantes_sync_summary(),
             "warnings": [],
@@ -4328,6 +4454,7 @@ def _start_participantes_sync_job(
             int(timeout),
             bool(exclude_ingles_por_niveles),
             ingles_grade_keys_tuple,
+            ingles_class_ids_tuple,
         ),
         daemon=True,
         name=f"participantes-sync-{job_id[:8]}",
@@ -4958,6 +5085,7 @@ def _fetch_alumnos_context_catalog_for_ingles_detection(
     empresa_id: int,
     ciclo_id: int,
     timeout: int,
+    niveles_data: Optional[List[Dict[str, object]]] = None,
     on_status: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, object]:
     def _status(message: str) -> None:
@@ -4967,12 +5095,16 @@ def _fetch_alumnos_context_catalog_for_ingles_detection(
             except Exception:
                 pass
 
-    niveles = _fetch_niveles_grados_grupos_censo(
-        token=token,
-        colegio_id=int(colegio_id),
-        empresa_id=int(empresa_id),
-        ciclo_id=int(ciclo_id),
-        timeout=int(timeout),
+    niveles = (
+        list(niveles_data)
+        if isinstance(niveles_data, list)
+        else _fetch_niveles_grados_grupos_censo(
+            token=token,
+            colegio_id=int(colegio_id),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+        )
     )
     contexts = _build_contexts_for_nivel_grado(niveles=niveles)
     if not contexts:
@@ -5036,6 +5168,7 @@ def _fetch_alumnos_context_catalog_for_ingles_detection(
 
     students = _dedupe_and_sort_censo_students(alumnos_raw)
     return {
+        "niveles": niveles,
         "students": students,
         "errors": errors,
     }
@@ -5070,7 +5203,24 @@ def _detect_ingles_por_niveles_behavior(
         for item in clases
         if isinstance(item, dict) and _is_ingles_por_niveles_class(item)
     ]
-    grade_options = _build_ingles_grade_options_for_participantes(clases)
+    detected_grade_options = _build_ingles_grade_options_for_participantes(clases)
+    grade_options = list(detected_grade_options)
+    niveles_data: List[Dict[str, object]] = []
+    try:
+        niveles_data = _fetch_niveles_grados_grupos_censo(
+            token=token,
+            colegio_id=int(colegio_id),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+        )
+    except Exception:
+        niveles_data = []
+    else:
+        grade_options = _build_ingles_grade_catalog_options_for_participantes(
+            niveles_data,
+            detected_grade_options=detected_grade_options,
+        )
     if not english_classes:
         return {
             "detected": False,
@@ -5088,6 +5238,7 @@ def _detect_ingles_por_niveles_behavior(
         empresa_id=int(empresa_id),
         ciclo_id=int(ciclo_id),
         timeout=int(timeout),
+        niveles_data=niveles_data or None,
         on_status=on_status,
     )
     students = [
@@ -5536,8 +5687,29 @@ def _filter_ingles_assignment_rows_by_selected_ingles_grades(
                 include_unresolved
                 and not str(row.get("_ingles_grade_key") or "").strip()
             )
-        )
-    ]
+            )
+        ]
+
+
+def _collect_ingles_class_ids_from_rows(
+    rows: List[Dict[str, object]],
+    selected_ingles_grade_keys: Sequence[object],
+) -> List[int]:
+    class_ids: List[int] = []
+    seen: Set[int] = set()
+    for row in _filter_ingles_assignment_rows_by_selected_ingles_grades(
+        rows,
+        selected_ingles_grade_keys,
+        include_unresolved=False,
+    ):
+        if not isinstance(row, dict):
+            continue
+        clase_id = _safe_int(row.get("_clase_id"))
+        if clase_id is None or int(clase_id) in seen:
+            continue
+        seen.add(int(clase_id))
+        class_ids.append(int(clase_id))
+    return class_ids
 
 
 def _prepare_ingles_assignment_review_rows(
@@ -6158,6 +6330,7 @@ def _apply_ingles_assignment_preview_rows(
                 pass
 
     actionable_rows: List[Tuple[Dict[str, object], int, int]] = []
+    target_members_by_class: Dict[int, Set[int]] = {}
     class_ids: List[int] = []
     seen_class_ids: Set[int] = set()
 
@@ -6171,12 +6344,14 @@ def _apply_ingles_assignment_preview_rows(
         if alumno_id is None or clase_id is None:
             continue
         actionable_rows.append((row, int(alumno_id), int(clase_id)))
+        target_members_by_class.setdefault(int(clase_id), set()).add(int(alumno_id))
         if int(clase_id) not in seen_class_ids:
             seen_class_ids.add(int(clase_id))
             class_ids.append(int(clase_id))
 
     members_by_class: Dict[int, Set[int]] = {}
     class_errors: Dict[int, str] = {}
+    class_sync_notes: Dict[int, Dict[str, object]] = {}
     total_classes = len(class_ids)
     for idx_class, clase_id in enumerate(class_ids, start=1):
         _status(f"Validando clase {idx_class}/{total_classes}: {clase_id}")
@@ -6195,9 +6370,48 @@ def _apply_ingles_assignment_preview_rows(
                 class_data
             )
 
+    synced_classes = 0
+    for clase_id in class_ids:
+        if int(clase_id) in class_errors:
+            continue
+        synced_classes += 1
+        current_members = members_by_class.setdefault(int(clase_id), set())
+        target_members = target_members_by_class.get(int(clase_id), set())
+        to_remove = sorted(current_members - target_members)
+        remove_errors: List[str] = []
+        if to_remove:
+            _status(
+                "Retirando alumnos fuera del Excel {idx}/{total}: clase {clase}".format(
+                    idx=synced_classes,
+                    total=max(total_classes, 1),
+                    clase=int(clase_id),
+                )
+            )
+        removed_ok = 0
+        for alumno_id in to_remove:
+            try:
+                _delete_alumno_clase_gestion_escolar(
+                    token=token,
+                    clase_id=int(clase_id),
+                    alumno_id=int(alumno_id),
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                )
+                current_members.discard(int(alumno_id))
+                removed_ok += 1
+            except Exception as exc:
+                remove_errors.append(f"{int(alumno_id)}: {exc}")
+        class_sync_notes[int(clase_id)] = {
+            "removed_ok": int(removed_ok),
+            "removed_error": len(remove_errors),
+            "remove_errors": list(remove_errors),
+        }
+
     results: List[Dict[str, object]] = []
     total_actions = len(actionable_rows)
     executed_actions = 0
+    class_note_attached: Set[int] = set()
     for row in preview_rows:
         result_row = dict(row) if isinstance(row, dict) else {}
         alumno_id = _safe_int(result_row.get("_alumno_id"))
@@ -6207,6 +6421,38 @@ def _apply_ingles_assignment_preview_rows(
         grupo_id = _safe_int(result_row.get("_grupo_id"))
         alumno_activo = bool(result_row.get("_activo"))
         estado = str(result_row.get("Estado") or "").strip()
+        class_sync_note = (
+            class_sync_notes.get(int(clase_id), {})
+            if clase_id is not None
+            else {}
+        )
+        result_row["_class_removed_ok"] = 0
+        result_row["_class_removed_error"] = 0
+        if clase_id is not None:
+            result_row["_class_removed_ok"] = int(
+                _safe_int(class_sync_note.get("removed_ok")) or 0
+            )
+            result_row["_class_removed_error"] = int(
+                _safe_int(class_sync_note.get("removed_error")) or 0
+            )
+        result_row["_class_cleanup_counted"] = False
+        class_note_suffix = ""
+        if (
+            estado == "Listo"
+            and clase_id is not None
+            and int(clase_id) not in class_note_attached
+        ):
+            removed_ok = int(_safe_int(class_sync_note.get("removed_ok")) or 0)
+            removed_error = int(_safe_int(class_sync_note.get("removed_error")) or 0)
+            result_row["_class_cleanup_counted"] = True
+            if removed_ok or removed_error:
+                note_parts: List[str] = []
+                if removed_ok:
+                    note_parts.append(f"retirados del Excel={removed_ok}")
+                if removed_error:
+                    note_parts.append(f"error al retirar={removed_error}")
+                class_note_suffix = " Clase sincronizada: " + " | ".join(note_parts) + "."
+            class_note_attached.add(int(clase_id))
 
         if estado != "Listo":
             result_row["Resultado aplicar"] = "SKIP"
@@ -6225,7 +6471,7 @@ def _apply_ingles_assignment_preview_rows(
             result_row["Detalle aplicar"] = (
                 "No se pudo validar la clase actual: "
                 f"{class_errors[int(clase_id)]}"
-            )
+            ) + class_note_suffix
             results.append(result_row)
             continue
 
@@ -6266,7 +6512,7 @@ def _apply_ingles_assignment_preview_rows(
                     "No se pudo activar al alumno antes de asignar: {msg}".format(
                         msg=str(activation_msg or "sin detalle").strip()
                     )
-                )
+                ) + class_note_suffix
                 results.append(result_row)
                 continue
             result_row["_activo"] = True
@@ -6278,7 +6524,7 @@ def _apply_ingles_assignment_preview_rows(
             result_row["Resultado aplicar"] = "Sin cambios"
             result_row["Detalle aplicar"] = (
                 f"{activation_prefix}El alumno ya estaba asignado a la clase."
-            ).strip()
+            ).strip() + class_note_suffix
             results.append(result_row)
             continue
 
@@ -6304,12 +6550,12 @@ def _apply_ingles_assignment_preview_rows(
             result_row["Resultado aplicar"] = "OK"
             result_row["Detalle aplicar"] = (
                 f"{activation_prefix}Asignado correctamente."
-            ).strip()
+            ).strip() + class_note_suffix
         else:
             result_row["Resultado aplicar"] = "Error"
             result_row["Detalle aplicar"] = (
                 f"{activation_prefix}{str(msg_assign or 'No se pudo asignar.').strip()}"
-            ).strip()
+            ).strip() + class_note_suffix
         results.append(result_row)
 
     return results
@@ -6381,16 +6627,29 @@ def _apply_ingles_assignment_for_selected_grades(
         for row in apply_rows
         if str(row.get("Resultado aplicar") or "").strip() == "Error"
     )
+    removed_ok_count = sum(
+        int(_safe_int(row.get("_class_removed_ok")) or 0)
+        for row in apply_rows
+        if bool(row.get("_class_cleanup_counted"))
+    )
+    removed_error_count = sum(
+        int(_safe_int(row.get("_class_removed_error")) or 0)
+        for row in apply_rows
+        if bool(row.get("_class_cleanup_counted"))
+    )
     if err_count:
         _set_ingles_por_niveles_result_notice(
             "warning",
             "Asignacion aplicada con observaciones. "
-            f"OK={ok_count} | Sin cambios={same_count} | Error={err_count}",
+            f"OK={ok_count} | Sin cambios={same_count} | Retirados={removed_ok_count} | "
+            f"Error retirar={removed_error_count} | Error={err_count}",
         )
     else:
         _set_ingles_por_niveles_result_notice(
             "success",
-            f"Asignacion aplicada. OK={ok_count} | Sin cambios={same_count}",
+            "Asignacion aplicada. "
+            f"OK={ok_count} | Sin cambios={same_count} | Retirados={removed_ok_count} | "
+            f"Error retirar={removed_error_count}",
         )
     return True, ""
 
@@ -12378,15 +12637,15 @@ with tab_crud_clases:
                         and not ingles_grade_error
                         and token
                     ):
+                        detected_ingles_grade_options: List[Dict[str, object]] = []
                         try:
-                            with st.spinner("Cargando grados con clases de Ingles..."):
-                                clases_ingles = _fetch_clases_gestion_escolar(
+                            with st.spinner("Cargando grados del colegio..."):
+                                niveles_ingles = _fetch_niveles_grados_grupos_censo(
                                     token=token,
                                     colegio_id=int(colegio_id_int),
                                     empresa_id=int(empresa_id),
                                     ciclo_id=int(ciclo_id),
                                     timeout=int(timeout),
-                                    ordered=True,
                                 )
                         except Exception as exc:  # pragma: no cover - UI
                             ingles_grade_error = str(exc)
@@ -12397,9 +12656,27 @@ with tab_crud_clases:
                                 "clases_auto_group_ingles_grades_scope"
                             ] = current_ingles_scope
                         else:
+                            try:
+                                clases_ingles = _fetch_clases_gestion_escolar(
+                                    token=token,
+                                    colegio_id=int(colegio_id_int),
+                                    empresa_id=int(empresa_id),
+                                    ciclo_id=int(ciclo_id),
+                                    timeout=int(timeout),
+                                    ordered=True,
+                                )
+                            except Exception:
+                                clases_ingles = []
+                            if clases_ingles:
+                                detected_ingles_grade_options = (
+                                    _build_ingles_grade_options_for_participantes(
+                                        clases_ingles
+                                    )
+                                )
                             ingles_grade_options = (
-                                _build_ingles_grade_options_for_participantes(
-                                    clases_ingles
+                                _build_ingles_grade_catalog_options_for_participantes(
+                                    niveles_ingles,
+                                    detected_options=detected_ingles_grade_options,
                                 )
                             )
                             st.session_state[
@@ -12420,6 +12697,11 @@ with tab_crud_clases:
                             f"No se pudieron cargar los grados de Ingles: {ingles_grade_error}"
                         )
                     elif ingles_grade_options:
+                        st.caption(
+                            "Selecciona los grados que llevan ingles por niveles. "
+                            "Si una clase no fue detectada por nombre, puedes marcar "
+                            "su grado manualmente."
+                        )
                         ingles_grade_option_by_key = {
                             str(item.get("key") or "").strip(): item
                             for item in ingles_grade_options
@@ -12466,7 +12748,7 @@ with tab_crud_clases:
                             "clases_auto_group_ingles_grade_selected_keys"
                         ] = list(selected_ingles_grade_keys)
                     else:
-                        st.caption("No se detectaron grados de ingles.")
+                        st.caption("No hay grados disponibles para seleccionar.")
                     if colegio_id_int is not None:
                         _render_ingles_por_niveles_excel_assignment_block(
                             token=token,
@@ -12506,6 +12788,7 @@ with tab_crud_clases:
                         st.error("Ingresa un Colegio Clave (global) valido.")
                     else:
                         can_start_sync = True
+                        selected_ingles_class_ids: List[int] = []
                         if not exclude_ingles_por_niveles:
                             detection_status_placeholder = st.empty()
                             try:
@@ -12592,6 +12875,20 @@ with tab_crud_clases:
                                 )
                                 or []
                             )
+                            selected_ingles_class_ids = _collect_ingles_class_ids_from_rows(
+                                preview_rows_for_apply,
+                                selected_ingles_grade_keys,
+                            )
+                            if not selected_ingles_class_ids:
+                                selected_ingles_class_ids = _collect_ingles_class_ids_from_rows(
+                                    list(
+                                        st.session_state.get(
+                                            "clases_auto_group_ingles_excel_apply_rows"
+                                        )
+                                        or []
+                                    ),
+                                    selected_ingles_grade_keys,
+                                )
                             if preview_rows_for_apply:
                                 apply_status_placeholder = st.empty()
                                 apply_ok, apply_error = (
@@ -12626,6 +12923,7 @@ with tab_crud_clases:
                                     exclude_ingles_por_niveles
                                 ),
                                 ingles_grade_keys=selected_ingles_grade_keys,
+                                ingles_class_ids=selected_ingles_class_ids,
                             )
                             st.session_state["clases_auto_group_job_id"] = current_job_id
                             st.session_state["clases_auto_group_polling_job_id"] = (

@@ -15,6 +15,7 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 
 
 PROCESS_NAMES = ("RECORDAR", "COMPRENDER", "APLICAR", "ANALIZAR", "EVALUAR", "CREAR")
+GENERIC_ITINERARY_TITLES = {"DETALLE", "HOJA", "SHEET", "TAB", "TABLA", "MATRIZ"}
 
 OUTPUT_HEADERS = [
     "ID MICRO HABILIDAD ESPEC\u00cdFICA",
@@ -315,6 +316,7 @@ def _build_output_rows(
             if not itinerary:
                 continue
             itinerary_number, itinerary_name = itinerary
+            itinerary_display_name = _itinerary_output_name(itinerary_number, itinerary_name)
 
             station_context, _station_source = _resolve_station_context(
                 _cell(row, layout.station_col),
@@ -364,8 +366,8 @@ def _build_output_rows(
                         grade,
                         level,
                         None,
-                        None,
-                        itinerary_name,
+                        itinerary_number,
+                        itinerary_display_name,
                         competence,
                         macro_ids[macro],
                         macro,
@@ -405,6 +407,10 @@ def _detect_matrix_layout(sheet_name: str, values: list[list[Any]]) -> MatrixLay
     for header_row in range(1, max_rows + 1):
         header_values = values[header_row - 1]
         context_cols = _find_context_columns(header_values)
+        if not context_cols and header_row < len(values):
+            context_cols = _find_context_columns(
+                _combine_header_rows(header_values, values[header_row])
+            )
         if not context_cols:
             continue
 
@@ -731,6 +737,9 @@ def _split_specific_skills(value: Any) -> list[str]:
     line_parts = _split_specific_skills_by_marked_lines(single_block)
     if line_parts:
         return line_parts
+    plain_line_parts = _split_specific_skills_by_plain_lines(single_block)
+    if plain_line_parts:
+        return plain_line_parts
 
     normalized = _normalize_specific_skill_part(single_block)
     return [normalized] if normalized else []
@@ -752,6 +761,23 @@ def _split_specific_skills_by_marked_lines(text: str) -> list[str]:
         return []
     marker_pattern = re.compile(r"^(?:[-\u2022*]+|\d+[\.\)]|[A-Za-z][\.\)])\s+")
     if not all(marker_pattern.match(line) for line in lines):
+        return []
+    result: list[str] = []
+    for line in lines:
+        normalized = _normalize_specific_skill_part(line)
+        if normalized:
+            result.append(normalized)
+    return result
+
+
+def _split_specific_skills_by_plain_lines(text: str) -> list[str]:
+    lines = [line.strip() for line in str(text).splitlines() if line.strip()]
+    if len(lines) < 2:
+        return []
+    starter_pattern = re.compile(r"^(?:[A-ZÁÉÍÓÚÑ¿¡0-9]|[a-záéíóúñ]+:)")
+    if not all(starter_pattern.match(line) for line in lines):
+        return []
+    if any(line[:1].islower() for line in lines[1:]):
         return []
     result: list[str] = []
     for line in lines:
@@ -785,6 +811,8 @@ def _is_meaningful_itinerary_title(number: int | None, title: str | None) -> boo
         rf"(?:ITI|ITINERARIO|HITO)\s*0*{number}",
         normalized,
     ):
+        return False
+    if normalized in GENERIC_ITINERARY_TITLES:
         return False
     return True
 
@@ -866,6 +894,13 @@ def _resolve_itinerary_context(
     )
 
 
+def _itinerary_output_name(number: int, title: str | None) -> str | None:
+    clean = _clean_text(title)
+    if not _is_meaningful_itinerary_title(number, clean):
+        return None
+    return clean
+
+
 def _merge_itinerary_context(
     cell_itinerary: tuple[int, str] | None,
     sheet_itinerary: tuple[int, str] | None,
@@ -914,6 +949,19 @@ def _parse_itinerary_from_sheet_name(sheet_name: str) -> tuple[int, str] | None:
         return None
     suffix = text[match.end() :].strip(" ._-")
     return int(match.group(1)), suffix
+
+
+def _combine_header_rows(first_row: list[Any], second_row: list[Any]) -> list[str]:
+    max_len = max(len(first_row), len(second_row))
+    result: list[str] = []
+    for index in range(max_len):
+        top = _clean_text(first_row[index]) if index < len(first_row) else None
+        bottom = _clean_text(second_row[index]) if index < len(second_row) else None
+        if top and bottom and _label_key(top) != _label_key(bottom):
+            result.append(f"{top} {bottom}")
+        else:
+            result.append(top or bottom or "")
+    return result
 
 
 def _first_line(value: str | None) -> str:

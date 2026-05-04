@@ -56,6 +56,11 @@ La matriz debe contener, por encabezado o por posicion fallback, estas piezas:
   - `EVALUAR`
   - `CREAR`
 
+El formato mas comun usa dos filas de encabezado:
+
+- fila 1: columnas base y el bloque general `NANOHABILIDADES`
+- fila 2: subencabezados de proceso `RECORDAR` a `CREAR`
+
 ### Formatos que entiende
 
 - Itinerario:
@@ -160,6 +165,7 @@ Primero intenta deteccion por encabezados:
 - busca `ITINERARIO`, `COMPETENCIA`, `MACROHABILIDAD`, `MICROHABILIDAD`, `ESTACION`, `CONOCIMIENTOS`
 - busca procesos cognitivos en la fila del encabezado o en las dos siguientes
 - exige al menos 2 procesos para considerar valida la matriz
+- si los encabezados estan repartidos entre las dos primeras filas, combina ambas para detectar mejor las columnas
 
 La comparacion de encabezados es tolerante:
 
@@ -233,7 +239,9 @@ Se separan con `_split_specific_skills(...)`.
 Regla actual:
 
 - separa por bloques en blanco
-- ejemplo: dos textos separados por una linea vacia producen dos filas
+- separa por lineas con viñetas o guiones
+- separa por lineas numeradas
+- si una celda trae varias lineas simples y cada linea parece una habilidad independiente, tambien las separa
 
 ## Como ordena las filas
 
@@ -290,7 +298,10 @@ SECMA4_I01_E02_MA03_MI05_ME04
 - `# MICROHABILIDADES ESPECIFICAS`
   - se reinicia por combinacion `(itinerario, estacion)`
 - `# ITINERARIO`
-  - actualmente sale vacio en la salida
+  - lleva el numero de itinerario
+- `ITINERARIO`
+  - lleva solo el nombre descriptivo
+  - si no existe un nombre descriptivo, puede quedar vacio
 
 ## Como infiere curso, grado, area y nivel
 

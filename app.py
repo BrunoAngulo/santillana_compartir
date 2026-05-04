@@ -1162,8 +1162,8 @@ def _render_sumun_template_view() -> None:
           </div>
         </div>
         <div style="font-size:0.92rem;margin-bottom:12px;">
-          <b>Regla estandar:</b> si ITINERARIO viene como <code>1</code>, la columna ITINERARIO sale como <code>1</code>.
-          Si viene como <code>Itinerario 1. La celula</code>, sale como <code>La celula</code>.
+          <b>Regla estandar:</b> el numero va a <code># ITINERARIO</code>.
+          La columna <code>ITINERARIO</code> muestra el nombre descriptivo, por ejemplo <code>La celula</code>.
         </div>
         """,
         unsafe_allow_html=True,
@@ -1630,8 +1630,8 @@ if menu_option != "Richmond Studio":
               </div>
             </div>
             <div style="font-size:0.92rem;margin-bottom:12px;">
-              <b>Regla estandar:</b> si ITINERARIO viene como <code>1</code>, la columna ITINERARIO sale como <code>1</code>.
-              Si viene como <code>Itinerario 1. La celula</code>, sale como <code>La celula</code>.
+              <b>Regla estandar:</b> el numero va a <code># ITINERARIO</code>.
+              La columna <code>ITINERARIO</code> muestra el nombre descriptivo, por ejemplo <code>La celula</code>.
             </div>
             """,
             unsafe_allow_html=True,

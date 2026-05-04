@@ -190,8 +190,8 @@ class SumunStationParsingTests(unittest.TestCase):
 
         self.assertEqual(summary.generated_rows, 2)
         self.assertEqual(len(rows), 2)
-        self.assertEqual(rows[0][5], None)
-        self.assertEqual(rows[1][5], None)
+        self.assertEqual(rows[0][5], 1)
+        self.assertEqual(rows[1][5], 1)
         self.assertEqual(rows[0][8], 1)
         self.assertEqual(rows[1][8], 1)
         self.assertEqual(rows[0][10], 1)
@@ -259,6 +259,8 @@ class SumunStationParsingTests(unittest.TestCase):
         rows = _generated_rows(output_bytes)
 
         self.assertEqual(summary.generated_rows, 2)
+        self.assertEqual(rows[0][5], 1)
+        self.assertEqual(rows[1][5], 1)
         self.assertEqual(rows[0][12], 1)
         self.assertEqual(rows[1][12], 1)
         self.assertEqual(rows[0][13], "Primera estación")
@@ -328,6 +330,8 @@ class SumunStationParsingTests(unittest.TestCase):
         self.assertEqual(summary.generated_rows, 2)
         self.assertEqual(rows[0][6], "La célula")
         self.assertEqual(rows[1][6], "La célula")
+        self.assertEqual(rows[0][5], 1)
+        self.assertEqual(rows[1][5], 1)
 
     def test_itinerary_title_is_shared_across_sheets_by_number(self) -> None:
         wb = Workbook()
@@ -410,12 +414,15 @@ class SumunStationParsingTests(unittest.TestCase):
         self.assertEqual(summary.generated_rows, 2)
         self.assertEqual(rows[0][6], "La célula")
         self.assertEqual(rows[1][6], "La célula")
+        self.assertEqual(rows[0][5], 1)
+        self.assertEqual(rows[1][5], 1)
 
     def test_specific_skills_split_bullets_and_numbered_lines(self) -> None:
         cases = {
             "• Skill 1\n• Skill 2": ["Skill 1", "Skill 2"],
             "- Skill 1\n- Skill 2": ["Skill 1", "Skill 2"],
             "1) Skill 1\n2) Skill 2": ["Skill 1", "Skill 2"],
+            "Skill 1\nSkill 2": ["Skill 1", "Skill 2"],
         }
         for process_value, expected_skills in cases.items():
             with self.subTest(process_value=process_value):
@@ -426,6 +433,72 @@ class SumunStationParsingTests(unittest.TestCase):
                 rows = _generated_rows(output_bytes)
                 self.assertEqual(summary.generated_rows, 2)
                 self.assertEqual([row[17] for row in rows], expected_skills)
+
+    def test_two_row_header_layout_is_detected(self) -> None:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Mat3_Iti1"
+        ws.append(
+            [
+                "ITINERARIO",
+                "ESTACIÓN",
+                "COMPETENCIA",
+                "MACROHABILIDAD",
+                "MICROHABILIDAD",
+                "CONOCIMIENTOS",
+                "NANOHABILIDADES",
+                "NANOHABILIDADES",
+                "NANOHABILIDADES",
+                "NANOHABILIDADES",
+                "NANOHABILIDADES",
+                "NANOHABILIDADES",
+            ]
+        )
+        ws.append(
+            [
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "RECORDAR",
+                "COMPRENDER",
+                "APLICAR",
+                "ANALIZAR",
+                "EVALUAR",
+                "CREAR",
+            ]
+        )
+        ws.append(
+            [
+                "Itinerario 1. La célula",
+                "E1 - Estación 1",
+                "Competencia base",
+                "Macro base",
+                "Micro base",
+                "Texto: conocimiento base",
+                "Skill 1",
+                None,
+                None,
+                None,
+                None,
+                None,
+            ]
+        )
+        output = BytesIO()
+        wb.save(output)
+
+        output_bytes, summary = generate_sumun_template_from_excel(
+            output.getvalue(),
+            source_name="MA4.xlsx",
+        )
+        rows = _generated_rows(output_bytes)
+
+        self.assertEqual(summary.generated_rows, 1)
+        self.assertEqual(rows[0][5], 1)
+        self.assertEqual(rows[0][6], "La célula")
+        self.assertEqual(rows[0][17], "Skill 1")
 
 
 if __name__ == "__main__":

@@ -199,7 +199,8 @@ Sale de:
 
 Regla importante:
 
-- si la celda solo trae `1`, el nombre visible del itinerario queda como `1`
+- si la celda solo trae `1`, el sistema intenta reutilizar el mejor nombre conocido para ese mismo itinerario en el workbook
+- si no existe un nombre mas descriptivo en ninguna hoja, entonces el nombre visible queda como `1`
 - si trae `Itinerario 1. La celula`, el numero queda `1` y el nombre queda `La celula`
 
 ### Estacion

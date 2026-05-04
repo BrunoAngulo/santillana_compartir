@@ -223,6 +223,153 @@ class SumunStationParsingTests(unittest.TestCase):
         self.assertEqual(rows[0][13], "Primera estación")
         self.assertEqual(rows[1][13], "Primera estación")
 
+    def test_itinerary_title_is_reused_when_numeric_and_descriptive_forms_mix(self) -> None:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Mat3_Iti1"
+        ws.append(
+            [
+                "ITINERARIO",
+                "COMPETENCIA",
+                "MACROHABILIDAD",
+                "MICROHABILIDAD",
+                "ESTACIÓN",
+                "CONOCIMIENTOS",
+                "RECORDAR",
+                "COMPRENDER",
+                "APLICAR",
+                "ANALIZAR",
+                "EVALUAR",
+                "CREAR",
+            ]
+        )
+        ws.append(
+            [
+                "1",
+                "Competencia base",
+                "Macro 1",
+                "Micro 1",
+                "E1 - Estación 1",
+                "Texto: conocimiento base",
+                "Skill 1",
+                None,
+                None,
+                None,
+                None,
+                None,
+            ]
+        )
+        ws.append(
+            [
+                "Itinerario 1. La célula",
+                "Competencia base",
+                "Macro 2",
+                "Micro 2",
+                "E1 - Estación 1",
+                "Texto: conocimiento base",
+                "Skill 2",
+                None,
+                None,
+                None,
+                None,
+                None,
+            ]
+        )
+        output = BytesIO()
+        wb.save(output)
+
+        output_bytes, summary = generate_sumun_template_from_excel(
+            output.getvalue(),
+            source_name="MA4.xlsx",
+        )
+        rows = _generated_rows(output_bytes)
+
+        self.assertEqual(summary.generated_rows, 2)
+        self.assertEqual(rows[0][6], "La célula")
+        self.assertEqual(rows[1][6], "La célula")
+
+    def test_itinerary_title_is_shared_across_sheets_by_number(self) -> None:
+        wb = Workbook()
+        ws1 = wb.active
+        ws1.title = "Mat3_Iti1"
+        ws1.append(
+            [
+                "ITINERARIO",
+                "COMPETENCIA",
+                "MACROHABILIDAD",
+                "MICROHABILIDAD",
+                "ESTACIÓN",
+                "CONOCIMIENTOS",
+                "RECORDAR",
+                "COMPRENDER",
+                "APLICAR",
+                "ANALIZAR",
+                "EVALUAR",
+                "CREAR",
+            ]
+        )
+        ws1.append(
+            [
+                "1",
+                "Competencia base",
+                "Macro 1",
+                "Micro 1",
+                "E1 - Estación 1",
+                "Texto: conocimiento base",
+                "Skill 1",
+                None,
+                None,
+                None,
+                None,
+                None,
+            ]
+        )
+        ws2 = wb.create_sheet("Mat3_Iti1_detalle")
+        ws2.append(
+            [
+                "ITINERARIO",
+                "COMPETENCIA",
+                "MACROHABILIDAD",
+                "MICROHABILIDAD",
+                "ESTACIÓN",
+                "CONOCIMIENTOS",
+                "RECORDAR",
+                "COMPRENDER",
+                "APLICAR",
+                "ANALIZAR",
+                "EVALUAR",
+                "CREAR",
+            ]
+        )
+        ws2.append(
+            [
+                "Itinerario 1. La célula",
+                "Competencia base",
+                "Macro 2",
+                "Micro 2",
+                "E2 - Estación 2",
+                "Texto: conocimiento base",
+                "Skill 2",
+                None,
+                None,
+                None,
+                None,
+                None,
+            ]
+        )
+        output = BytesIO()
+        wb.save(output)
+
+        output_bytes, summary = generate_sumun_template_from_excel(
+            output.getvalue(),
+            source_name="MA4.xlsx",
+        )
+        rows = _generated_rows(output_bytes)
+
+        self.assertEqual(summary.generated_rows, 2)
+        self.assertEqual(rows[0][6], "La célula")
+        self.assertEqual(rows[1][6], "La célula")
+
 
 if __name__ == "__main__":
     unittest.main()

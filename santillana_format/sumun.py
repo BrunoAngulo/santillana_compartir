@@ -282,6 +282,7 @@ def _build_output_rows(
     last_station_by_itinerary: dict[int, tuple[int, str]] = {}
     station_aliases: dict[tuple[int, str], tuple[int, str]] = {}
     next_station_number_by_itinerary: dict[int, int] = {}
+    itinerary_titles = _collect_itinerary_titles(workbook, sheet_names=sheet_names)
     output_rows: list[list[Any]] = []
     processed_sheets: list[str] = []
     skipped_sheets: list[str] = []
@@ -306,7 +307,11 @@ def _build_output_rows(
         for row_number in range(layout.data_start_row, len(values) + 1):
             row = values[row_number - 1]
             cell_itinerary = _parse_itinerary(_cell(row, layout.itinerary_col))
-            itinerary = _merge_itinerary_context(cell_itinerary, sheet_itinerary)
+            itinerary = _resolve_itinerary_context(
+                cell_itinerary,
+                sheet_itinerary,
+                itinerary_titles=itinerary_titles,
+            )
             if not itinerary:
                 continue
             itinerary_number, itinerary_name = itinerary
@@ -479,11 +484,16 @@ def _scan_sheet_rows(values: list[list[Any]], layout: MatrixLayout | None) -> Sh
     last_station_by_itinerary: dict[int, tuple[int, str]] = {}
     station_aliases: dict[tuple[int, str], tuple[int, str]] = {}
     next_station_number_by_itinerary: dict[int, int] = {}
+    itinerary_titles: dict[int, str] = {}
     sheet_itinerary = _infer_sheet_itinerary_context(values, layout, layout.sheet_name)
     for row_number in range(layout.data_start_row, len(values) + 1):
         row = values[row_number - 1]
         cell_itinerary = _parse_itinerary(_cell(row, layout.itinerary_col))
-        itinerary = _merge_itinerary_context(cell_itinerary, sheet_itinerary)
+        itinerary = _resolve_itinerary_context(
+            cell_itinerary,
+            sheet_itinerary,
+            itinerary_titles=itinerary_titles,
+        )
         if not itinerary:
             continue
         itinerary_number, _ = itinerary
@@ -730,6 +740,98 @@ def _parse_itinerary(value: Any) -> tuple[int, str] | None:
     return int(match.group(1)), match.group(2).strip()
 
 
+def _is_meaningful_itinerary_title(number: int | None, title: str | None) -> bool:
+    text = _clean_text(title)
+    if not text:
+        return False
+    if number is not None and text == str(number):
+        return False
+    normalized = _strip_accents(text).upper()
+    if number is not None and re.fullmatch(
+        rf"(?:ITI|ITINERARIO|HITO)\s*0*{number}",
+        normalized,
+    ):
+        return False
+    return True
+
+
+def _best_itinerary_title(number: int, *candidates: str | None) -> str:
+    best: str | None = None
+    for candidate in candidates:
+        clean = _clean_text(candidate)
+        if not _is_meaningful_itinerary_title(number, clean):
+            continue
+        if best is None or len(clean or "") > len(best):
+            best = clean
+    if best:
+        return best
+    return str(number)
+
+
+def _register_itinerary_title(
+    titles_by_number: dict[int, str],
+    number: int,
+    title: str | None,
+) -> None:
+    clean = _clean_text(title)
+    if not _is_meaningful_itinerary_title(number, clean):
+        return
+    current = titles_by_number.get(number)
+    if current is None or len(clean or "") > len(current):
+        titles_by_number[number] = str(clean)
+
+
+def _collect_itinerary_titles(workbook, *, sheet_names: list[str] | None = None) -> dict[int, str]:
+    titles_by_number: dict[int, str] = {}
+    selected_sheets = set(sheet_names or [])
+    for ws in workbook.worksheets:
+        if selected_sheets and ws.title not in selected_sheets:
+            continue
+        if ws.sheet_state != "visible":
+            continue
+        values = _fill_merged_values(ws)
+        layout = _detect_matrix_layout(ws.title, values)
+        if layout is None:
+            continue
+
+        sheet_itinerary = _infer_sheet_itinerary_context(values, layout, ws.title)
+        if sheet_itinerary:
+            _register_itinerary_title(
+                titles_by_number,
+                sheet_itinerary[0],
+                sheet_itinerary[1],
+            )
+
+        for row_number in range(layout.data_start_row, len(values) + 1):
+            parsed = _parse_itinerary(_cell(values[row_number - 1], layout.itinerary_col))
+            if parsed:
+                _register_itinerary_title(titles_by_number, parsed[0], parsed[1])
+    return titles_by_number
+
+
+def _resolve_itinerary_context(
+    cell_itinerary: tuple[int, str] | None,
+    sheet_itinerary: tuple[int, str] | None,
+    *,
+    itinerary_titles: dict[int, str],
+) -> tuple[int, str] | None:
+    if cell_itinerary:
+        itinerary_number = cell_itinerary[0]
+    elif sheet_itinerary:
+        itinerary_number = sheet_itinerary[0]
+    else:
+        return None
+    return (
+        itinerary_number,
+        _best_itinerary_title(
+            itinerary_number,
+            itinerary_titles.get(itinerary_number),
+            cell_itinerary[1] if cell_itinerary else None,
+            sheet_itinerary[1] if sheet_itinerary else None,
+        ),
+    )
+
+
 def _merge_itinerary_context(
     cell_itinerary: tuple[int, str] | None,
     sheet_itinerary: tuple[int, str] | None,
@@ -756,11 +858,13 @@ def _infer_sheet_itinerary_context(
         parsed = _parse_itinerary(_cell(values[row_number - 1], layout.itinerary_col))
         if parsed and itinerary_number is None:
             itinerary_number = parsed[0]
-        if parsed and parsed[1]:
+        if parsed and _is_meaningful_itinerary_title(parsed[0], parsed[1]):
             itinerary_title = parsed[1]
             break
 
-    if not itinerary_title and sheet_itinerary:
+    if not itinerary_title and sheet_itinerary and _is_meaningful_itinerary_title(
+        sheet_itinerary[0], sheet_itinerary[1]
+    ):
         itinerary_title = sheet_itinerary[1]
     if itinerary_number is None:
         return None
@@ -771,11 +875,11 @@ def _parse_itinerary_from_sheet_name(sheet_name: str) -> tuple[int, str] | None:
     text = _clean_text(sheet_name)
     if not text:
         return None
-    normalized = _strip_accents(text).upper()
-    match = re.search(r"\b(?:ITI|ITINERARIO|HITO)\s*([0-9]{1,2})\b", normalized)
+    match = re.search(r"\b(?:ITI|ITINERARIO|HITO)\s*([0-9]{1,2})\b", text, flags=re.I)
     if not match:
         return None
-    return int(match.group(1)), text
+    suffix = text[match.end() :].strip(" ._-")
+    return int(match.group(1)), suffix
 
 
 def _first_line(value: str | None) -> str:

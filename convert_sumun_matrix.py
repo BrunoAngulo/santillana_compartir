@@ -39,7 +39,7 @@ def main() -> None:
     print(f"Hojas procesadas: {', '.join(summary.processed_sheets)}")
     if summary.nonnumber_station_rows:
         print(
-            "Filas con estacion no numerada heredada: "
+            "Filas omitidas por estacion no identificable: "
             + ", ".join(summary.nonnumber_station_rows)
         )
 

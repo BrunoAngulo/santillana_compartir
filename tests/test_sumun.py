@@ -50,6 +50,10 @@ def _build_sumun_workbook(station_value: str) -> bytes:
     return output.getvalue()
 
 
+def _build_sumun_workbook_without_station() -> bytes:
+    return _build_sumun_workbook(None)
+
+
 def _build_sumun_workbook_with_repeated_skills() -> bytes:
     wb = Workbook()
     ws = wb.active
@@ -115,7 +119,12 @@ def _generated_rows(workbook_bytes: bytes) -> list[tuple]:
 
 class SumunStationParsingTests(unittest.TestCase):
     def test_generate_template_accepts_common_station_formats(self) -> None:
-        for station_value in ("1. Celula", "E1 - Celula", "Estación 1 - Celula"):
+        for station_value in (
+            "1. Celula",
+            "E1 - Celula",
+            "Estación 1 - Celula",
+            "Primera estacion",
+        ):
             with self.subTest(station_value=station_value):
                 output_bytes, summary = generate_sumun_template_from_excel(
                     _build_sumun_workbook(station_value),
@@ -124,12 +133,12 @@ class SumunStationParsingTests(unittest.TestCase):
                 self.assertTrue(output_bytes)
                 self.assertEqual(summary.generated_rows, 2)
 
-    def test_inspection_reports_invalid_station_format(self) -> None:
-        sheets = inspect_sumun_workbook_sheets(_build_sumun_workbook("Primera estacion"))
+    def test_inspection_reports_missing_station_value(self) -> None:
+        sheets = inspect_sumun_workbook_sheets(_build_sumun_workbook_without_station())
         self.assertEqual(len(sheets), 1)
         self.assertFalse(sheets[0].detected)
         self.assertEqual(sheets[0].estimated_rows, 0)
-        self.assertIn("estaciones validas", sheets[0].reason)
+        self.assertIn("faltan estaciones", sheets[0].reason)
 
     def test_macro_and_micro_ids_are_reused_across_station_changes(self) -> None:
         output_bytes, summary = generate_sumun_template_from_excel(
@@ -146,6 +155,73 @@ class SumunStationParsingTests(unittest.TestCase):
         self.assertEqual(rows[1][8], 1)
         self.assertEqual(rows[0][10], 1)
         self.assertEqual(rows[1][10], 1)
+
+    def test_text_only_station_is_reused_by_content(self) -> None:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "1-Ma4_Iti1"
+        ws.append(
+            [
+                "ITINERARIO",
+                "COMPETENCIA",
+                "MACROHABILIDAD",
+                "MICROHABILIDAD",
+                "ESTACIÓN",
+                "CONOCIMIENTOS",
+                "RECORDAR",
+                "COMPRENDER",
+                "APLICAR",
+                "ANALIZAR",
+                "EVALUAR",
+                "CREAR",
+            ]
+        )
+        ws.append(
+            [
+                "Itinerario 1. La célula",
+                "Competencia base",
+                "Macro 1",
+                "Micro 1",
+                "Primera estación",
+                "Texto: conocimiento base",
+                "Skill 1",
+                None,
+                None,
+                None,
+                None,
+                None,
+            ]
+        )
+        ws.append(
+            [
+                "Itinerario 1. La célula",
+                "Competencia base",
+                "Macro 2",
+                "Micro 2",
+                "Primera estación",
+                "Texto: conocimiento base",
+                "Skill 2",
+                None,
+                None,
+                None,
+                None,
+                None,
+            ]
+        )
+        output = BytesIO()
+        wb.save(output)
+
+        output_bytes, summary = generate_sumun_template_from_excel(
+            output.getvalue(),
+            source_name="MA4.xlsx",
+        )
+        rows = _generated_rows(output_bytes)
+
+        self.assertEqual(summary.generated_rows, 2)
+        self.assertEqual(rows[0][12], 1)
+        self.assertEqual(rows[1][12], 1)
+        self.assertEqual(rows[0][13], "Primera estación")
+        self.assertEqual(rows[1][13], "Primera estación")
 
 
 if __name__ == "__main__":

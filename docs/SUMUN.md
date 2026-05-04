@@ -66,6 +66,8 @@ La matriz debe contener, por encabezado o por posicion fallback, estas piezas:
   - `1. La celula`
   - `E1 - La celula`
   - `Estacion 1 - La celula`
+  - `La celula`
+  - `Primera estacion`
 
 ### Casos soportados
 
@@ -204,7 +206,17 @@ Regla importante:
 
 Sale de la columna `ESTACION`.
 
-Si una fila no trae estacion numerada pero ya hubo una estacion valida antes para ese mismo itinerario, hereda la anterior.
+Puede venir de dos formas:
+
+- numerada, por ejemplo `E1 - Fracciones`
+- solo por nombre, por ejemplo `Fracciones` o `Primera estacion`
+
+Si viene solo por nombre, el sistema compara el contenido de la celda y:
+
+- reutiliza la misma estacion si ese texto ya aparecio antes en el mismo itinerario
+- o crea un numero interno nuevo para esa estacion en su primera aparicion
+
+Solo se omite la fila si la columna `ESTACION` no tiene un dato util y tampoco existe una estacion previa heredable para ese itinerario.
 Eso se reporta en `nonnumber_station_rows`.
 
 ### Macro y micro

@@ -280,6 +280,8 @@ def _build_output_rows(
     micro_ids: dict[str, int] = {}
     specific_counters: defaultdict[tuple[int, int], int] = defaultdict(int)
     last_station_by_itinerary: dict[int, tuple[int, str]] = {}
+    station_aliases: dict[tuple[int, str], tuple[int, str]] = {}
+    next_station_number_by_itinerary: dict[int, int] = {}
     output_rows: list[list[Any]] = []
     processed_sheets: list[str] = []
     skipped_sheets: list[str] = []
@@ -309,16 +311,13 @@ def _build_output_rows(
                 continue
             itinerary_number, itinerary_name = itinerary
 
-            parsed_station = _parse_station(_cell(row, layout.station_col))
-            station_context = parsed_station or last_station_by_itinerary.get(itinerary_number)
-            has_process_values = any(_cell(row, col) for col in layout.process_cols.values())
-            if parsed_station:
-                last_station_by_itinerary[itinerary_number] = parsed_station
-            elif _cell(row, layout.station_col) is not None and has_process_values:
-                nonnumber_station_rows.append(f"{ws.title}!R{row_number}")
-
-            if not station_context:
-                continue
+            station_context, _station_source = _resolve_station_context(
+                _cell(row, layout.station_col),
+                itinerary_number,
+                last_station_by_itinerary=last_station_by_itinerary,
+                station_aliases=station_aliases,
+                next_station_number_by_itinerary=next_station_number_by_itinerary,
+            )
 
             competence = _clean_text(_cell(row, layout.competence_col))
             macro = _clean_text(_cell(row, layout.macro_col), strip_bullet=True)
@@ -333,6 +332,9 @@ def _build_output_rows(
             ]
             if not process_items:
                 continue
+            if not station_context:
+                nonnumber_station_rows.append(f"{ws.title}!R{row_number}")
+                continue
 
             if macro not in macro_ids:
                 macro_ids[macro] = len(macro_ids) + 1
@@ -341,9 +343,6 @@ def _build_output_rows(
 
             station_number, station_name = station_context
             knowledge = _clean_text(_cell(row, layout.knowledge_col))
-            if not parsed_station and _cell(row, layout.station_col) is not None:
-                station_note = _clean_text(_cell(row, layout.station_col))
-                knowledge = "\n".join(part for part in (station_note, knowledge) if part)
 
             for process, skill in process_items:
                 specific_counters[(itinerary_number, station_number)] += 1
@@ -450,9 +449,10 @@ def _inspection_reason(
         if len(scan_stats.missing_station_rows) > 3:
             rows = f"{rows}, ..."
         return (
-            "Se reconocio la estructura y microhabilidades, pero no se encontraron "
-            "estaciones validas para generar filas. "
-            "Revisa la columna ESTACION; formatos admitidos: 1..., E1..., Estacion 1... "
+            "Se reconocio la estructura y microhabilidades, pero faltan estaciones "
+            "identificables para generar filas. "
+            "La columna ESTACION puede venir numerada o con nombre; "
+            "las filas sin dato util no se pueden procesar "
             f"(primeras filas: {rows})."
         )
     if scan_stats.estimated_rows <= 0:
@@ -477,6 +477,8 @@ def _scan_sheet_rows(values: list[list[Any]], layout: MatrixLayout | None) -> Sh
     estimated = 0
     missing_station_rows: list[int] = []
     last_station_by_itinerary: dict[int, tuple[int, str]] = {}
+    station_aliases: dict[tuple[int, str], tuple[int, str]] = {}
+    next_station_number_by_itinerary: dict[int, int] = {}
     sheet_itinerary = _infer_sheet_itinerary_context(values, layout, layout.sheet_name)
     for row_number in range(layout.data_start_row, len(values) + 1):
         row = values[row_number - 1]
@@ -488,6 +490,13 @@ def _scan_sheet_rows(values: list[list[Any]], layout: MatrixLayout | None) -> Sh
         competence = _clean_text(_cell(row, layout.competence_col))
         macro = _clean_text(_cell(row, layout.macro_col), strip_bullet=True)
         micro = _clean_text(_cell(row, layout.micro_col), strip_bullet=True)
+        station_context, _station_source = _resolve_station_context(
+            _cell(row, layout.station_col),
+            itinerary_number,
+            last_station_by_itinerary=last_station_by_itinerary,
+            station_aliases=station_aliases,
+            next_station_number_by_itinerary=next_station_number_by_itinerary,
+        )
         if not competence or not macro or not micro:
             continue
         process_count = sum(
@@ -496,13 +505,8 @@ def _scan_sheet_rows(values: list[list[Any]], layout: MatrixLayout | None) -> Sh
         if not process_count:
             continue
 
-        parsed_station = _parse_station(_cell(row, layout.station_col))
-        station_context = parsed_station or last_station_by_itinerary.get(itinerary_number)
-        if parsed_station:
-            last_station_by_itinerary[itinerary_number] = parsed_station
-        elif _cell(row, layout.station_col) is not None:
-            missing_station_rows.append(row_number)
         if not station_context:
+            missing_station_rows.append(row_number)
             continue
 
         estimated += process_count
@@ -790,6 +794,84 @@ def _title_from_knowledge(value: str | None) -> str:
         return ""
     title = re.sub(r"^\s*Texto\s*:\s*", "", title, flags=re.I).strip()
     return title
+
+
+def _station_text_key(value: Any) -> str:
+    text = _clean_text(value)
+    if not text:
+        return ""
+    parsed_station = _parse_station(text)
+    if parsed_station and parsed_station[1]:
+        text = parsed_station[1]
+    else:
+        text = re.sub(r"^\s*ESTACI(?:O|Ó)N\s*[:\-]?\s*", "", text, flags=re.I).strip()
+    text = _strip_accents(text).upper()
+    text = re.sub(r"[^A-Z0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _register_station_alias(
+    itinerary_number: int,
+    station: tuple[int, str],
+    *,
+    station_aliases: dict[tuple[int, str], tuple[int, str]],
+    next_station_number_by_itinerary: dict[int, int],
+    raw_text: str | None = None,
+) -> None:
+    station_number, station_name = station
+    next_station_number_by_itinerary[itinerary_number] = max(
+        next_station_number_by_itinerary.get(itinerary_number, 1),
+        station_number + 1,
+    )
+    for candidate in (station_name, raw_text):
+        key = _station_text_key(candidate)
+        if key:
+            station_aliases.setdefault((itinerary_number, key), station)
+
+
+def _resolve_station_context(
+    value: Any,
+    itinerary_number: int,
+    *,
+    last_station_by_itinerary: dict[int, tuple[int, str]],
+    station_aliases: dict[tuple[int, str], tuple[int, str]],
+    next_station_number_by_itinerary: dict[int, int],
+) -> tuple[tuple[int, str] | None, str]:
+    raw_text = _clean_text(value)
+    parsed_station = _parse_station(value)
+    if parsed_station:
+        alias_key = _station_text_key(parsed_station[1] or raw_text)
+        station = station_aliases.get((itinerary_number, alias_key)) if alias_key else None
+        if station is None:
+            station = parsed_station
+            _register_station_alias(
+                itinerary_number,
+                station,
+                station_aliases=station_aliases,
+                next_station_number_by_itinerary=next_station_number_by_itinerary,
+                raw_text=raw_text,
+            )
+        last_station_by_itinerary[itinerary_number] = station
+        return station, "parsed"
+    if raw_text:
+        alias_key = _station_text_key(raw_text)
+        station = station_aliases.get((itinerary_number, alias_key)) if alias_key else None
+        if station is None:
+            station_number = next_station_number_by_itinerary.get(itinerary_number, 1)
+            station = (station_number, raw_text)
+            _register_station_alias(
+                itinerary_number,
+                station,
+                station_aliases=station_aliases,
+                next_station_number_by_itinerary=next_station_number_by_itinerary,
+                raw_text=raw_text,
+            )
+        last_station_by_itinerary[itinerary_number] = station
+        return station, "text"
+    inherited_station = last_station_by_itinerary.get(itinerary_number)
+    if inherited_station:
+        return inherited_station, "inherited"
+    return None, "missing"
 
 
 def _parse_station(value: Any) -> tuple[int, str] | None:

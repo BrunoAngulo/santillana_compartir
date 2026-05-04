@@ -1385,7 +1385,7 @@ def _render_sumun_template_view() -> None:
         inherited_rows = sumun_summary.get("nonnumber_station_rows") or []
         if inherited_rows:
             st.warning(
-                "Algunas filas tenian estacion no numerada; se heredaron de la estacion anterior: "
+                "Algunas filas no tenian una estacion identificable y se omitieron: "
                 + ", ".join(map(str, inherited_rows[:20]))
             )
 
@@ -1859,7 +1859,7 @@ if menu_option != "Richmond Studio":
             inherited_rows = sumun_summary.get("nonnumber_station_rows") or []
             if inherited_rows:
                 st.warning(
-                    "Algunas filas tenian estacion no numerada; se heredaron de la estacion anterior: "
+                    "Algunas filas no tenian una estacion identificable y se omitieron: "
                     + ", ".join(map(str, inherited_rows[:20]))
                 )
 

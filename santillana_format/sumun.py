@@ -127,6 +127,12 @@ class SumunSheetInspection:
         return asdict(self)
 
 
+@dataclass(frozen=True)
+class SheetScanStats:
+    estimated_rows: int
+    missing_station_rows: tuple[int, ...]
+
+
 def inspect_sumun_workbook_sheets(excel_bytes: bytes) -> list[SumunSheetInspection]:
     workbook = load_workbook(BytesIO(excel_bytes), data_only=False)
     result: list[SumunSheetInspection] = []
@@ -144,8 +150,9 @@ def inspect_sumun_workbook_sheets(excel_bytes: bytes) -> list[SumunSheetInspecti
             continue
         values = _fill_merged_values(ws)
         layout = _detect_matrix_layout(ws.title, values)
-        estimated_rows = _estimate_sheet_rows(values, layout) if layout else 0
-        reason = _inspection_reason(values, layout, estimated_rows)
+        scan_stats = _scan_sheet_rows(values, layout) if layout else SheetScanStats(0, ())
+        estimated_rows = scan_stats.estimated_rows
+        reason = _inspection_reason(layout, scan_stats)
         result.append(
             SumunSheetInspection(
                 index=index,
@@ -211,7 +218,7 @@ def generate_sumun_template_from_excel(
             for item in inspected[:8]
         )
         raise ValueError(
-            "No se encontraron hojas con formato de matriz SUMUN ni microhabilidades para cargar. "
+            "No se pudieron generar filas de la plantilla SUMUN. "
             f"Revision: {detail or 'sin hojas seleccionadas'}"
         )
 
@@ -353,7 +360,7 @@ def _build_output_rows(
                         grade,
                         level,
                         None,
-                        itinerary_number,
+                        None,
                         itinerary_name,
                         competence,
                         macro_ids[macro],
@@ -433,13 +440,22 @@ def _detect_matrix_layout(sheet_name: str, values: list[list[Any]]) -> MatrixLay
 
 
 def _inspection_reason(
-    values: list[list[Any]],
     layout: MatrixLayout | None,
-    estimated_rows: int,
+    scan_stats: SheetScanStats,
 ) -> str:
     if layout is None:
         return "No se reconocieron encabezados de matriz o columnas A:L con itinerarios."
-    if estimated_rows <= 0:
+    if scan_stats.estimated_rows <= 0 and scan_stats.missing_station_rows:
+        rows = ", ".join(str(row) for row in scan_stats.missing_station_rows[:3])
+        if len(scan_stats.missing_station_rows) > 3:
+            rows = f"{rows}, ..."
+        return (
+            "Se reconocio la estructura y microhabilidades, pero no se encontraron "
+            "estaciones validas para generar filas. "
+            "Revisa la columna ESTACION; formatos admitidos: 1..., E1..., Estacion 1... "
+            f"(primeras filas: {rows})."
+        )
+    if scan_stats.estimated_rows <= 0:
         return (
             "Se reconocio la estructura, pero no se encontraron microhabilidades "
             "en RECORDAR/COMPRENDER/APLICAR/ANALIZAR/EVALUAR/CREAR."
@@ -447,30 +463,50 @@ def _inspection_reason(
     process_list = ", ".join(layout.process_cols.keys())
     return (
         f"Matriz detectada. Encabezado fila {layout.header_row}; "
-        f"procesos: {process_list}; filas estimadas: {estimated_rows}."
+        f"procesos: {process_list}; filas estimadas: {scan_stats.estimated_rows}."
     )
 
 
 def _estimate_sheet_rows(values: list[list[Any]], layout: MatrixLayout | None) -> int:
+    return _scan_sheet_rows(values, layout).estimated_rows
+
+
+def _scan_sheet_rows(values: list[list[Any]], layout: MatrixLayout | None) -> SheetScanStats:
     if layout is None:
-        return 0
+        return SheetScanStats(0, ())
     estimated = 0
+    missing_station_rows: list[int] = []
+    last_station_by_itinerary: dict[int, tuple[int, str]] = {}
     sheet_itinerary = _infer_sheet_itinerary_context(values, layout, layout.sheet_name)
     for row_number in range(layout.data_start_row, len(values) + 1):
         row = values[row_number - 1]
         cell_itinerary = _parse_itinerary(_cell(row, layout.itinerary_col))
-        if not _merge_itinerary_context(cell_itinerary, sheet_itinerary):
+        itinerary = _merge_itinerary_context(cell_itinerary, sheet_itinerary)
+        if not itinerary:
             continue
+        itinerary_number, _ = itinerary
         competence = _clean_text(_cell(row, layout.competence_col))
         macro = _clean_text(_cell(row, layout.macro_col), strip_bullet=True)
         micro = _clean_text(_cell(row, layout.micro_col), strip_bullet=True)
         if not competence or not macro or not micro:
             continue
-        estimated += sum(
-            len(_split_specific_skills(_cell(row, col)))
-            for col in layout.process_cols.values()
+        process_count = sum(
+            len(_split_specific_skills(_cell(row, col))) for col in layout.process_cols.values()
         )
-    return estimated
+        if not process_count:
+            continue
+
+        parsed_station = _parse_station(_cell(row, layout.station_col))
+        station_context = parsed_station or last_station_by_itinerary.get(itinerary_number)
+        if parsed_station:
+            last_station_by_itinerary[itinerary_number] = parsed_station
+        elif _cell(row, layout.station_col) is not None:
+            missing_station_rows.append(row_number)
+        if not station_context:
+            continue
+
+        estimated += process_count
+    return SheetScanStats(estimated, tuple(missing_station_rows))
 
 
 def _find_context_columns(header_values: list[Any]) -> dict[str, int] | None:
@@ -760,7 +796,13 @@ def _parse_station(value: Any) -> tuple[int, str] | None:
     text = _clean_text(value)
     if not text:
         return None
-    match = re.match(r"(\d+)\s*\.?\s*(.*)", text)
+    match = re.match(
+        r"^(?:E|ESTACI(?:O|Ó)N)\s*[:\-]?\s*0*(\d+)\s*[\.\-:]?\s*(.*)$",
+        text,
+        flags=re.I,
+    )
+    if not match:
+        match = re.match(r"^0*(\d+)\s*[\.\-:]?\s*(.*)$", text)
     if not match:
         return None
     return int(match.group(1)), match.group(2).strip()

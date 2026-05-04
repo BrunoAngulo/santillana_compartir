@@ -81,6 +81,9 @@ streamlit run app.py
 - Jira Focus Web:
   - OAuth con Jira Cloud.
   - Worklogs, timeline, dashboard y reportes.
+- SUMUN:
+  - Convertir matrices SUMUN a plantilla plana de carga.
+  - Documentacion tecnica: `docs/SUMUN.md`.
 
 ## Configuracion
 

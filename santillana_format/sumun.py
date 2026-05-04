@@ -723,8 +723,42 @@ def _split_specific_skills(value: Any) -> list[str]:
     text = _clean_text(value)
     if not text:
         return []
-    parts = re.split(r"\n\s*\n+", text)
-    return [part.strip(" \t\n\r-\u2022") for part in parts if part.strip(" \t\n\r-\u2022")]
+    parts = [part.strip() for part in re.split(r"\n\s*\n+", text) if part.strip()]
+    if len(parts) > 1:
+        return [_normalize_specific_skill_part(part) for part in parts if _normalize_specific_skill_part(part)]
+
+    single_block = parts[0] if parts else text
+    line_parts = _split_specific_skills_by_marked_lines(single_block)
+    if line_parts:
+        return line_parts
+
+    normalized = _normalize_specific_skill_part(single_block)
+    return [normalized] if normalized else []
+
+
+def _normalize_specific_skill_part(value: str) -> str:
+    text = _clean_text(value)
+    if not text:
+        return ""
+    text = re.sub(r"^\s*(?:[-\u2022*]+|\d+[\.\)]|[A-Za-z][\.\)])\s*", "", text).strip()
+    text = re.sub(r"\n+", " ", text)
+    text = re.sub(r"[ \t]+", " ", text)
+    return text.strip(" \t\n\r-\u2022*")
+
+
+def _split_specific_skills_by_marked_lines(text: str) -> list[str]:
+    lines = [line.strip() for line in str(text).splitlines() if line.strip()]
+    if len(lines) < 2:
+        return []
+    marker_pattern = re.compile(r"^(?:[-\u2022*]+|\d+[\.\)]|[A-Za-z][\.\)])\s+")
+    if not all(marker_pattern.match(line) for line in lines):
+        return []
+    result: list[str] = []
+    for line in lines:
+        normalized = _normalize_specific_skill_part(line)
+        if normalized:
+            result.append(normalized)
+    return result
 
 
 def _parse_itinerary(value: Any) -> tuple[int, str] | None:

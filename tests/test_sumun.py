@@ -117,6 +117,47 @@ def _generated_rows(workbook_bytes: bytes) -> list[tuple]:
     return [tuple(row) for row in ws.iter_rows(min_row=2, values_only=True)]
 
 
+def _build_sumun_workbook_with_process_value(process_value: str) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "1-Ma4_Iti1"
+    ws.append(
+        [
+            "ITINERARIO",
+            "COMPETENCIA",
+            "MACROHABILIDAD",
+            "MICROHABILIDAD",
+            "ESTACIÓN",
+            "CONOCIMIENTOS",
+            "RECORDAR",
+            "COMPRENDER",
+            "APLICAR",
+            "ANALIZAR",
+            "EVALUAR",
+            "CREAR",
+        ]
+    )
+    ws.append(
+        [
+            "Itinerario 1. La célula",
+            "Competencia base",
+            "Macro base",
+            "Micro base",
+            "E1 - Estación 1",
+            "Texto: conocimiento base",
+            process_value,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ]
+    )
+    output = BytesIO()
+    wb.save(output)
+    return output.getvalue()
+
+
 class SumunStationParsingTests(unittest.TestCase):
     def test_generate_template_accepts_common_station_formats(self) -> None:
         for station_value in (
@@ -369,6 +410,22 @@ class SumunStationParsingTests(unittest.TestCase):
         self.assertEqual(summary.generated_rows, 2)
         self.assertEqual(rows[0][6], "La célula")
         self.assertEqual(rows[1][6], "La célula")
+
+    def test_specific_skills_split_bullets_and_numbered_lines(self) -> None:
+        cases = {
+            "• Skill 1\n• Skill 2": ["Skill 1", "Skill 2"],
+            "- Skill 1\n- Skill 2": ["Skill 1", "Skill 2"],
+            "1) Skill 1\n2) Skill 2": ["Skill 1", "Skill 2"],
+        }
+        for process_value, expected_skills in cases.items():
+            with self.subTest(process_value=process_value):
+                output_bytes, summary = generate_sumun_template_from_excel(
+                    _build_sumun_workbook_with_process_value(process_value),
+                    source_name="MA4.xlsx",
+                )
+                rows = _generated_rows(output_bytes)
+                self.assertEqual(summary.generated_rows, 2)
+                self.assertEqual([row[17] for row in rows], expected_skills)
 
 
 if __name__ == "__main__":

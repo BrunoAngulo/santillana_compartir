@@ -1370,6 +1370,9 @@ def _render_sumun_template_view() -> None:
             "Hojas", len(sumun_summary.get("processed_sheets") or [])
         )
         summary_cols[3].metric("Micro", int(sumun_summary.get("micro_count") or 0))
+        unique_micro_count = int(sumun_summary.get("unique_micro_count") or 0)
+        if unique_micro_count:
+            st.caption(f"Micro unicas: {unique_micro_count}")
 
         rows_by_sheet = sumun_summary.get("rows_by_sheet") or {}
         if rows_by_sheet:
@@ -1844,6 +1847,9 @@ if menu_option != "Richmond Studio":
             summary_cols[3].metric(
                 "Micro", int(sumun_summary.get("micro_count") or 0)
             )
+            unique_micro_count = int(sumun_summary.get("unique_micro_count") or 0)
+            if unique_micro_count:
+                st.caption(f"Micro unicas: {unique_micro_count}")
 
             rows_by_sheet = sumun_summary.get("rows_by_sheet") or {}
             if rows_by_sheet:

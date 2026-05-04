@@ -189,6 +189,8 @@ class SumunStationParsingTests(unittest.TestCase):
         rows = _generated_rows(output_bytes)
 
         self.assertEqual(summary.generated_rows, 2)
+        self.assertEqual(summary.micro_count, 2)
+        self.assertEqual(summary.unique_micro_count, 1)
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0][5], 1)
         self.assertEqual(rows[1][5], 1)

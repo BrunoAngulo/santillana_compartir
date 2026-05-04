@@ -392,6 +392,7 @@ Ese resumen incluye:
 - nombre de hoja de salida
 - numero total de filas
 - cantidad de macros unicas
+- cantidad de micros procesadas
 - cantidad de micros unicas
 - hojas procesadas
 - hojas omitidas

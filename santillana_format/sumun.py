@@ -107,6 +107,7 @@ class SumunTemplateSummary:
     generated_rows: int
     macro_count: int
     micro_count: int
+    unique_micro_count: int
     processed_sheets: list[str]
     skipped_sheets: list[str]
     rows_by_sheet: dict[str, int]
@@ -234,6 +235,7 @@ def generate_sumun_template_from_excel(
         generated_rows=len(rows),
         macro_count=build_stats["macro_count"],
         micro_count=build_stats["micro_count"],
+        unique_micro_count=build_stats["unique_micro_count"],
         processed_sheets=build_stats["processed_sheets"],
         skipped_sheets=build_stats["skipped_sheets"],
         rows_by_sheet=build_stats["rows_by_sheet"],
@@ -289,6 +291,7 @@ def _build_output_rows(
     skipped_sheets: list[str] = []
     rows_by_sheet: dict[str, int] = {}
     nonnumber_station_rows: list[str] = []
+    micro_row_count = 0
     selected_sheets = set(sheet_names or [])
 
     for ws in workbook.worksheets:
@@ -343,6 +346,7 @@ def _build_output_rows(
                 nonnumber_station_rows.append(f"{ws.title}!R{row_number}")
                 continue
 
+            micro_row_count += 1
             if macro not in macro_ids:
                 macro_ids[macro] = len(macro_ids) + 1
             if micro not in micro_ids:
@@ -393,7 +397,8 @@ def _build_output_rows(
 
     stats = {
         "macro_count": len(macro_ids),
-        "micro_count": len(micro_ids),
+        "micro_count": micro_row_count,
+        "unique_micro_count": len(micro_ids),
         "processed_sheets": processed_sheets,
         "skipped_sheets": skipped_sheets,
         "rows_by_sheet": rows_by_sheet,

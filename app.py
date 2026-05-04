@@ -5219,7 +5219,7 @@ def _detect_ingles_por_niveles_behavior(
     else:
         grade_options = _build_ingles_grade_catalog_options_for_participantes(
             niveles_data,
-            detected_grade_options=detected_grade_options,
+            detected_options=detected_grade_options,
         )
     if not english_classes:
         return {

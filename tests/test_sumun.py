@@ -268,6 +268,82 @@ class SumunStationParsingTests(unittest.TestCase):
         self.assertEqual(rows[0][13], "Primera estación")
         self.assertEqual(rows[1][13], "Primera estación")
 
+    def test_station_name_is_shared_when_numeric_and_descriptive_forms_mix(self) -> None:
+        cases = (
+            (1, "E1 - Primera estaciÃ³n"),
+            ("E1 - Primera estaciÃ³n", 1),
+        )
+        for first_station_value, second_station_value in cases:
+            with self.subTest(
+                first_station_value=first_station_value,
+                second_station_value=second_station_value,
+            ):
+                wb = Workbook()
+                ws = wb.active
+                ws.title = "1-Ma4_Iti1"
+                ws.append(
+                    [
+                        "ITINERARIO",
+                        "COMPETENCIA",
+                        "MACROHABILIDAD",
+                        "MICROHABILIDAD",
+                        "ESTACIÃ“N",
+                        "CONOCIMIENTOS",
+                        "RECORDAR",
+                        "COMPRENDER",
+                        "APLICAR",
+                        "ANALIZAR",
+                        "EVALUAR",
+                        "CREAR",
+                    ]
+                )
+                ws.append(
+                    [
+                        "Itinerario 1. La cÃ©lula",
+                        "Competencia base",
+                        "Macro 1",
+                        "Micro 1",
+                        first_station_value,
+                        "Texto: conocimiento base",
+                        "Skill 1",
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    ]
+                )
+                ws.append(
+                    [
+                        "Itinerario 1. La cÃ©lula",
+                        "Competencia base",
+                        "Macro 2",
+                        "Micro 2",
+                        second_station_value,
+                        "Texto: conocimiento base",
+                        "Skill 2",
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    ]
+                )
+                output = BytesIO()
+                wb.save(output)
+
+                output_bytes, summary = generate_sumun_template_from_excel(
+                    output.getvalue(),
+                    source_name="MA4.xlsx",
+                )
+                rows = _generated_rows(output_bytes)
+
+                self.assertEqual(summary.generated_rows, 2)
+                self.assertEqual(rows[0][12], 1)
+                self.assertEqual(rows[1][12], 1)
+                self.assertEqual(rows[0][13], "Primera estaciÃ³n")
+                self.assertEqual(rows[1][13], "Primera estaciÃ³n")
+
     def test_itinerary_title_is_reused_when_numeric_and_descriptive_forms_mix(self) -> None:
         wb = Workbook()
         ws = wb.active

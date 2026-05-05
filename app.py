@@ -1202,7 +1202,7 @@ def _render_sumun_template_view() -> None:
             sheet_by_index = {item.index: item for item in sumun_sheets}
             detected_indices = [item.index for item in sumun_sheets if item.detected]
             if len(sumun_sheets) > 1:
-                sheet_options = ["__detected__", "__all__"] + [
+                sheet_options = ["__all__", "__detected__"] + [
                     str(item.index) for item in sumun_sheets
                 ]
 
@@ -1222,15 +1222,15 @@ def _render_sumun_template_view() -> None:
                 selected_sheet_option = st.selectbox(
                     "Indice de hoja a procesar",
                     options=sheet_options,
-                    index=0 if detected_indices else 2,
+                    index=0,
                     format_func=_format_sumun_sheet_option,
                     key="sumun_sheet_option",
-                    help="Usa Todas las hojas detectadas cuando el archivo trae varios hitos en hojas distintas.",
+                    help="Por defecto se procesan todas las hojas visibles del archivo. Si quieres, puedes limitarlo a las detectadas o a una hoja puntual.",
                 )
-                if selected_sheet_option == "__detected__":
-                    selected_indices = detected_indices
-                elif selected_sheet_option == "__all__":
+                if selected_sheet_option == "__all__":
                     selected_indices = [item.index for item in sumun_sheets]
+                elif selected_sheet_option == "__detected__":
+                    selected_indices = detected_indices
                 else:
                     selected_indices = [int(selected_sheet_option)]
             else:
@@ -1675,7 +1675,7 @@ if menu_option != "Richmond Studio":
                     item.index for item in sumun_sheets if item.detected
                 ]
                 if len(sumun_sheets) > 1:
-                    sheet_options = ["__detected__", "__all__"] + [
+                    sheet_options = ["__all__", "__detected__"] + [
                         str(item.index) for item in sumun_sheets
                     ]
 
@@ -1695,15 +1695,15 @@ if menu_option != "Richmond Studio":
                     selected_sheet_option = st.selectbox(
                         "Indice de hoja a procesar",
                         options=sheet_options,
-                        index=0 if detected_indices else 2,
+                        index=0,
                         format_func=_format_sumun_sheet_option,
                         key="sumun_sheet_option",
-                        help="Usa Todas las hojas detectadas cuando el archivo trae varios hitos en hojas distintas.",
+                        help="Por defecto se procesan todas las hojas visibles del archivo. Si quieres, puedes limitarlo a las detectadas o a una hoja puntual.",
                     )
-                    if selected_sheet_option == "__detected__":
-                        selected_indices = detected_indices
-                    elif selected_sheet_option == "__all__":
+                    if selected_sheet_option == "__all__":
                         selected_indices = [item.index for item in sumun_sheets]
+                    elif selected_sheet_option == "__detected__":
+                        selected_indices = detected_indices
                     else:
                         selected_indices = [int(selected_sheet_option)]
                 else:

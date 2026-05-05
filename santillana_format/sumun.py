@@ -286,6 +286,11 @@ def _build_output_rows(
     station_aliases: dict[tuple[int, str], tuple[int, str]] = {}
     next_station_number_by_itinerary: dict[int, int] = {}
     itinerary_titles = _collect_itinerary_titles(workbook, sheet_names=sheet_names)
+    station_titles = _collect_station_titles(
+        workbook,
+        sheet_names=sheet_names,
+        itinerary_titles=itinerary_titles,
+    )
     output_rows: list[list[Any]] = []
     processed_sheets: list[str] = []
     skipped_sheets: list[str] = []
@@ -327,6 +332,7 @@ def _build_output_rows(
                 last_station_by_itinerary=last_station_by_itinerary,
                 station_aliases=station_aliases,
                 next_station_number_by_itinerary=next_station_number_by_itinerary,
+                station_titles=station_titles,
             )
 
             competence = _clean_text(_cell(row, layout.competence_col))
@@ -876,6 +882,67 @@ def _collect_itinerary_titles(workbook, *, sheet_names: list[str] | None = None)
     return titles_by_number
 
 
+def _register_station_title(
+    titles_by_key: dict[tuple[int, int], str],
+    itinerary_number: int,
+    station_number: int,
+    title: str | None,
+) -> None:
+    clean = _clean_text(title)
+    if not clean:
+        return
+    key = (itinerary_number, station_number)
+    current = titles_by_key.get(key)
+    if current is None or len(clean) > len(current):
+        titles_by_key[key] = clean
+
+
+def _collect_station_titles(
+    workbook,
+    *,
+    sheet_names: list[str] | None = None,
+    itinerary_titles: dict[int, str] | None = None,
+) -> dict[tuple[int, int], str]:
+    titles_by_key: dict[tuple[int, int], str] = {}
+    selected_sheets = set(sheet_names or [])
+    resolved_itinerary_titles = itinerary_titles or _collect_itinerary_titles(
+        workbook,
+        sheet_names=sheet_names,
+    )
+    for ws in workbook.worksheets:
+        if selected_sheets and ws.title not in selected_sheets:
+            continue
+        if ws.sheet_state != "visible":
+            continue
+        values = _fill_merged_values(ws)
+        layout = _detect_matrix_layout(ws.title, values)
+        if layout is None:
+            continue
+
+        sheet_itinerary = _infer_sheet_itinerary_context(values, layout, ws.title)
+        for row_number in range(layout.data_start_row, len(values) + 1):
+            row = values[row_number - 1]
+            cell_itinerary = _parse_itinerary(_cell(row, layout.itinerary_col))
+            itinerary = _resolve_itinerary_context(
+                cell_itinerary,
+                sheet_itinerary,
+                itinerary_titles=resolved_itinerary_titles,
+            )
+            if not itinerary:
+                continue
+            parsed_station = _parse_station(_cell(row, layout.station_col))
+            if not parsed_station:
+                continue
+            station_number, station_name = parsed_station
+            _register_station_title(
+                titles_by_key,
+                itinerary[0],
+                station_number,
+                station_name,
+            )
+    return titles_by_key
+
+
 def _resolve_itinerary_context(
     cell_itinerary: tuple[int, str] | None,
     sheet_itinerary: tuple[int, str] | None,
@@ -1027,14 +1094,34 @@ def _resolve_station_context(
     last_station_by_itinerary: dict[int, tuple[int, str]],
     station_aliases: dict[tuple[int, str], tuple[int, str]],
     next_station_number_by_itinerary: dict[int, int],
+    station_titles: dict[tuple[int, int], str] | None = None,
 ) -> tuple[tuple[int, str] | None, str]:
     raw_text = _clean_text(value)
     parsed_station = _parse_station(value)
     if parsed_station:
-        alias_key = _station_text_key(parsed_station[1] or raw_text)
+        station_number, station_name = parsed_station
+        canonical_station_name = ""
+        if station_titles:
+            canonical_station_name = station_titles.get(
+                (itinerary_number, station_number),
+                "",
+            )
+        if canonical_station_name and not station_name:
+            station_name = canonical_station_name
+        parsed_station = (station_number, station_name)
+        alias_key = _station_text_key(station_name or raw_text)
         station = station_aliases.get((itinerary_number, alias_key)) if alias_key else None
         if station is None:
             station = parsed_station
+            _register_station_alias(
+                itinerary_number,
+                station,
+                station_aliases=station_aliases,
+                next_station_number_by_itinerary=next_station_number_by_itinerary,
+                raw_text=raw_text,
+            )
+        elif canonical_station_name and not station[1]:
+            station = (station[0], canonical_station_name)
             _register_station_alias(
                 itinerary_number,
                 station,

@@ -681,7 +681,7 @@ class SumunStationParsingTests(unittest.TestCase):
         self.assertEqual(summary.generated_rows, 1)
         self.assertEqual(
             rows[0][14],
-            "Medidas de centralizaciÃ³n para datos agrupados: media, moda y mediana."
+            "Medidas de centralizaciÃ³n para datos agrupados: media, moda y mediana. "
             "Medidas de localizaciÃ³n: terciles, cuartiles, quintiles y percentiles",
         )
 

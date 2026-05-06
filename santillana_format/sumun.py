@@ -780,12 +780,12 @@ def _knowledge_line_separator(current_text: str, next_line: str, *, had_blank_li
         return ""
     last_char = current[-1]
     if last_char in ".!?":
-        return ""
+        return " "
     if had_blank_line:
-        return "."
+        return ". "
     if last_char in ",;:(" or _starts_with_lowercase_letter(next_line):
         return " "
-    return "."
+    return ". "
 
 
 def _normalize_knowledge_text(value: Any) -> str | None:

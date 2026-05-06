@@ -579,5 +579,112 @@ class SumunStationParsingTests(unittest.TestCase):
         self.assertEqual(rows[0][17], "Skill 1")
 
 
+    def test_station_text_drops_prefix_before_colon_and_fixes_line_breaks(self) -> None:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Mat3_Iti1"
+        ws.append(
+            [
+                "ITINERARIO",
+                "COMPETENCIA",
+                "MACROHABILIDAD",
+                "MICROHABILIDAD",
+                "ESTACIÃ“N",
+                "CONOCIMIENTOS",
+                "RECORDAR",
+                "COMPRENDER",
+                "APLICAR",
+                "ANALIZAR",
+                "EVALUAR",
+                "CREAR",
+            ]
+        )
+        ws.append(
+            [
+                "Itinerario 1. La cÃ©lula",
+                "Competencia base",
+                "Macro base",
+                "Micro base",
+                "EstaciÃ³n 17:\nMedidas de\ndispersiÃ³n y distribuciones\nestadÃ­sticas",
+                "Texto: conocimiento base",
+                "Skill 1",
+                None,
+                None,
+                None,
+                None,
+                None,
+            ]
+        )
+        output = BytesIO()
+        wb.save(output)
+
+        output_bytes, summary = generate_sumun_template_from_excel(
+            output.getvalue(),
+            source_name="MA4.xlsx",
+        )
+        rows = _generated_rows(output_bytes)
+
+        self.assertEqual(summary.generated_rows, 1)
+        self.assertEqual(rows[0][12], 17)
+        self.assertEqual(
+            rows[0][13],
+            "Medidas de dispersiÃ³n y distribuciones estadÃ­sticas.",
+        )
+
+    def test_knowledge_text_starts_with_letter_and_joins_blocks_with_period(self) -> None:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Mat3_Iti1"
+        ws.append(
+            [
+                "ITINERARIO",
+                "COMPETENCIA",
+                "MACROHABILIDAD",
+                "MICROHABILIDAD",
+                "ESTACIÃ“N",
+                "CONOCIMIENTOS",
+                "RECORDAR",
+                "COMPRENDER",
+                "APLICAR",
+                "ANALIZAR",
+                "EVALUAR",
+                "CREAR",
+            ]
+        )
+        ws.append(
+            [
+                "Itinerario 1. La cÃ©lula",
+                "Competencia base",
+                "Macro base",
+                "Micro base",
+                "E1 - EstaciÃ³n 1",
+                ". 1 Medidas de centralizaciÃ³n para datos agrupados: media, moda y mediana\n"
+                "Medidas de localizaciÃ³n: terciles, cuartiles,\n"
+                "quintiles y percentiles",
+                "Skill 1",
+                None,
+                None,
+                None,
+                None,
+                None,
+            ]
+        )
+        output = BytesIO()
+        wb.save(output)
+
+        output_bytes, summary = generate_sumun_template_from_excel(
+            output.getvalue(),
+            source_name="MA4.xlsx",
+        )
+        rows = _generated_rows(output_bytes)
+
+        self.assertEqual(summary.generated_rows, 1)
+        self.assertEqual(
+            rows[0][14],
+            "Medidas de centralizaciÃ³n para datos agrupados: media, moda y mediana."
+            "Medidas de localizaciÃ³n: terciles, cuartiles, quintiles y percentiles",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

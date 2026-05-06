@@ -359,7 +359,7 @@ def _build_output_rows(
                 micro_ids[micro] = len(micro_ids) + 1
 
             station_number, station_name = station_context
-            knowledge = _clean_text(_cell(row, layout.knowledge_col))
+            knowledge = _normalize_knowledge_text(_cell(row, layout.knowledge_col))
 
             for process, skill in process_items:
                 specific_counters[(itinerary_number, station_number)] += 1
@@ -736,6 +736,87 @@ def _clean_text(value: Any, *, strip_bullet: bool = False) -> str | None:
     return text or None
 
 
+def _lstrip_to_first_letter(text: str) -> str:
+    for index, char in enumerate(str(text)):
+        if char.isalpha():
+            return str(text)[index:].strip()
+    return ""
+
+
+def _starts_with_lowercase_letter(text: str) -> bool:
+    for char in str(text).strip():
+        if char.isalpha():
+            return char.islower()
+    return False
+
+
+def _normalize_station_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    raw_text = str(value).replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not raw_text:
+        return None
+
+    candidate = raw_text
+    if ":" in candidate:
+        _prefix, suffix = candidate.split(":", 1)
+        if suffix.strip():
+            candidate = suffix
+
+    lines = [re.sub(r"[ \t]+", " ", line).strip() for line in candidate.split("\n") if line.strip()]
+    if not lines:
+        return None
+
+    text = " ".join(lines).strip()
+    text = re.sub(r"[ \t]+", " ", text)
+    if ("\n" in raw_text or ":" in raw_text) and text and not re.search(r"[.!?]$", text):
+        text += "."
+    return text or None
+
+
+def _knowledge_line_separator(current_text: str, next_line: str, *, had_blank_line: bool) -> str:
+    current = current_text.rstrip()
+    if not current:
+        return ""
+    last_char = current[-1]
+    if last_char in ".!?":
+        return ""
+    if had_blank_line:
+        return "."
+    if last_char in ",;:(" or _starts_with_lowercase_letter(next_line):
+        return " "
+    return "."
+
+
+def _normalize_knowledge_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    raw_text = str(value).replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not raw_text:
+        return None
+
+    result = ""
+    had_blank_line = False
+    for raw_line in raw_text.split("\n"):
+        line = re.sub(r"[ \t]+", " ", raw_line).strip()
+        if not line:
+            had_blank_line = True
+            continue
+        line = _lstrip_to_first_letter(line)
+        if not line:
+            continue
+        if not result:
+            result = line
+        else:
+            result += _knowledge_line_separator(result, line, had_blank_line=had_blank_line)
+            result += line
+        had_blank_line = False
+
+    result = re.sub(r"[ \t]+", " ", result).strip()
+    result = _lstrip_to_first_letter(result)
+    return result or None
+
+
 def _split_specific_skills(value: Any) -> list[str]:
     text = _clean_text(value)
     if not text:
@@ -888,7 +969,7 @@ def _register_station_title(
     station_number: int,
     title: str | None,
 ) -> None:
-    clean = _clean_text(title)
+    clean = _normalize_station_text(title)
     if not clean:
         return
     key = (itinerary_number, station_number)
@@ -1055,7 +1136,7 @@ def _title_from_knowledge(value: str | None) -> str:
 
 
 def _station_text_key(value: Any) -> str:
-    text = _clean_text(value)
+    text = _normalize_station_text(value)
     if not text:
         return ""
     parsed_station = _parse_station(text)
@@ -1096,10 +1177,11 @@ def _resolve_station_context(
     next_station_number_by_itinerary: dict[int, int],
     station_titles: dict[tuple[int, int], str] | None = None,
 ) -> tuple[tuple[int, str] | None, str]:
-    raw_text = _clean_text(value)
+    raw_text = _normalize_station_text(value)
     parsed_station = _parse_station(value)
     if parsed_station:
         station_number, station_name = parsed_station
+        station_name = _normalize_station_text(station_name) or ""
         canonical_station_name = ""
         if station_titles:
             canonical_station_name = station_titles.get(
@@ -1156,16 +1238,13 @@ def _parse_station(value: Any) -> tuple[int, str] | None:
     text = _clean_text(value)
     if not text:
         return None
-    match = re.match(
-        r"^(?:E|ESTACI(?:O|Ó)N)\s*[:\-]?\s*0*(\d+)\s*[\.\-:]?\s*(.*)$",
-        text,
-        flags=re.I,
-    )
+    normalized = _strip_accents(text).upper()
+    match = re.match(r"^(?:E|ESTACI.*?N)\s*[:\-]?\s*0*(\d+)\s*[\.\-:]?\s*", normalized)
     if not match:
-        match = re.match(r"^0*(\d+)\s*[\.\-:]?\s*(.*)$", text)
+        match = re.match(r"^0*(\d+)\s*[\.\-:]?\s*", normalized)
     if not match:
         return None
-    return int(match.group(1)), match.group(2).strip()
+    return int(match.group(1)), text[match.end() :].strip()
 
 
 def _infer_course_code_and_grade(

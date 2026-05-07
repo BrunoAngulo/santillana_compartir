@@ -243,6 +243,8 @@ Regla actual:
 - separa por lineas numeradas
 - si una celda trae varias lineas simples y cada linea parece una habilidad independiente, tambien las separa
 
+- si dos filas distintas producen exactamente la misma combinacion de contexto, proceso y microhabilidad especifica, solo se conserva una salida
+
 ## Como ordena las filas
 
 El orden final sale de estas reglas:

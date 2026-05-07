@@ -512,6 +512,81 @@ class SumunStationParsingTests(unittest.TestCase):
                 self.assertEqual(summary.generated_rows, 2)
                 self.assertEqual([row[17] for row in rows], expected_skills)
 
+    def test_duplicate_specific_skill_rows_are_deduplicated(self) -> None:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Mat3_Iti1"
+        ws.append(
+            [
+                "ITINERARIO",
+                "COMPETENCIA",
+                "MACROHABILIDAD",
+                "MICROHABILIDAD",
+                "ESTACION",
+                "CONOCIMIENTOS",
+                "RECORDAR",
+                "COMPRENDER",
+                "APLICAR",
+                "ANALIZAR",
+                "EVALUAR",
+                "CREAR",
+            ]
+        )
+        ws.append(
+            [
+                "Itinerario 1. La celula",
+                "Competencia base",
+                "Macro base",
+                "Micro base",
+                "E1 - Estacion 1",
+                "Texto: conocimiento base",
+                "Ubica informacion literal",
+                None,
+                None,
+                None,
+                None,
+                None,
+            ]
+        )
+        duplicate_row = [
+            "Itinerario 1. La celula",
+            "Competencia base",
+            "Macro base",
+            "Micro base",
+            "E1 - Estacion 1",
+            "Texto: conocimiento base",
+            None,
+            "Describir informacion explicita en distintas partes del texto.",
+            None,
+            None,
+            None,
+            None,
+        ]
+        ws.append(duplicate_row)
+        ws.append(list(duplicate_row))
+        output = BytesIO()
+        wb.save(output)
+
+        output_bytes, summary = generate_sumun_template_from_excel(
+            output.getvalue(),
+            source_name="MA4.xlsx",
+        )
+        rows = _generated_rows(output_bytes)
+
+        self.assertEqual(summary.generated_rows, 2)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual([row[16] for row in rows], [1, 2])
+        self.assertEqual(
+            [row[17] for row in rows],
+            [
+                "Ubica informacion literal",
+                "Describir informacion explicita en distintas partes del texto.",
+            ],
+        )
+        self.assertEqual([row[18] for row in rows], ["RECORDAR", "COMPRENDER"])
+        self.assertTrue(str(rows[0][0]).endswith("_ME01"))
+        self.assertTrue(str(rows[1][0]).endswith("_ME02"))
+
     def test_two_row_header_layout_is_detected(self) -> None:
         wb = Workbook()
         ws = wb.active

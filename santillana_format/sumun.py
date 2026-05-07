@@ -291,6 +291,7 @@ def _build_output_rows(
         sheet_names=sheet_names,
         itinerary_titles=itinerary_titles,
     )
+    seen_specific_rows: set[tuple[Any, ...]] = set()
     output_rows: list[list[Any]] = []
     processed_sheets: list[str] = []
     skipped_sheets: list[str] = []
@@ -362,6 +363,27 @@ def _build_output_rows(
             knowledge = _normalize_knowledge_text(_cell(row, layout.knowledge_col))
 
             for process, skill in process_items:
+                dedupe_key = _specific_skill_output_key(
+                    area=area,
+                    grade=grade,
+                    level=level,
+                    itinerary_number=itinerary_number,
+                    itinerary_name=itinerary_display_name,
+                    competence=competence,
+                    macro_id=macro_ids[macro],
+                    macro=macro,
+                    micro_id=micro_ids[micro],
+                    micro=micro,
+                    station_number=station_number,
+                    station_name=station_name,
+                    knowledge=knowledge,
+                    skill=skill,
+                    process=process,
+                )
+                if dedupe_key in seen_specific_rows:
+                    continue
+                seen_specific_rows.add(dedupe_key)
+
                 specific_counters[(itinerary_number, station_number)] += 1
                 specific_number = specific_counters[(itinerary_number, station_number)]
                 output_id = (
@@ -411,6 +433,43 @@ def _build_output_rows(
         "nonnumber_station_rows": nonnumber_station_rows,
     }
     return output_rows, stats
+
+
+def _specific_skill_output_key(
+    *,
+    area: str,
+    grade: int,
+    level: str,
+    itinerary_number: int,
+    itinerary_name: str,
+    competence: str,
+    macro_id: int,
+    macro: str,
+    micro_id: int,
+    micro: str,
+    station_number: int,
+    station_name: str,
+    knowledge: str | None,
+    skill: str,
+    process: str,
+) -> tuple[Any, ...]:
+    return (
+        area,
+        grade,
+        level,
+        itinerary_number,
+        itinerary_name,
+        competence,
+        macro_id,
+        macro,
+        micro_id,
+        micro,
+        station_number,
+        station_name,
+        knowledge,
+        skill,
+        process,
+    )
 
 
 def _detect_matrix_layout(sheet_name: str, values: list[list[Any]]) -> MatrixLayout | None:

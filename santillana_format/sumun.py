@@ -135,6 +135,7 @@ class SumunSheetInspection:
 class SheetScanStats:
     estimated_rows: int
     missing_station_rows: tuple[int, ...]
+    empty_field_rows: tuple[tuple[int, tuple[str, ...]], ...] = ()
 
 
 def inspect_sumun_workbook_sheets(excel_bytes: bytes) -> list[SumunSheetInspection]:
@@ -517,6 +518,7 @@ def _inspection_reason(
     layout: MatrixLayout | None,
     scan_stats: SheetScanStats,
 ) -> str:
+    empty_fields_detail = _format_empty_field_detail(scan_stats.empty_field_rows)
     if layout is None:
         return "No se reconocieron encabezados de matriz o columnas A:L con itinerarios."
     if scan_stats.estimated_rows <= 0 and scan_stats.missing_station_rows:
@@ -530,20 +532,51 @@ def _inspection_reason(
             "las filas sin dato util no se pueden procesar "
             f"(primeras filas: {rows})."
         )
+        if empty_fields_detail:
+            reason = f"{reason} {empty_fields_detail}"
+        return reason
     if scan_stats.estimated_rows <= 0:
-        return (
+        reason = (
             "Se reconocio la estructura, pero no se encontraron microhabilidades "
             "en RECORDAR/COMPRENDER/APLICAR/ANALIZAR/EVALUAR/CREAR."
         )
+        if empty_fields_detail:
+            reason = f"{reason} {empty_fields_detail}"
+        return reason
     process_list = ", ".join(layout.process_cols.keys())
-    return (
+    reason = (
         f"Matriz detectada. Encabezado fila {layout.header_row}; "
         f"procesos: {process_list}; filas estimadas: {scan_stats.estimated_rows}."
     )
+    if empty_fields_detail:
+        reason = f"{reason} {empty_fields_detail}"
+    return reason
 
 
 def _estimate_sheet_rows(values: list[list[Any]], layout: MatrixLayout | None) -> int:
     return _scan_sheet_rows(values, layout).estimated_rows
+
+
+def _format_empty_field_detail(
+    empty_field_rows: tuple[tuple[int, tuple[str, ...]], ...],
+    *,
+    limit: int = 5,
+) -> str:
+    if not empty_field_rows:
+        return ""
+    parts: list[str] = []
+    for row_number, fields in empty_field_rows[:limit]:
+        field_txt = ", ".join(str(field) for field in fields if str(field).strip())
+        if not field_txt:
+            continue
+        parts.append(f"R{row_number}: {field_txt}")
+    if not parts:
+        return ""
+    extra = len(empty_field_rows) - len(parts)
+    detail = "Campos vacios detectados: " + "; ".join(parts)
+    if extra > 0:
+        detail += f"; +{extra} filas mas"
+    return detail + "."
 
 
 def _scan_sheet_rows(
@@ -556,6 +589,7 @@ def _scan_sheet_rows(
         return SheetScanStats(0, ())
     estimated = 0
     missing_station_rows: list[int] = []
+    empty_field_rows: list[tuple[int, tuple[str, ...]]] = []
     last_station_by_itinerary: dict[int, tuple[int, str]] = {}
     station_aliases: dict[tuple[int, str], tuple[int, str]] = {}
     next_station_number_by_itinerary: dict[int, int] = {}
@@ -563,6 +597,8 @@ def _scan_sheet_rows(
     sheet_itinerary = _infer_sheet_itinerary_context(values, layout, layout.sheet_name)
     for row_number in range(layout.data_start_row, len(values) + 1):
         row = values[row_number - 1]
+        if not _row_has_source_content(row, layout, merged_sources, row_number):
+            continue
         cell_itinerary = _parse_itinerary(_cell(row, layout.itinerary_col))
         itinerary = _resolve_itinerary_context(
             cell_itinerary,
@@ -575,6 +611,8 @@ def _scan_sheet_rows(
         competence = _clean_text(_cell(row, layout.competence_col))
         macro = _clean_text(_cell(row, layout.macro_col), strip_bullet=True)
         micro = _clean_text(_cell(row, layout.micro_col), strip_bullet=True)
+        station_value = _clean_text(_cell(row, layout.station_col))
+        knowledge = _normalize_knowledge_text(_cell(row, layout.knowledge_col))
         station_context, _station_source = _resolve_station_context(
             _cell(row, layout.station_col),
             itinerary_number,
@@ -582,8 +620,6 @@ def _scan_sheet_rows(
             station_aliases=station_aliases,
             next_station_number_by_itinerary=next_station_number_by_itinerary,
         )
-        if not competence or not macro or not micro:
-            continue
         process_count = sum(
             1
             for col in layout.process_cols.values()
@@ -595,6 +631,23 @@ def _scan_sheet_rows(
             )
             is not None
         )
+        missing_fields: list[str] = []
+        if not competence:
+            missing_fields.append("COMPETENCIA")
+        if not macro:
+            missing_fields.append("MACROHABILIDAD")
+        if not micro:
+            missing_fields.append("MICROHABILIDAD")
+        if not station_value:
+            missing_fields.append("ESTACION")
+        if not knowledge:
+            missing_fields.append("CONOCIMIENTOS")
+        if not process_count:
+            missing_fields.append("MICROHABILIDAD ESPECIFICA")
+        if missing_fields:
+            empty_field_rows.append((row_number, tuple(missing_fields)))
+        if not competence or not macro or not micro:
+            continue
         if not process_count:
             continue
 
@@ -603,7 +656,11 @@ def _scan_sheet_rows(
             continue
 
         estimated += process_count
-    return SheetScanStats(estimated, tuple(missing_station_rows))
+    return SheetScanStats(
+        estimated,
+        tuple(missing_station_rows),
+        tuple(empty_field_rows),
+    )
 
 
 def _find_context_columns(header_values: list[Any]) -> dict[str, int] | None:
@@ -644,6 +701,30 @@ def _find_context_columns(header_values: list[Any]) -> dict[str, int] | None:
     if all(context.values()):
         return {key: int(value) for key, value in context.items() if value is not None}
     return None
+
+
+def _row_has_source_content(
+    row: list[Any],
+    layout: MatrixLayout,
+    merged_sources: list[list[tuple[int, int]]] | None,
+    row_number: int,
+) -> bool:
+    relevant_cols = [
+        layout.itinerary_col,
+        layout.competence_col,
+        layout.macro_col,
+        layout.micro_col,
+        layout.station_col,
+        layout.knowledge_col,
+        *layout.process_cols.values(),
+    ]
+    for col in relevant_cols:
+        source = _cell_source(merged_sources, row_number, col)
+        if source is not None and source != (row_number, col):
+            continue
+        if _clean_text(_cell(row, col)) is not None:
+            return True
+    return False
 
 
 def _fallback_layout_from_data(sheet_name: str, values: list[list[Any]]) -> MatrixLayout | None:

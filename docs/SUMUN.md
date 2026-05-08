@@ -401,6 +401,9 @@ Ese resumen incluye:
 - detalle de filas generadas por conocimientos
 - filas donde la estacion fue heredada
 
+Ademas, el detalle por hoja reporta campos vacios detectados por fila cuando existen.
+Ejemplo: `R12: CONOCIMIENTOS, MICROHABILIDAD ESPECIFICA`.
+
 ## Errores y diagnostico
 
 Si no se generan filas, el sistema no falla con un error generico.

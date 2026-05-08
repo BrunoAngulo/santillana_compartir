@@ -1234,9 +1234,21 @@ def _render_sumun_template_view() -> None:
         rows_by_sheet = sumun_summary.get("rows_by_sheet") or {}
         if rows_by_sheet:
             st.markdown("**Hojas procesadas**")
+            sheet_by_name = {item.sheet_name: item for item in sumun_sheets}
             st.dataframe(
                 [
-                    {"Hoja": sheet_name, "Filas generadas": row_count}
+                    {
+                        "Hoja": sheet_name,
+                        "Filas generadas": row_count,
+                        "Detalle": str(
+                            (
+                                sheet_by_name.get(sheet_name).reason
+                                if sheet_by_name.get(sheet_name)
+                                else ""
+                            )
+                            or ""
+                        ),
+                    }
                     for sheet_name, row_count in rows_by_sheet.items()
                 ],
                 use_container_width=True,
@@ -1777,9 +1789,21 @@ if menu_option != "Richmond Studio":
             rows_by_sheet = sumun_summary.get("rows_by_sheet") or {}
             if rows_by_sheet:
                 st.markdown("**Hojas procesadas**")
+                sheet_by_name = {item.sheet_name: item for item in sumun_sheets}
                 st.dataframe(
                     [
-                        {"Hoja": sheet_name, "Filas generadas": row_count}
+                        {
+                            "Hoja": sheet_name,
+                            "Filas generadas": row_count,
+                            "Detalle": str(
+                                (
+                                    sheet_by_name.get(sheet_name).reason
+                                    if sheet_by_name.get(sheet_name)
+                                    else ""
+                                )
+                                or ""
+                            ),
+                        }
                         for sheet_name, row_count in rows_by_sheet.items()
                     ],
                     use_container_width=True,

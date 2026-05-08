@@ -181,6 +181,69 @@ class SumunStationParsingTests(unittest.TestCase):
         self.assertEqual(sheets[0].estimated_rows, 0)
         self.assertIn("faltan estaciones", sheets[0].reason)
 
+    def test_inspection_reports_empty_fields_in_detail(self) -> None:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Mat3_Iti1"
+        ws.append(
+            [
+                "ITINERARIO",
+                "COMPETENCIA",
+                "MACROHABILIDAD",
+                "MICROHABILIDAD",
+                "ESTACION",
+                "CONOCIMIENTOS",
+                "RECORDAR",
+                "COMPRENDER",
+                "APLICAR",
+                "ANALIZAR",
+                "EVALUAR",
+                "CREAR",
+            ]
+        )
+        ws.append(
+            [
+                "Itinerario 1. La celula",
+                "Competencia base",
+                "Macro base",
+                "Micro base",
+                "E1 - Estacion 1",
+                None,
+                "Skill 1",
+                None,
+                None,
+                None,
+                None,
+                None,
+            ]
+        )
+        ws.append(
+            [
+                "Itinerario 1. La celula",
+                None,
+                "Macro base",
+                "Micro base",
+                "E2 - Estacion 2",
+                "Texto: conocimiento base",
+                "Skill 2",
+                None,
+                None,
+                None,
+                None,
+                None,
+            ]
+        )
+        output = BytesIO()
+        wb.save(output)
+
+        sheets = inspect_sumun_workbook_sheets(output.getvalue())
+        self.assertEqual(len(sheets), 1)
+        self.assertTrue(sheets[0].detected)
+        self.assertEqual(sheets[0].estimated_rows, 1)
+        self.assertIn("Campos vacios detectados", sheets[0].reason)
+        self.assertIn("R2: CONOCIMIENTOS", sheets[0].reason)
+        self.assertIn("R3: COMPETENCIA", sheets[0].reason)
+
     def test_macro_and_micro_ids_are_reused_across_station_changes(self) -> None:
         output_bytes, summary = generate_sumun_template_from_excel(
             _build_sumun_workbook_with_repeated_skills(),

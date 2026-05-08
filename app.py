@@ -1226,6 +1226,10 @@ def _render_sumun_template_view() -> None:
         unique_micro_count = int(sumun_summary.get("unique_micro_count") or 0)
         if unique_micro_count:
             st.caption(f"Micro unicas: {unique_micro_count}")
+        st.caption(
+            "Cada celda con valor en RECORDAR/COMPRENDER/APLICAR/ANALIZAR/EVALUAR/CREAR genera una sola fila. "
+            "El texto interno de la celda no se divide."
+        )
 
         rows_by_sheet = sumun_summary.get("rows_by_sheet") or {}
         if rows_by_sheet:
@@ -1234,6 +1238,39 @@ def _render_sumun_template_view() -> None:
                 [
                     {"Hoja": sheet_name, "Filas generadas": row_count}
                     for sheet_name, row_count in rows_by_sheet.items()
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+        specific_rows_by_itinerary = sumun_summary.get("specific_rows_by_itinerary") or []
+        if specific_rows_by_itinerary:
+            st.markdown("**Microhabilidades Especificas Por Itinerario**")
+            st.dataframe(
+                [
+                    {
+                        "# Itinerario": int(item.get("itinerary_number") or 0),
+                        "Itinerario": str(item.get("itinerary") or ""),
+                        "Filas generadas": int(item.get("specific_rows") or 0),
+                    }
+                    for item in specific_rows_by_itinerary
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+        specific_rows_by_knowledge = sumun_summary.get("specific_rows_by_knowledge") or []
+        if specific_rows_by_knowledge:
+            st.markdown("**Microhabilidades Especificas Por Conocimientos**")
+            st.dataframe(
+                [
+                    {
+                        "# Itinerario": int(item.get("itinerary_number") or 0),
+                        "Itinerario": str(item.get("itinerary") or ""),
+                        "# Estacion": int(item.get("station_number") or 0),
+                        "Estacion": str(item.get("station") or ""),
+                        "Conocimientos": str(item.get("knowledge") or ""),
+                        "Filas generadas": int(item.get("specific_rows") or 0),
+                    }
+                    for item in specific_rows_by_knowledge
                 ],
                 use_container_width=True,
                 hide_index=True,
@@ -1732,6 +1769,10 @@ if menu_option != "Richmond Studio":
             unique_micro_count = int(sumun_summary.get("unique_micro_count") or 0)
             if unique_micro_count:
                 st.caption(f"Micro unicas: {unique_micro_count}")
+            st.caption(
+                "Cada celda con valor en RECORDAR/COMPRENDER/APLICAR/ANALIZAR/EVALUAR/CREAR genera una sola fila. "
+                "El texto interno de la celda no se divide."
+            )
 
             rows_by_sheet = sumun_summary.get("rows_by_sheet") or {}
             if rows_by_sheet:
@@ -1740,6 +1781,39 @@ if menu_option != "Richmond Studio":
                     [
                         {"Hoja": sheet_name, "Filas generadas": row_count}
                         for sheet_name, row_count in rows_by_sheet.items()
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            specific_rows_by_itinerary = sumun_summary.get("specific_rows_by_itinerary") or []
+            if specific_rows_by_itinerary:
+                st.markdown("**Microhabilidades Especificas Por Itinerario**")
+                st.dataframe(
+                    [
+                        {
+                            "# Itinerario": int(item.get("itinerary_number") or 0),
+                            "Itinerario": str(item.get("itinerary") or ""),
+                            "Filas generadas": int(item.get("specific_rows") or 0),
+                        }
+                        for item in specific_rows_by_itinerary
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+            specific_rows_by_knowledge = sumun_summary.get("specific_rows_by_knowledge") or []
+            if specific_rows_by_knowledge:
+                st.markdown("**Microhabilidades Especificas Por Conocimientos**")
+                st.dataframe(
+                    [
+                        {
+                            "# Itinerario": int(item.get("itinerary_number") or 0),
+                            "Itinerario": str(item.get("itinerary") or ""),
+                            "# Estacion": int(item.get("station_number") or 0),
+                            "Estacion": str(item.get("station") or ""),
+                            "Conocimientos": str(item.get("knowledge") or ""),
+                            "Filas generadas": int(item.get("specific_rows") or 0),
+                        }
+                        for item in specific_rows_by_knowledge
                     ],
                     use_container_width=True,
                     hide_index=True,

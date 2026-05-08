@@ -233,17 +233,14 @@ Si tienen bullets al inicio, se remueven.
 
 ### Microhabilidades especificas
 
-Cada celda de proceso cognitivo puede contener varias.
-Se separan con `_split_specific_skills(...)`.
+Cada celda de proceso cognitivo genera como maximo una fila.
+Se lee con `_specific_skill_cell_value(...)`.
 
 Regla actual:
 
-- separa por bloques en blanco
-- separa por lineas con viñetas o guiones
-- separa por lineas numeradas
-- si una celda trae varias lineas simples sin marcadores, las conserva como una sola microhabilidad especifica
-
-- si dos filas distintas producen exactamente la misma combinacion de contexto, proceso y microhabilidad especifica, solo se conserva una salida
+- si una celda tiene texto, genera una fila
+- el contenido interno de la celda se conserva en una sola microhabilidad especifica
+- los saltos de linea, vinetas o numeraciones no hacen que una celda se divida en varias filas
 
 ## Como ordena las filas
 
@@ -258,7 +255,7 @@ El orden final sale de estas reglas:
    - `ANALIZAR`
    - `EVALUAR`
    - `CREAR`
-4. Dentro de cada proceso, respeta el orden en que las microhabilidades aparecen separadas por bloques.
+4. Si una fila tiene varios procesos con valor, genera una fila por cada celda de proceso no vacia siguiendo ese orden fijo.
 
 ## Como genera los IDs y contadores
 
@@ -399,6 +396,8 @@ Ese resumen incluye:
 - hojas procesadas
 - hojas omitidas
 - filas generadas por hoja
+- detalle de filas generadas por itinerario
+- detalle de filas generadas por conocimientos
 - filas donde la estacion fue heredada
 
 ## Errores y diagnostico

@@ -111,6 +111,8 @@ class SumunTemplateSummary:
     processed_sheets: list[str]
     skipped_sheets: list[str]
     rows_by_sheet: dict[str, int]
+    specific_rows_by_itinerary: list[dict[str, Any]]
+    specific_rows_by_knowledge: list[dict[str, Any]]
     nonnumber_station_rows: list[str]
 
     def to_dict(self) -> dict[str, Any]:
@@ -239,6 +241,8 @@ def generate_sumun_template_from_excel(
         processed_sheets=build_stats["processed_sheets"],
         skipped_sheets=build_stats["skipped_sheets"],
         rows_by_sheet=build_stats["rows_by_sheet"],
+        specific_rows_by_itinerary=build_stats["specific_rows_by_itinerary"],
+        specific_rows_by_knowledge=build_stats["specific_rows_by_knowledge"],
         nonnumber_station_rows=build_stats["nonnumber_station_rows"],
     )
     return output_bytes, summary
@@ -291,11 +295,12 @@ def _build_output_rows(
         sheet_names=sheet_names,
         itinerary_titles=itinerary_titles,
     )
-    seen_specific_rows: set[tuple[Any, ...]] = set()
     output_rows: list[list[Any]] = []
     processed_sheets: list[str] = []
     skipped_sheets: list[str] = []
     rows_by_sheet: dict[str, int] = {}
+    specific_rows_by_itinerary: defaultdict[tuple[int, str], int] = defaultdict(int)
+    specific_rows_by_knowledge: defaultdict[tuple[int, str, int, str, str], int] = defaultdict(int)
     nonnumber_station_rows: list[str] = []
     micro_row_count = 0
     selected_sheets = set(sheet_names or [])
@@ -345,7 +350,8 @@ def _build_output_rows(
             process_items = [
                 (process, skill)
                 for process, col in layout.process_cols.items()
-                for skill in _split_specific_skills(_cell(row, col))
+                for skill in [_specific_skill_cell_value(_cell(row, col))]
+                if skill is not None
             ]
             if not process_items:
                 continue
@@ -360,30 +366,9 @@ def _build_output_rows(
                 micro_ids[micro] = len(micro_ids) + 1
 
             station_number, station_name = station_context
-            knowledge = _normalize_knowledge_text(_cell(row, layout.knowledge_col))
+            knowledge = _normalize_knowledge_text(_cell(row, layout.knowledge_col)) or ""
 
             for process, skill in process_items:
-                dedupe_key = _specific_skill_output_key(
-                    area=area,
-                    grade=grade,
-                    level=level,
-                    itinerary_number=itinerary_number,
-                    itinerary_name=itinerary_display_name,
-                    competence=competence,
-                    macro_id=macro_ids[macro],
-                    macro=macro,
-                    micro_id=micro_ids[micro],
-                    micro=micro,
-                    station_number=station_number,
-                    station_name=station_name,
-                    knowledge=knowledge,
-                    skill=skill,
-                    process=process,
-                )
-                if dedupe_key in seen_specific_rows:
-                    continue
-                seen_specific_rows.add(dedupe_key)
-
                 specific_counters[(itinerary_number, station_number)] += 1
                 specific_number = specific_counters[(itinerary_number, station_number)]
                 output_id = (
@@ -415,6 +400,16 @@ def _build_output_rows(
                         None,
                     ]
                 )
+                specific_rows_by_itinerary[(itinerary_number, itinerary_display_name)] += 1
+                specific_rows_by_knowledge[
+                    (
+                        itinerary_number,
+                        itinerary_display_name,
+                        station_number,
+                        station_name,
+                        knowledge,
+                    )
+                ] += 1
 
         generated_for_sheet = len(output_rows) - before_count
         if generated_for_sheet:
@@ -430,46 +425,34 @@ def _build_output_rows(
         "processed_sheets": processed_sheets,
         "skipped_sheets": skipped_sheets,
         "rows_by_sheet": rows_by_sheet,
+        "specific_rows_by_itinerary": [
+            {
+                "itinerary_number": itinerary_number,
+                "itinerary": itinerary_name,
+                "specific_rows": total_rows,
+            }
+            for (itinerary_number, itinerary_name), total_rows in specific_rows_by_itinerary.items()
+        ],
+        "specific_rows_by_knowledge": [
+            {
+                "itinerary_number": itinerary_number,
+                "itinerary": itinerary_name,
+                "station_number": station_number,
+                "station": station_name,
+                "knowledge": knowledge,
+                "specific_rows": total_rows,
+            }
+            for (
+                itinerary_number,
+                itinerary_name,
+                station_number,
+                station_name,
+                knowledge,
+            ), total_rows in specific_rows_by_knowledge.items()
+        ],
         "nonnumber_station_rows": nonnumber_station_rows,
     }
     return output_rows, stats
-
-
-def _specific_skill_output_key(
-    *,
-    area: str,
-    grade: int,
-    level: str,
-    itinerary_number: int,
-    itinerary_name: str,
-    competence: str,
-    macro_id: int,
-    macro: str,
-    micro_id: int,
-    micro: str,
-    station_number: int,
-    station_name: str,
-    knowledge: str | None,
-    skill: str,
-    process: str,
-) -> tuple[Any, ...]:
-    return (
-        area,
-        grade,
-        level,
-        itinerary_number,
-        itinerary_name,
-        competence,
-        macro_id,
-        macro,
-        micro_id,
-        micro,
-        station_number,
-        station_name,
-        knowledge,
-        skill,
-        process,
-    )
 
 
 def _detect_matrix_layout(sheet_name: str, values: list[list[Any]]) -> MatrixLayout | None:
@@ -586,7 +569,9 @@ def _scan_sheet_rows(values: list[list[Any]], layout: MatrixLayout | None) -> Sh
         if not competence or not macro or not micro:
             continue
         process_count = sum(
-            len(_split_specific_skills(_cell(row, col))) for col in layout.process_cols.values()
+            1
+            for col in layout.process_cols.values()
+            if _specific_skill_cell_value(_cell(row, col)) is not None
         )
         if not process_count:
             continue
@@ -876,63 +861,11 @@ def _normalize_knowledge_text(value: Any) -> str | None:
     return result or None
 
 
-def _split_specific_skills(value: Any) -> list[str]:
-    text = _clean_text(value)
-    if not text:
-        return []
-    parts = [part.strip() for part in re.split(r"\n\s*\n+", text) if part.strip()]
-    if len(parts) > 1:
-        return [_normalize_specific_skill_part(part) for part in parts if _normalize_specific_skill_part(part)]
-
-    single_block = parts[0] if parts else text
-    line_parts = _split_specific_skills_by_marked_lines(single_block)
-    if line_parts:
-        return line_parts
-
-    normalized = _normalize_specific_skill_part(single_block)
-    return [normalized] if normalized else []
-
-
-def _normalize_specific_skill_part(value: str) -> str:
-    text = _clean_text(value)
-    if not text:
-        return ""
-    text = re.sub(r"^\s*(?:[-\u2022*]+|\d+[\.\)]|[A-Za-z][\.\)])\s*", "", text).strip()
-    text = re.sub(r"\n+", " ", text)
-    text = re.sub(r"[ \t]+", " ", text)
-    return text.strip(" \t\n\r-\u2022*")
-
-
-def _split_specific_skills_by_marked_lines(text: str) -> list[str]:
-    lines = [line.strip() for line in str(text).splitlines() if line.strip()]
-    if len(lines) < 2:
-        return []
-    marker_pattern = re.compile(r"^(?:[-\u2022*]+|\d+[\.\)]|[A-Za-z][\.\)])\s+")
-    if not all(marker_pattern.match(line) for line in lines):
-        return []
-    result: list[str] = []
-    for line in lines:
-        normalized = _normalize_specific_skill_part(line)
-        if normalized:
-            result.append(normalized)
-    return result
-
-
-def _split_specific_skills_by_plain_lines(text: str) -> list[str]:
-    lines = [line.strip() for line in str(text).splitlines() if line.strip()]
-    if len(lines) < 2:
-        return []
-    starter_pattern = re.compile(r"^(?:[A-ZÁÉÍÓÚÑ¿¡0-9]|[a-záéíóúñ]+:)")
-    if not all(starter_pattern.match(line) for line in lines):
-        return []
-    if any(line[:1].islower() for line in lines[1:]):
-        return []
-    result: list[str] = []
-    for line in lines:
-        normalized = _normalize_specific_skill_part(line)
-        if normalized:
-            result.append(normalized)
-    return result
+def _specific_skill_cell_value(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).replace("\r\n", "\n").replace("\r", "\n").strip()
+    return text or None
 
 
 def _parse_itinerary(value: Any) -> tuple[int, str] | None:
@@ -1199,7 +1132,8 @@ def _station_text_key(value: Any) -> str:
     if parsed_station and parsed_station[1]:
         text = parsed_station[1]
     else:
-        text = re.sub(r"^\s*ESTACI(?:O|Ó)N\s*[:\-]?\s*", "", text, flags=re.I).strip()
+        text = _strip_accents(text)
+        text = re.sub(r"^\s*ESTACION\s*[:\-]?\s*", "", text, flags=re.I).strip()
     text = _strip_accents(text).upper()
     text = re.sub(r"[^A-Z0-9]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()

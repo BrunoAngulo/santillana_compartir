@@ -172,7 +172,7 @@ class SumunStationParsingTests(unittest.TestCase):
                     source_name="MA4.xlsx",
                 )
                 self.assertTrue(output_bytes)
-                self.assertEqual(summary.generated_rows, 2)
+                self.assertEqual(summary.generated_rows, 1)
 
     def test_inspection_reports_missing_station_value(self) -> None:
         sheets = inspect_sumun_workbook_sheets(_build_sumun_workbook_without_station())
@@ -495,21 +495,21 @@ class SumunStationParsingTests(unittest.TestCase):
         self.assertEqual(rows[0][5], 1)
         self.assertEqual(rows[1][5], 1)
 
-    def test_specific_skills_split_bullets_and_numbered_lines(self) -> None:
-        cases = {
-            "• Skill 1\n• Skill 2": ["Skill 1", "Skill 2"],
-            "- Skill 1\n- Skill 2": ["Skill 1", "Skill 2"],
-            "1) Skill 1\n2) Skill 2": ["Skill 1", "Skill 2"],
-        }
-        for process_value, expected_skills in cases.items():
+    def test_specific_skill_cell_value_is_kept_as_one_row(self) -> None:
+        for process_value in (
+            "Bullet 1\nBullet 2",
+            "- Skill 1\n- Skill 2",
+            "1) Skill 1\n2) Skill 2",
+        ):
             with self.subTest(process_value=process_value):
                 output_bytes, summary = generate_sumun_template_from_excel(
                     _build_sumun_workbook_with_process_value(process_value),
                     source_name="MA4.xlsx",
                 )
                 rows = _generated_rows(output_bytes)
-                self.assertEqual(summary.generated_rows, 2)
-                self.assertEqual([row[17] for row in rows], expected_skills)
+                self.assertEqual(summary.generated_rows, 1)
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0][17], process_value)
 
     def test_specific_skills_plain_multiline_cell_stays_as_one_row(self) -> None:
         output_bytes, summary = generate_sumun_template_from_excel(
@@ -520,9 +520,9 @@ class SumunStationParsingTests(unittest.TestCase):
 
         self.assertEqual(summary.generated_rows, 1)
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0][17], "Skill 1 Skill 2")
+        self.assertEqual(rows[0][17], "Skill 1\nSkill 2")
 
-    def test_duplicate_specific_skill_rows_are_deduplicated(self) -> None:
+    def test_summary_reports_specific_rows_by_itinerary_and_knowledge(self) -> None:
         wb = Workbook()
         ws = wb.active
         ws.title = "Mat3_Iti1"
@@ -558,22 +558,71 @@ class SumunStationParsingTests(unittest.TestCase):
                 None,
             ]
         )
-        duplicate_row = [
-            "Itinerario 1. La celula",
-            "Competencia base",
-            "Macro base",
-            "Micro base",
-            "E1 - Estacion 1",
-            "Texto: conocimiento base",
-            None,
-            "Describir informacion explicita en distintas partes del texto.",
-            None,
-            None,
-            None,
-            None,
-        ]
-        ws.append(duplicate_row)
-        ws.append(list(duplicate_row))
+        ws.append(
+            [
+                "Itinerario 1. La celula",
+                "Competencia base",
+                "Macro base",
+                "Micro base",
+                "E1 - Estacion 1",
+                "Texto: conocimiento base",
+                None,
+                "Describir informacion explicita en distintas partes del texto.",
+                None,
+                None,
+                None,
+                None,
+            ]
+        )
+        ws.append(
+            [
+                "Itinerario 1. La celula",
+                "Competencia base",
+                "Macro base",
+                "Micro base",
+                "E2 - Estacion 2",
+                "Texto: conocimiento complementario",
+                None,
+                "Relaciona informacion del texto con el contexto.",
+                None,
+                None,
+                None,
+                None,
+            ]
+        )
+        ws2 = wb.create_sheet("Mat3_Iti2")
+        ws2.append(
+            [
+                "ITINERARIO",
+                "COMPETENCIA",
+                "MACROHABILIDAD",
+                "MICROHABILIDAD",
+                "ESTACION",
+                "CONOCIMIENTOS",
+                "RECORDAR",
+                "COMPRENDER",
+                "APLICAR",
+                "ANALIZAR",
+                "EVALUAR",
+                "CREAR",
+            ]
+        )
+        ws2.append(
+            [
+                "Itinerario 2. Otra ruta",
+                "Competencia base",
+                "Macro base",
+                "Micro base",
+                "E1 - Estacion 1",
+                "Texto: conocimiento base",
+                "Recuerda una idea central",
+                None,
+                None,
+                None,
+                None,
+                None,
+            ]
+        )
         output = BytesIO()
         wb.save(output)
 
@@ -583,20 +632,52 @@ class SumunStationParsingTests(unittest.TestCase):
         )
         rows = _generated_rows(output_bytes)
 
-        self.assertEqual(summary.generated_rows, 2)
-        self.assertEqual(len(rows), 2)
-        self.assertEqual([row[16] for row in rows], [1, 2])
+        self.assertEqual(summary.generated_rows, 4)
+        self.assertEqual(len(rows), 4)
         self.assertEqual(
-            [row[17] for row in rows],
+            summary.specific_rows_by_itinerary,
             [
-                "Ubica informacion literal",
-                "Describir informacion explicita en distintas partes del texto.",
+                {
+                    "itinerary_number": 1,
+                    "itinerary": "La celula",
+                    "specific_rows": 3,
+                },
+                {
+                    "itinerary_number": 2,
+                    "itinerary": "Otra ruta",
+                    "specific_rows": 1,
+                },
             ],
         )
-        self.assertEqual([row[18] for row in rows], ["RECORDAR", "COMPRENDER"])
-        self.assertTrue(str(rows[0][0]).endswith("_ME01"))
-        self.assertTrue(str(rows[1][0]).endswith("_ME02"))
-
+        self.assertEqual(
+            summary.specific_rows_by_knowledge,
+            [
+                {
+                    "itinerary_number": 1,
+                    "itinerary": "La celula",
+                    "station_number": 1,
+                    "station": "Estacion 1",
+                    "knowledge": "Texto: conocimiento base",
+                    "specific_rows": 2,
+                },
+                {
+                    "itinerary_number": 1,
+                    "itinerary": "La celula",
+                    "station_number": 2,
+                    "station": "Estacion 2",
+                    "knowledge": "Texto: conocimiento complementario",
+                    "specific_rows": 1,
+                },
+                {
+                    "itinerary_number": 2,
+                    "itinerary": "Otra ruta",
+                    "station_number": 1,
+                    "station": "Estacion 1",
+                    "knowledge": "Texto: conocimiento base",
+                    "specific_rows": 1,
+                },
+            ],
+        )
     def test_two_row_header_layout_is_detected(self) -> None:
         wb = Workbook()
         ws = wb.active

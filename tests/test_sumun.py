@@ -240,6 +240,13 @@ class SumunStationParsingTests(unittest.TestCase):
         self.assertEqual(len(sheets), 1)
         self.assertTrue(sheets[0].detected)
         self.assertEqual(sheets[0].estimated_rows, 1)
+        self.assertEqual(
+            sheets[0].empty_field_rows,
+            (
+                (2, ("CONOCIMIENTOS",)),
+                (3, ("COMPETENCIA",)),
+            ),
+        )
         self.assertIn("Campos vacios detectados", sheets[0].reason)
         self.assertIn("R2: CONOCIMIENTOS", sheets[0].reason)
         self.assertIn("R3: COMPETENCIA", sheets[0].reason)

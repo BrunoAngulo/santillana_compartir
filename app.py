@@ -1230,6 +1230,28 @@ def _render_sumun_template_view() -> None:
             "Cada celda con valor en RECORDAR/COMPRENDER/APLICAR/ANALIZAR/EVALUAR/CREAR genera una sola fila. "
             "El texto interno de la celda no se divide."
         )
+        empty_field_detail_rows = [
+            {
+                "Hoja": str(item.sheet_name or ""),
+                "Fila": int(row_number or 0),
+                "Campos vacios": ", ".join(str(field) for field in fields if str(field).strip()),
+            }
+            for item in sumun_sheets
+            if not selected_sumun_sheet_names or item.sheet_name in selected_sumun_sheet_names
+            for row_number, fields in (item.empty_field_rows or ())
+            if fields
+        ]
+        if empty_field_detail_rows:
+            st.warning(
+                "Campos vacios detectados en {count} fila(s).".format(
+                    count=len(empty_field_detail_rows)
+                )
+            )
+            st.dataframe(
+                empty_field_detail_rows,
+                use_container_width=True,
+                hide_index=True,
+            )
 
         rows_by_sheet = sumun_summary.get("rows_by_sheet") or {}
         if rows_by_sheet:
@@ -1785,6 +1807,28 @@ if menu_option != "Richmond Studio":
                 "Cada celda con valor en RECORDAR/COMPRENDER/APLICAR/ANALIZAR/EVALUAR/CREAR genera una sola fila. "
                 "El texto interno de la celda no se divide."
             )
+            empty_field_detail_rows = [
+                {
+                    "Hoja": str(item.sheet_name or ""),
+                    "Fila": int(row_number or 0),
+                    "Campos vacios": ", ".join(str(field) for field in fields if str(field).strip()),
+                }
+                for item in sumun_sheets
+                if not selected_sumun_sheet_names or item.sheet_name in selected_sumun_sheet_names
+                for row_number, fields in (item.empty_field_rows or ())
+                if fields
+            ]
+            if empty_field_detail_rows:
+                st.warning(
+                    "Campos vacios detectados en {count} fila(s).".format(
+                        count=len(empty_field_detail_rows)
+                    )
+                )
+                st.dataframe(
+                    empty_field_detail_rows,
+                    use_container_width=True,
+                    hide_index=True,
+                )
 
             rows_by_sheet = sumun_summary.get("rows_by_sheet") or {}
             if rows_by_sheet:

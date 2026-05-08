@@ -126,6 +126,7 @@ class SumunSheetInspection:
     detected: bool
     estimated_rows: int
     reason: str = ""
+    empty_field_rows: tuple[tuple[int, tuple[str, ...]], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -150,6 +151,7 @@ def inspect_sumun_workbook_sheets(excel_bytes: bytes) -> list[SumunSheetInspecti
                     detected=False,
                     estimated_rows=0,
                     reason="Hoja oculta.",
+                    empty_field_rows=(),
                 )
             )
             continue
@@ -169,6 +171,7 @@ def inspect_sumun_workbook_sheets(excel_bytes: bytes) -> list[SumunSheetInspecti
                 detected=bool(layout and estimated_rows),
                 estimated_rows=estimated_rows,
                 reason=reason,
+                empty_field_rows=scan_stats.empty_field_rows,
             )
         )
     return result
@@ -525,7 +528,7 @@ def _inspection_reason(
         rows = ", ".join(str(row) for row in scan_stats.missing_station_rows[:3])
         if len(scan_stats.missing_station_rows) > 3:
             rows = f"{rows}, ..."
-        return (
+        reason = (
             "Se reconocio la estructura y microhabilidades, pero faltan estaciones "
             "identificables para generar filas. "
             "La columna ESTACION puede venir numerada o con nombre; "

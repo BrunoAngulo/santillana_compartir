@@ -500,7 +500,6 @@ class SumunStationParsingTests(unittest.TestCase):
             "• Skill 1\n• Skill 2": ["Skill 1", "Skill 2"],
             "- Skill 1\n- Skill 2": ["Skill 1", "Skill 2"],
             "1) Skill 1\n2) Skill 2": ["Skill 1", "Skill 2"],
-            "Skill 1\nSkill 2": ["Skill 1", "Skill 2"],
         }
         for process_value, expected_skills in cases.items():
             with self.subTest(process_value=process_value):
@@ -511,6 +510,17 @@ class SumunStationParsingTests(unittest.TestCase):
                 rows = _generated_rows(output_bytes)
                 self.assertEqual(summary.generated_rows, 2)
                 self.assertEqual([row[17] for row in rows], expected_skills)
+
+    def test_specific_skills_plain_multiline_cell_stays_as_one_row(self) -> None:
+        output_bytes, summary = generate_sumun_template_from_excel(
+            _build_sumun_workbook_with_process_value("Skill 1\nSkill 2"),
+            source_name="MA4.xlsx",
+        )
+        rows = _generated_rows(output_bytes)
+
+        self.assertEqual(summary.generated_rows, 1)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0][17], "Skill 1 Skill 2")
 
     def test_duplicate_specific_skill_rows_are_deduplicated(self) -> None:
         wb = Workbook()

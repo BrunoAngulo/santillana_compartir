@@ -888,9 +888,6 @@ def _split_specific_skills(value: Any) -> list[str]:
     line_parts = _split_specific_skills_by_marked_lines(single_block)
     if line_parts:
         return line_parts
-    plain_line_parts = _split_specific_skills_by_plain_lines(single_block)
-    if plain_line_parts:
-        return plain_line_parts
 
     normalized = _normalize_specific_skill_part(single_block)
     return [normalized] if normalized else []

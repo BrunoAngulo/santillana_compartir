@@ -241,7 +241,7 @@ Regla actual:
 - separa por bloques en blanco
 - separa por lineas con viñetas o guiones
 - separa por lineas numeradas
-- si una celda trae varias lineas simples y cada linea parece una habilidad independiente, tambien las separa
+- si una celda trae varias lineas simples sin marcadores, las conserva como una sola microhabilidad especifica
 
 - si dos filas distintas producen exactamente la misma combinacion de contexto, proceso y microhabilidad especifica, solo se conserva una salida
 
@@ -417,7 +417,7 @@ Mensajes comunes:
 
 - Solo acepta `.xlsx`.
 - La deteccion fallback asume estructura A:L.
-- La separacion de microhabilidades especificas depende de bloques en blanco, no de listas numeradas complejas.
+- La separacion de microhabilidades especificas depende de bloques en blanco o marcadores explicitos.
 - Si una estacion no tiene numero ni hay una estacion previa heredable, la fila se descarta.
 - El sistema no usa formulas calculadas por Excel; lee el contenido de la celda tal como `openpyxl` lo entrega.
 

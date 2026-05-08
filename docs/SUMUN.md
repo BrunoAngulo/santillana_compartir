@@ -241,6 +241,7 @@ Regla actual:
 - si una celda tiene texto, genera una fila
 - el contenido interno de la celda se conserva en una sola microhabilidad especifica
 - los saltos de linea, vinetas o numeraciones no hacen que una celda se divida en varias filas
+- si la celda de proceso esta combinada con otras filas, solo cuenta una vez desde la celda origen del merge
 
 ## Como ordena las filas
 

@@ -152,9 +152,13 @@ def inspect_sumun_workbook_sheets(excel_bytes: bytes) -> list[SumunSheetInspecti
                 )
             )
             continue
-        values = _fill_merged_values(ws)
+        values, merged_sources = _fill_merged_values_with_sources(ws)
         layout = _detect_matrix_layout(ws.title, values)
-        scan_stats = _scan_sheet_rows(values, layout) if layout else SheetScanStats(0, ())
+        scan_stats = (
+            _scan_sheet_rows(values, layout, merged_sources=merged_sources)
+            if layout
+            else SheetScanStats(0, ())
+        )
         estimated_rows = scan_stats.estimated_rows
         reason = _inspection_reason(layout, scan_stats)
         result.append(
@@ -311,7 +315,7 @@ def _build_output_rows(
         if ws.sheet_state != "visible":
             skipped_sheets.append(ws.title)
             continue
-        values = _fill_merged_values(ws)
+        values, merged_sources = _fill_merged_values_with_sources(ws)
         layout = _detect_matrix_layout(ws.title, values)
         if layout is None:
             skipped_sheets.append(ws.title)
@@ -350,7 +354,14 @@ def _build_output_rows(
             process_items = [
                 (process, skill)
                 for process, col in layout.process_cols.items()
-                for skill in [_specific_skill_cell_value(_cell(row, col))]
+                for skill in [
+                    _specific_skill_cell_value(
+                        _cell(row, col),
+                        source=_cell_source(merged_sources, row_number, col),
+                        row_number=row_number,
+                        col=col,
+                    )
+                ]
                 if skill is not None
             ]
             if not process_items:
@@ -535,7 +546,12 @@ def _estimate_sheet_rows(values: list[list[Any]], layout: MatrixLayout | None) -
     return _scan_sheet_rows(values, layout).estimated_rows
 
 
-def _scan_sheet_rows(values: list[list[Any]], layout: MatrixLayout | None) -> SheetScanStats:
+def _scan_sheet_rows(
+    values: list[list[Any]],
+    layout: MatrixLayout | None,
+    *,
+    merged_sources: list[list[tuple[int, int]]] | None = None,
+) -> SheetScanStats:
     if layout is None:
         return SheetScanStats(0, ())
     estimated = 0
@@ -571,7 +587,13 @@ def _scan_sheet_rows(values: list[list[Any]], layout: MatrixLayout | None) -> Sh
         process_count = sum(
             1
             for col in layout.process_cols.values()
-            if _specific_skill_cell_value(_cell(row, col)) is not None
+            if _specific_skill_cell_value(
+                _cell(row, col),
+                source=_cell_source(merged_sources, row_number, col),
+                row_number=row_number,
+                col=col,
+            )
+            is not None
         )
         if not process_count:
             continue
@@ -751,20 +773,44 @@ def _add_datos_sheet(wb) -> None:
         ws.column_dimensions[letter].width = width
 
 
-def _fill_merged_values(ws) -> list[list[Any]]:
+def _fill_merged_values_with_sources(ws) -> tuple[list[list[Any]], list[list[tuple[int, int]]]]:
     values = [
         [ws.cell(row, col).value for col in range(1, ws.max_column + 1)]
         for row in range(1, ws.max_row + 1)
     ]
+    sources = [
+        [(row, col) for col in range(1, ws.max_column + 1)]
+        for row in range(1, ws.max_row + 1)
+    ]
     for merged_range in ws.merged_cells.ranges:
         value = ws.cell(merged_range.min_row, merged_range.min_col).value
+        source = (merged_range.min_row, merged_range.min_col)
         for row in range(merged_range.min_row, merged_range.max_row + 1):
             for col in range(merged_range.min_col, merged_range.max_col + 1):
                 values[row - 1][col - 1] = value
+                sources[row - 1][col - 1] = source
+    return values, sources
+
+
+def _fill_merged_values(ws) -> list[list[Any]]:
+    values, _sources = _fill_merged_values_with_sources(ws)
     return values
 
 
 def _cell(row: list[Any], col: int) -> Any:
+    if col <= 0 or col > len(row):
+        return None
+    return row[col - 1]
+
+
+def _cell_source(
+    sources: list[list[tuple[int, int]]] | None,
+    row_number: int,
+    col: int,
+) -> tuple[int, int] | None:
+    if sources is None or row_number <= 0 or row_number > len(sources):
+        return None
+    row = sources[row_number - 1]
     if col <= 0 or col > len(row):
         return None
     return row[col - 1]
@@ -861,7 +907,20 @@ def _normalize_knowledge_text(value: Any) -> str | None:
     return result or None
 
 
-def _specific_skill_cell_value(value: Any) -> str | None:
+def _specific_skill_cell_value(
+    value: Any,
+    *,
+    source: tuple[int, int] | None = None,
+    row_number: int | None = None,
+    col: int | None = None,
+) -> str | None:
+    if (
+        source is not None
+        and row_number is not None
+        and col is not None
+        and source != (row_number, col)
+    ):
+        return None
     if value is None:
         return None
     text = str(value).replace("\r\n", "\n").replace("\r", "\n").strip()

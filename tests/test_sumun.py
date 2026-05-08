@@ -678,6 +678,68 @@ class SumunStationParsingTests(unittest.TestCase):
                 },
             ],
         )
+
+    def test_merged_specific_skill_cell_is_counted_once(self) -> None:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Mat3_Iti1"
+        ws.append(
+            [
+                "ITINERARIO",
+                "COMPETENCIA",
+                "MACROHABILIDAD",
+                "MICROHABILIDAD",
+                "ESTACION",
+                "CONOCIMIENTOS",
+                "RECORDAR",
+                "COMPRENDER",
+                "APLICAR",
+                "ANALIZAR",
+                "EVALUAR",
+                "CREAR",
+            ]
+        )
+        ws.append(
+            [
+                "Itinerario 1. La celula",
+                "Competencia base",
+                "Macro base",
+                "Micro base",
+                "E1 - Estacion 1",
+                "Texto: conocimiento base",
+                None,
+                "Describir informacion explicita en distintas partes del texto.",
+                None,
+                None,
+                None,
+                None,
+            ]
+        )
+        ws.append([None] * 12)
+        for col_letter in ("A", "B", "C", "D", "E", "F", "H"):
+            ws.merge_cells(f"{col_letter}2:{col_letter}3")
+
+        output = BytesIO()
+        wb.save(output)
+        workbook_bytes = output.getvalue()
+
+        sheets = inspect_sumun_workbook_sheets(workbook_bytes)
+        self.assertEqual(len(sheets), 1)
+        self.assertEqual(sheets[0].estimated_rows, 1)
+
+        output_bytes, summary = generate_sumun_template_from_excel(
+            workbook_bytes,
+            source_name="MA4.xlsx",
+        )
+        rows = _generated_rows(output_bytes)
+
+        self.assertEqual(summary.generated_rows, 1)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(
+            rows[0][17],
+            "Describir informacion explicita en distintas partes del texto.",
+        )
+
     def test_two_row_header_layout_is_detected(self) -> None:
         wb = Workbook()
         ws = wb.active

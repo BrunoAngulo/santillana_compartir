@@ -83,6 +83,20 @@ def _export_simple_excel(rows: List[Dict[str, object]], sheet_name: str = "data"
     return output.getvalue()
 
 
+def _export_multi_sheet_excel(sheets: Dict[str, List[Dict[str, object]]]) -> bytes:
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        for sheet_name, rows in sheets.items():
+            safe_sheet_name = str(sheet_name or "data").strip()[:31] or "data"
+            pd.DataFrame(rows or []).to_excel(
+                writer,
+                index=False,
+                sheet_name=safe_sheet_name,
+            )
+    output.seek(0)
+    return output.getvalue()
+
+
 def _show_dataframe(data: object, use_container_width: bool = True) -> None:
     if isinstance(data, pd.DataFrame):
         df_view = data.copy()
@@ -120,7 +134,13 @@ RICHMONDSTUDIO_USERS_URL = "https://richmondstudio.global/api/users"
 
 RICHMONDSTUDIO_GROUPS_URL = "https://richmondstudio.global/api/groups"
 
+RICHMONDSTUDIO_INSTITUTIONS_URL = "https://richmondstudio.global/api/institutions"
+
 RICHMONDSTUDIO_CURRENT_USER_URL = "https://richmondstudio.global/api/users/current"
+
+RICHMONDSTUDIO_CHANGE_INSTITUTION_URL = (
+    "https://richmondstudio.global/api/current_user/change_institution"
+)
 
 RICHMONDSTUDIO_BULK_USER_EDITION_URL = (
     "https://richmondstudio.global/api/administration/users/bulk/user-edition"
@@ -433,6 +453,106 @@ def _fetch_richmondstudio_groups(
             next_url = ""
 
     return groups
+
+def _fetch_richmondstudio_institutions(
+    token: str,
+    timeout: int = 30,
+) -> List[Dict[str, object]]:
+    headers = _richmondstudio_headers(token)
+    next_url = RICHMONDSTUDIO_INSTITUTIONS_URL
+    next_params: Optional[Dict[str, object]] = {"include": "institutionType"}
+    visited_urls = set()
+    institutions: List[Dict[str, object]] = []
+
+    while next_url:
+        if next_url in visited_urls:
+            break
+        visited_urls.add(next_url)
+        try:
+            response = requests.get(
+                next_url,
+                headers=headers,
+                params=next_params,
+                timeout=timeout,
+            )
+        except requests.RequestException as exc:
+            raise RuntimeError(f"Error de red: {exc}") from exc
+        next_params = None
+
+        status_code = response.status_code
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise RuntimeError(f"Respuesta no JSON (status {status_code})") from exc
+
+        if not response.ok:
+            raise RuntimeError(_richmondstudio_error_detail(payload, status_code))
+
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, list):
+            raise RuntimeError("Respuesta invalida: campo data no es lista.")
+        for item in data:
+            if isinstance(item, dict):
+                institutions.append(item)
+
+        next_candidate = None
+        if isinstance(payload, dict):
+            links = payload.get("links")
+            if isinstance(links, dict):
+                next_candidate = links.get("next")
+                if isinstance(next_candidate, dict):
+                    next_candidate = next_candidate.get("href")
+
+        if isinstance(next_candidate, str) and next_candidate.strip():
+            next_url = urljoin(RICHMONDSTUDIO_INSTITUTIONS_URL, next_candidate.strip())
+        else:
+            next_url = ""
+
+    return institutions
+
+def _change_richmondstudio_institution(
+    token: str,
+    institution_id: str,
+    timeout: int = 30,
+) -> str:
+    institution_id_text = str(institution_id or "").strip()
+    if not institution_id_text:
+        raise ValueError("Falta institution_id.")
+    headers = dict(_richmondstudio_headers(token))
+    headers["Accept"] = "application/json, text/plain, */*"
+    headers["Content-Type"] = "application/json"
+    try:
+        response = requests.post(
+            RICHMONDSTUDIO_CHANGE_INSTITUTION_URL,
+            headers=headers,
+            json={"institution_id": institution_id_text},
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Error de red: {exc}") from exc
+
+    status_code = response.status_code
+    body: object = None
+    if response.content:
+        try:
+            body = response.json()
+        except ValueError:
+            body = str(response.text or "").strip()
+
+    if not response.ok:
+        raise RuntimeError(_richmondstudio_response_error(response, status_code, body))
+    if isinstance(body, str) and body.strip():
+        return body.strip()
+    if isinstance(body, dict):
+        message = str(
+            body.get("message")
+            or body.get("detail")
+            or body.get("status")
+            or ""
+        ).strip()
+        if message:
+            return message
+    return "ok"
 
 def _create_richmondstudio_group(
     token: str, payload: Dict[str, object], timeout: int = 30
@@ -5202,6 +5322,307 @@ def _normalize_richmondstudio_group_row(group_item: Dict[str, object]) -> Dict[s
         "_users_data": _richmondstudio_group_users_data(group_item),
     }
 
+def _normalize_richmondstudio_institution_row(
+    institution_item: Dict[str, object],
+) -> Dict[str, str]:
+    attrs = (
+        institution_item.get("attributes")
+        if isinstance(institution_item.get("attributes"), dict)
+        else {}
+    )
+    relationships = (
+        institution_item.get("relationships")
+        if isinstance(institution_item.get("relationships"), dict)
+        else {}
+    )
+    institution_type_rel = (
+        relationships.get("institutionType")
+        if isinstance(relationships.get("institutionType"), dict)
+        else {}
+    )
+    institution_type_data = (
+        institution_type_rel.get("data")
+        if isinstance(institution_type_rel.get("data"), dict)
+        else {}
+    )
+    return {
+        "id": str(institution_item.get("id") or "").strip(),
+        "name": str(attrs.get("name") or "").strip(),
+        "countryCode": str(attrs.get("countryCode") or "").strip(),
+        "institutionTypeId": str(institution_type_data.get("id") or "").strip(),
+    }
+
+def _richmondstudio_group_starts_in_year(
+    group_item: Dict[str, object],
+    year: int,
+) -> bool:
+    attrs = group_item.get("attributes") if isinstance(group_item.get("attributes"), dict) else {}
+    start_date = str(attrs.get("startDate") or "").strip()
+    return start_date.startswith(f"{int(year)}-")
+
+def _richmondstudio_group_gradelevel_is_null(group_item: Dict[str, object]) -> bool:
+    attrs = group_item.get("attributes") if isinstance(group_item.get("attributes"), dict) else {}
+    grade_level = attrs.get("gradeLevel")
+    return grade_level is None or str(grade_level).strip() == ""
+
+def _richmondstudio_gradelevel_null_bucket(group_item: Dict[str, object]) -> str:
+    attrs = group_item.get("attributes") if isinstance(group_item.get("attributes"), dict) else {}
+    level = str(attrs.get("level") or "").strip().lower()
+    grade = str(attrs.get("grade") or "").strip().lower()
+    if level == "primary" and grade in {"grade1", "grade2"}:
+        return "Primaria grade1/grade2"
+    return "Otros gradeLevel null"
+
+def _build_richmondstudio_gradelevels_report_rows(
+    institution: Dict[str, str],
+    groups: List[Dict[str, object]],
+    year: int = 2026,
+) -> Tuple[List[Dict[str, object]], Dict[str, int]]:
+    rows: List[Dict[str, object]] = []
+    year_groups_count = 0
+    null_count = 0
+    primary_grade_1_2_count = 0
+    other_null_count = 0
+    for group_item in groups:
+        if not isinstance(group_item, dict):
+            continue
+        attrs = group_item.get("attributes") if isinstance(group_item.get("attributes"), dict) else {}
+        if not _richmondstudio_group_starts_in_year(group_item, year):
+            continue
+        year_groups_count += 1
+        if not _richmondstudio_group_gradelevel_is_null(group_item):
+            continue
+        null_count += 1
+        bucket = _richmondstudio_gradelevel_null_bucket(group_item)
+        if bucket == "Primaria grade1/grade2":
+            primary_grade_1_2_count += 1
+        else:
+            other_null_count += 1
+        rows.append(
+            {
+                "Colegio": str(institution.get("name") or "").strip(),
+                "Colegio ID": str(institution.get("id") or "").strip(),
+                "Pais": str(institution.get("countryCode") or "").strip(),
+                "Institution type ID": str(
+                    institution.get("institutionTypeId") or ""
+                ).strip(),
+                "Clase": str(attrs.get("name") or "").strip(),
+                "Clase ID": str(group_item.get("id") or "").strip(),
+                "Codigo": str(attrs.get("code") or "").strip(),
+                "Descripcion": str(attrs.get("description") or "").strip(),
+                "Start date": str(attrs.get("startDate") or "").strip(),
+                "End date": str(attrs.get("endDate") or "").strip(),
+                "Level": str(attrs.get("level") or "").strip(),
+                "Grade": str(attrs.get("grade") or "").strip(),
+                "Grade level": "null",
+                "Grupo reporte": bucket,
+                "Usuarios": _richmondstudio_group_users_count(group_item),
+                "numberOfStudents": attrs.get("numberOfStudents"),
+            }
+        )
+
+    rows.sort(
+        key=lambda row: (
+            str(row.get("Colegio") or "").upper(),
+            str(row.get("Grupo reporte") or "").upper(),
+            str(row.get("Grade") or "").upper(),
+            str(row.get("Clase") or "").upper(),
+        )
+    )
+    return rows, {
+        "classes_2026": year_groups_count,
+        "gradelevel_null": null_count,
+        "primary_grade1_grade2_null": primary_grade_1_2_count,
+        "other_null": other_null_count,
+    }
+
+def _create_richmondstudio_gradelevels_report(
+    token: str,
+    year: int = 2026,
+    timeout: int = 30,
+    on_status: Optional[Callable[[str], None]] = None,
+    on_progress: Optional[Callable[[int, int], None]] = None,
+) -> Dict[str, object]:
+    def _status(message: str) -> None:
+        if on_status:
+            on_status(message)
+
+    original_institution_id = ""
+    try:
+        current_context = _fetch_richmondstudio_current_user_context(
+            token,
+            timeout=int(timeout),
+        )
+        original_institution_id = str(
+            current_context.get("institution_id") or ""
+        ).strip()
+    except Exception:
+        original_institution_id = ""
+
+    institutions = [
+        _normalize_richmondstudio_institution_row(item)
+        for item in _fetch_richmondstudio_institutions(token, timeout=int(timeout))
+        if isinstance(item, dict)
+    ]
+    institutions = [
+        institution
+        for institution in institutions
+        if str(institution.get("id") or "").strip()
+    ]
+    institutions.sort(key=lambda item: str(item.get("name") or "").upper())
+
+    report_rows: List[Dict[str, object]] = []
+    summary_rows: List[Dict[str, object]] = []
+    error_rows: List[Dict[str, object]] = []
+    last_institution_id = ""
+    total = len(institutions)
+    for index, institution in enumerate(institutions, start=1):
+        institution_id = str(institution.get("id") or "").strip()
+        institution_name = str(institution.get("name") or institution_id).strip()
+        if on_progress:
+            on_progress(index - 1, total)
+        _status(f"Procesando {index}/{total}: {institution_name}")
+        try:
+            _change_richmondstudio_institution(
+                token,
+                institution_id,
+                timeout=int(timeout),
+            )
+            last_institution_id = institution_id
+            groups = _fetch_richmondstudio_groups(
+                token,
+                timeout=int(timeout),
+                include_users=True,
+            )
+            institution_rows, counts = _build_richmondstudio_gradelevels_report_rows(
+                institution,
+                groups,
+                year=int(year),
+            )
+            report_rows.extend(institution_rows)
+            summary_rows.append(
+                {
+                    "Colegio": institution_name,
+                    "Colegio ID": institution_id,
+                    "Clases 2026": counts["classes_2026"],
+                    "GradeLevel null": counts["gradelevel_null"],
+                    "Primaria grade1/grade2 null": counts[
+                        "primary_grade1_grade2_null"
+                    ],
+                    "Otros null": counts["other_null"],
+                    "Estado": "OK",
+                }
+            )
+        except Exception as exc:
+            error_message = str(exc)
+            error_rows.append(
+                {
+                    "Colegio": institution_name,
+                    "Colegio ID": institution_id,
+                    "Error": error_message,
+                }
+            )
+            summary_rows.append(
+                {
+                    "Colegio": institution_name,
+                    "Colegio ID": institution_id,
+                    "Clases 2026": 0,
+                    "GradeLevel null": 0,
+                    "Primaria grade1/grade2 null": 0,
+                    "Otros null": 0,
+                    "Estado": error_message,
+                }
+            )
+        finally:
+            if on_progress:
+                on_progress(index, total)
+
+    restore_error = ""
+    if original_institution_id and original_institution_id != last_institution_id:
+        try:
+            _status("Restaurando institucion original de Richmond Studio...")
+            _change_richmondstudio_institution(
+                token,
+                original_institution_id,
+                timeout=int(timeout),
+            )
+        except Exception as exc:
+            restore_error = str(exc)
+
+    report_rows.sort(
+        key=lambda row: (
+            str(row.get("Colegio") or "").upper(),
+            str(row.get("Grupo reporte") or "").upper(),
+            str(row.get("Grade") or "").upper(),
+            str(row.get("Clase") or "").upper(),
+        )
+    )
+    summary = {
+        "institutions_total": total,
+        "classes_2026": sum(int(row.get("Clases 2026") or 0) for row in summary_rows),
+        "gradelevel_null": len(report_rows),
+        "primary_grade1_grade2_null": sum(
+            int(row.get("Primaria grade1/grade2 null") or 0)
+            for row in summary_rows
+        ),
+        "other_null": sum(int(row.get("Otros null") or 0) for row in summary_rows),
+        "errors": len(error_rows),
+        "year": int(year),
+        "restore_error": restore_error,
+    }
+    return {
+        "rows": report_rows,
+        "summary_rows": summary_rows,
+        "error_rows": error_rows,
+        "summary": summary,
+    }
+
+def _build_richmondstudio_gradelevels_report_excel(
+    report: Dict[str, object],
+) -> bytes:
+    rows = [
+        dict(row)
+        for row in (report.get("rows") if isinstance(report.get("rows"), list) else [])
+        if isinstance(row, dict)
+    ]
+    primary_rows = [
+        row
+        for row in rows
+        if str(row.get("Grupo reporte") or "") == "Primaria grade1/grade2"
+    ]
+    other_rows = [
+        row
+        for row in rows
+        if str(row.get("Grupo reporte") or "") != "Primaria grade1/grade2"
+    ]
+    summary_rows = [
+        dict(row)
+        for row in (
+            report.get("summary_rows")
+            if isinstance(report.get("summary_rows"), list)
+            else []
+        )
+        if isinstance(row, dict)
+    ]
+    error_rows = [
+        dict(row)
+        for row in (
+            report.get("error_rows")
+            if isinstance(report.get("error_rows"), list)
+            else []
+        )
+        if isinstance(row, dict)
+    ]
+    return _export_multi_sheet_excel(
+        {
+            "GradeLevel null": rows,
+            "Primaria grade1 grade2": primary_rows,
+            "Otros nulos": other_rows,
+            "Resumen": summary_rows,
+            "Errores": error_rows,
+        }
+    )
+
 def _normalize_richmondstudio_loaded_rows(rows: List[Dict[str, object]]) -> List[Dict[str, object]]:
     normalized: List[Dict[str, object]] = []
     for row in rows:
@@ -8239,6 +8660,166 @@ def _render_richmondstudio_tools_password_panel(
                     )
 
 
+def _render_richmondstudio_gradelevels_report_panel(
+    rs_token: str,
+    timeout: int,
+) -> None:
+    with st.container(border=True):
+        st.markdown("### Reporte gradeLevels nulos por colegio")
+        st.caption(
+            "Lista todas las instituciones, cambia el colegio activo en Richmond Studio, "
+            "consulta sus clases con usuarios y genera un Excel de clases iniciadas en 2026 "
+            "con gradeLevel null. Primaria grade1/grade2 queda separada de los demas nulos."
+        )
+        report_year = int(
+            st.number_input(
+                "Ano de startDate",
+                min_value=2020,
+                max_value=2035,
+                value=2026,
+                step=1,
+                key="rs_gradelevels_report_year",
+            )
+        )
+        run_report = st.button(
+            "Generar reporte gradeLevels",
+            type="primary",
+            key="rs_gradelevels_report_generate_btn",
+            use_container_width=True,
+        )
+
+        if run_report:
+            if not rs_token:
+                st.error("Ingresa el bearer token de Richmond Studio.")
+                st.stop()
+            status_placeholder = st.empty()
+            progress_placeholder = st.empty()
+            progress_bar = progress_placeholder.progress(0)
+            try:
+                with st.spinner("Consultando instituciones y clases Richmond Studio..."):
+                    report = _create_richmondstudio_gradelevels_report(
+                        rs_token,
+                        year=int(report_year),
+                        timeout=max(int(timeout), 60),
+                        on_status=lambda message: status_placeholder.write(message),
+                        on_progress=lambda current, total: progress_bar.progress(
+                            min(
+                                100,
+                                max(
+                                    0,
+                                    int((float(current) / max(int(total), 1)) * 100),
+                                ),
+                            )
+                        ),
+                    )
+                    report_bytes = _build_richmondstudio_gradelevels_report_excel(report)
+            except Exception as exc:  # pragma: no cover - UI
+                status_placeholder.empty()
+                progress_placeholder.empty()
+                st.error(f"No se pudo generar el reporte gradeLevels: {exc}")
+                st.stop()
+            status_placeholder.empty()
+            progress_placeholder.empty()
+            st.session_state["rs_gradelevels_report"] = report
+            st.session_state["rs_gradelevels_report_bytes"] = report_bytes
+            st.session_state["rs_gradelevels_report_filename"] = (
+                f"richmond_reporte_gradelevels_{int(report_year)}.xlsx"
+            )
+            summary = (
+                report.get("summary")
+                if isinstance(report.get("summary"), dict)
+                else {}
+            )
+            st.success(
+                "Reporte gradeLevels generado. Instituciones: {institutions_total} | "
+                "Clases {year}: {classes_2026} | GradeLevel null: {gradelevel_null} | "
+                "Primaria grade1/grade2 null: {primary_grade1_grade2_null} | "
+                "Otros nulos: {other_null} | Errores: {errors}.".format(
+                    **summary
+                )
+            )
+            restore_error = str(summary.get("restore_error") or "").strip()
+            if restore_error:
+                st.warning(
+                    "El reporte se genero, pero no se pudo restaurar la institucion original: "
+                    f"{restore_error}"
+                )
+
+        cached_report = (
+            st.session_state.get("rs_gradelevels_report")
+            if isinstance(st.session_state.get("rs_gradelevels_report"), dict)
+            else {}
+        )
+        cached_bytes = bytes(st.session_state.get("rs_gradelevels_report_bytes") or b"")
+        if cached_report:
+            summary = (
+                cached_report.get("summary")
+                if isinstance(cached_report.get("summary"), dict)
+                else {}
+            )
+            metric_cols = st.columns(5, gap="small")
+            metric_cols[0].metric(
+                "Instituciones",
+                int(summary.get("institutions_total") or 0),
+            )
+            metric_cols[1].metric(
+                f"Clases {int(summary.get('year') or report_year)}",
+                int(summary.get("classes_2026") or 0),
+            )
+            metric_cols[2].metric(
+                "GradeLevel null",
+                int(summary.get("gradelevel_null") or 0),
+            )
+            metric_cols[3].metric(
+                "Primaria G1/G2 null",
+                int(summary.get("primary_grade1_grade2_null") or 0),
+            )
+            metric_cols[4].metric("Errores", int(summary.get("errors") or 0))
+
+            report_rows = [
+                row
+                for row in (
+                    cached_report.get("rows")
+                    if isinstance(cached_report.get("rows"), list)
+                    else []
+                )
+                if isinstance(row, dict)
+            ]
+            summary_rows = [
+                row
+                for row in (
+                    cached_report.get("summary_rows")
+                    if isinstance(cached_report.get("summary_rows"), list)
+                    else []
+                )
+                if isinstance(row, dict)
+            ]
+            if cached_bytes:
+                st.download_button(
+                    "Descargar Excel gradeLevels",
+                    data=cached_bytes,
+                    file_name=str(
+                        st.session_state.get("rs_gradelevels_report_filename")
+                        or "richmond_reporte_gradelevels.xlsx"
+                    ),
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="rs_gradelevels_report_download_btn",
+                    use_container_width=True,
+                )
+            if report_rows:
+                st.markdown("**Clases con gradeLevel null**")
+                _show_dataframe(report_rows[:300], use_container_width=True)
+                if len(report_rows) > 300:
+                    st.caption(
+                        f"Mostrando 300 de {len(report_rows)} clase(s). Descarga el Excel para ver todo."
+                    )
+            else:
+                st.info("No se encontraron clases con gradeLevel null para el ano seleccionado.")
+            if summary_rows:
+                with st.expander("Resumen por colegio", expanded=False):
+                    _show_dataframe(summary_rows, use_container_width=True)
+
+
 def render_richmond_studio_view() -> None:
     timeout = 30
     st.session_state["rs_timeout"] = int(timeout)
@@ -8361,6 +8942,7 @@ def render_richmond_studio_view() -> None:
         tab_rs_usuarios,
         tab_rs_alumnos,
         tab_rs_docentes,
+        tab_rs_gradelevels,
         tab_rs_excel,
     ) = st.tabs(
         [
@@ -8368,6 +8950,7 @@ def render_richmond_studio_view() -> None:
             "Usuarios RS",
             "CRUD Alumnos RS",
             "Asignar clases a docentes",
+            "Reporte gradeLevels",
             "Herramientas RS",
         ]
     )
@@ -8499,6 +9082,12 @@ def render_richmond_studio_view() -> None:
                     rs_token=rs_token,
                     timeout=int(timeout),
                 )
+
+    with tab_rs_gradelevels:
+        _render_richmondstudio_gradelevels_report_panel(
+            rs_token=rs_token,
+            timeout=int(timeout),
+        )
 
     with tab_rs_excel:
         if str(st.session_state.get("rs_tools_nav") or "").strip() not in {

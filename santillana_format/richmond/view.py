@@ -83,20 +83,6 @@ def _export_simple_excel(rows: List[Dict[str, object]], sheet_name: str = "data"
     return output.getvalue()
 
 
-def _export_multi_sheet_excel(sheets: Dict[str, List[Dict[str, object]]]) -> bytes:
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        for sheet_name, rows in sheets.items():
-            safe_sheet_name = str(sheet_name or "data").strip()[:31] or "data"
-            pd.DataFrame(rows or []).to_excel(
-                writer,
-                index=False,
-                sheet_name=safe_sheet_name,
-            )
-    output.seek(0)
-    return output.getvalue()
-
-
 def _show_dataframe(data: object, use_container_width: bool = True) -> None:
     if isinstance(data, pd.DataFrame):
         df_view = data.copy()
@@ -5365,14 +5351,6 @@ def _richmondstudio_group_gradelevel_is_null(group_item: Dict[str, object]) -> b
     grade_level = attrs.get("gradeLevel")
     return grade_level is None or str(grade_level).strip() == ""
 
-def _richmondstudio_gradelevel_null_bucket(group_item: Dict[str, object]) -> str:
-    attrs = group_item.get("attributes") if isinstance(group_item.get("attributes"), dict) else {}
-    level = str(attrs.get("level") or "").strip().lower()
-    grade = str(attrs.get("grade") or "").strip().lower()
-    if level == "primary" and grade in {"grade1", "grade2"}:
-        return "Primaria grade1/grade2"
-    return "Otros gradeLevel null"
-
 def _build_richmondstudio_gradelevels_report_rows(
     institution: Dict[str, str],
     groups: List[Dict[str, object]],
@@ -5381,8 +5359,6 @@ def _build_richmondstudio_gradelevels_report_rows(
     rows: List[Dict[str, object]] = []
     year_groups_count = 0
     null_count = 0
-    primary_grade_1_2_count = 0
-    other_null_count = 0
     for group_item in groups:
         if not isinstance(group_item, dict):
             continue
@@ -5393,38 +5369,20 @@ def _build_richmondstudio_gradelevels_report_rows(
         if not _richmondstudio_group_gradelevel_is_null(group_item):
             continue
         null_count += 1
-        bucket = _richmondstudio_gradelevel_null_bucket(group_item)
-        if bucket == "Primaria grade1/grade2":
-            primary_grade_1_2_count += 1
-        else:
-            other_null_count += 1
         rows.append(
             {
                 "Colegio": str(institution.get("name") or "").strip(),
-                "Colegio ID": str(institution.get("id") or "").strip(),
-                "Pais": str(institution.get("countryCode") or "").strip(),
-                "Institution type ID": str(
-                    institution.get("institutionTypeId") or ""
-                ).strip(),
                 "Clase": str(attrs.get("name") or "").strip(),
-                "Clase ID": str(group_item.get("id") or "").strip(),
-                "Codigo": str(attrs.get("code") or "").strip(),
-                "Descripcion": str(attrs.get("description") or "").strip(),
-                "Start date": str(attrs.get("startDate") or "").strip(),
-                "End date": str(attrs.get("endDate") or "").strip(),
                 "Level": str(attrs.get("level") or "").strip(),
                 "Grade": str(attrs.get("grade") or "").strip(),
-                "Grade level": "null",
-                "Grupo reporte": bucket,
-                "Usuarios": _richmondstudio_group_users_count(group_item),
-                "numberOfStudents": attrs.get("numberOfStudents"),
+                "GradeLevel": "null",
+                "StartDate": str(attrs.get("startDate") or "").strip(),
             }
         )
 
     rows.sort(
         key=lambda row: (
             str(row.get("Colegio") or "").upper(),
-            str(row.get("Grupo reporte") or "").upper(),
             str(row.get("Grade") or "").upper(),
             str(row.get("Clase") or "").upper(),
         )
@@ -5432,8 +5390,6 @@ def _build_richmondstudio_gradelevels_report_rows(
     return rows, {
         "classes_2026": year_groups_count,
         "gradelevel_null": null_count,
-        "primary_grade1_grade2_null": primary_grade_1_2_count,
-        "other_null": other_null_count,
     }
 
 def _create_richmondstudio_gradelevels_report(
@@ -5506,10 +5462,6 @@ def _create_richmondstudio_gradelevels_report(
                     "Colegio ID": institution_id,
                     "Clases 2026": counts["classes_2026"],
                     "GradeLevel null": counts["gradelevel_null"],
-                    "Primaria grade1/grade2 null": counts[
-                        "primary_grade1_grade2_null"
-                    ],
-                    "Otros null": counts["other_null"],
                     "Estado": "OK",
                 }
             )
@@ -5528,8 +5480,6 @@ def _create_richmondstudio_gradelevels_report(
                     "Colegio ID": institution_id,
                     "Clases 2026": 0,
                     "GradeLevel null": 0,
-                    "Primaria grade1/grade2 null": 0,
-                    "Otros null": 0,
                     "Estado": error_message,
                 }
             )
@@ -5552,7 +5502,6 @@ def _create_richmondstudio_gradelevels_report(
     report_rows.sort(
         key=lambda row: (
             str(row.get("Colegio") or "").upper(),
-            str(row.get("Grupo reporte") or "").upper(),
             str(row.get("Grade") or "").upper(),
             str(row.get("Clase") or "").upper(),
         )
@@ -5561,11 +5510,6 @@ def _create_richmondstudio_gradelevels_report(
         "institutions_total": total,
         "classes_2026": sum(int(row.get("Clases 2026") or 0) for row in summary_rows),
         "gradelevel_null": len(report_rows),
-        "primary_grade1_grade2_null": sum(
-            int(row.get("Primaria grade1/grade2 null") or 0)
-            for row in summary_rows
-        ),
-        "other_null": sum(int(row.get("Otros null") or 0) for row in summary_rows),
         "errors": len(error_rows),
         "year": int(year),
         "restore_error": restore_error,
@@ -5585,43 +5529,7 @@ def _build_richmondstudio_gradelevels_report_excel(
         for row in (report.get("rows") if isinstance(report.get("rows"), list) else [])
         if isinstance(row, dict)
     ]
-    primary_rows = [
-        row
-        for row in rows
-        if str(row.get("Grupo reporte") or "") == "Primaria grade1/grade2"
-    ]
-    other_rows = [
-        row
-        for row in rows
-        if str(row.get("Grupo reporte") or "") != "Primaria grade1/grade2"
-    ]
-    summary_rows = [
-        dict(row)
-        for row in (
-            report.get("summary_rows")
-            if isinstance(report.get("summary_rows"), list)
-            else []
-        )
-        if isinstance(row, dict)
-    ]
-    error_rows = [
-        dict(row)
-        for row in (
-            report.get("error_rows")
-            if isinstance(report.get("error_rows"), list)
-            else []
-        )
-        if isinstance(row, dict)
-    ]
-    return _export_multi_sheet_excel(
-        {
-            "GradeLevel null": rows,
-            "Primaria grade1 grade2": primary_rows,
-            "Otros nulos": other_rows,
-            "Resumen": summary_rows,
-            "Errores": error_rows,
-        }
-    )
+    return _export_simple_excel(rows, sheet_name="GradeLevel null")
 
 def _normalize_richmondstudio_loaded_rows(rows: List[Dict[str, object]]) -> List[Dict[str, object]]:
     normalized: List[Dict[str, object]] = []
@@ -8668,8 +8576,8 @@ def _render_richmondstudio_gradelevels_report_panel(
         st.markdown("### Reporte gradeLevels nulos por colegio")
         st.caption(
             "Lista todas las instituciones, cambia el colegio activo en Richmond Studio, "
-            "consulta sus clases con usuarios y genera un Excel de clases iniciadas en 2026 "
-            "con gradeLevel null. Primaria grade1/grade2 queda separada de los demas nulos."
+            "consulta sus clases y genera un Excel de una sola hoja con todas las clases "
+            "iniciadas en 2026 que tienen gradeLevel null, sin separar por grado."
         )
         report_year = int(
             st.number_input(
@@ -8733,8 +8641,7 @@ def _render_richmondstudio_gradelevels_report_panel(
             st.success(
                 "Reporte gradeLevels generado. Instituciones: {institutions_total} | "
                 "Clases {year}: {classes_2026} | GradeLevel null: {gradelevel_null} | "
-                "Primaria grade1/grade2 null: {primary_grade1_grade2_null} | "
-                "Otros nulos: {other_null} | Errores: {errors}.".format(
+                "Errores: {errors}.".format(
                     **summary
                 )
             )
@@ -8757,7 +8664,7 @@ def _render_richmondstudio_gradelevels_report_panel(
                 if isinstance(cached_report.get("summary"), dict)
                 else {}
             )
-            metric_cols = st.columns(5, gap="small")
+            metric_cols = st.columns(4, gap="small")
             metric_cols[0].metric(
                 "Instituciones",
                 int(summary.get("institutions_total") or 0),
@@ -8770,11 +8677,7 @@ def _render_richmondstudio_gradelevels_report_panel(
                 "GradeLevel null",
                 int(summary.get("gradelevel_null") or 0),
             )
-            metric_cols[3].metric(
-                "Primaria G1/G2 null",
-                int(summary.get("primary_grade1_grade2_null") or 0),
-            )
-            metric_cols[4].metric("Errores", int(summary.get("errors") or 0))
+            metric_cols[3].metric("Errores", int(summary.get("errors") or 0))
 
             report_rows = [
                 row

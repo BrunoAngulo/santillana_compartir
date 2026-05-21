@@ -37,7 +37,7 @@ def _build_sumun_workbook(station_value: str) -> bytes:
             "Micro base",
             station_value,
             "Texto: conocimiento base",
-            "Primer skill\n\nSegundo skill",
+            "Primer skill",
             None,
             None,
             None,
@@ -591,6 +591,24 @@ class SumunStationParsingTests(unittest.TestCase):
         self.assertEqual(summary.generated_rows, 1)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0][17], "Skill 1\nSkill 2")
+
+    def test_specific_skills_blank_line_separated_blocks_create_rows(self) -> None:
+        skills = [
+            "Examinar las consecuencias personales, economicas y ambientales del consumismo.",
+            "Analizar casos de consumo responsable frente a decisiones de consumismo influenciadas por la publicidad.",
+            "Analizar mensajes publicitarios para identificar las estrategias que utilizan para captar la atencion.",
+        ]
+        output_bytes, summary = generate_sumun_template_from_excel(
+            _build_sumun_workbook_with_process_value("\n\n".join(skills)),
+            source_name="MA4.xlsx",
+        )
+        rows = _generated_rows(output_bytes)
+
+        self.assertEqual(summary.generated_rows, 3)
+        self.assertEqual(len(rows), 3)
+        self.assertEqual([row[16] for row in rows], [1, 2, 3])
+        self.assertEqual([row[17] for row in rows], skills)
+        self.assertEqual([row[18] for row in rows], ["RECORDAR", "RECORDAR", "RECORDAR"])
 
     def test_summary_reports_specific_rows_by_itinerary_and_knowledge(self) -> None:
         wb = Workbook()

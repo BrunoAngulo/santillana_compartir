@@ -358,15 +358,12 @@ def _build_output_rows(
             process_items = [
                 (process, skill)
                 for process, col in layout.process_cols.items()
-                for skill in [
-                    _specific_skill_cell_value(
-                        _cell(row, col),
-                        source=_cell_source(merged_sources, row_number, col),
-                        row_number=row_number,
-                        col=col,
-                    )
-                ]
-                if skill is not None
+                for skill in _specific_skill_cell_values(
+                    _cell(row, col),
+                    source=_cell_source(merged_sources, row_number, col),
+                    row_number=row_number,
+                    col=col,
+                )
             ]
             if not process_items:
                 continue
@@ -624,15 +621,15 @@ def _scan_sheet_rows(
             next_station_number_by_itinerary=next_station_number_by_itinerary,
         )
         process_count = sum(
-            1
-            for col in layout.process_cols.values()
-            if _specific_skill_cell_value(
-                _cell(row, col),
-                source=_cell_source(merged_sources, row_number, col),
-                row_number=row_number,
-                col=col,
+            len(
+                _specific_skill_cell_values(
+                    _cell(row, col),
+                    source=_cell_source(merged_sources, row_number, col),
+                    row_number=row_number,
+                    col=col,
+                )
             )
-            is not None
+            for col in layout.process_cols.values()
         )
         missing_fields: list[str] = []
         if not competence:
@@ -991,24 +988,27 @@ def _normalize_knowledge_text(value: Any) -> str | None:
     return result or None
 
 
-def _specific_skill_cell_value(
+def _specific_skill_cell_values(
     value: Any,
     *,
     source: tuple[int, int] | None = None,
     row_number: int | None = None,
     col: int | None = None,
-) -> str | None:
+) -> tuple[str, ...]:
     if (
         source is not None
         and row_number is not None
         and col is not None
         and source != (row_number, col)
     ):
-        return None
+        return ()
     if value is None:
-        return None
+        return ()
     text = str(value).replace("\r\n", "\n").replace("\r", "\n").strip()
-    return text or None
+    if not text:
+        return ()
+    blocks = [block.strip() for block in re.split(r"\n[ \t]*\n+", text)]
+    return tuple(block for block in blocks if block)
 
 
 def _parse_itinerary(value: Any) -> tuple[int, str] | None:

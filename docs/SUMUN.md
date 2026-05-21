@@ -233,14 +233,14 @@ Si tienen bullets al inicio, se remueven.
 
 ### Microhabilidades especificas
 
-Cada celda de proceso cognitivo genera como maximo una fila.
-Se lee con `_specific_skill_cell_value(...)`.
+Cada celda de proceso cognitivo puede generar una o mas filas.
+Se lee con `_specific_skill_cell_values(...)`.
 
 Regla actual:
 
-- si una celda tiene texto, genera una fila
-- el contenido interno de la celda se conserva en una sola microhabilidad especifica
-- los saltos de linea, vinetas o numeraciones no hacen que una celda se divida en varias filas
+- si una celda tiene texto, genera al menos una fila
+- si el contenido tiene bloques separados por una linea en blanco, cada bloque genera una fila
+- los saltos de linea simples, vinetas o numeraciones sin linea en blanco se conservan en una sola microhabilidad especifica
 - si la celda de proceso esta combinada con otras filas, solo cuenta una vez desde la celda origen del merge
 
 ## Como ordena las filas
@@ -420,7 +420,7 @@ Mensajes comunes:
 
 - Solo acepta `.xlsx`.
 - La deteccion fallback asume estructura A:L.
-- La separacion de microhabilidades especificas depende de bloques en blanco o marcadores explicitos.
+- Las microhabilidades especificas se separan por bloques en blanco dentro de una misma celda de proceso.
 - Si una estacion no tiene numero ni hay una estacion previa heredable, la fila se descarta.
 - El sistema no usa formulas calculadas por Excel; lee el contenido de la celda tal como `openpyxl` lo entrega.
 

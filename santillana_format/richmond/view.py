@@ -122,6 +122,8 @@ RICHMONDSTUDIO_GROUPS_URL = "https://richmondstudio.global/api/groups"
 
 RICHMONDSTUDIO_INSTITUTIONS_URL = "https://richmondstudio.global/api/institutions"
 
+RICHMONDSTUDIO_SETTINGS_URL = "https://richmondstudio.global/api/settings"
+
 RICHMONDSTUDIO_CURRENT_USER_URL = "https://richmondstudio.global/api/users/current"
 
 RICHMONDSTUDIO_CHANGE_INSTITUTION_URL = (
@@ -539,6 +541,37 @@ def _change_richmondstudio_institution(
         if message:
             return message
     return "ok"
+
+def _fetch_richmondstudio_settings(
+    token: str,
+    timeout: int = 30,
+) -> Dict[str, object]:
+    headers = dict(_richmondstudio_headers(token))
+    headers["Accept"] = "application/json, text/plain, */*"
+    headers["Referer"] = "https://richmondstudio.global/settings"
+    try:
+        response = requests.get(
+            RICHMONDSTUDIO_SETTINGS_URL,
+            headers=headers,
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Error de red: {exc}") from exc
+
+    status_code = response.status_code
+    try:
+        body = response.json()
+    except ValueError:
+        body = None
+
+    if not response.ok:
+        raise RuntimeError(_richmondstudio_response_error(response, status_code, body))
+    if body is None or not isinstance(body, dict):
+        raise RuntimeError(f"Respuesta no JSON (status {status_code})")
+    data = body.get("data")
+    if not isinstance(data, list):
+        raise RuntimeError("Respuesta invalida: campo data no es lista.")
+    return body
 
 def _create_richmondstudio_group(
     token: str, payload: Dict[str, object], timeout: int = 30
@@ -5392,6 +5425,240 @@ def _build_richmondstudio_gradelevels_report_rows(
         "gradelevel_null": null_count,
     }
 
+def _richmondstudio_estela_truthy(value: object) -> bool:
+    if isinstance(value, bool):
+        return bool(value)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value != 0
+    text = _normalize_plain_text(value).lower()
+    return text in {"1", "t", "true", "si", "s", "yes", "y", "x"}
+
+def _extract_richmondstudio_estela_grade_rows(
+    settings_payload: Dict[str, object],
+) -> List[Dict[str, object]]:
+    data = settings_payload.get("data")
+    if not isinstance(data, list):
+        return []
+
+    grades_value: object = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("key") or "").strip() != "grades":
+            continue
+        grades_value = item.get("value")
+        break
+    if not isinstance(grades_value, list):
+        return []
+
+    grades: List[Dict[str, object]] = []
+    for grade_item in grades_value:
+        if not isinstance(grade_item, dict):
+            continue
+        label = str(grade_item.get("label") or "").strip()
+        grade_code = str(grade_item.get("grade") or "").strip()
+        if not label and grade_code:
+            label = grade_code
+        if not label:
+            continue
+        grades.append(
+            {
+                "label": label,
+                "grade": grade_code,
+                "ireadActive": _richmondstudio_estela_truthy(
+                    grade_item.get("ireadActive")
+                ),
+            }
+        )
+    return grades
+
+def _create_richmondstudio_estela_report(
+    token: str,
+    timeout: int = 30,
+    on_status: Optional[Callable[[str], None]] = None,
+    on_progress: Optional[Callable[[int, int], None]] = None,
+) -> Dict[str, object]:
+    def _status(message: str) -> None:
+        if on_status:
+            on_status(message)
+
+    original_institution_id = ""
+    try:
+        current_context = _fetch_richmondstudio_current_user_context(
+            token,
+            timeout=int(timeout),
+        )
+        original_institution_id = str(
+            current_context.get("institution_id") or ""
+        ).strip()
+    except Exception:
+        original_institution_id = ""
+
+    institutions = [
+        _normalize_richmondstudio_institution_row(item)
+        for item in _fetch_richmondstudio_institutions(token, timeout=int(timeout))
+        if isinstance(item, dict)
+    ]
+    institutions = [
+        institution
+        for institution in institutions
+        if str(institution.get("id") or "").strip()
+    ]
+    institutions.sort(key=lambda item: str(item.get("name") or "").upper())
+
+    grade_columns: List[str] = []
+    grade_column_seen: Set[str] = set()
+    active_institution_rows: List[Dict[str, object]] = []
+    summary_rows: List[Dict[str, object]] = []
+    error_rows: List[Dict[str, object]] = []
+    last_institution_id = ""
+    total = len(institutions)
+
+    for index, institution in enumerate(institutions, start=1):
+        institution_id = str(institution.get("id") or "").strip()
+        institution_name = str(institution.get("name") or institution_id).strip()
+        if on_progress:
+            on_progress(index - 1, total)
+        _status(f"Procesando ESTELA {index}/{total}: {institution_name}")
+        try:
+            _change_richmondstudio_institution(
+                token,
+                institution_id,
+                timeout=int(timeout),
+            )
+            last_institution_id = institution_id
+            settings_payload = _fetch_richmondstudio_settings(
+                token,
+                timeout=int(timeout),
+            )
+            grade_rows = _extract_richmondstudio_estela_grade_rows(settings_payload)
+            for grade_row in grade_rows:
+                label = str(grade_row.get("label") or "").strip()
+                if label and label not in grade_column_seen:
+                    grade_columns.append(label)
+                    grade_column_seen.add(label)
+
+            active_labels = {
+                str(grade_row.get("label") or "").strip()
+                for grade_row in grade_rows
+                if bool(grade_row.get("ireadActive"))
+                and str(grade_row.get("label") or "").strip()
+            }
+            if active_labels:
+                active_institution_rows.append(
+                    {
+                        "Nombre de la institucion": institution_name,
+                        "_institution_id": institution_id,
+                        "_active_labels": active_labels,
+                    }
+                )
+            summary_rows.append(
+                {
+                    "Colegio": institution_name,
+                    "Colegio ID": institution_id,
+                    "Grados iRead activos": len(active_labels),
+                    "Estado": "OK" if active_labels else "Sin iRead activo",
+                }
+            )
+        except Exception as exc:
+            error_message = str(exc)
+            error_rows.append(
+                {
+                    "Colegio": institution_name,
+                    "Colegio ID": institution_id,
+                    "Error": error_message,
+                }
+            )
+            summary_rows.append(
+                {
+                    "Colegio": institution_name,
+                    "Colegio ID": institution_id,
+                    "Grados iRead activos": 0,
+                    "Estado": error_message,
+                }
+            )
+        finally:
+            if on_progress:
+                on_progress(index, total)
+
+    restore_error = ""
+    if original_institution_id and original_institution_id != last_institution_id:
+        try:
+            _status("Restaurando institucion original de Richmond Studio...")
+            _change_richmondstudio_institution(
+                token,
+                original_institution_id,
+                timeout=int(timeout),
+            )
+        except Exception as exc:
+            restore_error = str(exc)
+
+    active_institution_rows.sort(
+        key=lambda row: str(row.get("Nombre de la institucion") or "").upper()
+    )
+    report_rows: List[Dict[str, object]] = []
+    for active_row in active_institution_rows:
+        active_labels = active_row.get("_active_labels")
+        if not isinstance(active_labels, set):
+            active_labels = set()
+        report_row: Dict[str, object] = {
+            "Nombre de la institucion": str(
+                active_row.get("Nombre de la institucion") or ""
+            ).strip()
+        }
+        for grade_label in grade_columns:
+            report_row[grade_label] = "Si" if grade_label in active_labels else ""
+        report_rows.append(report_row)
+
+    summary = {
+        "institutions_total": total,
+        "institutions_with_iread": len(report_rows),
+        "institutions_without_iread": max(total - len(report_rows) - len(error_rows), 0),
+        "grade_columns": len(grade_columns),
+        "errors": len(error_rows),
+        "restore_error": restore_error,
+    }
+    return {
+        "rows": report_rows,
+        "columns": ["Nombre de la institucion", *grade_columns],
+        "summary_rows": summary_rows,
+        "error_rows": error_rows,
+        "summary": summary,
+    }
+
+def _build_richmondstudio_estela_report_excel(
+    report: Dict[str, object],
+) -> bytes:
+    rows = [
+        dict(row)
+        for row in (report.get("rows") if isinstance(report.get("rows"), list) else [])
+        if isinstance(row, dict)
+    ]
+    columns = [
+        str(column or "").strip()
+        for column in (
+            report.get("columns") if isinstance(report.get("columns"), list) else []
+        )
+        if str(column or "").strip()
+    ]
+    if not columns:
+        columns = ["Nombre de la institucion"]
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df = pd.DataFrame(rows)
+        if rows:
+            ordered_columns = columns + [
+                column for column in df.columns if column not in columns
+            ]
+            df = df.reindex(columns=ordered_columns)
+        else:
+            df = pd.DataFrame(columns=columns)
+        df.to_excel(writer, index=False, sheet_name="ESTELA iRead")
+        ws = writer.book["ESTELA iRead"]
+        ws.freeze_panes = "A2"
+    output.seek(0)
+    return output.getvalue()
+
 def _create_richmondstudio_gradelevels_report(
     token: str,
     year: int = 2026,
@@ -8722,6 +8989,159 @@ def _render_richmondstudio_gradelevels_report_panel(
                 with st.expander("Resumen por colegio", expanded=False):
                     _show_dataframe(summary_rows, use_container_width=True)
 
+def _render_richmondstudio_estela_report_panel(
+    rs_token: str,
+    timeout: int,
+) -> None:
+    with st.container(border=True):
+        st.markdown("### Reporte ESTELA iRead por colegio")
+        st.caption(
+            "Lista todas las instituciones, cambia el colegio activo en Richmond Studio, "
+            "consulta /api/settings por colegio y genera un Excel solo con los colegios "
+            "que tienen al menos un grado iRead activo."
+        )
+        run_report = st.button(
+            "Generar reporte ESTELA",
+            type="primary",
+            key="rs_estela_report_generate_btn",
+            use_container_width=True,
+        )
+
+        if run_report:
+            if not rs_token:
+                st.error("Ingresa el bearer token de Richmond Studio.")
+                st.stop()
+            status_placeholder = st.empty()
+            progress_placeholder = st.empty()
+            progress_bar = progress_placeholder.progress(0)
+            try:
+                with st.spinner("Consultando settings ESTELA en Richmond Studio..."):
+                    report = _create_richmondstudio_estela_report(
+                        rs_token,
+                        timeout=max(int(timeout), 60),
+                        on_status=lambda message: status_placeholder.write(message),
+                        on_progress=lambda current, total: progress_bar.progress(
+                            min(
+                                100,
+                                max(
+                                    0,
+                                    int((float(current) / max(int(total), 1)) * 100),
+                                ),
+                            )
+                        ),
+                    )
+                    report_bytes = _build_richmondstudio_estela_report_excel(report)
+            except Exception as exc:  # pragma: no cover - UI
+                status_placeholder.empty()
+                progress_placeholder.empty()
+                st.error(f"No se pudo generar el reporte ESTELA: {exc}")
+                st.stop()
+            status_placeholder.empty()
+            progress_placeholder.empty()
+            st.session_state["rs_estela_report"] = report
+            st.session_state["rs_estela_report_bytes"] = report_bytes
+            st.session_state["rs_estela_report_filename"] = (
+                "richmond_reporte_estela_iread.xlsx"
+            )
+            summary = (
+                report.get("summary")
+                if isinstance(report.get("summary"), dict)
+                else {}
+            )
+            st.success(
+                "Reporte ESTELA generado. Instituciones: {institutions_total} | "
+                "Con iRead: {institutions_with_iread} | Sin iRead: "
+                "{institutions_without_iread} | Errores: {errors}.".format(**summary)
+            )
+            restore_error = str(summary.get("restore_error") or "").strip()
+            if restore_error:
+                st.warning(
+                    "El reporte se genero, pero no se pudo restaurar la institucion original: "
+                    f"{restore_error}"
+                )
+
+        cached_report = (
+            st.session_state.get("rs_estela_report")
+            if isinstance(st.session_state.get("rs_estela_report"), dict)
+            else {}
+        )
+        cached_bytes = bytes(st.session_state.get("rs_estela_report_bytes") or b"")
+        if cached_report:
+            summary = (
+                cached_report.get("summary")
+                if isinstance(cached_report.get("summary"), dict)
+                else {}
+            )
+            metric_cols = st.columns(4, gap="small")
+            metric_cols[0].metric(
+                "Instituciones",
+                int(summary.get("institutions_total") or 0),
+            )
+            metric_cols[1].metric(
+                "Con iRead",
+                int(summary.get("institutions_with_iread") or 0),
+            )
+            metric_cols[2].metric(
+                "Sin iRead",
+                int(summary.get("institutions_without_iread") or 0),
+            )
+            metric_cols[3].metric("Errores", int(summary.get("errors") or 0))
+
+            report_rows = [
+                row
+                for row in (
+                    cached_report.get("rows")
+                    if isinstance(cached_report.get("rows"), list)
+                    else []
+                )
+                if isinstance(row, dict)
+            ]
+            summary_rows = [
+                row
+                for row in (
+                    cached_report.get("summary_rows")
+                    if isinstance(cached_report.get("summary_rows"), list)
+                    else []
+                )
+                if isinstance(row, dict)
+            ]
+            error_rows = [
+                row
+                for row in (
+                    cached_report.get("error_rows")
+                    if isinstance(cached_report.get("error_rows"), list)
+                    else []
+                )
+                if isinstance(row, dict)
+            ]
+            if cached_bytes:
+                st.download_button(
+                    "Descargar Excel ESTELA",
+                    data=cached_bytes,
+                    file_name=str(
+                        st.session_state.get("rs_estela_report_filename")
+                        or "richmond_reporte_estela_iread.xlsx"
+                    ),
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="rs_estela_report_download_btn",
+                    use_container_width=True,
+                )
+            if report_rows:
+                st.markdown("**Colegios con iRead activo**")
+                _show_dataframe(report_rows[:300], use_container_width=True)
+                if len(report_rows) > 300:
+                    st.caption(
+                        f"Mostrando 300 de {len(report_rows)} colegio(s). Descarga el Excel para ver todo."
+                    )
+            else:
+                st.info("No se encontraron colegios con iRead activo.")
+            if summary_rows:
+                with st.expander("Resumen por colegio", expanded=False):
+                    _show_dataframe(summary_rows, use_container_width=True)
+            if error_rows:
+                with st.expander("Errores", expanded=False):
+                    _show_dataframe(error_rows, use_container_width=True)
+
 
 def render_richmond_studio_view() -> None:
     timeout = 30
@@ -8853,7 +9273,7 @@ def render_richmond_studio_view() -> None:
             "Usuarios RS",
             "CRUD Alumnos RS",
             "Asignar clases a docentes",
-            "Reporte gradeLevels",
+            "Reportes RS",
             "Herramientas RS",
         ]
     )
@@ -8988,6 +9408,10 @@ def render_richmond_studio_view() -> None:
 
     with tab_rs_gradelevels:
         _render_richmondstudio_gradelevels_report_panel(
+            rs_token=rs_token,
+            timeout=int(timeout),
+        )
+        _render_richmondstudio_estela_report_panel(
             rs_token=rs_token,
             timeout=int(timeout),
         )

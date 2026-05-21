@@ -215,6 +215,43 @@ RICHMONDSTUDIO_USER_IMPORT_LEVEL = "level"
 
 RICHMONDSTUDIO_USER_LEVEL_OPTIONS = ("preschool", "primary", "secondary", "adult")
 
+RICHMONDSTUDIO_EXCEL_IREAD_PRODUCTS = (
+    "I-READ Upselling",
+    "I-READ Stand Alone",
+)
+
+RICHMONDSTUDIO_EXCEL_IREAD_PRODUCT_KEYS = {
+    _normalize_compare_text(product)
+    for product in RICHMONDSTUDIO_EXCEL_IREAD_PRODUCTS
+}
+
+RICHMONDSTUDIO_EXCEL_IREAD_GRADE_COLUMNS: List[Tuple[str, str]] = [
+    ("1 PRIMARIA", "Primer grado de primaria"),
+    ("2 PRIMARIA", "Segundo grado de primaria"),
+    ("3 PRIMARIA", "Tercer grado de primaria"),
+    ("4 PRIMARIA", "Cuarto grado de primaria"),
+    ("5 PRIMARIA", "Quinto grado de primaria"),
+    ("6 PRIMARIA", "Sexto grado de primaria"),
+    ("1 SECUNDARIA", "Primer a\u00f1o de secundaria"),
+    ("2 SECUNDARIA", "Segundo a\u00f1o de secundaria"),
+    ("3 SECUNDARIA", "Tercer a\u00f1o de secundaria"),
+    ("4 SECUNDARIA", "Cuarto a\u00f1o de secundaria"),
+    ("5 SECUNDARIA", "Quinto a\u00f1o de secundaria"),
+    ("CINCO ANOS", "5 a\u00f1os"),
+    ("CUATRO ANOS", "4 a\u00f1os"),
+    ("DOS ANOS", "2 a\u00f1os"),
+    ("TRES ANOS", "3 a\u00f1os"),
+    ("JOVENES ADULTOS", "J\u00d3VENES ADULTOS"),
+]
+
+RICHMONDSTUDIO_EXCEL_IREAD_GRADE_LABELS = [
+    label for _key, label in RICHMONDSTUDIO_EXCEL_IREAD_GRADE_COLUMNS
+]
+
+RICHMONDSTUDIO_EXCEL_IREAD_GRADE_LABEL_BY_KEY = {
+    key: label for key, label in RICHMONDSTUDIO_EXCEL_IREAD_GRADE_COLUMNS
+}
+
 def _richmondstudio_grade_option_from_code(grade_code: object) -> str:
     code = str(grade_code or "").strip()
     return str(RICHMONDSTUDIO_GRADE_OPTION_BY_CODE.get(code, code)).strip()
@@ -5659,6 +5696,159 @@ def _build_richmondstudio_estela_report_excel(
     output.seek(0)
     return output.getvalue()
 
+def _normalize_richmondstudio_excel_iread_grade_key(value: object) -> str:
+    text = _normalize_plain_text(value)
+    text = text.replace("\u00ba", " ").replace("\u00b0", " ")
+    text = re.sub(r"[^A-Z0-9]+", " ", text)
+    return text.strip()
+
+def _richmondstudio_excel_iread_product_matches(value: object) -> bool:
+    text = _normalize_compare_text(value)
+    if not text:
+        return False
+    return any(product_key in text for product_key in RICHMONDSTUDIO_EXCEL_IREAD_PRODUCT_KEYS)
+
+def _resolve_richmondstudio_excel_export_sheet(
+    excel_bytes: bytes,
+) -> Tuple[pd.ExcelFile, str]:
+    excel_file = pd.ExcelFile(BytesIO(excel_bytes), engine="openpyxl")
+    sheet_names = list(excel_file.sheet_names)
+    for sheet_name in sheet_names:
+        if str(sheet_name or "").strip() == "Export":
+            return excel_file, sheet_name
+    for sheet_name in sheet_names:
+        if _normalize_compare_text(sheet_name) == "EXPORT":
+            return excel_file, sheet_name
+    available = ", ".join(str(name) for name in sheet_names) or "sin hojas"
+    raise ValueError(f"No se encontro la hoja Export. Hojas disponibles: {available}.")
+
+def _create_richmondstudio_excel_iread_report(
+    excel_bytes: bytes,
+) -> Dict[str, object]:
+    if not excel_bytes:
+        raise ValueError("Sube un Excel para generar el reporte.")
+
+    excel_file, sheet_name = _resolve_richmondstudio_excel_export_sheet(excel_bytes)
+    df = pd.read_excel(
+        excel_file,
+        sheet_name=sheet_name,
+        header=None,
+        dtype=str,
+    ).fillna("")
+    if df.shape[1] < 9:
+        raise ValueError(
+            "La hoja Export debe tener al menos 9 columnas para leer D, F e I."
+        )
+
+    active_labels_by_institution: Dict[str, Set[str]] = {}
+    matched_rows: List[Dict[str, object]] = []
+    unmapped_grade_rows: List[Dict[str, object]] = []
+    product_rows_count = 0
+
+    for row_index, row in df.iterrows():
+        institution_name = str(row.iloc[3] or "").strip()
+        grade_raw = str(row.iloc[5] or "").strip()
+        product_raw = str(row.iloc[8] or "").strip()
+        if not _richmondstudio_excel_iread_product_matches(product_raw):
+            continue
+
+        product_rows_count += 1
+        if not institution_name:
+            unmapped_grade_rows.append(
+                {
+                    "Fila Excel": int(row_index) + 1,
+                    "Institucion": "",
+                    "Grado origen": grade_raw,
+                    "Producto": product_raw,
+                    "Detalle": "Institucion vacia en columna D",
+                }
+            )
+            continue
+
+        grade_key = _normalize_richmondstudio_excel_iread_grade_key(grade_raw)
+        grade_label = RICHMONDSTUDIO_EXCEL_IREAD_GRADE_LABEL_BY_KEY.get(grade_key, "")
+        if not grade_label:
+            unmapped_grade_rows.append(
+                {
+                    "Fila Excel": int(row_index) + 1,
+                    "Institucion": institution_name,
+                    "Grado origen": grade_raw,
+                    "Producto": product_raw,
+                    "Detalle": "Grado no mapeado",
+                }
+            )
+            continue
+
+        active_labels_by_institution.setdefault(institution_name, set()).add(grade_label)
+        matched_rows.append(
+            {
+                "Fila Excel": int(row_index) + 1,
+                "Institucion": institution_name,
+                "Grado origen": grade_raw,
+                "Grado reporte": grade_label,
+                "Producto": product_raw,
+            }
+        )
+
+    report_rows: List[Dict[str, object]] = []
+    for institution_name in sorted(active_labels_by_institution, key=lambda item: item.upper()):
+        active_labels = active_labels_by_institution[institution_name]
+        report_row: Dict[str, object] = {
+            "Nombre de la institucion": institution_name,
+        }
+        for grade_label in RICHMONDSTUDIO_EXCEL_IREAD_GRADE_LABELS:
+            report_row[grade_label] = "Si" if grade_label in active_labels else ""
+        report_rows.append(report_row)
+
+    summary = {
+        "institutions_with_iread": len(report_rows),
+        "matched_rows": len(matched_rows),
+        "product_rows": product_rows_count,
+        "unmapped_rows": len(unmapped_grade_rows),
+        "source_rows": int(len(df)),
+        "sheet_name": str(sheet_name),
+    }
+    return {
+        "rows": report_rows,
+        "columns": [
+            "Nombre de la institucion",
+            *RICHMONDSTUDIO_EXCEL_IREAD_GRADE_LABELS,
+        ],
+        "matched_rows": matched_rows,
+        "unmapped_grade_rows": unmapped_grade_rows,
+        "summary": summary,
+    }
+
+def _build_richmondstudio_excel_iread_report_excel(
+    report: Dict[str, object],
+) -> bytes:
+    rows = [
+        dict(row)
+        for row in (report.get("rows") if isinstance(report.get("rows"), list) else [])
+        if isinstance(row, dict)
+    ]
+    columns = [
+        str(column or "").strip()
+        for column in (
+            report.get("columns") if isinstance(report.get("columns"), list) else []
+        )
+        if str(column or "").strip()
+    ]
+    if not columns:
+        columns = ["Nombre de la institucion", *RICHMONDSTUDIO_EXCEL_IREAD_GRADE_LABELS]
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df = pd.DataFrame(rows)
+        if rows:
+            df = df.reindex(columns=columns)
+        else:
+            df = pd.DataFrame(columns=columns)
+        df.to_excel(writer, index=False, sheet_name="iRead Export")
+        ws = writer.book["iRead Export"]
+        ws.freeze_panes = "A2"
+    output.seek(0)
+    return output.getvalue()
+
 def _create_richmondstudio_gradelevels_report(
     token: str,
     year: int = 2026,
@@ -9142,6 +9332,150 @@ def _render_richmondstudio_estela_report_panel(
                 with st.expander("Errores", expanded=False):
                     _show_dataframe(error_rows, use_container_width=True)
 
+def _render_richmondstudio_excel_iread_report_panel() -> None:
+    with st.container(border=True):
+        st.markdown("### Reporte iRead desde Excel Export")
+        st.caption(
+            "Sube el Excel con hoja Export. Se leen Institucion en columna D, "
+            "grado en columna F y producto en columna I. Solo se consideran "
+            "I-READ Upselling e I-READ Stand Alone."
+        )
+        uploaded_excel = st.file_uploader(
+            "Excel Export",
+            type=["xlsx", "xlsm"],
+            key="rs_excel_iread_report_upload",
+        )
+        run_report = st.button(
+            "Generar reporte iRead desde Excel",
+            type="primary",
+            key="rs_excel_iread_report_generate_btn",
+            use_container_width=True,
+        )
+
+        if run_report:
+            if uploaded_excel is None:
+                st.error("Sube el Excel con la hoja Export.")
+            else:
+                try:
+                    report = _create_richmondstudio_excel_iread_report(
+                        uploaded_excel.getvalue()
+                    )
+                    report_bytes = _build_richmondstudio_excel_iread_report_excel(
+                        report
+                    )
+                except Exception as exc:
+                    st.error(f"No se pudo generar el reporte desde Excel: {exc}")
+                else:
+                    st.session_state["rs_excel_iread_report"] = report
+                    st.session_state["rs_excel_iread_report_bytes"] = report_bytes
+                    st.session_state["rs_excel_iread_report_filename"] = (
+                        "richmond_reporte_iread_export.xlsx"
+                    )
+                    summary = (
+                        report.get("summary")
+                        if isinstance(report.get("summary"), dict)
+                        else {}
+                    )
+                    st.success(
+                        "Reporte iRead generado. Instituciones: "
+                        "{institutions_with_iread} | Filas iRead: {matched_rows} | "
+                        "Grados no mapeados: {unmapped_rows}.".format(**summary)
+                    )
+
+        cached_report = (
+            st.session_state.get("rs_excel_iread_report")
+            if isinstance(st.session_state.get("rs_excel_iread_report"), dict)
+            else {}
+        )
+        cached_bytes = bytes(st.session_state.get("rs_excel_iread_report_bytes") or b"")
+        if cached_report:
+            summary = (
+                cached_report.get("summary")
+                if isinstance(cached_report.get("summary"), dict)
+                else {}
+            )
+            metric_cols = st.columns(4, gap="small")
+            metric_cols[0].metric(
+                "Instituciones",
+                int(summary.get("institutions_with_iread") or 0),
+            )
+            metric_cols[1].metric(
+                "Filas iRead",
+                int(summary.get("matched_rows") or 0),
+            )
+            metric_cols[2].metric(
+                "Filas producto",
+                int(summary.get("product_rows") or 0),
+            )
+            metric_cols[3].metric(
+                "No mapeados",
+                int(summary.get("unmapped_rows") or 0),
+            )
+
+            report_rows = [
+                row
+                for row in (
+                    cached_report.get("rows")
+                    if isinstance(cached_report.get("rows"), list)
+                    else []
+                )
+                if isinstance(row, dict)
+            ]
+            unmapped_rows = [
+                row
+                for row in (
+                    cached_report.get("unmapped_grade_rows")
+                    if isinstance(cached_report.get("unmapped_grade_rows"), list)
+                    else []
+                )
+                if isinstance(row, dict)
+            ]
+            matched_rows = [
+                row
+                for row in (
+                    cached_report.get("matched_rows")
+                    if isinstance(cached_report.get("matched_rows"), list)
+                    else []
+                )
+                if isinstance(row, dict)
+            ]
+
+            if cached_bytes:
+                st.download_button(
+                    "Descargar Excel iRead",
+                    data=cached_bytes,
+                    file_name=str(
+                        st.session_state.get("rs_excel_iread_report_filename")
+                        or "richmond_reporte_iread_export.xlsx"
+                    ),
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="rs_excel_iread_report_download_btn",
+                    use_container_width=True,
+                )
+            if report_rows:
+                st.markdown("**Colegios con iRead en el Excel**")
+                _show_dataframe(report_rows[:300], use_container_width=True)
+                if len(report_rows) > 300:
+                    st.caption(
+                        f"Mostrando 300 de {len(report_rows)} colegio(s). Descarga el Excel para ver todo."
+                    )
+            else:
+                st.info("No se encontraron colegios con productos iRead en el Excel.")
+            if unmapped_rows:
+                with st.expander("Grados o filas no mapeadas", expanded=True):
+                    _show_dataframe(unmapped_rows[:300], use_container_width=True)
+                    if len(unmapped_rows) > 300:
+                        st.caption(
+                            f"Mostrando 300 de {len(unmapped_rows)} fila(s) no mapeada(s)."
+                        )
+            if matched_rows:
+                with st.expander("Filas usadas para el reporte", expanded=False):
+                    _show_dataframe(matched_rows[:300], use_container_width=True)
+                    if len(matched_rows) > 300:
+                        st.caption(
+                            f"Mostrando 300 de {len(matched_rows)} fila(s) usada(s)."
+                        )
+
 
 def render_richmond_studio_view() -> None:
     timeout = 30
@@ -9415,6 +9749,7 @@ def render_richmond_studio_view() -> None:
             rs_token=rs_token,
             timeout=int(timeout),
         )
+        _render_richmondstudio_excel_iread_report_panel()
 
     with tab_rs_excel:
         if str(st.session_state.get("rs_tools_nav") or "").strip() not in {

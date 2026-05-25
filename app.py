@@ -10691,23 +10691,29 @@ def _render_alumnos_global_login_search_section(
 
 def _render_pegasus_reportes_section() -> None:
     st.subheader("Reportes")
-    st.caption("Reportes directos de Pegasus para el colegio global seleccionado.")
+    st.caption("Reportes directos de Pegasus para todos los colegios del token.")
 
     token = _get_shared_token()
     empresa_id = DEFAULT_EMPRESA_ID
     ciclo_id = GESTION_ESCOLAR_CICLO_ID_DEFAULT
     timeout = 30
-    colegio_id_raw = str(st.session_state.get("shared_colegio_id", "") or "").strip()
-    colegio_id_current = _safe_int(colegio_id_raw)
+
+    if token:
+        _ensure_shared_colegios_loaded(
+            token=token,
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+        )
 
     with st.container(border=True):
         st.markdown("**Reporte SantillanaInclusiva**")
         st.caption(
-            "Lista clases de Primaria cuya materia es No Aplica. "
-            "El grado se muestra con nombre y el curso usa geClaseClave."
+            "Recorre todos los colegios, lista clases de Primaria cuya materia es "
+            "No Aplica, muestra el grado con nombre y el curso con geClaseClave."
         )
         run_report = st.button(
-            "Generar reporte",
+            "Generar reporte de todos los colegios",
             type="primary",
             key="reportes_santillana_inclusiva_run",
             use_container_width=True,
@@ -10717,38 +10723,104 @@ def _render_pegasus_reportes_section() -> None:
         if not token:
             st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
             st.stop()
-        if colegio_id_current is None:
-            st.error("Selecciona un colegio global antes de generar el reporte.")
+        colegio_rows = [
+            row
+            for row in (st.session_state.get("shared_colegios_rows") or [])
+            if isinstance(row, dict) and _safe_int(row.get("colegio_id")) is not None
+        ]
+        colegio_catalog_error = str(
+            st.session_state.get("shared_colegios_error") or ""
+        ).strip()
+        if colegio_catalog_error:
+            st.error(f"No se pudo cargar la lista de colegios: {colegio_catalog_error}")
+            st.stop()
+        if not colegio_rows:
+            st.error("No se encontraron colegios para este token.")
             st.stop()
 
-        colegio_label = _colegio_label_from_global_state(int(colegio_id_current))
-        try:
-            with st.spinner("Buscando clases Santillana Inclusiva de Primaria..."):
-                clases = _fetch_clases_gestion_escolar(
-                    token=token,
-                    colegio_id=int(colegio_id_current),
-                    empresa_id=int(empresa_id),
-                    ciclo_id=int(ciclo_id),
-                    timeout=int(timeout),
-                    ordered=True,
-                    nivel_id=PEGASUS_PRIMARIA_NIVEL_ID,
+        progress_bar = st.progress(0)
+        status_box = st.empty()
+        report_rows: List[Dict[str, object]] = []
+        report_errors: List[str] = []
+        total_colegios = len(colegio_rows)
+        with st.spinner("Buscando clases Santillana Inclusiva en todos los colegios..."):
+            for idx, colegio_row in enumerate(colegio_rows, start=1):
+                colegio_id = _safe_int(colegio_row.get("colegio_id"))
+                if colegio_id is None:
+                    continue
+                colegio_label = str(
+                    colegio_row.get("colegio")
+                    or colegio_row.get("label")
+                    or f"Colegio {int(colegio_id)}"
+                ).strip()
+                progress_bar.progress(
+                    min(1.0, max(0.0, (idx - 1) / max(total_colegios, 1)))
                 )
-                report_rows = _build_santillana_inclusiva_report_rows(
-                    clases=clases,
-                    colegio_label=colegio_label,
+                status_box.caption(
+                    "[{idx}/{total}] {colegio}".format(
+                        idx=idx,
+                        total=total_colegios,
+                        colegio=colegio_label,
+                    )
                 )
-        except Exception as exc:  # pragma: no cover - UI
-            st.session_state["reportes_santillana_inclusiva_error"] = str(exc)
-            st.error(f"No se pudo generar el reporte: {exc}")
-            st.stop()
+                try:
+                    clases = _fetch_clases_gestion_escolar(
+                        token=token,
+                        colegio_id=int(colegio_id),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                        ordered=True,
+                        nivel_id=PEGASUS_PRIMARIA_NIVEL_ID,
+                    )
+                except Exception as exc:  # pragma: no cover - UI
+                    report_errors.append(
+                        "{colegio} ({colegio_id}): {error}".format(
+                            colegio=colegio_label or "Colegio",
+                            colegio_id=int(colegio_id),
+                            error=str(exc).strip() or "error sin detalle",
+                        )
+                    )
+                    continue
+                report_rows.extend(
+                    _build_santillana_inclusiva_report_rows(
+                        clases=clases,
+                        colegio_label=colegio_label,
+                    )
+                )
+
+        progress_bar.progress(1.0)
+        status_box.caption(
+            "Reporte terminado: {clases} clase(s), {errores} colegio(s) con error.".format(
+                clases=len(report_rows),
+                errores=len(report_errors),
+            )
+        )
+        report_rows.sort(
+            key=lambda row: (
+                str(row.get("Colegio") or "").upper(),
+                _participantes_grado_sort_rank(row.get("Grado")),
+                str(row.get("Nombre curso") or "").upper(),
+            )
+        )
 
         st.session_state["reportes_santillana_inclusiva_rows"] = report_rows
+        st.session_state["reportes_santillana_inclusiva_errors"] = report_errors
         st.session_state["reportes_santillana_inclusiva_error"] = ""
         st.session_state["reportes_santillana_inclusiva_scope"] = {
-            "colegio_id": int(colegio_id_current),
-            "colegio": colegio_label,
+            "colegios_total": int(total_colegios),
+            "colegios_error": len(report_errors),
         }
-        st.success(f"Reporte listo. Clases encontradas: {len(report_rows)}.")
+        if report_errors:
+            st.warning(
+                "Reporte generado con observaciones. Clases encontradas: {clases} | "
+                "Colegios con error: {errores}.".format(
+                    clases=len(report_rows),
+                    errores=len(report_errors),
+                )
+            )
+        else:
+            st.success(f"Reporte listo. Clases encontradas: {len(report_rows)}.")
 
     report_error = str(
         st.session_state.get("reportes_santillana_inclusiva_error") or ""
@@ -10759,34 +10831,26 @@ def _render_pegasus_reportes_section() -> None:
     report_rows_cached = st.session_state.get("reportes_santillana_inclusiva_rows")
     if isinstance(report_rows_cached, list):
         scope = st.session_state.get("reportes_santillana_inclusiva_scope") or {}
-        colegio_scope = str(scope.get("colegio") or "").strip()
-        colegio_id_scope = _safe_int(scope.get("colegio_id"))
+        errors_cached = list(
+            st.session_state.get("reportes_santillana_inclusiva_errors") or []
+        )
         with st.container(border=True):
-            metric_cols = st.columns(3)
+            metric_cols = st.columns(4)
             metric_cols[0].metric("Clases", len(report_rows_cached))
             metric_cols[1].metric("Nivel", "Primaria")
             metric_cols[2].metric(
-                "Colegio",
-                colegio_scope or (
-                    f"Colegio {int(colegio_id_scope)}"
-                    if colegio_id_scope is not None
-                    else "-"
-                ),
+                "Colegios",
+                int(scope.get("colegios_total") or 0),
             )
+            metric_cols[3].metric("Errores", len(errors_cached))
             if report_rows_cached:
-                file_suffix = (
-                    _sanitize_zip_component(
-                        colegio_scope or f"Colegio {int(colegio_id_scope or 0)}",
-                        "colegio",
-                    )
-                )
                 st.download_button(
                     label="Descargar reporte",
                     data=_export_simple_excel(
                         report_rows_cached,
                         sheet_name="SantillanaInclusiva",
                     ),
-                    file_name=f"reporte_santillana_inclusiva_{file_suffix}.xlsx",
+                    file_name="reporte_santillana_inclusiva_todos_colegios.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="reportes_santillana_inclusiva_download",
                     use_container_width=True,
@@ -10794,6 +10858,16 @@ def _render_pegasus_reportes_section() -> None:
                 _show_dataframe(report_rows_cached, use_container_width=True)
             else:
                 st.info("No se encontraron clases con materia No Aplica en Primaria.")
+
+            if errors_cached:
+                with st.expander(
+                    f"Colegios con error ({len(errors_cached)})",
+                    expanded=False,
+                ):
+                    st.write("\n".join(f"- {item}" for item in errors_cached[:120]))
+                    pending = len(errors_cached) - 120
+                    if pending > 0:
+                        st.caption(f"... y {pending} errores mas.")
 
 
 def _render_otras_funcionalidades_view() -> None:

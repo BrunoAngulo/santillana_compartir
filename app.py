@@ -74,6 +74,7 @@ from santillana_format.pegasus import (
     listar_y_mapear_clases,
     process_excel,
 )
+from santillana_format.pegasus.alumnos import GRADOS_POR_NIVEL as PEGASUS_GRADOS_POR_NIVEL
 
 APP_ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 APP_TAB_LOGO_PATH = APP_ASSETS_DIR / "tab_logo.png"
@@ -266,6 +267,7 @@ PEGASUS_NIVEL_LABEL_BY_ID = {
     39: "Primaria",
     40: "Secundaria",
 }
+PEGASUS_PRIMARIA_NIVEL_ID = 39
 CENSO_ACTIVOS_EXPORT_COLUMNS = [
     "Nivel",
     "Grado",
@@ -1902,11 +1904,12 @@ if menu_option != "Richmond Studio":
                 key="sumun_download_btn",
             )
 
-    tab_crud_clases, tab_crud_profesores, tab_crud_alumnos, tab_otras_funcionalidades = st.tabs(
+    tab_crud_clases, tab_crud_profesores, tab_crud_alumnos, tab_reportes, tab_otras_funcionalidades = st.tabs(
         [
             "CRUD Clases",
             "CRUD Profesores",
             "CRUD Alumnos",
+            "Reportes",
             "Otras funcionalidades",
         ]
     )
@@ -2459,10 +2462,13 @@ def _fetch_clases_gestion_escolar(
     ciclo_id: int,
     timeout: int,
     ordered: bool = False,
+    nivel_id: Optional[int] = None,
 ) -> List[Dict[str, object]]:
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
     url = GESTION_ESCOLAR_URL.format(empresa_id=empresa_id, ciclo_id=ciclo_id)
     params: Dict[str, object] = {"colegioId": colegio_id}
+    if nivel_id is not None:
+        params["nivelId"] = int(nivel_id)
     if ordered:
         params["ordered"] = 1
     try:
@@ -3130,6 +3136,8 @@ def _extract_clase_base_meta(item: Dict[str, object]) -> Optional[Dict[str, obje
 
 
 def _is_santillana_inclusiva_class(item: Dict[str, object]) -> bool:
+    if _clase_has_materia_no_aplica(item):
+        return True
     search_text = " ".join(
         part
         for part in (
@@ -3144,6 +3152,18 @@ def _is_santillana_inclusiva_class(item: Dict[str, object]) -> bool:
     )
     target = "SANTILLANA INCLUSIVA"
     return target in search_text
+
+
+def _clase_has_materia_no_aplica(item: Dict[str, object]) -> bool:
+    clase_materias = item.get("claseMaterias") if isinstance(item.get("claseMaterias"), list) else []
+    for entry in clase_materias:
+        if not isinstance(entry, dict):
+            continue
+        materia = entry.get("materia") if isinstance(entry.get("materia"), dict) else {}
+        materia_nombre = _normalize_plain_text(materia.get("materia"))
+        if materia_nombre == "NO APLICA":
+            return True
+    return False
 
 
 def _iter_ingles_class_search_values(item: Dict[str, object]) -> Iterable[str]:
@@ -3221,6 +3241,109 @@ def _clase_participantes_label(row: Dict[str, object]) -> str:
     if context:
         base = f"{base} | {context}"
     return base
+
+
+def _pegasus_grado_label(
+    grado_id: object,
+    nivel_id: object = None,
+    fallback: object = "",
+) -> str:
+    fallback_txt = str(fallback or "").strip()
+    if fallback_txt and not fallback_txt.isdigit():
+        return fallback_txt
+
+    grado_id_int = _safe_int(grado_id)
+    if grado_id_int is None:
+        return fallback_txt
+
+    nivel_id_int = _safe_int(nivel_id)
+    if nivel_id_int is not None:
+        label = (
+            PEGASUS_GRADOS_POR_NIVEL.get(int(nivel_id_int), {}) or {}
+        ).get(int(grado_id_int))
+        if label:
+            return str(label).strip()
+
+    for grados in PEGASUS_GRADOS_POR_NIVEL.values():
+        label = (grados or {}).get(int(grado_id_int))
+        if label:
+            return str(label).strip()
+    return fallback_txt or f"Grado {int(grado_id_int)}"
+
+
+def _colegio_label_from_clase(
+    item: Dict[str, object],
+    fallback: object = "",
+) -> str:
+    cnc = item.get("colegioNivelCiclo") if isinstance(item.get("colegioNivelCiclo"), dict) else {}
+    colegio = cnc.get("colegio") if isinstance(cnc.get("colegio"), dict) else {}
+    return str(
+        colegio.get("colegio")
+        or colegio.get("colegioClave")
+        or fallback
+        or ""
+    ).strip()
+
+
+def _colegio_label_from_global_state(colegio_id: int) -> str:
+    for row in st.session_state.get("shared_colegios_rows") or []:
+        if not isinstance(row, dict):
+            continue
+        row_id = _safe_int(row.get("colegio_id"))
+        if row_id is None or int(row_id) != int(colegio_id):
+            continue
+        return str(
+            row.get("colegio")
+            or row.get("label")
+            or f"Colegio {int(colegio_id)}"
+        ).strip()
+    return str(st.session_state.get("shared_colegio_label") or "").strip() or f"Colegio {int(colegio_id)}"
+
+
+def _build_santillana_inclusiva_report_rows(
+    clases: List[Dict[str, object]],
+    colegio_label: object = "",
+) -> List[Dict[str, object]]:
+    rows: List[Dict[str, object]] = []
+    seen: Set[Tuple[str, str, str]] = set()
+    for item in clases:
+        if not isinstance(item, dict):
+            continue
+        if not _clase_has_materia_no_aplica(item):
+            continue
+
+        meta = _extract_clase_base_meta(item) or {}
+        colegio_nombre = _colegio_label_from_clase(item, fallback=colegio_label)
+        grado_nombre = _pegasus_grado_label(
+            meta.get("grado_id"),
+            nivel_id=meta.get("nivel_id"),
+            fallback=meta.get("grado_nombre"),
+        )
+        ge_clase_clave = str(item.get("geClaseClave") or item.get("geClase") or "").strip()
+        key = (
+            _normalize_compare_text(colegio_nombre),
+            _normalize_compare_text(grado_nombre),
+            _normalize_compare_text(ge_clase_clave),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(
+            {
+                "Colegio": colegio_nombre,
+                "Grado": grado_nombre,
+                "Nombre curso": ge_clase_clave,
+            }
+        )
+
+    rows.sort(
+        key=lambda row: (
+            str(row.get("Colegio") or "").upper(),
+            _participantes_grado_sort_rank(row.get("Grado")),
+            str(row.get("Nombre curso") or "").upper(),
+        )
+    )
+    return rows
 
 
 def _extract_clase_alumno_rows(clase_data: Dict[str, object]) -> List[Dict[str, object]]:
@@ -8244,14 +8367,18 @@ def _store_alumno_edit_detail_state(detail: Dict[str, object], context: Dict[str
     st.session_state["alumnos_edit_fetch_error"] = ""
 
 
-def _clear_alumnos_edit_move_state(close_dialog: bool = True) -> None:
-    for state_key in (
-        "alumnos_edit_move_last_alumno_id",
-        "alumnos_edit_move_nivel_id",
-        "alumnos_edit_move_grado_id",
-        "alumnos_edit_move_seccion",
-    ):
-        st.session_state.pop(state_key, None)
+def _clear_alumnos_edit_move_state(
+    close_dialog: bool = True,
+    clear_widget_keys: bool = True,
+) -> None:
+    if clear_widget_keys:
+        for state_key in (
+            "alumnos_edit_move_last_alumno_id",
+            "alumnos_edit_move_nivel_id",
+            "alumnos_edit_move_grado_id",
+            "alumnos_edit_move_seccion",
+        ):
+            st.session_state.pop(state_key, None)
     if close_dialog:
         st.session_state.pop("alumnos_edit_move_dialog_alumno_id", None)
 
@@ -9664,7 +9791,7 @@ def _show_alumno_edit_move_dialog(
                 )
             ).strip(),
         }
-        _clear_alumnos_edit_move_state(close_dialog=True)
+        _clear_alumnos_edit_move_state(close_dialog=True, clear_widget_keys=False)
         st.rerun()
 
     if action_cols[1].button(
@@ -9672,7 +9799,7 @@ def _show_alumno_edit_move_dialog(
         key=f"alumnos_edit_move_cancel_btn_{alumno_id_int}",
         use_container_width=True,
     ):
-        _clear_alumnos_edit_move_state(close_dialog=True)
+        _clear_alumnos_edit_move_state(close_dialog=True, clear_widget_keys=False)
         st.rerun()
 
 
@@ -10560,6 +10687,113 @@ def _render_alumnos_global_login_search_section(
                     pending = len(errors_cached) - 80
                     if pending > 0:
                         st.caption(f"... y {pending} errores mas.")
+
+
+def _render_pegasus_reportes_section() -> None:
+    st.subheader("Reportes")
+    st.caption("Reportes directos de Pegasus para el colegio global seleccionado.")
+
+    token = _get_shared_token()
+    empresa_id = DEFAULT_EMPRESA_ID
+    ciclo_id = GESTION_ESCOLAR_CICLO_ID_DEFAULT
+    timeout = 30
+    colegio_id_raw = str(st.session_state.get("shared_colegio_id", "") or "").strip()
+    colegio_id_current = _safe_int(colegio_id_raw)
+
+    with st.container(border=True):
+        st.markdown("**Reporte SantillanaInclusiva**")
+        st.caption(
+            "Lista clases de Primaria cuya materia es No Aplica. "
+            "El grado se muestra con nombre y el curso usa geClaseClave."
+        )
+        run_report = st.button(
+            "Generar reporte",
+            type="primary",
+            key="reportes_santillana_inclusiva_run",
+            use_container_width=True,
+        )
+
+    if run_report:
+        if not token:
+            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+            st.stop()
+        if colegio_id_current is None:
+            st.error("Selecciona un colegio global antes de generar el reporte.")
+            st.stop()
+
+        colegio_label = _colegio_label_from_global_state(int(colegio_id_current))
+        try:
+            with st.spinner("Buscando clases Santillana Inclusiva de Primaria..."):
+                clases = _fetch_clases_gestion_escolar(
+                    token=token,
+                    colegio_id=int(colegio_id_current),
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                    ordered=True,
+                    nivel_id=PEGASUS_PRIMARIA_NIVEL_ID,
+                )
+                report_rows = _build_santillana_inclusiva_report_rows(
+                    clases=clases,
+                    colegio_label=colegio_label,
+                )
+        except Exception as exc:  # pragma: no cover - UI
+            st.session_state["reportes_santillana_inclusiva_error"] = str(exc)
+            st.error(f"No se pudo generar el reporte: {exc}")
+            st.stop()
+
+        st.session_state["reportes_santillana_inclusiva_rows"] = report_rows
+        st.session_state["reportes_santillana_inclusiva_error"] = ""
+        st.session_state["reportes_santillana_inclusiva_scope"] = {
+            "colegio_id": int(colegio_id_current),
+            "colegio": colegio_label,
+        }
+        st.success(f"Reporte listo. Clases encontradas: {len(report_rows)}.")
+
+    report_error = str(
+        st.session_state.get("reportes_santillana_inclusiva_error") or ""
+    ).strip()
+    if report_error:
+        st.error(report_error)
+
+    report_rows_cached = st.session_state.get("reportes_santillana_inclusiva_rows")
+    if isinstance(report_rows_cached, list):
+        scope = st.session_state.get("reportes_santillana_inclusiva_scope") or {}
+        colegio_scope = str(scope.get("colegio") or "").strip()
+        colegio_id_scope = _safe_int(scope.get("colegio_id"))
+        with st.container(border=True):
+            metric_cols = st.columns(3)
+            metric_cols[0].metric("Clases", len(report_rows_cached))
+            metric_cols[1].metric("Nivel", "Primaria")
+            metric_cols[2].metric(
+                "Colegio",
+                colegio_scope or (
+                    f"Colegio {int(colegio_id_scope)}"
+                    if colegio_id_scope is not None
+                    else "-"
+                ),
+            )
+            if report_rows_cached:
+                file_suffix = (
+                    _sanitize_zip_component(
+                        colegio_scope or f"Colegio {int(colegio_id_scope or 0)}",
+                        "colegio",
+                    )
+                )
+                st.download_button(
+                    label="Descargar reporte",
+                    data=_export_simple_excel(
+                        report_rows_cached,
+                        sheet_name="SantillanaInclusiva",
+                    ),
+                    file_name=f"reporte_santillana_inclusiva_{file_suffix}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="reportes_santillana_inclusiva_download",
+                    use_container_width=True,
+                )
+                _show_dataframe(report_rows_cached, use_container_width=True)
+            else:
+                st.info("No se encontraron clases con materia No Aplica en Primaria.")
 
 
 def _render_otras_funcionalidades_view() -> None:
@@ -18202,6 +18436,9 @@ with tab_crud_alumnos:
                         ).strip(),
                     }
                     st.rerun()
+
+with tab_reportes:
+    _render_pegasus_reportes_section()
 
 with tab_otras_funcionalidades:
     _render_otras_funcionalidades_view()

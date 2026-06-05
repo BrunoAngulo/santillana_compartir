@@ -225,6 +225,17 @@ RICHMONDSTUDIO_EXCEL_IREAD_PRODUCT_KEYS = {
     for product in RICHMONDSTUDIO_EXCEL_IREAD_PRODUCTS
 }
 
+RICHMONDSTUDIO_MOCKS_PRODUCT_PREFIXES = (
+    "YLE",
+    "Richmond Practice Test",
+    "Target",
+)
+
+RICHMONDSTUDIO_MOCKS_PRODUCT_PREFIX_KEYS = tuple(
+    _normalize_compare_text(product)
+    for product in RICHMONDSTUDIO_MOCKS_PRODUCT_PREFIXES
+)
+
 RICHMONDSTUDIO_EXCEL_IREAD_GRADE_COLUMNS: List[Tuple[str, str]] = [
     ("1 PRIMARIA", "Primer grado de primaria"),
     ("2 PRIMARIA", "Segundo grado de primaria"),
@@ -1143,6 +1154,12 @@ def _richmondstudio_parse_year_month(value: object) -> Optional[Tuple[int, int]]
         parsed = datetime.fromisoformat(text)
         return int(parsed.year), int(parsed.month)
     except ValueError:
+        for fmt in ("%d/%m/%Y", "%d-%m-%Y"):
+            try:
+                parsed_date = datetime.strptime(text, fmt)
+                return int(parsed_date.year), int(parsed_date.month)
+            except ValueError:
+                pass
         match = re.match(r"^(\d{4})-(\d{2})", text)
         if match:
             try:
@@ -1187,6 +1204,30 @@ def _richmondstudio_subscription_rows_expiring_in_year(
         rows.append(dict(row))
     return rows
 
+def _richmondstudio_subscription_product_matches_mocks(value: object) -> bool:
+    text = _normalize_compare_text(value)
+    if not text:
+        return False
+    return any(
+        text.startswith(prefix)
+        for prefix in RICHMONDSTUDIO_MOCKS_PRODUCT_PREFIX_KEYS
+    )
+
+def _richmondstudio_mock_subscription_rows_expiring_in_year(
+    detail_body: Dict[str, object],
+    year: int,
+) -> List[Dict[str, str]]:
+    return [
+        row
+        for row in _richmondstudio_subscription_rows_expiring_in_year(
+            detail_body,
+            year=int(year),
+        )
+        if _richmondstudio_subscription_product_matches_mocks(
+            row.get("product_name")
+        )
+    ]
+
 def _build_richmondstudio_expiring_subscription_report_row(
     row: Dict[str, object],
 ) -> Dict[str, str]:
@@ -1214,6 +1255,25 @@ def _build_richmondstudio_expiring_subscription_report_row(
         "CLASSES COUNT": classes_count,
         "CLASS NAMES": class_names,
     }
+
+def _build_richmondstudio_mock_subscription_report_row(
+    user_row: Dict[str, object],
+    subscription_row: Dict[str, object],
+) -> Dict[str, str]:
+    base_row = _build_richmondstudio_expiring_subscription_report_row(user_row)
+    base_row.update(
+        {
+            "Product": str(subscription_row.get("product_name") or "").strip(),
+            "Created at": _richmondstudio_date_display(
+                subscription_row.get("created_at")
+            ),
+            "Expires at": _richmondstudio_date_display(
+                subscription_row.get("expiration_date")
+            ),
+            "Subscription ID": str(subscription_row.get("id") or "").strip(),
+        }
+    )
+    return base_row
 
 def _list_richmondstudio_users_with_subscriptions_expiring_in_year(
     token: str,
@@ -1311,6 +1371,113 @@ def _list_richmondstudio_users_with_subscriptions_expiring_in_year(
         key=lambda item: (
             str(item.get("USER NAME") or "").lower(),
             str(item.get("Email") or "").lower(),
+        ),
+    )
+    return summary, result_rows
+
+def _list_richmondstudio_students_with_mocks_expiring_in_year(
+    token: str,
+    rows: List[Dict[str, object]],
+    timeout: int = 30,
+    target_year: Optional[int] = None,
+    on_status: Optional[Callable[[str], None]] = None,
+    on_progress: Optional[Callable[[int, int], None]] = None,
+) -> Tuple[Dict[str, int], List[Dict[str, str]]]:
+    def _status(message: str) -> None:
+        if callable(on_status):
+            try:
+                on_status(str(message or ""))
+            except Exception:
+                pass
+
+    def _progress(current: int, total: int) -> None:
+        if callable(on_progress):
+            try:
+                on_progress(int(current), int(total))
+            except Exception:
+                pass
+
+    target_year_int = int(target_year or (date.today().year + 1))
+    eligible_rows = [
+        row
+        for row in rows
+        if str(row.get("RS USER ID") or "").strip()
+        and str(row.get("Role") or "").strip().lower() == "student"
+    ]
+    summary = {
+        "eligible_total": int(len(eligible_rows)),
+        "processed_total": 0,
+        "matched_total": 0,
+        "error_total": 0,
+        "subscriptions_total": 0,
+    }
+    result_rows: List[Dict[str, str]] = []
+
+    total_rows = len(eligible_rows)
+    if total_rows <= 0:
+        _progress(1, 1)
+        return summary, result_rows
+
+    _progress(0, total_rows)
+    for idx_row, row in enumerate(eligible_rows, start=1):
+        user_id = str(row.get("RS USER ID") or "").strip()
+        first_name = str(row.get("First name") or "").strip()
+        last_name = str(row.get("Last name") or "").strip()
+        user_name = " ".join(
+            part for part in (first_name, last_name) if part
+        ).strip() or str(row.get("Username") or "").strip()
+        _status(
+            "Revisando mocks RS {idx}/{total}: {user}".format(
+                idx=idx_row,
+                total=max(total_rows, 1),
+                user=user_name or user_id or "(sin usuario)",
+            )
+        )
+
+        try:
+            detail_body = _fetch_richmondstudio_user_detail(
+                token=token,
+                user_id=user_id,
+                timeout=int(timeout),
+            )
+            matching_subscription_rows = (
+                _richmondstudio_mock_subscription_rows_expiring_in_year(
+                    detail_body,
+                    year=int(target_year_int),
+                )
+            )
+            summary["processed_total"] += 1
+            if not matching_subscription_rows:
+                _progress(idx_row, total_rows)
+                continue
+
+            summary["matched_total"] += 1
+            summary["subscriptions_total"] += int(len(matching_subscription_rows))
+            for subscription_row in matching_subscription_rows:
+                result_rows.append(
+                    _build_richmondstudio_mock_subscription_report_row(
+                        row,
+                        subscription_row,
+                    )
+                )
+        except Exception as exc:
+            summary["error_total"] += 1
+            _status(
+                "Error revisando mocks RS para {user}: {detail}".format(
+                    user=user_name or user_id or "(sin usuario)",
+                    detail=str(exc).strip() or "sin detalle",
+                )
+            )
+        finally:
+            _progress(idx_row, total_rows)
+
+    result_rows = sorted(
+        result_rows,
+        key=lambda item: (
+            str(item.get("USER NAME") or "").lower(),
+            str(item.get("Email") or "").lower(),
+            str(item.get("Product") or "").lower(),
+            str(item.get("Expires at") or "").lower(),
         ),
     )
     return summary, result_rows
@@ -1817,6 +1984,9 @@ def _store_richmondstudio_registered_panel_data(
         "rs_expiring_next_year_summary",
         "rs_expiring_next_year_rows",
         "rs_expiring_next_year_bytes",
+        "rs_mocks_next_year_summary",
+        "rs_mocks_next_year_rows",
+        "rs_mocks_next_year_bytes",
         "rs_class_users_export_bytes",
         "rs_class_users_export_filename",
         "rs_class_users_export_group_id",
@@ -8060,12 +8230,145 @@ def _render_richmondstudio_tools_expiring_panel(
                 )
 
 
+def _render_richmondstudio_tools_mocks_panel(
+    rs_token: str,
+    timeout: int,
+) -> None:
+    with st.container(border=True):
+        mocks_next_year = int(date.today().year + 1)
+        mocks_next_year_sheet = f"mocks_expiring_{mocks_next_year}"
+        mocks_next_year_file_name = f"rs_mocks_{mocks_next_year}.xlsx"
+        registered_user_rows_cached = list(
+            st.session_state.get("rs_registered_user_rows") or []
+        )
+
+        st.markdown("### 3. Mocks")
+        st.markdown(
+            f"**Mocks de estudiantes que expiran en {mocks_next_year}**"
+        )
+        st.caption(
+            "Lista suscripciones de alumnos RS cuyo producto empieza con YLE, "
+            "Richmond Practice Test o Target, y cuya fecha de expiracion cae en "
+            "el proximo ano."
+        )
+        if st.button(
+            f"Listar mocks que expiran en {mocks_next_year}",
+            key="rs_mocks_next_year_list_btn",
+            use_container_width=True,
+        ):
+            if not rs_token:
+                st.error("Ingresa el bearer token de Richmond Studio.")
+            elif not registered_user_rows_cached:
+                st.warning(
+                    "Primero ejecuta `Listar alumnos registrados` para cargar usuarios RS."
+                )
+            else:
+                status_placeholder = st.empty()
+                progress_placeholder = st.empty()
+                progress_bar = progress_placeholder.progress(0)
+                try:
+                    mocks_summary, mocks_rows = (
+                        _list_richmondstudio_students_with_mocks_expiring_in_year(
+                            token=rs_token,
+                            rows=registered_user_rows_cached,
+                            timeout=int(timeout),
+                            target_year=int(mocks_next_year),
+                            on_status=lambda message: status_placeholder.write(
+                                message
+                            ),
+                            on_progress=lambda current, total: progress_bar.progress(
+                                min(
+                                    100,
+                                    max(
+                                        0,
+                                        int(
+                                            (float(current) / max(int(total), 1))
+                                            * 100
+                                        ),
+                                    ),
+                                )
+                            ),
+                        )
+                    )
+                except Exception as exc:  # pragma: no cover - UI
+                    status_placeholder.empty()
+                    progress_placeholder.empty()
+                    st.error(f"Error RS: {exc}")
+                else:
+                    status_placeholder.empty()
+                    progress_placeholder.empty()
+                    st.session_state["rs_mocks_next_year_summary"] = dict(
+                        mocks_summary
+                    )
+                    st.session_state["rs_mocks_next_year_rows"] = list(
+                        mocks_rows
+                    )
+                    st.session_state["rs_mocks_next_year_bytes"] = (
+                        _export_simple_excel(
+                            mocks_rows,
+                            sheet_name=mocks_next_year_sheet,
+                        )
+                        if mocks_rows
+                        else b""
+                    )
+                    st.success(
+                        "Consulta de mocks RS completada. "
+                        "Alumnos revisados: {processed_total}/{eligible_total} | "
+                        "Alumnos con coincidencia: {matched_total} | "
+                        "Mocks detectados: {subscriptions_total} | "
+                        "Errores: {error_total}.".format(
+                            **mocks_summary
+                        )
+                    )
+
+        mocks_summary_cached = (
+            st.session_state.get("rs_mocks_next_year_summary") or {}
+        )
+        mocks_rows_cached = (
+            st.session_state.get("rs_mocks_next_year_rows") or []
+        )
+        mocks_bytes_cached = (
+            st.session_state.get("rs_mocks_next_year_bytes") or b""
+        )
+        if mocks_summary_cached:
+            st.markdown(
+                f"**Resultado mocks que expiran en {mocks_next_year}**"
+            )
+            st.info(
+                "Alumnos revisados: {processed_total}/{eligible_total} | "
+                "Alumnos con coincidencia: {matched_total} | "
+                "Mocks detectados: {subscriptions_total} | "
+                "Errores: {error_total}".format(
+                    **mocks_summary_cached
+                )
+            )
+            if mocks_rows_cached:
+                _show_dataframe(
+                    mocks_rows_cached[:200],
+                    use_container_width=True,
+                )
+            else:
+                st.caption(
+                    "No se encontraron mocks con producto YLE, Richmond Practice "
+                    f"Test o Target y expirationDate en {mocks_next_year}."
+                )
+            if mocks_bytes_cached:
+                st.download_button(
+                    label=f"Descargar mocks que expiran en {mocks_next_year}",
+                    data=mocks_bytes_cached,
+                    file_name=mocks_next_year_file_name,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="rs_mocks_next_year_download",
+                    use_container_width=True,
+                )
+
+
 def _render_richmondstudio_tools_user_classes_panel(
     rs_token: str,
     timeout: int,
 ) -> None:
     with st.container(border=True):
-        st.markdown("### 3. Gestionar clases por usuario")
+        st.markdown("### 4. Gestionar clases por usuario")
         st.markdown("**Gestionar clases de usuario RS**")
         st.caption(
             "Usa el listado registrado para seleccionar un usuario, reemplazar sus clases, "
@@ -8475,7 +8778,7 @@ def _render_richmondstudio_tools_class_users_panel(
     timeout: int,
 ) -> None:
     with st.container(border=True):
-        st.markdown("### 4. Gestionar usuarios por clase")
+        st.markdown("### 5. Gestionar usuarios por clase")
         st.markdown("**Gestionar usuarios de una clase RS**")
         st.caption(
             "Selecciona una clase, revisa sus usuarios actuales y define la lista final de participantes por nombre y login."
@@ -8894,7 +9197,7 @@ def _render_richmondstudio_tools_password_panel(
     timeout: int,
 ) -> None:
     with st.container(border=True):
-        st.markdown("### 5. Actualizacion masiva de password")
+        st.markdown("### 6. Actualizacion masiva de password")
         st.markdown("**Actualizar password usuarios RS**")
         st.caption(
             "Descarga el Excel de todos los usuarios registrados, completa New password(optional) "
@@ -9755,6 +10058,7 @@ def render_richmond_studio_view() -> None:
         if str(st.session_state.get("rs_tools_nav") or "").strip() not in {
             "listado",
             "suscripciones",
+            "mocks",
             "clases_usuario",
             "usuarios_clase",
             "password",
@@ -9775,6 +10079,11 @@ def render_richmond_studio_view() -> None:
                         "suscripciones",
                         "Suscripciones",
                         "Revisa usuarios con vencimientos proximos",
+                    ),
+                    (
+                        "mocks",
+                        "Mocks",
+                        "Lista alumnos con YLE, Richmond Practice Test o Target",
                     ),
                     (
                         "clases_usuario",
@@ -9802,6 +10111,11 @@ def render_richmond_studio_view() -> None:
                 )
             if rs_tools_view == "suscripciones":
                 _render_richmondstudio_tools_expiring_panel(
+                    rs_token=rs_token,
+                    timeout=int(timeout),
+                )
+            if rs_tools_view == "mocks":
+                _render_richmondstudio_tools_mocks_panel(
                     rs_token=rs_token,
                     timeout=int(timeout),
                 )

@@ -53,6 +53,7 @@ from santillana_format.sumun import (
 )
 from santillana_format.pegasus import (
     ALUMNOS_CICLO_ID_DEFAULT,
+    APLICATIVO_COMPARTIR_EVIDENCIAS_IPA,
     CODE_COLUMN_NAME,
     COMPARE_MODE_AMBOS,
     COMPARE_MODE_APELLIDOS,
@@ -68,6 +69,8 @@ from santillana_format.pegasus import (
     descargar_plantilla_edicion_masiva,
     export_profesores_bd_excel,
     export_profesores_excel,
+    fetch_aplicaciones_articulos,
+    has_active_articulo_aplicacion,
     listar_profesores_bd_data,
     listar_profesores_data,
     listar_profesores_filters_data,
@@ -10719,6 +10722,19 @@ def _render_pegasus_reportes_section() -> None:
             use_container_width=True,
         )
 
+    with st.container(border=True):
+        st.markdown("**Reporte Compartir Evidencias (IPA)**")
+        st.caption(
+            "Recorre todos los colegios, consulta articulos/aplicaciones y exporta "
+            "solo los colegios donde el aplicativo esta activo."
+        )
+        run_aplicativo_ipa_report = st.button(
+            "Generar reporte Compartir Evidencias (IPA)",
+            type="primary",
+            key="reportes_aplicativo_ipa_run",
+            use_container_width=True,
+        )
+
     if run_report:
         if not token:
             st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
@@ -10858,6 +10874,154 @@ def _render_pegasus_reportes_section() -> None:
                 _show_dataframe(report_rows_cached, use_container_width=True)
             else:
                 st.info("No se encontraron clases con materia No Aplica en Primaria.")
+
+            if errors_cached:
+                with st.expander(
+                    f"Colegios con error ({len(errors_cached)})",
+                    expanded=False,
+                ):
+                    st.write("\n".join(f"- {item}" for item in errors_cached[:120]))
+                    pending = len(errors_cached) - 120
+                    if pending > 0:
+                        st.caption(f"... y {pending} errores mas.")
+
+    if run_aplicativo_ipa_report:
+        if not token:
+            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+            st.stop()
+        colegio_rows = [
+            row
+            for row in (st.session_state.get("shared_colegios_rows") or [])
+            if isinstance(row, dict) and _safe_int(row.get("colegio_id")) is not None
+        ]
+        colegio_catalog_error = str(
+            st.session_state.get("shared_colegios_error") or ""
+        ).strip()
+        if colegio_catalog_error:
+            st.error(f"No se pudo cargar la lista de colegios: {colegio_catalog_error}")
+            st.stop()
+        if not colegio_rows:
+            st.error("No se encontraron colegios para este token.")
+            st.stop()
+
+        progress_bar = st.progress(0)
+        status_box = st.empty()
+        report_rows: List[Dict[str, object]] = []
+        report_errors: List[str] = []
+        total_colegios = len(colegio_rows)
+        with st.spinner("Buscando Compartir Evidencias (IPA) en todos los colegios..."):
+            for idx, colegio_row in enumerate(colegio_rows, start=1):
+                colegio_id = _safe_int(colegio_row.get("colegio_id"))
+                if colegio_id is None:
+                    continue
+                colegio_label = str(
+                    colegio_row.get("colegio")
+                    or colegio_row.get("label")
+                    or f"Colegio {int(colegio_id)}"
+                ).strip()
+                progress_bar.progress(
+                    min(1.0, max(0.0, (idx - 1) / max(total_colegios, 1)))
+                )
+                status_box.caption(
+                    "[{idx}/{total}] {colegio}".format(
+                        idx=idx,
+                        total=total_colegios,
+                        colegio=colegio_label,
+                    )
+                )
+                try:
+                    aplicaciones = fetch_aplicaciones_articulos(
+                        token=token,
+                        colegio_id=int(colegio_id),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                        filtrar_activo=0,
+                    )
+                except Exception as exc:  # pragma: no cover - UI
+                    report_errors.append(
+                        "{colegio} ({colegio_id}): {error}".format(
+                            colegio=colegio_label or "Colegio",
+                            colegio_id=int(colegio_id),
+                            error=str(exc).strip() or "error sin detalle",
+                        )
+                    )
+                    continue
+                if has_active_articulo_aplicacion(
+                    aplicaciones,
+                    articulo_nombre=APLICATIVO_COMPARTIR_EVIDENCIAS_IPA,
+                ):
+                    report_rows.append(
+                        {
+                            "Nombre colegio": colegio_label,
+                            "Estado del aplicativo": "Activo",
+                        }
+                    )
+
+        progress_bar.progress(1.0)
+        status_box.caption(
+            "Reporte terminado: {colegios} colegio(s), {errores} colegio(s) con error.".format(
+                colegios=len(report_rows),
+                errores=len(report_errors),
+            )
+        )
+        report_rows.sort(key=lambda row: str(row.get("Nombre colegio") or "").upper())
+
+        st.session_state["reportes_aplicativo_ipa_rows"] = report_rows
+        st.session_state["reportes_aplicativo_ipa_errors"] = report_errors
+        st.session_state["reportes_aplicativo_ipa_error"] = ""
+        st.session_state["reportes_aplicativo_ipa_scope"] = {
+            "colegios_total": int(total_colegios),
+            "colegios_error": len(report_errors),
+            "articulo": APLICATIVO_COMPARTIR_EVIDENCIAS_IPA,
+        }
+        if report_errors:
+            st.warning(
+                "Reporte generado con observaciones. Colegios encontrados: {colegios} | "
+                "Colegios con error: {errores}.".format(
+                    colegios=len(report_rows),
+                    errores=len(report_errors),
+                )
+            )
+        else:
+            st.success(f"Reporte listo. Colegios encontrados: {len(report_rows)}.")
+
+    app_report_error = str(
+        st.session_state.get("reportes_aplicativo_ipa_error") or ""
+    ).strip()
+    if app_report_error:
+        st.error(app_report_error)
+
+    app_report_rows_cached = st.session_state.get("reportes_aplicativo_ipa_rows")
+    if isinstance(app_report_rows_cached, list):
+        scope = st.session_state.get("reportes_aplicativo_ipa_scope") or {}
+        errors_cached = list(st.session_state.get("reportes_aplicativo_ipa_errors") or [])
+        with st.container(border=True):
+            metric_cols = st.columns(4)
+            metric_cols[0].metric("Colegios", len(app_report_rows_cached))
+            metric_cols[1].metric("Aplicativo", "IPA")
+            metric_cols[2].metric(
+                "Consultados",
+                int(scope.get("colegios_total") or 0),
+            )
+            metric_cols[3].metric("Errores", len(errors_cached))
+            if app_report_rows_cached:
+                st.download_button(
+                    label="Descargar reporte IPA",
+                    data=_export_simple_excel(
+                        app_report_rows_cached,
+                        sheet_name="CompartirEvidenciasIPA",
+                    ),
+                    file_name="reporte_compartir_evidencias_ipa_colegios_activos.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="reportes_aplicativo_ipa_download",
+                    use_container_width=True,
+                )
+                _show_dataframe(app_report_rows_cached, use_container_width=True)
+            else:
+                st.info(
+                    "No se encontraron colegios con Compartir Evidencias (IPA) activo."
+                )
 
             if errors_cached:
                 with st.expander(

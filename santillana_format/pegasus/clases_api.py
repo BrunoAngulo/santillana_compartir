@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import unicodedata
 from typing import Callable, Dict, List, Optional, Tuple
 
 import requests
@@ -15,7 +17,13 @@ GESTION_ESCOLAR_ALUMNOS_CLASE_URL = (
     "{empresa_id}/ciclos/{ciclo_id}/clases/{clase_id}/alumnos"
 )
 
+ARTICULOS_APLICACIONES_URL = (
+    "https://www.uno-internacional.com/pegasus-api/articulos/empresas/"
+    "{empresa_id}/ciclos/{ciclo_id}/aplicaciones"
+)
+
 GESTION_ESCOLAR_CICLO_ID_DEFAULT = 207
+APLICATIVO_COMPARTIR_EVIDENCIAS_IPA = "Compartir Evidencias (IPA)"
 
 
 def _safe_int(value: object) -> Optional[int]:
@@ -25,6 +33,32 @@ def _safe_int(value: object) -> Optional[int]:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _normalize_compare_text(value: object) -> str:
+    text = str(value or "").strip().upper()
+    text = unicodedata.normalize("NFD", text)
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def _extract_data_list(payload: object, nested_keys: Tuple[str, ...]) -> List[Dict[str, object]]:
+    if not isinstance(payload, dict):
+        raise RuntimeError("Respuesta invalida")
+
+    data = payload.get("data")
+    if isinstance(data, list):
+        return [item for item in data if isinstance(item, dict)]
+    if isinstance(data, dict):
+        for key in nested_keys:
+            value = data.get(key)
+            if isinstance(value, list):
+                return [item for item in value if isinstance(item, dict)]
+        for value in data.values():
+            if isinstance(value, list):
+                return [item for item in value if isinstance(item, dict)]
+    raise RuntimeError("Campo data no es lista")
 
 
 def fetch_clases_gestion_escolar(
@@ -60,18 +94,62 @@ def fetch_clases_gestion_escolar(
         message = payload.get("message") if isinstance(payload, dict) else "Respuesta invalida"
         raise RuntimeError(message or "Respuesta invalida")
 
-    data = payload.get("data")
-    if isinstance(data, list):
-        return data
-    if isinstance(data, dict):
-        for key in ("items", "rows", "data", "clases"):
-            value = data.get(key)
-            if isinstance(value, list):
-                return value
-        for value in data.values():
-            if isinstance(value, list):
-                return value
-    raise RuntimeError("Campo data no es lista")
+    return _extract_data_list(payload, ("items", "rows", "data", "clases"))
+
+
+def fetch_aplicaciones_articulos(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int = 30,
+    filtrar_activo: int = 0,
+) -> List[Dict[str, object]]:
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    url = ARTICULOS_APLICACIONES_URL.format(
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+    )
+    params: Dict[str, object] = {
+        "colegioId": int(colegio_id),
+        "filtrarActivo": int(filtrar_activo),
+    }
+
+    try:
+        response = requests.get(url, headers=headers, params=params, timeout=int(timeout))
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Error de red: {exc}") from exc
+
+    status_code = response.status_code
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError(f"Respuesta no JSON (status {status_code})") from exc
+
+    if not response.ok:
+        message = payload.get("message") if isinstance(payload, dict) else ""
+        raise RuntimeError(message or f"HTTP {status_code}")
+
+    if not isinstance(payload, dict) or not payload.get("success", False):
+        message = payload.get("message") if isinstance(payload, dict) else "Respuesta invalida"
+        raise RuntimeError(message or "Respuesta invalida")
+
+    return _extract_data_list(payload, ("items", "rows", "data", "aplicaciones"))
+
+
+def has_active_articulo_aplicacion(
+    aplicaciones: List[Dict[str, object]],
+    articulo_nombre: str = APLICATIVO_COMPARTIR_EVIDENCIAS_IPA,
+) -> bool:
+    target = _normalize_compare_text(articulo_nombre)
+    for item in aplicaciones:
+        if not isinstance(item, dict) or not bool(item.get("activo", False)):
+            continue
+        articulo = item.get("articulo")
+        nombre = articulo.get("articulo") if isinstance(articulo, dict) else articulo
+        if _normalize_compare_text(nombre) == target:
+            return True
+    return False
 
 
 def extract_clase_fields(item: Dict[str, object]) -> Optional[Dict[str, object]]:

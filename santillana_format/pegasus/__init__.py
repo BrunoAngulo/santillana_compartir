@@ -13,7 +13,10 @@ from .alumnos_compare import (
 )
 from .clases_api import listar_y_mapear_clases
 from .clases_api import (
+    APLICATIVO_COMPARTIR_EVIDENCIAS_IPA,
     GESTION_ESCOLAR_CICLO_ID_DEFAULT,
+    fetch_aplicaciones_articulos,
+    has_active_articulo_aplicacion,
     listar_alumnos_por_clase_gestion_escolar,
 )
 from .processor import (
@@ -36,6 +39,7 @@ from .profesores_password import actualizar_passwords_docentes
 
 __all__ = [
     "ALUMNOS_CICLO_ID_DEFAULT",
+    "APLICATIVO_COMPARTIR_EVIDENCIAS_IPA",
     "CODE_COLUMN_NAME",
     "COMPARE_MODE_AMBOS",
     "COMPARE_MODE_APELLIDOS",
@@ -52,6 +56,8 @@ __all__ = [
     "descargar_plantilla_edicion_masiva",
     "export_profesores_bd_excel",
     "export_profesores_excel",
+    "fetch_aplicaciones_articulos",
+    "has_active_articulo_aplicacion",
     "listar_profesores_bd_data",
     "listar_profesores_data",
     "listar_profesores_filters_data",

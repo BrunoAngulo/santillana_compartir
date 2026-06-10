@@ -3370,6 +3370,9 @@ def _build_santillana_inclusiva_report_rows(
                 "Colegio": colegio_nombre,
                 "Grado": grado_nombre,
                 "Nombre curso": ge_clase_clave,
+                "Profesores asignados (login)": "",
+                "Tiene alumnos": False,
+                "_clase_id": meta.get("clase_id"),
             }
         )
 
@@ -3381,6 +3384,30 @@ def _build_santillana_inclusiva_report_rows(
         )
     )
     return rows
+
+
+def _format_profesores_asignados(
+    profesores: Sequence[Dict[str, object]],
+) -> str:
+    values: List[str] = []
+    seen: Set[Tuple[str, str]] = set()
+    for profesor in profesores:
+        if not isinstance(profesor, dict):
+            continue
+        nombre = str(profesor.get("nombre") or "").strip()
+        login = str(profesor.get("login") or "").strip()
+        key = (
+            _normalize_compare_text(nombre),
+            _normalize_compare_text(login),
+        )
+        if not any(key) or key in seen:
+            continue
+        seen.add(key)
+        if nombre and login:
+            values.append(f"{nombre} ({login})")
+        else:
+            values.append(nombre or login)
+    return "; ".join(values)
 
 
 def _extract_clase_alumno_rows(clase_data: Dict[str, object]) -> List[Dict[str, object]]:
@@ -3460,6 +3487,7 @@ def _load_clase_participantes_detail(
     errors: List[str] = []
     alumnos_rows: List[Dict[str, object]] = []
     profesores_rows: List[Dict[str, object]] = []
+    tiene_alumnos = False
     try:
         clase_data = _fetch_alumnos_clase_gestion_escolar(
             token=token,
@@ -3468,6 +3496,12 @@ def _load_clase_participantes_detail(
             ciclo_id=int(ciclo_id),
             timeout=int(timeout),
         )
+        clase_alumnos = (
+            clase_data.get("claseAlumnos")
+            if isinstance(clase_data.get("claseAlumnos"), list)
+            else []
+        )
+        tiene_alumnos = bool(clase_alumnos)
         alumnos_rows = _extract_clase_alumno_rows(clase_data)
     except Exception as exc:
         errors.append(f"Alumnos: {exc}")
@@ -3483,6 +3517,7 @@ def _load_clase_participantes_detail(
         errors.append(f"Profesores: {exc}")
     return {
         "alumnos": alumnos_rows,
+        "tiene_alumnos": tiene_alumnos,
         "profesores": profesores_rows,
         "errors": errors,
     }
@@ -10747,7 +10782,8 @@ def _render_pegasus_reportes_section() -> None:
         st.markdown("**Reporte SantillanaInclusiva**")
         st.caption(
             "Recorre todos los colegios, lista clases de Primaria cuya materia es "
-            "No Aplica, muestra el grado con nombre y el curso con geClaseClave."
+            "No Aplica, muestra el grado, el curso, los profesores asignados con "
+            "sus logins y si la clase tiene alumnos."
         )
         run_report = st.button(
             "Generar reporte de todos los colegios",
@@ -10832,16 +10868,45 @@ def _render_pegasus_reportes_section() -> None:
                         )
                     )
                     continue
-                report_rows.extend(
-                    _build_santillana_inclusiva_report_rows(
-                        clases=clases,
-                        colegio_label=colegio_label,
-                    )
+                colegio_report_rows = _build_santillana_inclusiva_report_rows(
+                    clases=clases,
+                    colegio_label=colegio_label,
                 )
+                for report_row in colegio_report_rows:
+                    clase_id = _safe_int(report_row.pop("_clase_id", None))
+                    if clase_id is None:
+                        report_errors.append(
+                            "{colegio}: {curso}: clase sin ID.".format(
+                                colegio=colegio_label or "Colegio",
+                                curso=str(report_row.get("Nombre curso") or "Curso"),
+                            )
+                        )
+                        continue
+                    detail = _load_clase_participantes_detail(
+                        token=token,
+                        clase_id=int(clase_id),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                    )
+                    report_row["Profesores asignados (login)"] = (
+                        _format_profesores_asignados(detail.get("profesores") or [])
+                    )
+                    report_row["Tiene alumnos"] = bool(detail.get("tiene_alumnos"))
+                    for detail_error in detail.get("errors") or []:
+                        report_errors.append(
+                            "{colegio}: {curso} (clase {clase_id}): {error}".format(
+                                colegio=colegio_label or "Colegio",
+                                curso=str(report_row.get("Nombre curso") or "Curso"),
+                                clase_id=int(clase_id),
+                                error=str(detail_error).strip() or "error sin detalle",
+                            )
+                        )
+                report_rows.extend(colegio_report_rows)
 
         progress_bar.progress(1.0)
         status_box.caption(
-            "Reporte terminado: {clases} clase(s), {errores} colegio(s) con error.".format(
+            "Reporte terminado: {clases} clase(s), {errores} consulta(s) con error.".format(
                 clases=len(report_rows),
                 errores=len(report_errors),
             )
@@ -10864,7 +10929,7 @@ def _render_pegasus_reportes_section() -> None:
         if report_errors:
             st.warning(
                 "Reporte generado con observaciones. Clases encontradas: {clases} | "
-                "Colegios con error: {errores}.".format(
+                "Consultas con error: {errores}.".format(
                     clases=len(report_rows),
                     errores=len(report_errors),
                 )
@@ -10911,7 +10976,7 @@ def _render_pegasus_reportes_section() -> None:
 
             if errors_cached:
                 with st.expander(
-                    f"Colegios con error ({len(errors_cached)})",
+                    f"Consultas con error ({len(errors_cached)})",
                     expanded=False,
                 ):
                     st.write("\n".join(f"- {item}" for item in errors_cached[:120]))

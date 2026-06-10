@@ -4,6 +4,7 @@ La carpeta [browser_extension/santillana_session_helper](./santillana_session_he
 
 - `pgs-jwt-token` desde `https://apps.santillanacompartir.com/`
 - `accessToken` desde `https://richmondstudio.global/`
+- `_unity_web_session` y el `cookie header` completo desde `https://richmondlp.com/`
 - `_session_id` y el `cookie header` completo desde `https://loqueleodigital.com/`
 
 ## Instalar

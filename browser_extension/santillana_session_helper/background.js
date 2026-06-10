@@ -15,6 +15,16 @@ const SOURCE_CONFIG = {
     matchPatterns: ["https://richmondstudio.global/*"],
     storageKey: "accessToken",
   },
+  rlp: {
+    id: "rlp",
+    label: "RLP",
+    mode: "cookies",
+    bootstrapUrl: "https://richmondlp.com/admin",
+    cookiesUrl: "https://richmondlp.com/",
+    cookieDomain: "richmondlp.com",
+    sessionCookieName: "_unity_web_session",
+    includeAllDomainCookies: true,
+  },
   loqueleo: {
     id: "loqueleo",
     label: "Loqueleo",

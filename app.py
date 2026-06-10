@@ -47,6 +47,7 @@ from santillana_format.richmond import (
     read_richmondstudio_browser_token,
     render_richmond_studio_view,
 )
+from santillana_format.rlp import render_rlp_view
 from santillana_format.sumun import (
     generate_sumun_template_from_excel,
     inspect_sumun_workbook_sheets,
@@ -953,6 +954,17 @@ def _apply_token_snapshot_payload(payload: Dict[str, object]) -> Dict[str, str]:
     if isinstance(loqueleo_cookie_items, list):
         st.session_state["loqueleo_cookie_items"] = loqueleo_cookie_items
 
+    rlp_source = _extract_snapshot_source(payload, "rlp")
+    rlp_cookie_header = str(rlp_source.get("cookieHeader") or "").strip()
+    rlp_cookie_items = rlp_source.get("cookies")
+    if rlp_cookie_header:
+        st.session_state["rlp_cookie_header"] = rlp_cookie_header
+        summary["rlp"] = "guardado"
+    else:
+        summary["rlp"] = "sin valor"
+    if isinstance(rlp_cookie_items, list):
+        st.session_state["rlp_cookie_items"] = rlp_cookie_items
+
     if read_at:
         st.session_state["token_reader_last_read_at"] = read_at
     st.session_state["token_reader_last_snapshot_json"] = json.dumps(
@@ -998,6 +1010,19 @@ def _build_token_reader_status_rows() -> List[Dict[str, str]]:
                 str(st.session_state.get("loqueleo_session_id", "") or "").strip()
             ),
         },
+        {
+            "Seccion": "RLP",
+            "Estado": (
+                "Guardado"
+                if str(st.session_state.get("rlp_cookie_header", "") or "").strip()
+                else "Sin dato"
+            ),
+            "Valor": (
+                "Cookie header disponible"
+                if str(st.session_state.get("rlp_cookie_header", "") or "").strip()
+                else ""
+            ),
+        },
     ]
 
 
@@ -1017,7 +1042,8 @@ def _render_token_reader_view() -> None:
 
     st.subheader("Lectura Tokens")
     st.caption(
-        "Pega el JSON completo exportado por la extension para guardar Pegasus, Richmond y Loqueleo en esta app."
+        "Pega el JSON completo exportado por la extension para guardar Pegasus, "
+        "Richmond Studio, Loqueleo y RLP en esta app."
     )
 
     success_notice = str(st.session_state.pop("token_reader_success_notice", "") or "").strip()
@@ -1064,7 +1090,8 @@ def _render_token_reader_view() -> None:
                     "Guardado completado. "
                     f"Pegasus: {summary['pegasus']} | "
                     f"Richmond: {summary['richmond']} | "
-                    f"Loqueleo: {summary['loqueleo']}."
+                    f"Loqueleo: {summary['loqueleo']} | "
+                    f"RLP: {summary['rlp']}."
                 )
             st.rerun()
         if col_load_last.button(
@@ -1090,6 +1117,8 @@ def _render_token_reader_view() -> None:
     ).strip()
     if loqueleo_cookie_header:
         st.caption("Cookie header de Loqueleo guardado en sesion.")
+    if str(st.session_state.get("rlp_cookie_header", "") or "").strip():
+        st.caption("Cookie header de RLP guardado en sesion.")
 
 
 @st.cache_data(show_spinner=False)
@@ -1382,6 +1411,7 @@ with menu_main_col:
             "Procesos Pegasus",
             "SUMUN",
             "Richmond Studio",
+            "RLP",
             "Loqueleo",
             "Lectura Tokens",
             "Jira Focus Web",
@@ -1434,6 +1464,10 @@ if menu_option == "Loqueleo":
 
 if menu_option == "Lectura Tokens":
     _render_token_reader_view()
+    st.stop()
+
+if menu_option == "RLP":
+    render_rlp_view()
     st.stop()
 
 if menu_option == "SUMUN":

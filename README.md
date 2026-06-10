@@ -26,6 +26,10 @@ Santillana_format/
 |   |-- richmond/                  # Dominio Richmond Studio
 |   |   |-- __init__.py            # Facade del dominio
 |   |   |-- view.py
+|   |-- rlp/                       # Dominio Richmond Learning Platform
+|   |   |-- __init__.py
+|   |   |-- service.py
+|   |   |-- view.py
 |   |-- loqueleo/                  # Dominio Loqueleo
 |   |   |-- __init__.py
 |   |   |-- view.py
@@ -78,6 +82,9 @@ streamlit run app.py
   - Gestion y creacion de clases.
   - Alta y administracion de usuarios.
   - Sincronizacion de clases y actualizacion de passwords.
+- RLP:
+  - Verificacion masiva de tokens desde Excel.
+  - Exportacion de `token_details`, productos y errores.
 - Jira Focus Web:
   - OAuth con Jira Cloud.
   - Worklogs, timeline, dashboard y reportes.

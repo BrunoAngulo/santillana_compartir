@@ -9,6 +9,11 @@ const SOURCE_META = {
     primaryField: "value",
     emptyValue: "",
   },
+  rlp: {
+    label: "RLP",
+    primaryField: "value",
+    emptyValue: "",
+  },
   loqueleo: {
     label: "Loqueleo",
     primaryField: "sessionId",

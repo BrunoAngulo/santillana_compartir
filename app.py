@@ -3340,6 +3340,8 @@ def _colegio_label_from_global_state(colegio_id: int) -> str:
 def _build_santillana_inclusiva_report_rows(
     clases: List[Dict[str, object]],
     colegio_label: object = "",
+    colegio_id: object = "",
+    crm_id: object = "",
 ) -> List[Dict[str, object]]:
     rows: List[Dict[str, object]] = []
     seen: Set[Tuple[str, str, str]] = set()
@@ -3367,6 +3369,8 @@ def _build_santillana_inclusiva_report_rows(
         seen.add(key)
         rows.append(
             {
+                "Colegio ID": colegio_id,
+                "CRM ID": str(crm_id or "").strip(),
                 "Colegio": colegio_nombre,
                 "Grado": grado_nombre,
                 "Nombre curso": ge_clase_clave,
@@ -10871,6 +10875,8 @@ def _render_pegasus_reportes_section() -> None:
                 colegio_report_rows = _build_santillana_inclusiva_report_rows(
                     clases=clases,
                     colegio_label=colegio_label,
+                    colegio_id=int(colegio_id),
+                    crm_id=colegio_row.get("crm_id"),
                 )
                 for report_row in colegio_report_rows:
                     clase_id = _safe_int(report_row.pop("_clase_id", None))

@@ -1,5 +1,6 @@
 import os
 import base64
+import hashlib
 import json
 import re
 import csv
@@ -272,6 +273,7 @@ PEGASUS_NIVEL_LABEL_BY_ID = {
     40: "Secundaria",
 }
 PEGASUS_PRIMARIA_NIVEL_ID = 39
+SANTILLANA_INCLUSIVA_COURSE_PREFIX = "SANTILLANA INCLUSIVA"
 CENSO_ACTIVOS_EXPORT_COLUMNS = [
     "Nivel",
     "Grado",
@@ -3388,6 +3390,124 @@ def _build_santillana_inclusiva_report_rows(
         )
     )
     return rows
+
+
+def _santillana_inclusiva_course_name(item: Dict[str, object]) -> str:
+    fallback = ""
+    for key in ("geClaseClave", "geClase", "clase_nombre", "clase"):
+        value = str(item.get(key) or "").strip()
+        if not value:
+            continue
+        if not fallback:
+            fallback = value
+        if _normalize_plain_text(value).startswith(
+            SANTILLANA_INCLUSIVA_COURSE_PREFIX
+        ):
+            return value
+    return fallback
+
+
+def _is_santillana_inclusiva_named_class(item: Dict[str, object]) -> bool:
+    for key in ("geClaseClave", "geClase", "clase_nombre", "clase"):
+        value = str(item.get(key) or "").strip()
+        normalized_value = re.sub(r"\s+", " ", _normalize_plain_text(value)).strip()
+        if value and normalized_value.startswith(SANTILLANA_INCLUSIVA_COURSE_PREFIX):
+            return True
+    return False
+
+
+def _build_santillana_inclusiva_removal_class_row(
+    item: Dict[str, object],
+    colegio_label: object,
+    colegio_id: int,
+) -> Optional[Dict[str, object]]:
+    if not _is_santillana_inclusiva_named_class(item):
+        return None
+    meta = _extract_clase_base_meta(item) or {}
+    clase_id = _safe_int(meta.get("clase_id"))
+    if clase_id is None:
+        return None
+    grado_nombre = _pegasus_grado_label(
+        meta.get("grado_id"),
+        nivel_id=meta.get("nivel_id"),
+        fallback=meta.get("grado_nombre"),
+    )
+    curso = _santillana_inclusiva_course_name(item)
+    colegio_nombre = _colegio_label_from_clase(item, fallback=colegio_label)
+    return {
+        "_key": f"{int(colegio_id)}:{int(clase_id)}",
+        "_clase_id": int(clase_id),
+        "_colegio_id": int(colegio_id),
+        "Colegio": colegio_nombre or f"Colegio {int(colegio_id)}",
+        "Colegio ID": int(colegio_id),
+        "Clase ID": int(clase_id),
+        "Nivel": str(meta.get("nivel_nombre") or "").strip(),
+        "Grado": grado_nombre,
+        "Nombre curso": curso or f"Clase {int(clase_id)}",
+        "Alumnos": [],
+        "Profesores": [],
+        "Errores": [],
+    }
+
+
+def _santillana_inclusiva_removal_class_label(row: Dict[str, object]) -> str:
+    return "{colegio} | {curso} | clase {clase_id} | {alumnos} alumno(s)".format(
+        colegio=str(row.get("Colegio") or "Colegio"),
+        curso=str(row.get("Nombre curso") or "Curso"),
+        clase_id=int(_safe_int(row.get("_clase_id")) or 0),
+        alumnos=len(row.get("Alumnos") or []),
+    )
+
+
+def _santillana_inclusiva_removal_visible_class_rows(
+    rows: Sequence[Dict[str, object]],
+) -> List[Dict[str, object]]:
+    visible_rows: List[Dict[str, object]] = []
+    for row in rows:
+        profesores = [
+            item for item in (row.get("Profesores") or []) if isinstance(item, dict)
+        ]
+        errors = [
+            str(item).strip()
+            for item in (row.get("Errores") or [])
+            if str(item).strip()
+        ]
+        visible_rows.append(
+            {
+                "Colegio": row.get("Colegio", ""),
+                "Colegio ID": row.get("Colegio ID", ""),
+                "Clase ID": row.get("Clase ID", ""),
+                "Nivel": row.get("Nivel", ""),
+                "Grado": row.get("Grado", ""),
+                "Nombre curso": row.get("Nombre curso", ""),
+                "Alumnos a retirar": len(row.get("Alumnos") or []),
+                "Profesores conservados": _format_profesores_asignados(profesores),
+                "Observaciones": " | ".join(errors),
+            }
+        )
+    return visible_rows
+
+
+def _santillana_inclusiva_removal_student_rows(
+    rows: Sequence[Dict[str, object]],
+) -> List[Dict[str, object]]:
+    student_rows: List[Dict[str, object]] = []
+    for row in rows:
+        for alumno in row.get("Alumnos") or []:
+            if not isinstance(alumno, dict):
+                continue
+            student_rows.append(
+                {
+                    "Colegio": row.get("Colegio", ""),
+                    "Clase ID": row.get("Clase ID", ""),
+                    "Nombre curso": row.get("Nombre curso", ""),
+                    "Alumno ID": alumno.get("alumno_id", ""),
+                    "Alumno": alumno.get("nombre_completo", ""),
+                    "Login": alumno.get("login", ""),
+                    "DNI": alumno.get("dni", ""),
+                }
+            )
+    return student_rows
 
 
 def _format_profesores_asignados(
@@ -10765,6 +10885,501 @@ def _render_alumnos_global_login_search_section(
                         st.caption(f"... y {pending} errores mas.")
 
 
+def _render_santillana_inclusiva_student_removal(
+    token: str,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+) -> None:
+    with st.container(border=True):
+        st.markdown("**Retirar alumnos de clases Santillana Inclusiva**")
+        st.caption(
+            "Previsualiza clases de todos los colegios cuyo nombre de curso comienza "
+            "con `Santillana Inclusiva`. La accion retira solo alumnos; los profesores "
+            "asignados se conservan."
+        )
+        run_preview = st.button(
+            "Preparar previsualizacion de retiro",
+            type="primary",
+            key="reportes_retiro_si_preview_run",
+            use_container_width=True,
+        )
+
+    if run_preview:
+        if not token:
+            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+        else:
+            colegio_rows = [
+                row
+                for row in (st.session_state.get("shared_colegios_rows") or [])
+                if isinstance(row, dict)
+                and _safe_int(row.get("colegio_id")) is not None
+            ]
+            colegio_catalog_error = str(
+                st.session_state.get("shared_colegios_error") or ""
+            ).strip()
+            if colegio_catalog_error:
+                st.error(
+                    f"No se pudo cargar la lista de colegios: {colegio_catalog_error}"
+                )
+            elif not colegio_rows:
+                st.error("No se encontraron colegios para este token.")
+            else:
+                progress_bar = st.progress(0)
+                status_box = st.empty()
+                preview_rows: List[Dict[str, object]] = []
+                preview_errors: List[str] = []
+                seen_classes: Set[Tuple[int, int]] = set()
+                total_colegios = len(colegio_rows)
+                with st.spinner(
+                    "Buscando clases Santillana Inclusiva y sus alumnos..."
+                ):
+                    for idx, colegio_row in enumerate(colegio_rows, start=1):
+                        colegio_id = _safe_int(colegio_row.get("colegio_id"))
+                        if colegio_id is None:
+                            continue
+                        colegio_label = str(
+                            colegio_row.get("colegio")
+                            or colegio_row.get("label")
+                            or f"Colegio {int(colegio_id)}"
+                        ).strip()
+                        progress_bar.progress(
+                            min(
+                                1.0,
+                                max(0.0, (idx - 1) / max(total_colegios, 1)),
+                            )
+                        )
+                        status_box.caption(
+                            "[{idx}/{total}] {colegio}".format(
+                                idx=idx,
+                                total=total_colegios,
+                                colegio=colegio_label,
+                            )
+                        )
+                        try:
+                            clases = _fetch_clases_gestion_escolar(
+                                token=token,
+                                colegio_id=int(colegio_id),
+                                empresa_id=int(empresa_id),
+                                ciclo_id=int(ciclo_id),
+                                timeout=int(timeout),
+                                ordered=True,
+                            )
+                        except Exception as exc:  # pragma: no cover - UI
+                            preview_errors.append(
+                                "{colegio} ({colegio_id}): {error}".format(
+                                    colegio=colegio_label or "Colegio",
+                                    colegio_id=int(colegio_id),
+                                    error=str(exc).strip() or "error sin detalle",
+                                )
+                            )
+                            continue
+
+                        for clase in clases:
+                            if not isinstance(clase, dict):
+                                continue
+                            preview_row = (
+                                _build_santillana_inclusiva_removal_class_row(
+                                    clase,
+                                    colegio_label=colegio_label,
+                                    colegio_id=int(colegio_id),
+                                )
+                            )
+                            if not isinstance(preview_row, dict):
+                                continue
+                            clase_id = _safe_int(preview_row.get("_clase_id"))
+                            class_identity = (
+                                int(colegio_id),
+                                int(clase_id or 0),
+                            )
+                            if clase_id is None or class_identity in seen_classes:
+                                continue
+                            seen_classes.add(class_identity)
+                            detail = _load_clase_participantes_detail(
+                                token=token,
+                                clase_id=int(clase_id),
+                                empresa_id=int(empresa_id),
+                                ciclo_id=int(ciclo_id),
+                                timeout=int(timeout),
+                            )
+                            preview_row["Alumnos"] = [
+                                row
+                                for row in (detail.get("alumnos") or [])
+                                if isinstance(row, dict)
+                            ]
+                            preview_row["Profesores"] = [
+                                row
+                                for row in (detail.get("profesores") or [])
+                                if isinstance(row, dict)
+                            ]
+                            preview_row["Errores"] = [
+                                str(item).strip()
+                                for item in (detail.get("errors") or [])
+                                if str(item).strip()
+                            ]
+                            preview_rows.append(preview_row)
+
+                progress_bar.progress(1.0)
+                status_box.caption(
+                    "Previsualizacion terminada: {clases} clase(s), "
+                    "{alumnos} alumno(s), {errores} colegio(s) con error.".format(
+                        clases=len(preview_rows),
+                        alumnos=sum(
+                            len(row.get("Alumnos") or []) for row in preview_rows
+                        ),
+                        errores=len(preview_errors),
+                    )
+                )
+                preview_rows.sort(
+                    key=lambda row: (
+                        str(row.get("Colegio") or "").upper(),
+                        _participantes_grado_sort_rank(row.get("Grado")),
+                        str(row.get("Nombre curso") or "").upper(),
+                        int(_safe_int(row.get("_clase_id")) or 0),
+                    )
+                )
+                st.session_state["reportes_retiro_si_preview_rows"] = preview_rows
+                st.session_state["reportes_retiro_si_preview_errors"] = preview_errors
+                st.session_state["reportes_retiro_si_scope"] = {
+                    "colegios_total": int(total_colegios),
+                    "colegios_error": len(preview_errors),
+                    "empresa_id": int(empresa_id),
+                    "ciclo_id": int(ciclo_id),
+                    "token_fingerprint": hashlib.sha256(
+                        token.encode("utf-8")
+                    ).hexdigest(),
+                }
+                st.session_state["reportes_retiro_si_widget_version"] = (
+                    int(
+                        st.session_state.get(
+                            "reportes_retiro_si_widget_version",
+                            0,
+                        )
+                        or 0
+                    )
+                    + 1
+                )
+                st.session_state.pop("reportes_retiro_si_result_rows", None)
+                st.session_state.pop("reportes_retiro_si_result_summary", None)
+                if preview_errors:
+                    st.warning(
+                        "Previsualizacion lista con observaciones. "
+                        f"Clases encontradas: {len(preview_rows)}."
+                    )
+                else:
+                    st.success(
+                        f"Previsualizacion lista. Clases encontradas: {len(preview_rows)}."
+                    )
+
+    preview_rows_cached = st.session_state.get("reportes_retiro_si_preview_rows")
+    if isinstance(preview_rows_cached, list):
+        preview_rows_cached = [
+            row for row in preview_rows_cached if isinstance(row, dict)
+        ]
+        preview_errors_cached = [
+            str(item).strip()
+            for item in (
+                st.session_state.get("reportes_retiro_si_preview_errors") or []
+            )
+            if str(item).strip()
+        ]
+        preview_scope = st.session_state.get("reportes_retiro_si_scope") or {}
+        preview_matches_context = bool(token) and (
+            str(preview_scope.get("token_fingerprint") or "")
+            == hashlib.sha256(token.encode("utf-8")).hexdigest()
+            and _safe_int(preview_scope.get("empresa_id")) == int(empresa_id)
+            and _safe_int(preview_scope.get("ciclo_id")) == int(ciclo_id)
+        )
+        if not preview_rows_cached:
+            st.info(
+                "No se encontraron cursos cuyo nombre comience con "
+                "`Santillana Inclusiva`."
+            )
+        else:
+            if not preview_matches_context:
+                st.warning(
+                    "El token o ciclo cambio desde esta previsualizacion. "
+                    "Vuelve a prepararla antes de ejecutar el retiro."
+                )
+            widget_version = int(
+                st.session_state.get("reportes_retiro_si_widget_version", 0) or 0
+            )
+            class_by_key = {
+                str(row.get("_key")): row
+                for row in preview_rows_cached
+                if str(row.get("_key") or "").strip()
+            }
+            selection_mode = st.selectbox(
+                "Clases a procesar",
+                options=("Todas las clases", "Seleccionar algunas clases"),
+                key=f"reportes_retiro_si_mode_{widget_version}",
+            )
+            if selection_mode == "Todas las clases":
+                selected_class_keys = list(class_by_key.keys())
+                st.caption(
+                    "Se incluyen todas las clases encontradas en la previsualizacion."
+                )
+            else:
+                selected_class_keys = st.multiselect(
+                    "Selecciona las clases",
+                    options=list(class_by_key.keys()),
+                    key=f"reportes_retiro_si_classes_{widget_version}",
+                    format_func=lambda value: _santillana_inclusiva_removal_class_label(
+                        class_by_key.get(str(value), {})
+                    ),
+                    placeholder="Selecciona una o varias clases",
+                )
+
+            selected_rows = [
+                class_by_key[key]
+                for key in selected_class_keys
+                if key in class_by_key
+            ]
+            selected_student_rows = _santillana_inclusiva_removal_student_rows(
+                selected_rows
+            )
+            professor_count = sum(
+                len(row.get("Profesores") or []) for row in selected_rows
+            )
+            class_error_count = sum(
+                len(row.get("Errores") or []) for row in selected_rows
+            )
+            metric_cols = st.columns(4)
+            metric_cols[0].metric("Clases seleccionadas", len(selected_rows))
+            metric_cols[1].metric(
+                "Alumnos a retirar",
+                len(selected_student_rows),
+            )
+            metric_cols[2].metric("Profesores conservados", professor_count)
+            metric_cols[3].metric(
+                "Observaciones",
+                class_error_count + len(preview_errors_cached),
+            )
+
+            if selected_rows:
+                st.markdown("**Previsualizacion de clases**")
+                _show_dataframe(
+                    _santillana_inclusiva_removal_visible_class_rows(selected_rows),
+                    use_container_width=True,
+                )
+                with st.expander(
+                    f"Alumnos que se retiraran ({len(selected_student_rows)})",
+                    expanded=False,
+                ):
+                    if selected_student_rows:
+                        _show_dataframe(
+                            selected_student_rows,
+                            use_container_width=True,
+                        )
+                        st.download_button(
+                            "Descargar previsualizacion de alumnos",
+                            data=_export_simple_excel(
+                                selected_student_rows,
+                                sheet_name="alumnos_a_retirar",
+                            ),
+                            file_name="previsualizacion_retiro_santillana_inclusiva.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key=f"reportes_retiro_si_preview_download_{widget_version}",
+                            use_container_width=True,
+                        )
+                    else:
+                        st.caption(
+                            "Las clases seleccionadas no tienen alumnos para retirar."
+                        )
+
+                st.warning(
+                    "Esta accion retirara solamente los alumnos listados arriba. "
+                    "No elimina clases ni modifica profesores."
+                )
+                confirm_removal = st.checkbox(
+                    "Confirmo retirar los alumnos previsualizados de las clases seleccionadas.",
+                    key=f"reportes_retiro_si_confirm_{widget_version}",
+                )
+                run_removal = st.button(
+                    "Retirar alumnos previsualizados",
+                    key=f"reportes_retiro_si_apply_{widget_version}",
+                    type="primary",
+                    disabled=(
+                        not bool(selected_student_rows)
+                        or not preview_matches_context
+                    ),
+                    use_container_width=True,
+                )
+                if run_removal:
+                    if not token:
+                        st.error(
+                            "Falta el token. Configura el token global o PEGASUS_TOKEN."
+                        )
+                    elif not preview_matches_context:
+                        st.error(
+                            "La previsualizacion ya no corresponde al token o ciclo actual."
+                        )
+                    elif not confirm_removal:
+                        st.error("Confirma la accion antes de retirar alumnos.")
+                    else:
+                        progress_bar = st.progress(0)
+                        status_box = st.empty()
+                        result_rows: List[Dict[str, object]] = []
+                        removed_pairs: Set[Tuple[str, int]] = set()
+                        total_students = len(selected_student_rows)
+                        processed = 0
+                        for class_row in selected_rows:
+                            class_key = str(class_row.get("_key") or "")
+                            clase_id = _safe_int(class_row.get("_clase_id"))
+                            if clase_id is None:
+                                continue
+                            for alumno in class_row.get("Alumnos") or []:
+                                if not isinstance(alumno, dict):
+                                    continue
+                                alumno_id = _safe_int(alumno.get("alumno_id"))
+                                if alumno_id is None:
+                                    continue
+                                processed += 1
+                                progress_bar.progress(
+                                    min(
+                                        1.0,
+                                        max(
+                                            0.0,
+                                            (processed - 1)
+                                            / max(total_students, 1),
+                                        ),
+                                    )
+                                )
+                                status_box.caption(
+                                    "[{idx}/{total}] {alumno} | {curso}".format(
+                                        idx=processed,
+                                        total=total_students,
+                                        alumno=str(
+                                            alumno.get("nombre_completo")
+                                            or f"Alumno {int(alumno_id)}"
+                                        ),
+                                        curso=str(
+                                            class_row.get("Nombre curso") or "Curso"
+                                        ),
+                                    )
+                                )
+                                result_row = {
+                                    "Colegio": class_row.get("Colegio", ""),
+                                    "Clase ID": int(clase_id),
+                                    "Nombre curso": class_row.get(
+                                        "Nombre curso",
+                                        "",
+                                    ),
+                                    "Alumno ID": int(alumno_id),
+                                    "Alumno": alumno.get("nombre_completo", ""),
+                                    "Login": alumno.get("login", ""),
+                                    "Estado": "",
+                                    "Detalle": "",
+                                }
+                                try:
+                                    _delete_alumno_clase_gestion_escolar(
+                                        token=token,
+                                        clase_id=int(clase_id),
+                                        alumno_id=int(alumno_id),
+                                        empresa_id=int(empresa_id),
+                                        ciclo_id=int(ciclo_id),
+                                        timeout=int(timeout),
+                                    )
+                                    result_row["Estado"] = "Retirado"
+                                    removed_pairs.add((class_key, int(alumno_id)))
+                                except Exception as exc:  # pragma: no cover - UI
+                                    result_row["Estado"] = "Error"
+                                    result_row["Detalle"] = (
+                                        str(exc).strip() or "error sin detalle"
+                                    )
+                                result_rows.append(result_row)
+
+                        progress_bar.progress(1.0)
+                        ok_count = sum(
+                            1
+                            for row in result_rows
+                            if row.get("Estado") == "Retirado"
+                        )
+                        error_count = len(result_rows) - ok_count
+                        status_box.caption(
+                            "Retiro terminado: {ok} alumno(s) retirado(s), "
+                            "{errors} error(es).".format(
+                                ok=ok_count,
+                                errors=error_count,
+                            )
+                        )
+                        updated_preview_rows: List[Dict[str, object]] = []
+                        for class_row in preview_rows_cached:
+                            class_key = str(class_row.get("_key") or "")
+                            updated_row = dict(class_row)
+                            updated_row["Alumnos"] = [
+                                alumno
+                                for alumno in (class_row.get("Alumnos") or [])
+                                if not (
+                                    isinstance(alumno, dict)
+                                    and _safe_int(alumno.get("alumno_id")) is not None
+                                    and (
+                                        class_key,
+                                        int(_safe_int(alumno.get("alumno_id")) or 0),
+                                    )
+                                    in removed_pairs
+                                )
+                            ]
+                            updated_preview_rows.append(updated_row)
+                        st.session_state[
+                            "reportes_retiro_si_preview_rows"
+                        ] = updated_preview_rows
+                        st.session_state[
+                            "reportes_retiro_si_result_rows"
+                        ] = result_rows
+                        st.session_state[
+                            "reportes_retiro_si_result_summary"
+                        ] = {
+                            "retirados": ok_count,
+                            "errores": error_count,
+                        }
+                        st.session_state["reportes_retiro_si_widget_version"] = (
+                            widget_version + 1
+                        )
+                        st.rerun()
+            else:
+                st.info("Selecciona al menos una clase para continuar.")
+
+        if preview_errors_cached:
+            with st.expander(
+                f"Colegios con error en la previsualizacion ({len(preview_errors_cached)})",
+                expanded=False,
+            ):
+                st.write(
+                    "\n".join(f"- {item}" for item in preview_errors_cached[:120])
+                )
+                pending = len(preview_errors_cached) - 120
+                if pending > 0:
+                    st.caption(f"... y {pending} errores mas.")
+
+    result_rows_cached = st.session_state.get("reportes_retiro_si_result_rows")
+    if isinstance(result_rows_cached, list):
+        result_summary = (
+            st.session_state.get("reportes_retiro_si_result_summary") or {}
+        )
+        retirados = int(result_summary.get("retirados") or 0)
+        errores = int(result_summary.get("errores") or 0)
+        if errores:
+            st.warning(
+                f"Ultimo retiro: {retirados} alumno(s) retirado(s), {errores} error(es)."
+            )
+        else:
+            st.success(f"Ultimo retiro completado: {retirados} alumno(s) retirado(s).")
+        if result_rows_cached:
+            st.download_button(
+                "Descargar resultado del retiro",
+                data=_export_simple_excel(
+                    result_rows_cached,
+                    sheet_name="resultado_retiro",
+                ),
+                file_name="resultado_retiro_santillana_inclusiva.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="reportes_retiro_si_result_download",
+                use_container_width=True,
+            )
+            _show_dataframe(result_rows_cached, use_container_width=True)
+
+
 def _render_pegasus_reportes_section() -> None:
     st.subheader("Reportes")
     st.caption("Reportes directos de Pegasus para todos los colegios del token.")
@@ -10795,6 +11410,13 @@ def _render_pegasus_reportes_section() -> None:
             key="reportes_santillana_inclusiva_run",
             use_container_width=True,
         )
+
+    _render_santillana_inclusiva_student_removal(
+        token=token,
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        timeout=int(timeout),
+    )
 
     with st.container(border=True):
         st.markdown("**Reporte Compartir Evidencias (IPA)**")

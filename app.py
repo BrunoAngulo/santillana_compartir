@@ -119,12 +119,108 @@ except Exception as exc:  # pragma: no cover - arranque defensivo
     export_profesores_crear_excel = _raise_profesores_compare_import_error
     merge_profesores_reference_base_record = _raise_profesores_compare_import_error
 
+def _build_radartec_profesores_groups_fallback(
+    profesores: Sequence[Dict[str, object]],
+) -> Tuple[List[Dict[str, object]], List[Dict[str, object]], Dict[str, int]]:
+    def _int_or_none(value: object) -> Optional[int]:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _login_is_active(row: Dict[str, object]) -> bool:
+        explicit = row.get("login_activo")
+        if isinstance(explicit, bool):
+            return explicit
+        if isinstance(explicit, (int, float)):
+            return explicit != 0
+        text = str(explicit if explicit not in (None, "") else row.get("estado") or "")
+        normalized = unicodedata.normalize("NFD", text.strip().upper())
+        normalized = "".join(
+            char for char in normalized if unicodedata.category(char) != "Mn"
+        )
+        return normalized in {
+            "ACTIVO",
+            "ACTIVA",
+            "ACTIVE",
+            "ENABLED",
+            "SI",
+            "TRUE",
+            "1",
+        }
+
+    linked: List[Dict[str, object]] = []
+    unlinked: List[Dict[str, object]] = []
+    seen: Set[int] = set()
+    for raw_row in profesores:
+        if not isinstance(raw_row, dict):
+            continue
+        persona_id = _int_or_none(raw_row.get("persona_id"))
+        if persona_id is None or persona_id in seen:
+            continue
+        seen.add(persona_id)
+        clase_ids = sorted(
+            {
+                int(value)
+                for value in (raw_row.get("clase_ids_actuales") or [])
+                if _int_or_none(value) is not None
+            }
+        )
+        login = str(raw_row.get("login") or "").strip()
+        active = _login_is_active(raw_row)
+        nombre = str(raw_row.get("nombre") or "").strip()
+        row = {
+            "persona_id": persona_id,
+            "docente": nombre or f"Persona {persona_id}",
+            "login": login,
+            "login_display": login or "SIN LOGIN",
+            "login_activo": active,
+            "estado_login": "Activo" if active else "Inactivo",
+            "clases_total": len(clase_ids),
+            "clases": sorted(
+                {
+                    str(value).strip()
+                    for value in (raw_row.get("clases_actuales") or [])
+                    if str(value).strip()
+                }
+            ),
+        }
+        (linked if clase_ids else unlinked).append(row)
+
+    def _sort_key(row: Dict[str, object]) -> Tuple[str, str, int]:
+        return (
+            str(row.get("login_display") or "").upper(),
+            str(row.get("docente") or "").upper(),
+            int(row.get("persona_id") or 0),
+        )
+
+    linked.sort(key=_sort_key)
+    unlinked.sort(key=_sort_key)
+    summary = {
+        "profesores_total": len(linked) + len(unlinked),
+        "vinculados_total": len(linked),
+        "vinculados_activos": sum(
+            1 for row in linked if bool(row.get("login_activo"))
+        ),
+        "vinculados_inactivos": sum(
+            1 for row in linked if not bool(row.get("login_activo"))
+        ),
+        "no_vinculados_total": len(unlinked),
+        "no_vinculados_activos": sum(
+            1 for row in unlinked if bool(row.get("login_activo"))
+        ),
+        "no_vinculados_inactivos": sum(
+            1 for row in unlinked if not bool(row.get("login_activo"))
+        ),
+    }
+    return linked, unlinked, summary
+
+
 PROFESORES_MANUAL_IMPORT_ERROR = ""
 try:
     from santillana_format.pegasus.profesores_manual import (
         asignar_santillana_inclusiva_profesores,
         asignar_clases_profesor_manual,
-        build_radartec_profesores_groups,
         build_santillana_inclusiva_profesores_plan,
         listar_profesores_clases_panel_data,
     )
@@ -136,11 +232,22 @@ except Exception as exc:  # pragma: no cover - arranque defensivo
 
     asignar_clases_profesor_manual = _raise_profesores_manual_import_error
     asignar_santillana_inclusiva_profesores = _raise_profesores_manual_import_error
-    build_radartec_profesores_groups = _raise_profesores_manual_import_error
+    build_radartec_profesores_groups = (
+        _build_radartec_profesores_groups_fallback
+    )
     build_santillana_inclusiva_profesores_plan = (
         _raise_profesores_manual_import_error
     )
     listar_profesores_clases_panel_data = _raise_profesores_manual_import_error
+else:
+    try:
+        from santillana_format.pegasus.profesores_manual import (
+            build_radartec_profesores_groups,
+        )
+    except (ImportError, AttributeError):
+        build_radartec_profesores_groups = (
+            _build_radartec_profesores_groups_fallback
+        )
 
 
 GESTION_ESCOLAR_URL = (

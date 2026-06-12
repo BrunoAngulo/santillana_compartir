@@ -124,6 +124,7 @@ try:
     from santillana_format.pegasus.profesores_manual import (
         asignar_santillana_inclusiva_profesores,
         asignar_clases_profesor_manual,
+        build_radartec_profesores_groups,
         build_santillana_inclusiva_profesores_plan,
         listar_profesores_clases_panel_data,
     )
@@ -135,6 +136,7 @@ except Exception as exc:  # pragma: no cover - arranque defensivo
 
     asignar_clases_profesor_manual = _raise_profesores_manual_import_error
     asignar_santillana_inclusiva_profesores = _raise_profesores_manual_import_error
+    build_radartec_profesores_groups = _raise_profesores_manual_import_error
     build_santillana_inclusiva_profesores_plan = (
         _raise_profesores_manual_import_error
     )
@@ -1949,11 +1951,19 @@ if menu_option != "Richmond Studio":
                 key="sumun_download_btn",
             )
 
-    tab_crud_clases, tab_crud_profesores, tab_crud_alumnos, tab_reportes, tab_otras_funcionalidades = st.tabs(
+    (
+        tab_crud_clases,
+        tab_crud_profesores,
+        tab_crud_alumnos,
+        tab_radartec,
+        tab_reportes,
+        tab_otras_funcionalidades,
+    ) = st.tabs(
         [
             "CRUD Clases",
             "CRUD Profesores",
             "CRUD Alumnos",
+            "RADARTEC",
             "Reportes",
             "Otras funcionalidades",
         ]
@@ -2183,6 +2193,201 @@ def _show_dataframe(data: object, use_container_width: bool = True) -> None:
     if not df_view.empty:
         df_view.index = range(1, len(df_view) + 1)
     st.dataframe(df_view, use_container_width=use_container_width)
+
+
+def _clear_radartec_state() -> None:
+    for state_key in list(st.session_state.keys()):
+        if str(state_key).startswith("radartec_"):
+            st.session_state.pop(state_key, None)
+
+
+def _radartec_styled_dataframe(
+    rows: Sequence[Dict[str, object]],
+) -> object:
+    display_rows = [
+        {
+            "Login": str(row.get("login_display") or "SIN LOGIN").strip(),
+            "Estado": str(row.get("estado_login") or "Inactivo").strip(),
+            "Docente": str(row.get("docente") or "").strip(),
+            "Clases": int(row.get("clases_total") or 0),
+        }
+        for row in rows
+    ]
+    dataframe = pd.DataFrame(
+        display_rows,
+        columns=["Login", "Estado", "Docente", "Clases"],
+    )
+    if not dataframe.empty:
+        dataframe.index = range(1, len(dataframe) + 1)
+
+    def _style_row(row: pd.Series) -> List[str]:
+        activo = str(row.get("Estado") or "").strip().lower() == "activo"
+        color = "#166534" if activo else "#991B1B"
+        background = "#DCFCE7" if activo else "#FEE2E2"
+        highlighted = (
+            f"background-color:{background};color:{color};font-weight:700;"
+        )
+        return [
+            highlighted if column in {"Login", "Estado"} else ""
+            for column in dataframe.columns
+        ]
+
+    return dataframe.style.apply(_style_row, axis=1)
+
+
+def _render_radartec_section() -> None:
+    st.subheader("RADARTEC")
+    st.caption(
+        "Separa los profesores con al menos una clase asignada de los que no "
+        "estan vinculados a ninguna clase."
+    )
+    st.caption(
+        "Verde: login activo. Rojo: login inactivo o sin login."
+    )
+
+    colegio_id_raw = str(st.session_state.get("shared_colegio_id", "")).strip()
+    current_colegio_id = _safe_int(colegio_id_raw)
+    loaded_colegio_id = _safe_int(st.session_state.get("radartec_colegio_id"))
+    if (
+        loaded_colegio_id is not None
+        and current_colegio_id is not None
+        and int(loaded_colegio_id) != int(current_colegio_id)
+    ):
+        _clear_radartec_state()
+
+    col_load, col_clear = st.columns([2, 1], gap="small")
+    run_load = col_load.button(
+        "Cargar RADARTEC",
+        type="primary",
+        key="radartec_load",
+        use_container_width=True,
+        disabled=bool(PROFESORES_MANUAL_IMPORT_ERROR),
+    )
+    clear = col_clear.button(
+        "Limpiar",
+        key="radartec_clear",
+        use_container_width=True,
+    )
+    if clear:
+        _clear_radartec_state()
+        st.rerun()
+
+    if PROFESORES_MANUAL_IMPORT_ERROR:
+        st.error(
+            "RADARTEC no esta disponible en este despliegue: "
+            f"{PROFESORES_MANUAL_IMPORT_ERROR}"
+        )
+
+    if run_load:
+        token = _get_shared_token()
+        if not token:
+            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+            return
+        try:
+            colegio_id = _parse_colegio_id(colegio_id_raw)
+        except ValueError as exc:
+            st.error(f"Error: {exc}")
+            return
+
+        progress = st.progress(0)
+        status = st.empty()
+
+        def _radartec_progress(
+            phase: str,
+            current: int,
+            total: int,
+            message: str,
+        ) -> None:
+            percent = int((current / total) * 100) if total else 0
+            progress.progress(percent)
+            status.write(f"{phase}: {message} ({current}/{total})")
+
+        try:
+            (
+                profesores_rows,
+                clases_rows,
+                load_summary,
+                load_errors,
+            ) = listar_profesores_clases_panel_data(
+                token=token,
+                colegio_id=int(colegio_id),
+                empresa_id=DEFAULT_EMPRESA_ID,
+                ciclo_id=int(PROFESORES_CICLO_ID_DEFAULT),
+                timeout=30,
+                on_progress=_radartec_progress,
+            )
+        except Exception as exc:  # pragma: no cover - UI
+            st.error(f"No se pudo cargar RADARTEC: {exc}")
+            return
+        finally:
+            progress.empty()
+            status.empty()
+
+        st.session_state["radartec_profesores_rows"] = profesores_rows
+        st.session_state["radartec_clases_rows"] = clases_rows
+        st.session_state["radartec_load_summary"] = load_summary
+        st.session_state["radartec_errors"] = load_errors
+        st.session_state["radartec_colegio_id"] = int(colegio_id)
+
+    profesores_cached = st.session_state.get("radartec_profesores_rows")
+    if not isinstance(profesores_cached, list):
+        st.info("Selecciona un colegio global y pulsa `Cargar RADARTEC`.")
+        return
+
+    vinculados, no_vinculados, summary = build_radartec_profesores_groups(
+        profesores_cached
+    )
+    load_summary_cached = st.session_state.get("radartec_load_summary") or {}
+    errors_cached = st.session_state.get("radartec_errors") or []
+    if load_summary_cached:
+        st.caption(
+            "Docentes consultados: {profesores_total} | Clases revisadas: "
+            "{clases_total} | Consultas de staff con error: "
+            "{staff_consultas_error}.".format(**load_summary_cached)
+        )
+
+    total_cols = st.columns(3)
+    total_cols[0].metric("Total profesores", summary["profesores_total"])
+    total_cols[1].metric("Con clases", summary["vinculados_total"])
+    total_cols[2].metric("Sin clases", summary["no_vinculados_total"])
+
+    linked_col, unlinked_col = st.columns(2, gap="large")
+    with linked_col:
+        st.markdown("### Profesores con clases")
+        linked_metrics = st.columns(3)
+        linked_metrics[0].metric("Total", summary["vinculados_total"])
+        linked_metrics[1].metric("Activos", summary["vinculados_activos"])
+        linked_metrics[2].metric("Inactivos", summary["vinculados_inactivos"])
+        if vinculados:
+            st.dataframe(
+                _radartec_styled_dataframe(vinculados),
+                width="stretch",
+                height=min(720, 80 + (len(vinculados) * 35)),
+            )
+        else:
+            st.info("No hay profesores vinculados a clases.")
+
+    with unlinked_col:
+        st.markdown("### Profesores sin clases")
+        unlinked_metrics = st.columns(3)
+        unlinked_metrics[0].metric("Total", summary["no_vinculados_total"])
+        unlinked_metrics[1].metric("Activos", summary["no_vinculados_activos"])
+        unlinked_metrics[2].metric("Inactivos", summary["no_vinculados_inactivos"])
+        if no_vinculados:
+            st.dataframe(
+                _radartec_styled_dataframe(no_vinculados),
+                width="stretch",
+                height=min(720, 80 + (len(no_vinculados) * 35)),
+            )
+        else:
+            st.info("Todos los profesores estan vinculados a una clase.")
+
+    if errors_cached:
+        with st.expander(
+            f"Consultas de staff con error ({len(errors_cached)})",
+            expanded=False,
+        ):
+            _show_dataframe(errors_cached, use_container_width=True)
 
 
 def _normalize_censo_activos_export_rows(
@@ -19977,6 +20182,9 @@ with tab_crud_alumnos:
                         ).strip(),
                     }
                     st.rerun()
+
+with tab_radartec:
+    _render_radartec_section()
 
 with tab_reportes:
     _render_pegasus_reportes_section()

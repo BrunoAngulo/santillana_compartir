@@ -328,6 +328,39 @@ def _parse_activo(value: object) -> bool:
     return False
 
 
+def _parse_optional_activo(value: object) -> Optional[bool]:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "si", "sí", "yes", "activo", "active", "enabled"}:
+            return True
+        if normalized in {"false", "0", "no", "inactivo", "inactive", "disabled"}:
+            return False
+    return None
+
+
+def _extract_login_activo(item: Dict[str, object]) -> Optional[bool]:
+    persona_login = (
+        item.get("personaLogin")
+        if isinstance(item.get("personaLogin"), dict)
+        else {}
+    )
+    for key in ("activo", "active", "habilitado", "enabled", "estado", "status"):
+        parsed = _parse_optional_activo(persona_login.get(key))
+        if parsed is not None:
+            return parsed
+    for key in ("loginActivo", "personaLoginActivo"):
+        parsed = _parse_optional_activo(item.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
 def export_profesores_excel(
     profesores: List[Dict[str, object]],
     profesores_clases: Optional[List[Dict[str, object]]] = None,
@@ -758,6 +791,7 @@ def listar_profesores_filters_data(
 
         persona_login = item.get("personaLogin") if isinstance(item.get("personaLogin"), dict) else {}
         login = persona_login.get("login") or ""
+        login_activo = _extract_login_activo(item)
         niveles_presentes = set(_extract_niveles(item, only_activos=False))
         niveles_activos = set(_extract_niveles(item, only_activos=True))
         activos_map = _extract_niveles_activos_map(item)
@@ -784,6 +818,7 @@ def listar_profesores_filters_data(
                 "dni": item.get("idOficial") or "",
                 "email": item.get("email") or "",
                 "login": login,
+                "login_activo": login_activo,
                 "estado": estado,
                 "niveles_presentes": set(niveles_presentes),
                 "niveles_activos": dict(activos_map),
@@ -805,6 +840,8 @@ def listar_profesores_filters_data(
                 current[target_key] = item.get(source_key)
         if not current.get("login") and login:
             current["login"] = login
+        if login_activo is True or current.get("login_activo") is None:
+            current["login_activo"] = login_activo
 
         current["niveles_presentes"].update(niveles_presentes)
         current["niveles_detalle"].update(niveles_presentes)

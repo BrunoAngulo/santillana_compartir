@@ -60,6 +60,7 @@ def listar_profesores_clases_panel_data(
             "dni": str(entry.get("dni") or "").strip(),
             "email": str(entry.get("email") or "").strip(),
             "estado": str(entry.get("estado") or "").strip(),
+            "login_activo": entry.get("login_activo"),
             "niveles_presentes": sorted(
                 _unique_ints(entry.get("niveles_presentes") or [])
             ),
@@ -172,6 +173,7 @@ def listar_profesores_clases_panel_data(
                         "dni": str(staff_row.get("dni") or "").strip(),
                         "email": "",
                         "estado": "Activo" if bool(staff_row.get("activo", True)) else "",
+                        "login_activo": None,
                         "niveles_presentes": [],
                         "niveles_activos": {},
                         "niveles_detalle": [],
@@ -234,6 +236,83 @@ def listar_profesores_clases_panel_data(
         "staff_consultas_error": sum(1 for item in errores if item.get("tipo") == "listar_staff"),
     }
     return profesores_rows, clases_rows, summary, errores
+
+
+def build_radartec_profesores_groups(
+    profesores: Sequence[Dict[str, object]],
+) -> Tuple[List[Dict[str, object]], List[Dict[str, object]], Dict[str, int]]:
+    vinculados: List[Dict[str, object]] = []
+    no_vinculados: List[Dict[str, object]] = []
+    seen_persona_ids: Set[int] = set()
+
+    for raw_profesor in profesores:
+        if not isinstance(raw_profesor, dict):
+            continue
+        persona_id = _safe_int(raw_profesor.get("persona_id"))
+        if persona_id is None or int(persona_id) in seen_persona_ids:
+            continue
+        seen_persona_ids.add(int(persona_id))
+
+        clase_ids = sorted(
+            _unique_ints(raw_profesor.get("clase_ids_actuales") or [])
+        )
+        clases_labels = sorted(
+            {
+                str(value).strip()
+                for value in (raw_profesor.get("clases_actuales") or [])
+                if str(value).strip()
+            }
+        )
+        login = str(raw_profesor.get("login") or "").strip()
+        login_activo = _profesor_login_activo(raw_profesor)
+        nombre = str(raw_profesor.get("nombre") or "").strip()
+        if not nombre:
+            nombre = _compose_profesor_nombre(
+                raw_profesor.get("nombre_base"),
+                raw_profesor.get("apellido_paterno"),
+                raw_profesor.get("apellido_materno"),
+            )
+
+        row = {
+            "persona_id": int(persona_id),
+            "docente": nombre or f"Persona {int(persona_id)}",
+            "login": login,
+            "login_display": login or "SIN LOGIN",
+            "login_activo": bool(login_activo),
+            "estado_login": "Activo" if login_activo else "Inactivo",
+            "clases_total": len(clase_ids),
+            "clases": clases_labels,
+        }
+        if clase_ids:
+            vinculados.append(row)
+        else:
+            no_vinculados.append(row)
+
+    sort_key = lambda row: (
+        _normalize_text(row.get("login_display")),
+        _normalize_text(row.get("docente")),
+        int(row.get("persona_id") or 0),
+    )
+    vinculados.sort(key=sort_key)
+    no_vinculados.sort(key=sort_key)
+    summary = {
+        "profesores_total": len(vinculados) + len(no_vinculados),
+        "vinculados_total": len(vinculados),
+        "vinculados_activos": sum(
+            1 for row in vinculados if bool(row.get("login_activo"))
+        ),
+        "vinculados_inactivos": sum(
+            1 for row in vinculados if not bool(row.get("login_activo"))
+        ),
+        "no_vinculados_total": len(no_vinculados),
+        "no_vinculados_activos": sum(
+            1 for row in no_vinculados if bool(row.get("login_activo"))
+        ),
+        "no_vinculados_inactivos": sum(
+            1 for row in no_vinculados if not bool(row.get("login_activo"))
+        ),
+    }
+    return vinculados, no_vinculados, summary
 
 
 def build_santillana_inclusiva_profesores_plan(
@@ -887,6 +966,32 @@ def _profesor_level_ids(row: Dict[str, object]) -> Set[int]:
             if nivel_id_int is not None and bool(activo):
                 level_ids.add(int(nivel_id_int))
     return level_ids
+
+
+def _profesor_login_activo(row: Dict[str, object]) -> bool:
+    explicit = row.get("login_activo")
+    if isinstance(explicit, bool):
+        return explicit
+    if isinstance(explicit, (int, float)):
+        return explicit != 0
+    if isinstance(explicit, str) and explicit.strip():
+        return _normalize_text(explicit) in {
+            "ACTIVO",
+            "ACTIVE",
+            "ENABLED",
+            "SI",
+            "TRUE",
+            "1",
+        }
+    return _normalize_text(row.get("estado")) in {
+        "ACTIVO",
+        "ACTIVA",
+        "ACTIVE",
+        "ENABLED",
+        "SI",
+        "TRUE",
+        "1",
+    }
 
 
 def _class_context(row: Dict[str, object]) -> Optional[Dict[str, object]]:

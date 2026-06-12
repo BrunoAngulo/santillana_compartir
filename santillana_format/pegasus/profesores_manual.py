@@ -264,7 +264,7 @@ def build_radartec_profesores_groups(
             }
         )
         login = str(raw_profesor.get("login") or "").strip()
-        login_activo = _profesor_login_activo(raw_profesor)
+        login_activo = bool(login) and _profesor_login_activo(raw_profesor)
         nombre = str(raw_profesor.get("nombre") or "").strip()
         if not nombre:
             nombre = _compose_profesor_nombre(
@@ -280,6 +280,7 @@ def build_radartec_profesores_groups(
             "login_display": login or "SIN LOGIN",
             "login_activo": bool(login_activo),
             "estado_login": "Activo" if login_activo else "Inactivo",
+            "nivel_ids": sorted(_profesor_level_ids(raw_profesor)),
             "clases_total": len(clase_ids),
             "clases": clases_labels,
         }

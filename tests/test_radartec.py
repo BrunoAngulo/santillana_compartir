@@ -22,6 +22,8 @@ class RadartecTests(unittest.TestCase):
                 "nombre": "Docente Sin Clase",
                 "login": "docente.inactivo",
                 "login_activo": False,
+                "niveles_activos": {39: False},
+                "niveles_presentes": [39],
                 "clase_ids_actuales": [],
             },
         ]
@@ -34,6 +36,7 @@ class RadartecTests(unittest.TestCase):
         self.assertEqual([row["persona_id"] for row in no_vinculados], [20])
         self.assertEqual(vinculados[0]["estado_login"], "Activo")
         self.assertEqual(no_vinculados[0]["estado_login"], "Inactivo")
+        self.assertEqual(no_vinculados[0]["nivel_ids"], [39])
         self.assertEqual(summary["vinculados_total"], 1)
         self.assertEqual(summary["no_vinculados_total"], 1)
 
@@ -85,6 +88,26 @@ class RadartecTests(unittest.TestCase):
                 {"personaLogin": {"login": "docente", "estado": "Inactivo"}}
             )
         )
+
+    def test_teacher_without_login_is_not_an_active_account(self) -> None:
+        profesores = [
+            {
+                "persona_id": 10,
+                "nombre": "Docente sin login",
+                "login": "",
+                "estado": "Activo",
+                "niveles_presentes": [39],
+                "clase_ids_actuales": [],
+            }
+        ]
+
+        _vinculados, no_vinculados, summary = (
+            build_radartec_profesores_groups(profesores)
+        )
+
+        self.assertFalse(no_vinculados[0]["login_activo"])
+        self.assertEqual(no_vinculados[0]["login_display"], "SIN LOGIN")
+        self.assertEqual(summary["no_vinculados_inactivos"], 1)
 
 
 if __name__ == "__main__":

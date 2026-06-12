@@ -149,6 +149,28 @@ def _build_radartec_profesores_groups_fallback(
             "1",
         }
 
+    def _level_ids(row: Dict[str, object]) -> List[int]:
+        level_ids: Set[int] = set()
+        for key in (
+            "niveles_presentes",
+            "niveles_detalle",
+            "niveles_detalle_activos",
+        ):
+            values = row.get(key)
+            if not isinstance(values, (list, tuple, set)):
+                continue
+            for value in values:
+                parsed = _int_or_none(value)
+                if parsed is not None:
+                    level_ids.add(parsed)
+        activos = row.get("niveles_activos")
+        if isinstance(activos, dict):
+            for nivel_id, activo in activos.items():
+                parsed = _int_or_none(nivel_id)
+                if parsed is not None and bool(activo):
+                    level_ids.add(parsed)
+        return sorted(level_ids)
+
     linked: List[Dict[str, object]] = []
     unlinked: List[Dict[str, object]] = []
     seen: Set[int] = set()
@@ -167,7 +189,7 @@ def _build_radartec_profesores_groups_fallback(
             }
         )
         login = str(raw_row.get("login") or "").strip()
-        active = _login_is_active(raw_row)
+        active = bool(login) and _login_is_active(raw_row)
         nombre = str(raw_row.get("nombre") or "").strip()
         row = {
             "persona_id": persona_id,
@@ -176,6 +198,7 @@ def _build_radartec_profesores_groups_fallback(
             "login_display": login or "SIN LOGIN",
             "login_activo": active,
             "estado_login": "Activo" if active else "Inactivo",
+            "nivel_ids": _level_ids(raw_row),
             "clases_total": len(clase_ids),
             "clases": sorted(
                 {
@@ -2342,6 +2365,144 @@ def _radartec_styled_dataframe(
     return dataframe.style.apply(_style_row, axis=1)
 
 
+def _radartec_inactivation_candidates(
+    no_vinculados: Sequence[Dict[str, object]],
+) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
+    candidates: List[Dict[str, object]] = []
+    without_levels: List[Dict[str, object]] = []
+    for row in no_vinculados:
+        if not isinstance(row, dict) or not bool(row.get("login_activo")):
+            continue
+        nivel_ids = sorted(
+            {
+                int(value)
+                for value in (row.get("nivel_ids") or [])
+                if _safe_int(value) is not None
+            }
+        )
+        candidate = {**row, "nivel_ids": nivel_ids}
+        if nivel_ids:
+            candidates.append(candidate)
+        else:
+            without_levels.append(candidate)
+    return candidates, without_levels
+
+
+def _inactivate_radartec_profesores(
+    token: str,
+    colegio_id: int,
+    candidates: Sequence[Dict[str, object]],
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+    on_progress: Optional[Callable[[int, int, str], None]] = None,
+) -> Tuple[Dict[str, int], List[Dict[str, object]]]:
+    summary = {
+        "cuentas_total": len(candidates),
+        "cuentas_inactivadas": 0,
+        "cuentas_error": 0,
+        "niveles_actualizados": 0,
+        "niveles_error": 0,
+    }
+    results: List[Dict[str, object]] = []
+    for index, candidate in enumerate(candidates, start=1):
+        persona_id = _safe_int(candidate.get("persona_id"))
+        nivel_ids = [
+            int(value)
+            for value in (candidate.get("nivel_ids") or [])
+            if _safe_int(value) is not None
+        ]
+        login = str(candidate.get("login_display") or "SIN LOGIN").strip()
+        docente = str(candidate.get("docente") or "").strip()
+        if callable(on_progress):
+            on_progress(index, len(candidates), login)
+        if persona_id is None or not nivel_ids:
+            summary["cuentas_error"] += 1
+            results.append(
+                {
+                    "persona_id": persona_id or "",
+                    "Login": login,
+                    "Docente": docente,
+                    "Estado": "ERROR",
+                    "Detalle": "Falta persona ID o niveles para inactivar.",
+                }
+            )
+            continue
+
+        estado_summary, estado_errors = _update_profesor_edit_estado_web(
+            token=token,
+            colegio_id=int(colegio_id),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            persona_id=int(persona_id),
+            nivel_ids=nivel_ids,
+            activo=False,
+            timeout=int(timeout),
+        )
+        niveles_actualizados = int(
+            estado_summary.get("niveles_actualizados") or 0
+        )
+        errores_api = int(estado_summary.get("errores_api") or 0)
+        summary["niveles_actualizados"] += niveles_actualizados
+        summary["niveles_error"] += errores_api
+        if errores_api == 0 and niveles_actualizados == len(set(nivel_ids)):
+            summary["cuentas_inactivadas"] += 1
+            estado = "INACTIVADA"
+            detalle = (
+                f"Niveles inactivados: {niveles_actualizados}."
+            )
+        else:
+            summary["cuentas_error"] += 1
+            estado = "ERROR"
+            detalle_errors = "; ".join(
+                "nivel {nivel}: {error}".format(
+                    nivel=item.get("nivel_id", "-"),
+                    error=str(item.get("error") or "sin detalle"),
+                )
+                for item in estado_errors
+            )
+            detalle = detalle_errors or (
+                "No se confirmo la inactivacion de todos los niveles."
+            )
+        results.append(
+            {
+                "persona_id": int(persona_id),
+                "Login": login,
+                "Docente": docente,
+                "Estado": estado,
+                "Detalle": detalle,
+            }
+        )
+    return summary, results
+
+
+def _update_radartec_cached_inactivated(
+    result_rows: Sequence[Dict[str, object]],
+) -> None:
+    inactivated_ids = {
+        int(row["persona_id"])
+        for row in result_rows
+        if str(row.get("Estado") or "") == "INACTIVADA"
+        and _safe_int(row.get("persona_id")) is not None
+    }
+    if not inactivated_ids:
+        return
+    for row in st.session_state.get("radartec_profesores_rows") or []:
+        if not isinstance(row, dict):
+            continue
+        persona_id = _safe_int(row.get("persona_id"))
+        if persona_id is None or int(persona_id) not in inactivated_ids:
+            continue
+        row["login_activo"] = False
+        row["estado"] = "Inactivo"
+        activos = row.get("niveles_activos")
+        if isinstance(activos, dict):
+            row["niveles_activos"] = {
+                nivel_id: False for nivel_id in activos
+            }
+        row["niveles_detalle_activos"] = []
+
+
 def _render_radartec_section() -> None:
     st.subheader("RADARTEC")
     st.caption(
@@ -2435,6 +2596,8 @@ def _render_radartec_section() -> None:
         st.session_state["radartec_load_summary"] = load_summary
         st.session_state["radartec_errors"] = load_errors
         st.session_state["radartec_colegio_id"] = int(colegio_id)
+        st.session_state.pop("radartec_inactivate_summary", None)
+        st.session_state.pop("radartec_inactivate_results", None)
 
     profesores_cached = st.session_state.get("radartec_profesores_rows")
     if not isinstance(profesores_cached, list):
@@ -2446,6 +2609,24 @@ def _render_radartec_section() -> None:
     )
     load_summary_cached = st.session_state.get("radartec_load_summary") or {}
     errors_cached = st.session_state.get("radartec_errors") or []
+    inactivate_summary_cached = (
+        st.session_state.get("radartec_inactivate_summary") or {}
+    )
+    inactivate_results_cached = (
+        st.session_state.get("radartec_inactivate_results") or []
+    )
+    inactivation_candidates, active_without_levels = (
+        _radartec_inactivation_candidates(no_vinculados)
+    )
+    staff_error_count = max(
+        int(load_summary_cached.get("staff_consultas_error") or 0),
+        sum(
+            1
+            for item in errors_cached
+            if isinstance(item, dict)
+            and str(item.get("tipo") or "") == "listar_staff"
+        ),
+    )
     if load_summary_cached:
         st.caption(
             "Docentes consultados: {profesores_total} | Clases revisadas: "
@@ -2488,6 +2669,154 @@ def _render_radartec_section() -> None:
             )
         else:
             st.info("Todos los profesores estan vinculados a una clase.")
+
+        st.markdown("**Inactivar cuentas activas sin clases**")
+        if inactivation_candidates:
+            st.caption(
+                "Se inactivaran estas {total} cuenta(s):".format(
+                    total=len(inactivation_candidates)
+                )
+            )
+            st.dataframe(
+                [
+                    {
+                        "Login": row.get("login_display") or "SIN LOGIN",
+                        "Docente": row.get("docente") or "",
+                        "Niveles": ", ".join(
+                            _profesor_edit_level_label(nivel_id)
+                            for nivel_id in (row.get("nivel_ids") or [])
+                        ),
+                    }
+                    for row in inactivation_candidates
+                ],
+                width="stretch",
+                hide_index=True,
+            )
+        else:
+            st.success("No hay cuentas activas sin clases para inactivar.")
+
+        if active_without_levels:
+            st.warning(
+                "{total} cuenta(s) activa(s) sin clases no tienen niveles "
+                "identificados y no se pueden inactivar automaticamente.".format(
+                    total=len(active_without_levels)
+                )
+            )
+        if staff_error_count:
+            st.error(
+                "La inactivacion esta bloqueada porque {total} consulta(s) de "
+                "staff fallaron. Recarga RADARTEC antes de continuar.".format(
+                    total=staff_error_count
+                )
+            )
+
+        confirm_inactivate = st.checkbox(
+            "Confirmo inactivar todas las cuentas activas de esta lista.",
+            key="radartec_confirm_inactivate",
+            disabled=not bool(inactivation_candidates) or bool(staff_error_count),
+        )
+        run_inactivate = st.button(
+            "Inactivar activos sin clases",
+            type="primary",
+            key="radartec_inactivate_active_unlinked",
+            use_container_width=True,
+            disabled=(
+                not bool(inactivation_candidates)
+                or bool(staff_error_count)
+                or not confirm_inactivate
+            ),
+        )
+        if run_inactivate:
+            token = _get_shared_token()
+            colegio_id = _safe_int(st.session_state.get("radartec_colegio_id"))
+            if not token:
+                st.error(
+                    "Falta el token. Configura el token global o PEGASUS_TOKEN."
+                )
+            elif colegio_id is None:
+                st.error("Falta el colegio cargado en RADARTEC.")
+            else:
+                progress_inactivate = st.progress(0)
+                status_inactivate = st.empty()
+
+                def _inactivate_progress(
+                    current: int,
+                    total: int,
+                    login: str,
+                ) -> None:
+                    percent = int((current / total) * 100) if total else 0
+                    progress_inactivate.progress(percent)
+                    status_inactivate.write(
+                        f"Inactivando {login} ({current}/{total})"
+                    )
+
+                try:
+                    inactivate_summary, inactivate_results = (
+                        _inactivate_radartec_profesores(
+                            token=token,
+                            colegio_id=int(colegio_id),
+                            candidates=inactivation_candidates,
+                            empresa_id=DEFAULT_EMPRESA_ID,
+                            ciclo_id=int(PROFESORES_CICLO_ID_DEFAULT),
+                            timeout=30,
+                            on_progress=_inactivate_progress,
+                        )
+                    )
+                except Exception as exc:  # pragma: no cover - UI
+                    st.error(f"No se pudieron inactivar las cuentas: {exc}")
+                else:
+                    st.session_state["radartec_inactivate_summary"] = (
+                        inactivate_summary
+                    )
+                    st.session_state["radartec_inactivate_results"] = (
+                        inactivate_results
+                    )
+                    _update_radartec_cached_inactivated(inactivate_results)
+                    st.rerun()
+                finally:
+                    progress_inactivate.empty()
+                    status_inactivate.empty()
+
+        if inactivate_summary_cached:
+            if int(inactivate_summary_cached.get("cuentas_error") or 0):
+                st.warning(
+                    "Ultima ejecucion: {ok} cuenta(s) inactivada(s), "
+                    "{errors} con error.".format(
+                        ok=int(
+                            inactivate_summary_cached.get(
+                                "cuentas_inactivadas"
+                            )
+                            or 0
+                        ),
+                        errors=int(
+                            inactivate_summary_cached.get("cuentas_error") or 0
+                        ),
+                    )
+                )
+            else:
+                st.success(
+                    "Ultima ejecucion: {ok} cuenta(s) inactivada(s).".format(
+                        ok=int(
+                            inactivate_summary_cached.get(
+                                "cuentas_inactivadas"
+                            )
+                            or 0
+                        )
+                    )
+                )
+            if inactivate_results_cached:
+                _show_dataframe(
+                    [
+                        {
+                            "Login": row.get("Login") or "",
+                            "Docente": row.get("Docente") or "",
+                            "Estado": row.get("Estado") or "",
+                            "Detalle": row.get("Detalle") or "",
+                        }
+                        for row in inactivate_results_cached
+                    ],
+                    use_container_width=True,
+                )
 
     if errors_cached:
         with st.expander(

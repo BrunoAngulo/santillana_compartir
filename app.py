@@ -122,7 +122,9 @@ except Exception as exc:  # pragma: no cover - arranque defensivo
 PROFESORES_MANUAL_IMPORT_ERROR = ""
 try:
     from santillana_format.pegasus.profesores_manual import (
+        asignar_santillana_inclusiva_profesores,
         asignar_clases_profesor_manual,
+        build_santillana_inclusiva_profesores_plan,
         listar_profesores_clases_panel_data,
     )
 except Exception as exc:  # pragma: no cover - arranque defensivo
@@ -132,6 +134,10 @@ except Exception as exc:  # pragma: no cover - arranque defensivo
         raise ImportError(PROFESORES_MANUAL_IMPORT_ERROR)
 
     asignar_clases_profesor_manual = _raise_profesores_manual_import_error
+    asignar_santillana_inclusiva_profesores = _raise_profesores_manual_import_error
+    build_santillana_inclusiva_profesores_plan = (
+        _raise_profesores_manual_import_error
+    )
     listar_profesores_clases_panel_data = _raise_profesores_manual_import_error
 
 
@@ -8841,6 +8847,140 @@ def _profesor_edit_option_label(row: Dict[str, object]) -> str:
     return label
 
 
+def _clear_profesores_inclusiva_state() -> None:
+    for state_key in list(st.session_state.keys()):
+        if str(state_key).startswith("profesores_inclusiva_"):
+            st.session_state.pop(state_key, None)
+
+
+def _profesores_inclusiva_console_lines(
+    plan_rows: Sequence[Dict[str, object]],
+    result_rows: Optional[Sequence[Dict[str, object]]] = None,
+) -> List[str]:
+    lines = ["PREVISUALIZACION DE CAMBIOS"]
+    pending_total = 0
+    for plan in plan_rows:
+        nombre = str(plan.get("nombre") or "Docente").strip()
+        login = str(plan.get("login") or "").strip()
+        profesor_label = f"{nombre} ({login})" if login else nombre
+        pending_classes = [
+            row
+            for row in (plan.get("clases_pendientes") or [])
+            if isinstance(row, dict)
+        ]
+        if pending_classes:
+            for clase in pending_classes:
+                pending_total += 1
+                lines.append(
+                    "[ASIGNAR] {profesor} -> {clase}".format(
+                        profesor=profesor_label,
+                        clase=str(
+                            clase.get("clase_label")
+                            or f"Clase {clase.get('clase_id', '-')}"
+                        ).strip(),
+                    )
+                )
+            continue
+        if not plan.get("contextos"):
+            lines.append(
+                f"[SIN CONTEXTO] {profesor_label}: no tiene clases base de Primaria."
+            )
+        elif not plan.get("clases_destino"):
+            contextos = ", ".join(
+                str(value) for value in (plan.get("contextos_labels") or [])
+            )
+            lines.append(
+                f"[SIN CURSO] {profesor_label}: no hay Santillana Inclusiva para {contextos or '-'}."
+            )
+        else:
+            lines.append(
+                f"[SIN CAMBIOS] {profesor_label}: ya tiene las clases inclusivas correspondientes."
+            )
+    lines.append(f"TOTAL PENDIENTE: {pending_total} asignacion(es).")
+
+    if result_rows:
+        lines.extend(["", "ULTIMA EJECUCION"])
+        for result in result_rows:
+            estado = str(result.get("estado") or "").strip().upper()
+            lines.append(
+                "[{estado}] {profesor} -> {clase}{detalle}".format(
+                    estado=estado or "RESULTADO",
+                    profesor=str(result.get("nombre") or "Docente").strip(),
+                    clase=str(
+                        result.get("clase")
+                        or f"Clase {result.get('clase_id', '-')}"
+                    ).strip(),
+                    detalle=(
+                        f" | {str(result.get('detalle') or '').strip()}"
+                        if str(result.get("detalle") or "").strip()
+                        else ""
+                    ),
+                )
+            )
+    return lines
+
+
+def _update_profesores_inclusiva_cached_assignments(
+    result_rows: Sequence[Dict[str, object]],
+) -> None:
+    successful = [
+        row
+        for row in result_rows
+        if str(row.get("estado") or "") in {"asignada", "ya_asignada"}
+        and _safe_int(row.get("persona_id")) is not None
+        and _safe_int(row.get("clase_id")) is not None
+    ]
+    if not successful:
+        return
+
+    profesor_rows = st.session_state.get("profesores_inclusiva_rows") or []
+    clases_rows = st.session_state.get("profesores_inclusiva_clases") or []
+    clases_by_id = {
+        int(row["clase_id"]): row
+        for row in clases_rows
+        if isinstance(row, dict) and _safe_int(row.get("clase_id")) is not None
+    }
+    profesores_by_id = {
+        int(row["persona_id"]): row
+        for row in profesor_rows
+        if isinstance(row, dict) and _safe_int(row.get("persona_id")) is not None
+    }
+
+    for result in successful:
+        persona_id = int(result["persona_id"])
+        clase_id = int(result["clase_id"])
+        profesor = profesores_by_id.get(persona_id)
+        clase = clases_by_id.get(clase_id)
+        if profesor is not None:
+            current_ids = {
+                int(value)
+                for value in (profesor.get("clase_ids_actuales") or [])
+                if _safe_int(value) is not None
+            }
+            current_ids.add(clase_id)
+            profesor["clase_ids_actuales"] = sorted(current_ids)
+            profesor["clases_actuales_count"] = len(current_ids)
+            labels = {
+                str(value).strip()
+                for value in (profesor.get("clases_actuales") or [])
+                if str(value).strip()
+            }
+            if clase is not None:
+                clase_label = str(clase.get("clase_label") or "").strip()
+                if clase_label:
+                    labels.add(clase_label)
+            profesor["clases_actuales"] = sorted(labels)
+        if clase is not None:
+            staff_ids = {
+                int(value)
+                for value in (clase.get("staff_persona_ids") or [])
+                if _safe_int(value) is not None
+            }
+            staff_ids.add(persona_id)
+            clase["staff_persona_ids"] = sorted(staff_ids)
+            clase["staff_count"] = len(staff_ids)
+
+
 def _clear_profesores_edit_state() -> None:
     for state_key in (
         "profesores_edit_rows",
@@ -14753,6 +14893,17 @@ with tab_crud_profesores:
                 "profesores_manual_colegio_id",
             ):
                 st.session_state.pop(state_key, None)
+        loaded_profesores_inclusiva_colegio_id = _safe_int(
+            st.session_state.get("profesores_inclusiva_colegio_id")
+        )
+        current_profesores_inclusiva_colegio_id = _safe_int(colegio_id_raw)
+        if (
+            loaded_profesores_inclusiva_colegio_id is not None
+            and current_profesores_inclusiva_colegio_id is not None
+            and loaded_profesores_inclusiva_colegio_id
+            != current_profesores_inclusiva_colegio_id
+        ):
+            _clear_profesores_inclusiva_state()
         loaded_profesores_edit_colegio_id = _safe_int(
             st.session_state.get("profesores_edit_colegio_id")
         )
@@ -14775,6 +14926,11 @@ with tab_crud_profesores:
                 "Funciones de profesores",
                 [
                     ("manual", "Manual", "Asigna clases por docente"),
+                    (
+                        "inclusiva",
+                        "Santillana Inclusiva",
+                        "Asigna automaticamente por grado y seccion",
+                    ),
                     ("editar", "Editar", "Edita datos, estado, login, password y clases"),
                 ],
                 state_key="profesores_crud_nav",
@@ -15379,6 +15535,331 @@ with tab_crud_profesores:
                         st.caption(
                             "No hay profesores para crear. Si quieres forzar uno, desmarca 'Usar referencia sistema'."
                         )
+            if profesores_crud_view == "inclusiva":
+                st.subheader("Asignar Santillana Inclusiva")
+                st.caption(
+                    "Detecta los grados y secciones donde enseña cada docente de Primaria "
+                    "y agrega solamente las clases Santillana Inclusiva equivalentes."
+                )
+                st.info(
+                    "Esta funcion solo agrega clases. No quita asignaciones actuales ni "
+                    "modifica docentes de otros niveles."
+                )
+                if PROFESORES_MANUAL_IMPORT_ERROR:
+                    st.error(
+                        "La asignacion de Santillana Inclusiva no esta disponible: "
+                        f"{PROFESORES_MANUAL_IMPORT_ERROR}"
+                    )
+
+                col_load_inclusiva, col_clear_inclusiva = st.columns(
+                    [2, 1], gap="small"
+                )
+                run_inclusiva_load = col_load_inclusiva.button(
+                    "Cargar docentes de Primaria",
+                    type="primary",
+                    key="profesores_inclusiva_load",
+                    use_container_width=True,
+                    disabled=bool(PROFESORES_MANUAL_IMPORT_ERROR),
+                )
+                clear_inclusiva = col_clear_inclusiva.button(
+                    "Limpiar",
+                    key="profesores_inclusiva_clear",
+                    use_container_width=True,
+                )
+
+                if clear_inclusiva:
+                    _clear_profesores_inclusiva_state()
+                    st.rerun()
+
+                if run_inclusiva_load:
+                    token = _get_shared_token()
+                    if not token:
+                        st.error(
+                            "Falta el token. Configura el token global o PEGASUS_TOKEN."
+                        )
+                        st.stop()
+                    try:
+                        colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                    except ValueError as exc:
+                        st.error(f"Error: {exc}")
+                        st.stop()
+
+                    progress = st.progress(0)
+                    status = st.empty()
+
+                    def _inclusiva_load_progress(
+                        phase: str, current: int, total: int, message: str
+                    ) -> None:
+                        percent = int((current / total) * 100) if total else 0
+                        progress.progress(percent)
+                        status.write(f"{phase}: {message} ({current}/{total})")
+
+                    try:
+                        (
+                            inclusiva_rows,
+                            inclusiva_clases,
+                            inclusiva_load_summary,
+                            inclusiva_errors,
+                        ) = listar_profesores_clases_panel_data(
+                            token=token,
+                            colegio_id=colegio_id_int,
+                            empresa_id=DEFAULT_EMPRESA_ID,
+                            ciclo_id=int(ciclo_id),
+                            timeout=int(timeout),
+                            on_progress=_inclusiva_load_progress,
+                        )
+                    except Exception as exc:  # pragma: no cover - UI
+                        st.error(f"Error: {exc}")
+                        st.stop()
+                    finally:
+                        progress.empty()
+                        status.empty()
+
+                    st.session_state["profesores_inclusiva_rows"] = inclusiva_rows
+                    st.session_state["profesores_inclusiva_clases"] = inclusiva_clases
+                    st.session_state["profesores_inclusiva_load_summary"] = (
+                        inclusiva_load_summary
+                    )
+                    st.session_state["profesores_inclusiva_errors"] = inclusiva_errors
+                    st.session_state["profesores_inclusiva_colegio_id"] = int(
+                        colegio_id_int
+                    )
+                    st.session_state.pop("profesores_inclusiva_last_summary", None)
+                    st.session_state.pop("profesores_inclusiva_last_results", None)
+
+                inclusiva_rows_cached = (
+                    st.session_state.get("profesores_inclusiva_rows") or []
+                )
+                inclusiva_clases_cached = (
+                    st.session_state.get("profesores_inclusiva_clases") or []
+                )
+                inclusiva_errors_cached = (
+                    st.session_state.get("profesores_inclusiva_errors") or []
+                )
+                inclusiva_load_summary_cached = (
+                    st.session_state.get("profesores_inclusiva_load_summary") or {}
+                )
+                inclusiva_last_summary = (
+                    st.session_state.get("profesores_inclusiva_last_summary") or {}
+                )
+                inclusiva_last_results = (
+                    st.session_state.get("profesores_inclusiva_last_results") or []
+                )
+
+                if inclusiva_load_summary_cached:
+                    st.caption(
+                        "Carga general: {profesores_total} docentes | {clases_total} clases "
+                        "| {staff_consultas_error} consultas de staff con error.".format(
+                            **inclusiva_load_summary_cached
+                        )
+                    )
+                if inclusiva_errors_cached:
+                    with st.expander(
+                        f"Errores de carga ({len(inclusiva_errors_cached)})"
+                    ):
+                        _show_dataframe(
+                            inclusiva_errors_cached,
+                            use_container_width=True,
+                        )
+
+                if inclusiva_rows_cached or inclusiva_clases_cached:
+                    inclusiva_plan, inclusiva_summary = (
+                        build_santillana_inclusiva_profesores_plan(
+                            inclusiva_rows_cached,
+                            inclusiva_clases_cached,
+                            primaria_nivel_id=PEGASUS_PRIMARIA_NIVEL_ID,
+                        )
+                    )
+                    metric_cols = st.columns(4)
+                    metric_cols[0].metric(
+                        "Docentes de Primaria",
+                        inclusiva_summary.get("docentes_primaria", 0),
+                    )
+                    metric_cols[1].metric(
+                        "Con grado y seccion",
+                        inclusiva_summary.get("docentes_con_contexto", 0),
+                    )
+                    metric_cols[2].metric(
+                        "Docentes con cambios",
+                        inclusiva_summary.get("docentes_con_cambios", 0),
+                    )
+                    metric_cols[3].metric(
+                        "Asignaciones pendientes",
+                        inclusiva_summary.get("asignaciones_pendientes", 0),
+                    )
+                    st.caption(
+                        "Clases Santillana Inclusiva detectadas en Primaria: "
+                        f"{inclusiva_summary.get('clases_inclusivas_primaria', 0)}."
+                    )
+
+                    if inclusiva_last_summary:
+                        st.success(
+                            "Ultima ejecucion: asignadas {asignadas} | ya asignadas "
+                            "{ya_asignadas} | errores {errores_api}.".format(
+                                **inclusiva_last_summary
+                            )
+                        )
+
+                    confirm_inclusiva = st.checkbox(
+                        "Confirmo que deseo aplicar las asignaciones mostradas en la consola.",
+                        key="profesores_inclusiva_confirm",
+                    )
+
+                    def _run_inclusiva_assignment(
+                        selected_plan_rows: Sequence[Dict[str, object]],
+                    ) -> None:
+                        token_apply = _get_shared_token()
+                        if not token_apply:
+                            st.error(
+                                "Falta el token. Configura el token global o PEGASUS_TOKEN."
+                            )
+                            return
+                        progress_apply = st.progress(0)
+                        status_apply = st.empty()
+
+                        def _inclusiva_assign_progress(
+                            current: int, total: int, message: str
+                        ) -> None:
+                            percent = int((current / total) * 100) if total else 0
+                            progress_apply.progress(percent)
+                            status_apply.write(
+                                f"Asignando {message} ({current}/{total})"
+                            )
+
+                        try:
+                            apply_summary, apply_results = (
+                                asignar_santillana_inclusiva_profesores(
+                                    token=token_apply,
+                                    plan_rows=selected_plan_rows,
+                                    empresa_id=DEFAULT_EMPRESA_ID,
+                                    ciclo_id=int(ciclo_id),
+                                    timeout=int(timeout),
+                                    on_progress=_inclusiva_assign_progress,
+                                )
+                            )
+                        except Exception as exc:  # pragma: no cover - UI
+                            st.error(f"Error: {exc}")
+                            return
+                        finally:
+                            progress_apply.empty()
+                            status_apply.empty()
+
+                        st.session_state["profesores_inclusiva_last_summary"] = (
+                            apply_summary
+                        )
+                        st.session_state["profesores_inclusiva_last_results"] = (
+                            apply_results
+                        )
+                        _update_profesores_inclusiva_cached_assignments(apply_results)
+                        st.rerun()
+
+                    bulk_col, pending_col = st.columns([2, 3], gap="small")
+                    run_inclusiva_all = bulk_col.button(
+                        "Asignar a todos",
+                        type="primary",
+                        key="profesores_inclusiva_apply_all",
+                        use_container_width=True,
+                        disabled=(
+                            not confirm_inclusiva
+                            or inclusiva_summary.get("asignaciones_pendientes", 0) == 0
+                        ),
+                    )
+                    pending_col.info(
+                        "{docentes} docente(s), {asignaciones} asignacion(es) por aplicar.".format(
+                            docentes=inclusiva_summary.get(
+                                "docentes_con_cambios", 0
+                            ),
+                            asignaciones=inclusiva_summary.get(
+                                "asignaciones_pendientes", 0
+                            ),
+                        )
+                    )
+                    if run_inclusiva_all:
+                        _run_inclusiva_assignment(inclusiva_plan)
+
+                    search_inclusiva = st.text_input(
+                        "Buscar docente de Primaria",
+                        key="profesores_inclusiva_search",
+                        placeholder="Nombre, login, DNI o persona ID",
+                    )
+                    search_inclusiva_norm = _normalize_plain_text(search_inclusiva)
+                    visible_inclusiva_plan = []
+                    for plan in inclusiva_plan:
+                        haystack = " ".join(
+                            [
+                                str(plan.get("nombre") or ""),
+                                str(plan.get("login") or ""),
+                                str(plan.get("dni") or ""),
+                                str(plan.get("persona_id") or ""),
+                            ]
+                        )
+                        if (
+                            not search_inclusiva_norm
+                            or search_inclusiva_norm
+                            in _normalize_plain_text(haystack)
+                        ):
+                            visible_inclusiva_plan.append(plan)
+
+                    st.markdown("**Docentes de Primaria**")
+                    if not visible_inclusiva_plan:
+                        st.caption("No hay docentes para ese filtro.")
+                    for plan in visible_inclusiva_plan:
+                        persona_id = int(plan["persona_id"])
+                        pending_count = len(plan.get("clases_pendientes") or [])
+                        contextos = ", ".join(
+                            str(value)
+                            for value in (plan.get("contextos_labels") or [])
+                        )
+                        with st.container(border=True):
+                            info_col, context_col, status_col, action_col = st.columns(
+                                [2.7, 2.2, 1.2, 1.5],
+                                gap="small",
+                                vertical_alignment="center",
+                            )
+                            info_col.markdown(
+                                f"**{str(plan.get('nombre') or 'Docente').strip()}**"
+                            )
+                            info_col.caption(
+                                "ID {persona_id}{login}".format(
+                                    persona_id=persona_id,
+                                    login=(
+                                        f" | {str(plan.get('login')).strip()}"
+                                        if str(plan.get("login") or "").strip()
+                                        else ""
+                                    ),
+                                )
+                            )
+                            context_col.markdown(contextos or "Sin clases base")
+                            context_col.caption("Grados y secciones detectados")
+                            if pending_count:
+                                status_col.warning(f"{pending_count} pendiente(s)")
+                            elif plan.get("clases_destino"):
+                                status_col.success("Al dia")
+                            else:
+                                status_col.caption("Sin coincidencias")
+                            run_single_inclusiva = action_col.button(
+                                "Asignar",
+                                key=f"profesores_inclusiva_apply_{persona_id}",
+                                use_container_width=True,
+                                disabled=not confirm_inclusiva or pending_count == 0,
+                            )
+                            if run_single_inclusiva:
+                                _run_inclusiva_assignment([plan])
+
+                    st.markdown("**Consola de cambios**")
+                    st.code(
+                        "\n".join(
+                            _profesores_inclusiva_console_lines(
+                                inclusiva_plan,
+                                result_rows=inclusiva_last_results,
+                            )
+                        ),
+                        language="text",
+                    )
+                elif run_inclusiva_load:
+                    st.warning(
+                        "No se encontraron docentes o clases para construir el plan."
+                    )
             if profesores_crud_view == "manual":
                 st.subheader("Asignacion manual de clases")
                 if PROFESORES_MANUAL_IMPORT_ERROR:

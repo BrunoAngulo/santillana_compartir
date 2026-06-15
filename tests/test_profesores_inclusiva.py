@@ -135,7 +135,92 @@ class ProfesoresInclusivaPlanTests(unittest.TestCase):
             [row["clase_id"] for row in plan[0]["clases_ya_asignadas"]],
             [301],
         )
+        self.assertEqual(plan[0]["clases_a_retirar"], [])
         self.assertEqual(summary["asignaciones_pendientes"], 0)
+
+    def test_removes_inclusive_class_when_it_is_the_only_course_in_context(
+        self,
+    ) -> None:
+        profesores = [
+            {
+                "persona_id": 10,
+                "nombre": "Docente Primaria",
+                "niveles_presentes": [39],
+                "clase_ids_actuales": [101, 301, 302],
+            }
+        ]
+        clases = [
+            self._class(101, 39, 1, 11, "1 Primaria", "A", "Matematica"),
+            self._class(
+                301,
+                39,
+                1,
+                11,
+                "1 Primaria",
+                "A",
+                "Santillana Inclusiva 1PA",
+                inclusiva=True,
+            ),
+            self._class(
+                302,
+                39,
+                2,
+                22,
+                "2 Primaria",
+                "B",
+                "Santillana Inclusiva 2PB",
+                inclusiva=True,
+            ),
+        ]
+
+        plan, summary = build_santillana_inclusiva_profesores_plan(
+            profesores,
+            clases,
+        )
+
+        self.assertEqual(
+            [row["clase_id"] for row in plan[0]["clases_ya_asignadas"]],
+            [301],
+        )
+        self.assertEqual(
+            [row["clase_id"] for row in plan[0]["clases_a_retirar"]],
+            [302],
+        )
+        self.assertEqual(summary["asignaciones_pendientes"], 0)
+        self.assertEqual(summary["retiros_pendientes"], 1)
+        self.assertEqual(summary["cambios_pendientes"], 1)
+
+    def test_does_not_remove_inclusive_class_without_section_context(
+        self,
+    ) -> None:
+        profesores = [
+            {
+                "persona_id": 10,
+                "nombre": "Docente Primaria",
+                "niveles_presentes": [39],
+                "clase_ids_actuales": [301],
+            }
+        ]
+        clases = [
+            self._class(
+                301,
+                39,
+                1,
+                None,
+                "1 Primaria",
+                "",
+                "Santillana Inclusiva",
+                inclusiva=True,
+            )
+        ]
+
+        plan, summary = build_santillana_inclusiva_profesores_plan(
+            profesores,
+            clases,
+        )
+
+        self.assertEqual(plan[0]["clases_a_retirar"], [])
+        self.assertEqual(summary["retiros_pendientes"], 0)
 
     @patch(
         "santillana_format.pegasus.profesores_manual._assign_staff_profesor",
@@ -171,6 +256,43 @@ class ProfesoresInclusivaPlanTests(unittest.TestCase):
         assign_staff.assert_called_once()
         self.assertEqual(assign_staff.call_args.kwargs["persona_id"], 10)
         self.assertEqual(assign_staff.call_args.kwargs["clase_id"], 301)
+
+    @patch(
+        "santillana_format.pegasus.profesores_manual._unassign_staff_profesor",
+        return_value=(True, None),
+    )
+    @patch(
+        "santillana_format.pegasus.profesores_manual._fetch_staff_profesores_detalle",
+        return_value=([{"persona_id": 10}], None),
+    )
+    def test_apply_removes_orphan_inclusive_assignment(
+        self,
+        fetch_staff,
+        unassign_staff,
+    ) -> None:
+        plan = [
+            {
+                "persona_id": 10,
+                "nombre": "Docente Primaria",
+                "clases_pendientes": [],
+                "clases_a_retirar": [
+                    {"clase_id": 302, "clase_label": "Santillana Inclusiva 2PB"}
+                ],
+            }
+        ]
+
+        summary, results = asignar_santillana_inclusiva_profesores(
+            token="token",
+            plan_rows=plan,
+        )
+
+        self.assertEqual(summary["retiradas"], 1)
+        self.assertEqual(summary["asignadas"], 0)
+        self.assertEqual(results[0]["estado"], "retirada")
+        fetch_staff.assert_called_once()
+        unassign_staff.assert_called_once()
+        self.assertEqual(unassign_staff.call_args.kwargs["persona_id"], 10)
+        self.assertEqual(unassign_staff.call_args.kwargs["clase_id"], 302)
 
     @staticmethod
     def _class(

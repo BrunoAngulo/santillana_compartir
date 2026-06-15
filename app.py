@@ -9512,7 +9512,8 @@ def _profesores_inclusiva_console_lines(
     result_rows: Optional[Sequence[Dict[str, object]]] = None,
 ) -> List[str]:
     lines = ["PREVISUALIZACION DE CAMBIOS"]
-    pending_total = 0
+    assignment_total = 0
+    removal_total = 0
     for plan in plan_rows:
         nombre = str(plan.get("nombre") or "Docente").strip()
         login = str(plan.get("login") or "").strip()
@@ -9522,18 +9523,34 @@ def _profesores_inclusiva_console_lines(
             for row in (plan.get("clases_pendientes") or [])
             if isinstance(row, dict)
         ]
-        if pending_classes:
-            for clase in pending_classes:
-                pending_total += 1
-                lines.append(
-                    "[ASIGNAR] {profesor} -> {clase}".format(
-                        profesor=profesor_label,
-                        clase=str(
-                            clase.get("clase_label")
-                            or f"Clase {clase.get('clase_id', '-')}"
-                        ).strip(),
-                    )
+        removal_classes = [
+            row
+            for row in (plan.get("clases_a_retirar") or [])
+            if isinstance(row, dict)
+        ]
+        for clase in pending_classes:
+            assignment_total += 1
+            lines.append(
+                "[ASIGNAR] {profesor} -> {clase}".format(
+                    profesor=profesor_label,
+                    clase=str(
+                        clase.get("clase_label")
+                        or f"Clase {clase.get('clase_id', '-')}"
+                    ).strip(),
                 )
+            )
+        for clase in removal_classes:
+            removal_total += 1
+            lines.append(
+                "[RETIRAR] {profesor} -> {clase}".format(
+                    profesor=profesor_label,
+                    clase=str(
+                        clase.get("clase_label")
+                        or f"Clase {clase.get('clase_id', '-')}"
+                    ).strip(),
+                )
+            )
+        if pending_classes or removal_classes:
             continue
         if not plan.get("contextos"):
             lines.append(
@@ -9550,7 +9567,12 @@ def _profesores_inclusiva_console_lines(
             lines.append(
                 f"[SIN CAMBIOS] {profesor_label}: ya tiene las clases inclusivas correspondientes."
             )
-    lines.append(f"TOTAL PENDIENTE: {pending_total} asignacion(es).")
+    lines.append(
+        "TOTAL PENDIENTE: {assignments} asignacion(es), {removals} retiro(s).".format(
+            assignments=assignment_total,
+            removals=removal_total,
+        )
+    )
 
     if result_rows:
         lines.extend(["", "ULTIMA EJECUCION"])
@@ -9580,7 +9602,8 @@ def _update_profesores_inclusiva_cached_assignments(
     successful = [
         row
         for row in result_rows
-        if str(row.get("estado") or "") in {"asignada", "ya_asignada"}
+        if str(row.get("estado") or "")
+        in {"asignada", "ya_asignada", "retirada", "ya_retirada"}
         and _safe_int(row.get("persona_id")) is not None
         and _safe_int(row.get("clase_id")) is not None
     ]
@@ -9605,13 +9628,20 @@ def _update_profesores_inclusiva_cached_assignments(
         clase_id = int(result["clase_id"])
         profesor = profesores_by_id.get(persona_id)
         clase = clases_by_id.get(clase_id)
+        is_removal = str(result.get("estado") or "") in {
+            "retirada",
+            "ya_retirada",
+        }
         if profesor is not None:
             current_ids = {
                 int(value)
                 for value in (profesor.get("clase_ids_actuales") or [])
                 if _safe_int(value) is not None
             }
-            current_ids.add(clase_id)
+            if is_removal:
+                current_ids.discard(clase_id)
+            else:
+                current_ids.add(clase_id)
             profesor["clase_ids_actuales"] = sorted(current_ids)
             profesor["clases_actuales_count"] = len(current_ids)
             labels = {
@@ -9622,7 +9652,10 @@ def _update_profesores_inclusiva_cached_assignments(
             if clase is not None:
                 clase_label = str(clase.get("clase_label") or "").strip()
                 if clase_label:
-                    labels.add(clase_label)
+                    if is_removal:
+                        labels.discard(clase_label)
+                    else:
+                        labels.add(clase_label)
             profesor["clases_actuales"] = sorted(labels)
         if clase is not None:
             staff_ids = {
@@ -9630,7 +9663,10 @@ def _update_profesores_inclusiva_cached_assignments(
                 for value in (clase.get("staff_persona_ids") or [])
                 if _safe_int(value) is not None
             }
-            staff_ids.add(persona_id)
+            if is_removal:
+                staff_ids.discard(persona_id)
+            else:
+                staff_ids.add(persona_id)
             clase["staff_persona_ids"] = sorted(staff_ids)
             clase["staff_count"] = len(staff_ids)
 
@@ -17033,11 +17069,12 @@ with tab_crud_profesores:
                 st.subheader("Asignar Santillana Inclusiva")
                 st.caption(
                     "Detecta los grados y secciones donde enseña cada docente de Primaria "
-                    "y agrega solamente las clases Santillana Inclusiva equivalentes."
+                    "y sincroniza las clases Santillana Inclusiva equivalentes."
                 )
                 st.info(
-                    "Esta funcion solo agrega clases. No quita asignaciones actuales ni "
-                    "modifica docentes de otros niveles."
+                    "Agrega la clase inclusiva cuando el docente enseña otro curso en el "
+                    "mismo grado y seccion. La retira cuando es su unico curso en ese "
+                    "grado y seccion. No modifica clases de otros niveles."
                 )
                 if PROFESORES_MANUAL_IMPORT_ERROR:
                     st.error(
@@ -17164,7 +17201,7 @@ with tab_crud_profesores:
                             primaria_nivel_id=PEGASUS_PRIMARIA_NIVEL_ID,
                         )
                     )
-                    metric_cols = st.columns(4)
+                    metric_cols = st.columns(5)
                     metric_cols[0].metric(
                         "Docentes de Primaria",
                         inclusiva_summary.get("docentes_primaria", 0),
@@ -17181,6 +17218,10 @@ with tab_crud_profesores:
                         "Asignaciones pendientes",
                         inclusiva_summary.get("asignaciones_pendientes", 0),
                     )
+                    metric_cols[4].metric(
+                        "Retiros pendientes",
+                        inclusiva_summary.get("retiros_pendientes", 0),
+                    )
                     st.caption(
                         "Clases Santillana Inclusiva detectadas en Primaria: "
                         f"{inclusiva_summary.get('clases_inclusivas_primaria', 0)}."
@@ -17188,14 +17229,20 @@ with tab_crud_profesores:
 
                     if inclusiva_last_summary:
                         st.success(
-                            "Ultima ejecucion: asignadas {asignadas} | ya asignadas "
-                            "{ya_asignadas} | errores {errores_api}.".format(
-                                **inclusiva_last_summary
+                            "Ultima ejecucion: asignadas {asignadas} | retiradas "
+                            "{retiradas} | ya resueltas {already} | errores {errors}.".format(
+                                asignadas=inclusiva_last_summary.get("asignadas", 0),
+                                retiradas=inclusiva_last_summary.get("retiradas", 0),
+                                already=(
+                                    inclusiva_last_summary.get("ya_asignadas", 0)
+                                    + inclusiva_last_summary.get("ya_retiradas", 0)
+                                ),
+                                errors=inclusiva_last_summary.get("errores_api", 0),
                             )
                         )
 
                     confirm_inclusiva = st.checkbox(
-                        "Confirmo que deseo aplicar las asignaciones mostradas en la consola.",
+                        "Confirmo que deseo aplicar las asignaciones y retiros mostrados en la consola.",
                         key="profesores_inclusiva_confirm",
                     )
 
@@ -17217,7 +17264,7 @@ with tab_crud_profesores:
                             percent = int((current / total) * 100) if total else 0
                             progress_apply.progress(percent)
                             status_apply.write(
-                                f"Asignando {message} ({current}/{total})"
+                                f"Procesando {message} ({current}/{total})"
                             )
 
                         try:
@@ -17249,22 +17296,26 @@ with tab_crud_profesores:
 
                     bulk_col, pending_col = st.columns([2, 3], gap="small")
                     run_inclusiva_all = bulk_col.button(
-                        "Asignar a todos",
+                        "Aplicar a todos",
                         type="primary",
                         key="profesores_inclusiva_apply_all",
                         use_container_width=True,
                         disabled=(
                             not confirm_inclusiva
-                            or inclusiva_summary.get("asignaciones_pendientes", 0) == 0
+                            or inclusiva_summary.get("cambios_pendientes", 0) == 0
                         ),
                     )
                     pending_col.info(
-                        "{docentes} docente(s), {asignaciones} asignacion(es) por aplicar.".format(
+                        "{docentes} docente(s), {asignaciones} asignacion(es) y "
+                        "{retiros} retiro(s) por aplicar.".format(
                             docentes=inclusiva_summary.get(
                                 "docentes_con_cambios", 0
                             ),
                             asignaciones=inclusiva_summary.get(
                                 "asignaciones_pendientes", 0
+                            ),
+                            retiros=inclusiva_summary.get(
+                                "retiros_pendientes", 0
                             ),
                         )
                     )
@@ -17299,7 +17350,9 @@ with tab_crud_profesores:
                         st.caption("No hay docentes para ese filtro.")
                     for plan in visible_inclusiva_plan:
                         persona_id = int(plan["persona_id"])
-                        pending_count = len(plan.get("clases_pendientes") or [])
+                        assignment_count = len(plan.get("clases_pendientes") or [])
+                        removal_count = len(plan.get("clases_a_retirar") or [])
+                        pending_count = assignment_count + removal_count
                         contextos = ", ".join(
                             str(value)
                             for value in (plan.get("contextos_labels") or [])
@@ -17326,13 +17379,15 @@ with tab_crud_profesores:
                             context_col.markdown(contextos or "Sin clases base")
                             context_col.caption("Grados y secciones detectados")
                             if pending_count:
-                                status_col.warning(f"{pending_count} pendiente(s)")
+                                status_col.warning(
+                                    f"{assignment_count} asignar | {removal_count} retirar"
+                                )
                             elif plan.get("clases_destino"):
                                 status_col.success("Al dia")
                             else:
                                 status_col.caption("Sin coincidencias")
                             run_single_inclusiva = action_col.button(
-                                "Asignar",
+                                "Aplicar",
                                 key=f"profesores_inclusiva_apply_{persona_id}",
                                 use_container_width=True,
                                 disabled=not confirm_inclusiva or pending_count == 0,

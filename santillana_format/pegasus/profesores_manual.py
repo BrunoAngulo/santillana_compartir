@@ -368,6 +368,11 @@ def build_santillana_inclusiva_profesores_plan(
             for clase in current_primary_classes
             if not _is_santillana_inclusiva_class_row(clase)
         ]
+        current_inclusive_classes = [
+            clase
+            for clase in current_primary_classes
+            if _is_santillana_inclusiva_class_row(clase)
+        ]
         source_contexts: List[Dict[str, object]] = []
         seen_contexts: Set[Tuple[int, int, int, str]] = set()
         for clase in source_classes:
@@ -419,6 +424,37 @@ def build_santillana_inclusiva_profesores_plan(
             for clase in target_classes
             if int(clase["clase_id"]) in current_set
         ]
+        removal_classes: List[Dict[str, object]] = []
+        for inclusiva in current_inclusive_classes:
+            inclusive_context = _class_context(inclusiva)
+            if inclusive_context is None:
+                continue
+            if (
+                _safe_int(inclusive_context.get("grupo_id")) is None
+                and not _normalize_section(inclusive_context.get("seccion"))
+            ):
+                continue
+            if any(
+                _same_class_context(source_context, inclusiva)
+                for source_context in source_contexts
+            ):
+                continue
+            target_id = int(inclusiva["clase_id"])
+            removal_classes.append(
+                {
+                    "clase_id": target_id,
+                    "clase_label": str(
+                        inclusiva.get("clase_label")
+                        or inclusiva.get("clase_nombre")
+                        or inclusiva.get("clase")
+                        or f"Clase {target_id}"
+                    ).strip(),
+                    "grado": str(inclusiva.get("grado") or "").strip(),
+                    "seccion": str(inclusiva.get("seccion") or "").strip(),
+                    "grado_id": _safe_int(inclusiva.get("grado_id")),
+                    "grupo_id": _safe_int(inclusiva.get("grupo_id")),
+                }
+            )
         nombre = str(raw_profesor.get("nombre") or "").strip()
         if not nombre:
             nombre = _compose_profesor_nombre(
@@ -440,6 +476,7 @@ def build_santillana_inclusiva_profesores_plan(
                 "clases_destino": target_classes,
                 "clases_pendientes": pending_classes,
                 "clases_ya_asignadas": already_classes,
+                "clases_a_retirar": removal_classes,
                 "clase_ids_actuales": current_ids,
             }
         )
@@ -456,13 +493,21 @@ def build_santillana_inclusiva_profesores_plan(
             1 for row in plan_rows if row.get("contextos")
         ),
         "docentes_con_cambios": sum(
-            1 for row in plan_rows if row.get("clases_pendientes")
+            1
+            for row in plan_rows
+            if row.get("clases_pendientes") or row.get("clases_a_retirar")
         ),
         "asignaciones_pendientes": sum(
             len(row.get("clases_pendientes") or []) for row in plan_rows
         ),
+        "retiros_pendientes": sum(
+            len(row.get("clases_a_retirar") or []) for row in plan_rows
+        ),
         "clases_inclusivas_primaria": len(inclusivas_primaria),
     }
+    summary["cambios_pendientes"] = (
+        summary["asignaciones_pendientes"] + summary["retiros_pendientes"]
+    )
     return plan_rows, summary
 
 
@@ -474,7 +519,7 @@ def asignar_santillana_inclusiva_profesores(
     timeout: int = 30,
     on_progress: Optional[Callable[[int, int, str], None]] = None,
 ) -> Tuple[Dict[str, int], List[Dict[str, object]]]:
-    operations: List[Tuple[int, str, Dict[str, object]]] = []
+    operations: List[Tuple[str, int, str, Dict[str, object]]] = []
     for plan in plan_rows:
         if not isinstance(plan, dict):
             continue
@@ -485,13 +530,27 @@ def asignar_santillana_inclusiva_profesores(
         for clase in plan.get("clases_pendientes") or []:
             if not isinstance(clase, dict) or _safe_int(clase.get("clase_id")) is None:
                 continue
-            operations.append((int(persona_id), nombre, dict(clase)))
+            operations.append(("assign", int(persona_id), nombre, dict(clase)))
+        for clase in plan.get("clases_a_retirar") or []:
+            if not isinstance(clase, dict) or _safe_int(clase.get("clase_id")) is None:
+                continue
+            operations.append(("remove", int(persona_id), nombre, dict(clase)))
 
     summary = {
-        "docentes_procesados": len({persona_id for persona_id, _, _ in operations}),
-        "asignaciones_total": len(operations),
+        "docentes_procesados": len(
+            {persona_id for _, persona_id, _, _ in operations}
+        ),
+        "operaciones_total": len(operations),
+        "asignaciones_total": sum(
+            1 for action, _, _, _ in operations if action == "assign"
+        ),
+        "retiros_total": sum(
+            1 for action, _, _, _ in operations if action == "remove"
+        ),
         "asignadas": 0,
         "ya_asignadas": 0,
+        "retiradas": 0,
+        "ya_retiradas": 0,
         "errores_api": 0,
     }
     results: List[Dict[str, object]] = []
@@ -499,16 +558,20 @@ def asignar_santillana_inclusiva_profesores(
     staff_errors: Dict[int, str] = {}
 
     with requests.Session() as session:
-        for index, (persona_id, nombre, clase) in enumerate(operations, start=1):
+        for index, (action, persona_id, nombre, clase) in enumerate(
+            operations,
+            start=1,
+        ):
             clase_id = int(clase["clase_id"])
             clase_label = str(
                 clase.get("clase_label") or f"Clase {clase_id}"
             ).strip()
             if on_progress:
+                action_label = "Asignar" if action == "assign" else "Retirar"
                 on_progress(
                     index,
                     len(operations),
-                    f"{nombre}: {clase_label}",
+                    f"{action_label} {nombre}: {clase_label}",
                 )
 
             if clase_id not in staff_cache and clase_id not in staff_errors:
@@ -544,7 +607,7 @@ def asignar_santillana_inclusiva_profesores(
                 continue
 
             current_staff = staff_cache.setdefault(clase_id, set())
-            if persona_id in current_staff:
+            if action == "assign" and persona_id in current_staff:
                 summary["ya_asignadas"] += 1
                 results.append(
                     {
@@ -558,15 +621,40 @@ def asignar_santillana_inclusiva_profesores(
                 )
                 continue
 
-            ok, error = _assign_staff_profesor(
-                session=session,
-                token=token,
-                empresa_id=int(empresa_id),
-                ciclo_id=int(ciclo_id),
-                clase_id=clase_id,
-                persona_id=persona_id,
-                timeout=int(timeout),
-            )
+            if action == "remove" and persona_id not in current_staff:
+                summary["ya_retiradas"] += 1
+                results.append(
+                    {
+                        "persona_id": persona_id,
+                        "nombre": nombre,
+                        "clase_id": clase_id,
+                        "clase": clase_label,
+                        "estado": "ya_retirada",
+                        "detalle": "El profesor ya no estaba asignado.",
+                    }
+                )
+                continue
+
+            if action == "assign":
+                ok, error = _assign_staff_profesor(
+                    session=session,
+                    token=token,
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    clase_id=clase_id,
+                    persona_id=persona_id,
+                    timeout=int(timeout),
+                )
+            else:
+                ok, error = _unassign_staff_profesor(
+                    session=session,
+                    token=token,
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    clase_id=clase_id,
+                    persona_id=persona_id,
+                    timeout=int(timeout),
+                )
             if not ok:
                 summary["errores_api"] += 1
                 results.append(
@@ -575,22 +663,34 @@ def asignar_santillana_inclusiva_profesores(
                         "nombre": nombre,
                         "clase_id": clase_id,
                         "clase": clase_label,
-                        "estado": "error_asignar",
+                        "estado": (
+                            "error_asignar"
+                            if action == "assign"
+                            else "error_retirar"
+                        ),
                         "detalle": error or "Error desconocido.",
                     }
                 )
                 continue
 
-            current_staff.add(persona_id)
-            summary["asignadas"] += 1
+            if action == "assign":
+                current_staff.add(persona_id)
+                summary["asignadas"] += 1
+                estado = "asignada"
+                detalle = "Asignacion realizada."
+            else:
+                current_staff.discard(persona_id)
+                summary["retiradas"] += 1
+                estado = "retirada"
+                detalle = "Retiro realizado."
             results.append(
                 {
                     "persona_id": persona_id,
                     "nombre": nombre,
                     "clase_id": clase_id,
                     "clase": clase_label,
-                    "estado": "asignada",
-                    "detalle": "Asignacion realizada.",
+                    "estado": estado,
+                    "detalle": detalle,
                 }
             )
 

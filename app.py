@@ -54,6 +54,12 @@ from santillana_format.sumun import (
     inspect_sumun_workbook_sheets,
     standardize_sumun_workbook_from_excel,
 )
+from santillana_format.pegasus.censo import (
+    build_censo_colegio_filename,
+    build_flat_censo_zip_path,
+    export_censo_alumnos_excel,
+    normalize_censo_alumnos_export_rows,
+)
 from santillana_format.pegasus import (
     ALUMNOS_CICLO_ID_DEFAULT,
     APLICATIVO_COMPARTIR_EVIDENCIAS_IPA,
@@ -426,15 +432,6 @@ PEGASUS_NIVEL_LABEL_BY_ID = {
 }
 PEGASUS_PRIMARIA_NIVEL_ID = 39
 SANTILLANA_INCLUSIVA_COURSE_PREFIX = "SANTILLANA INCLUSIVA"
-CENSO_ACTIVOS_EXPORT_COLUMNS = [
-    "Nivel",
-    "Grado",
-    "Grupo",
-    "Nombre del alumno",
-    "DNI",
-    "Login",
-    "Password",
-]
 CENSO_PROFESORES_ACTIVOS_EXPORT_COLUMNS = [
     "Nombre",
     "Apellido paterno",
@@ -2423,13 +2420,7 @@ def _export_simple_excel(rows: List[Dict[str, object]], sheet_name: str = "data"
 
 
 def _export_censo_activos_excel(rows: List[Dict[str, object]]) -> bytes:
-    output = BytesIO()
-    df = pd.DataFrame(rows)
-    df = df.reindex(columns=CENSO_ACTIVOS_EXPORT_COLUMNS)
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="activos")
-    output.seek(0)
-    return output.getvalue()
+    return export_censo_alumnos_excel(rows)
 
 
 def _export_censo_profesores_activos_excel(rows: List[Dict[str, object]]) -> bytes:
@@ -2956,45 +2947,7 @@ def _render_radartec_section() -> None:
 def _normalize_censo_activos_export_rows(
     rows: List[Dict[str, object]]
 ) -> List[Dict[str, str]]:
-    normalized: List[Dict[str, str]] = []
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        normalized.append(
-            {
-                "Nivel": str(row.get("Nivel") or row.get("nivel") or "").strip(),
-                "Grado": str(row.get("Grado") or row.get("grado") or "").strip(),
-                "Grupo": str(
-                    row.get("Grupo")
-                    or row.get("Seccion")
-                    or row.get("seccion")
-                    or ""
-                ).strip(),
-                "Nombre del alumno": str(
-                    row.get("Nombre del alumno")
-                    or row.get("Nombre completo")
-                    or row.get("nombre_completo")
-                    or ""
-                ).strip(),
-                "DNI": str(
-                    row.get("DNI")
-                    or row.get("dni")
-                    or row.get("id_oficial")
-                    or ""
-                ).strip(),
-                "Login": str(row.get("Login") or row.get("login") or "").strip(),
-                "Password": str(row.get("Password") or row.get("password") or "").strip(),
-            }
-        )
-    normalized.sort(
-        key=lambda row: (
-            str(row.get("Nivel") or ""),
-            str(row.get("Grado") or ""),
-            str(row.get("Grupo") or ""),
-            str(row.get("Nombre del alumno") or ""),
-        )
-    )
-    return normalized
+    return normalize_censo_alumnos_export_rows(rows)
 
 
 def _load_censo_activos_for_colegio(
@@ -3003,6 +2956,7 @@ def _load_censo_activos_for_colegio(
     empresa_id: int,
     ciclo_id: int,
     timeout: int,
+    include_inactive: bool = False,
     on_status: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, object]:
     def _status(message: str) -> None:
@@ -3021,9 +2975,10 @@ def _load_censo_activos_for_colegio(
         timeout=int(timeout),
     )
     contexts = _build_contexts_for_nivel_grado(niveles=niveles)
-    rows_activos: List[Dict[str, object]] = []
-    export_rows_activos: List[Dict[str, object]] = []
-    errors_activos: List[str] = []
+    rows_censo: List[Dict[str, object]] = []
+    export_rows_censo: List[Dict[str, object]] = []
+    errors_censo: List[str] = []
+    seen_students: Set[Tuple[str, object]] = set()
 
     _status("Leyendo logins...")
     try:
@@ -3064,7 +3019,7 @@ def _load_censo_activos_for_colegio(
                 timeout=int(timeout),
             )
         except Exception as exc:
-            errors_activos.append(
+            errors_censo.append(
                 "Error en {nivel} | {grado} ({seccion}): {err}".format(
                     nivel=str(ctx.get("nivel") or ""),
                     grado=str(ctx.get("grado") or ""),
@@ -3078,14 +3033,40 @@ def _load_censo_activos_for_colegio(
             if not isinstance(item, dict):
                 continue
             flat = _flatten_censo_alumno_for_auto_plan(item=item, fallback=ctx)
-            if not _to_bool(flat.get("activo")):
+            is_active = _to_bool(flat.get("activo"))
+            if not include_inactive and not is_active:
                 continue
+            identity_value = flat.get("alumno_id") or flat.get("persona_id")
+            if identity_value is not None:
+                identity_key: Tuple[str, object] = (
+                    "alumno" if flat.get("alumno_id") is not None else "persona",
+                    identity_value,
+                )
+            else:
+                identity_key = (
+                    "fallback",
+                    "|".join(
+                        [
+                            str(flat.get("nombre_completo") or ""),
+                            str(flat.get("id_oficial") or ""),
+                            str(flat.get("nivel") or ""),
+                            str(flat.get("grado") or ""),
+                            str(flat.get("seccion_norm") or flat.get("seccion") or ""),
+                        ]
+                    ),
+                )
+            if identity_key in seen_students:
+                continue
+            seen_students.add(identity_key)
+
             login_txt, _password_txt = _resolve_alumno_login_password(
                 item,
                 login_lookup_by_alumno,
                 login_lookup_by_persona,
             )
-            row_activo = {
+            row_censo = {
+                "personaId": flat.get("persona_id") or "",
+                "Estado": "Activo" if is_active else "Inactivo",
                 "Nivel": flat.get("nivel") or "",
                 "Grado": flat.get("grado") or "",
                 "Grupo": flat.get("seccion_norm") or flat.get("seccion") or "",
@@ -3094,16 +3075,20 @@ def _load_censo_activos_for_colegio(
                 "Login": login_txt,
                 "Password": "",
             }
-            rows_activos.append(dict(row_activo))
-            export_rows_activos.append(dict(row_activo))
+            rows_censo.append(dict(row_censo))
+            export_rows_censo.append(dict(row_censo))
 
-    rows_activos = _normalize_censo_activos_export_rows(rows_activos)
-    export_rows_activos = _normalize_censo_activos_export_rows(export_rows_activos)
+    rows_censo = _normalize_censo_activos_export_rows(rows_censo)
+    export_rows_censo = _normalize_censo_activos_export_rows(export_rows_censo)
+    activos_total = sum(1 for row in rows_censo if row.get("Estado") == "Activo")
+    inactivos_total = sum(1 for row in rows_censo if row.get("Estado") == "Inactivo")
     return {
-        "rows": rows_activos,
-        "export_rows": export_rows_activos,
-        "errors": errors_activos,
+        "rows": rows_censo,
+        "export_rows": export_rows_censo,
+        "errors": errors_censo,
         "contexts_total": total_contexts,
+        "activos_total": activos_total,
+        "inactivos_total": inactivos_total,
     }
 
 
@@ -13667,9 +13652,9 @@ def _render_otras_funcionalidades_view() -> None:
     )
 
     with st.container(border=True):
-        st.markdown("**Censo activos por varios colegios**")
+        st.markdown("**Censo por varios colegios**")
         st.caption(
-            "Selecciona colegios y genera un ZIP masivo. Puedes descargar solo alumnos o solo docentes."
+            "Selecciona colegios y genera un ZIP masivo. El censo de alumnos incluye activos e inactivos."
         )
         colegio_rows_multi = st.session_state.get("shared_colegios_rows") or []
         colegio_error_multi = str(
@@ -13715,7 +13700,7 @@ def _render_otras_funcionalidades_view() -> None:
 
         action_cols = st.columns(2, gap="small")
         run_censo_alumnos_multi = action_cols[0].button(
-            "Censo de alumnos",
+            "Censo de alumnos activos e inactivos",
             type="primary",
             key="otras_censo_alumnos_multi_btn",
             use_container_width=True,
@@ -13749,23 +13734,46 @@ def _render_otras_funcionalidades_view() -> None:
         summary_rows_multi: List[Dict[str, object]] = []
         errors_multi: List[str] = []
         zip_buffer = BytesIO()
-        zip_name_multi = (
-            f"censo_{censo_kind}_activos_colegios_{date.today().isoformat()}.zip"
+        zip_scope = (
+            "alumnos"
+            if censo_kind == "alumnos"
+            else "docentes_activos"
         )
+        zip_name_multi = f"censo_{zip_scope}_colegios_{date.today().isoformat()}.zip"
         zip_root_folder = _sanitize_zip_component(
-            f"censo_{censo_kind}_activos_colegios_{date.today().isoformat()}",
-            f"censo_{censo_kind}_activos_colegios",
+            f"censo_{zip_scope}_colegios_{date.today().isoformat()}",
+            f"censo_{zip_scope}_colegios",
         )
+        used_file_names: Set[str] = set()
 
         with ZipFile(zip_buffer, "w", ZIP_DEFLATED) as zip_file:
             for idx, colegio_id_multi in enumerate(colegio_ids_multi, start=1):
-                colegio_base_name = _get_colegio_export_base_name(int(colegio_id_multi))
+                colegio_row_multi = row_by_id_multi.get(int(colegio_id_multi)) or {}
+                colegio_name_multi = str(
+                    colegio_row_multi.get("colegio")
+                    or colegio_row_multi.get("label")
+                    or f"Colegio {int(colegio_id_multi)}"
+                ).strip()
+                crm_id_multi = str(
+                    colegio_row_multi.get("crm_id")
+                    or colegio_row_multi.get("crmId")
+                    or ""
+                ).strip()
+                file_name = build_censo_colegio_filename(
+                    colegio_row_multi,
+                    int(colegio_id_multi),
+                    used_names=used_file_names,
+                )
+                zip_path = build_flat_censo_zip_path(
+                    zip_root_folder,
+                    file_name,
+                )
 
                 def _on_multi_status(
                     message: str,
                     current_idx: int = idx,
                     current_total: int = total_colegios_multi,
-                    colegio_name: str = colegio_base_name,
+                    colegio_name: str = colegio_name_multi,
                 ) -> None:
                     status_placeholder.caption(
                         "[{idx}/{total}] {colegio}: {message}".format(
@@ -13784,12 +13792,11 @@ def _render_otras_funcionalidades_view() -> None:
                             empresa_id=int(empresa_id),
                             ciclo_id=int(ciclo_id),
                             timeout=int(timeout),
+                            include_inactive=True,
                             on_status=_on_multi_status,
                         )
                         export_rows_multi = list(payload_multi.get("export_rows") or [])
                         errors_colegio_multi = list(payload_multi.get("errors") or [])
-                        file_name = f"censo_alumnos_activos_{colegio_base_name}.xlsx"
-                        zip_path = f"{zip_root_folder}/{colegio_base_name}/{file_name}"
                         zip_file.writestr(
                             zip_path,
                             _export_censo_activos_excel(export_rows_multi),
@@ -13797,8 +13804,15 @@ def _render_otras_funcionalidades_view() -> None:
                         summary_rows_multi.append(
                             {
                                 "Colegio ID": int(colegio_id_multi),
-                                "Colegio": colegio_base_name,
-                                "Alumnos activos": len(export_rows_multi),
+                                "CRM ID": crm_id_multi,
+                                "Colegio": colegio_name_multi,
+                                "Alumnos activos": int(
+                                    payload_multi.get("activos_total") or 0
+                                ),
+                                "Alumnos inactivos": int(
+                                    payload_multi.get("inactivos_total") or 0
+                                ),
+                                "Total alumnos": len(export_rows_multi),
                                 "Errores": len(errors_colegio_multi),
                                 "Archivo": zip_path,
                                 "Estado": (
@@ -13817,8 +13831,6 @@ def _render_otras_funcionalidades_view() -> None:
                         )
                         export_rows_multi = list(payload_multi.get("export_rows") or [])
                         errors_colegio_multi = list(payload_multi.get("errors") or [])
-                        file_name = f"censo_docentes_activos_{colegio_base_name}.xlsx"
-                        zip_path = f"{zip_root_folder}/{colegio_base_name}/{file_name}"
                         zip_file.writestr(
                             zip_path,
                             _export_censo_profesores_activos_excel(export_rows_multi),
@@ -13826,7 +13838,8 @@ def _render_otras_funcionalidades_view() -> None:
                         summary_rows_multi.append(
                             {
                                 "Colegio ID": int(colegio_id_multi),
-                                "Colegio": colegio_base_name,
+                                "CRM ID": crm_id_multi,
+                                "Colegio": colegio_name_multi,
                                 "Docentes activos": len(export_rows_multi),
                                 "Errores": len(errors_colegio_multi),
                                 "Archivo": zip_path,
@@ -13847,9 +13860,10 @@ def _render_otras_funcionalidades_view() -> None:
                     summary_rows_multi.append(
                         {
                             "Colegio ID": int(colegio_id_multi),
-                            "Colegio": colegio_base_name,
+                            "CRM ID": crm_id_multi,
+                            "Colegio": colegio_name_multi,
                             (
-                                "Alumnos activos"
+                                "Total alumnos"
                                 if censo_kind == "alumnos"
                                 else "Docentes activos"
                             ): 0,
@@ -13897,9 +13911,9 @@ def _render_otras_funcionalidades_view() -> None:
             with multi_col_text:
                 st.markdown("**Resultado masivo por colegios**")
                 st.caption(
-                    "Tipo: {kind}. Se genero un Excel por colegio dentro del ZIP.".format(
+                    "Tipo: {kind}. Se genero un Excel por colegio dentro de una sola carpeta del ZIP.".format(
                         kind=(
-                            "alumnos"
+                            "alumnos activos e inactivos"
                             if censo_multi_kind_cached == "alumnos"
                             else "docentes"
                         )
@@ -19544,6 +19558,7 @@ with tab_crud_alumnos:
                                     empresa_id=int(empresa_id),
                                     ciclo_id=int(ciclo_id),
                                     timeout=int(timeout),
+                                    include_inactive=True,
                                     on_status=_on_multi_status,
                                 )
                                 export_rows_multi = list(

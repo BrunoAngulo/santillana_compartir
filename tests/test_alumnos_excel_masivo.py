@@ -5,7 +5,9 @@ from unittest.mock import patch
 import pandas as pd
 
 from santillana_format.pegasus.alumnos import (
+    EXCEL_MASIVO_ESTUDIANTES_CONSOLIDADO_COLUMNS,
     EXCEL_MASIVO_ESTUDIANTES_COLUMNS,
+    consolidar_excel_masivo_estudiantes,
     descargar_excel_masivo_estudiantes,
     transformar_excel_masivo_estudiantes,
 )
@@ -119,6 +121,36 @@ class ExcelMasivoEstudiantesTests(unittest.TestCase):
             kwargs["headers"]["Authorization"],
             "Bearer token-demo",
         )
+
+    def test_consolidates_multiple_schools_in_one_workbook(self) -> None:
+        first_excel, _ = transformar_excel_masivo_estudiantes(
+            _build_plantilla_bd_excel()
+        )
+        second_excel, _ = transformar_excel_masivo_estudiantes(
+            _build_plantilla_bd_excel()
+        )
+
+        output_bytes, summary = consolidar_excel_masivo_estudiantes(
+            [
+                ("00018662", 9039, "LICEO NAVAL", first_excel),
+                ("00019999", 9040, "COLEGIO DOS", second_excel),
+            ]
+        )
+
+        frame = pd.read_excel(
+            BytesIO(output_bytes),
+            sheet_name="estudiantes",
+            dtype=str,
+            engine="openpyxl",
+        ).fillna("")
+        self.assertEqual(
+            list(frame.columns),
+            EXCEL_MASIVO_ESTUDIANTES_CONSOLIDADO_COLUMNS,
+        )
+        self.assertEqual(summary, {"colegios_total": 2, "alumnos_total": 4})
+        self.assertEqual(set(frame["CRM ID"]), {"00018662", "00019999"})
+        self.assertEqual(set(frame["Colegio ID"]), {"9039", "9040"})
+        self.assertEqual(set(frame["Colegio"]), {"LICEO NAVAL", "COLEGIO DOS"})
 
 
 if __name__ == "__main__":

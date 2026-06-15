@@ -120,6 +120,12 @@ EXCEL_MASIVO_ESTUDIANTES_COLUMNS = [
     "Login",
     "Password",
 ]
+EXCEL_MASIVO_ESTUDIANTES_CONSOLIDADO_COLUMNS = [
+    "CRM ID",
+    "Colegio ID",
+    "Colegio",
+    *EXCEL_MASIVO_ESTUDIANTES_COLUMNS,
+]
 
 GRADO_OPTIONS = [
     "2 años",
@@ -498,6 +504,65 @@ def transformar_excel_masivo_estudiantes(
 
     output_bytes, total = _export_excel_masivo_estudiantes_frame(frame)
     return output_bytes, {"alumnos_total": total}
+
+
+def consolidar_excel_masivo_estudiantes(
+    colegios: Sequence[Tuple[object, object, object, bytes]],
+) -> Tuple[bytes, Dict[str, int]]:
+    """Combine transformed school workbooks into one identified student sheet."""
+    frames: List[pd.DataFrame] = []
+    colegios_total = 0
+    for crm_id, colegio_id, colegio, excel_bytes in colegios:
+        try:
+            frame = pd.read_excel(
+                BytesIO(excel_bytes),
+                sheet_name="estudiantes",
+                dtype=str,
+                engine="openpyxl",
+            ).fillna("")
+        except Exception as exc:
+            raise RuntimeError(
+                f"No se pudo consolidar el Excel del colegio {colegio}: {exc}"
+            ) from exc
+
+        for column in EXCEL_MASIVO_ESTUDIANTES_COLUMNS:
+            if column not in frame.columns:
+                frame[column] = ""
+        frame = frame[EXCEL_MASIVO_ESTUDIANTES_COLUMNS].copy()
+        frame.insert(0, "Colegio", _clean_excel_value(colegio))
+        frame.insert(0, "Colegio ID", _clean_excel_value(colegio_id))
+        frame.insert(0, "CRM ID", _clean_excel_value(crm_id))
+        frames.append(frame)
+        colegios_total += 1
+
+    consolidated = (
+        pd.concat(frames, ignore_index=True)
+        if frames
+        else pd.DataFrame(columns=EXCEL_MASIVO_ESTUDIANTES_CONSOLIDADO_COLUMNS)
+    )
+    consolidated = consolidated[
+        EXCEL_MASIVO_ESTUDIANTES_CONSOLIDADO_COLUMNS
+    ]
+
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        consolidated.to_excel(writer, index=False, sheet_name="estudiantes")
+        ws = writer.book["estudiantes"]
+        ws.freeze_panes = "A2"
+        ws.auto_filter.ref = ws.dimensions
+        for idx, column in enumerate(consolidated.columns, start=1):
+            sample = consolidated[column].astype(str).head(200).tolist()
+            max_len = max([len(str(column))] + [len(value) for value in sample])
+            ws.column_dimensions[get_column_letter(idx)].width = min(max_len + 2, 60)
+        for column_letter in ("A", "B", "D", "J", "K", "L"):
+            for cell in ws[column_letter]:
+                cell.number_format = "@"
+
+    output.seek(0)
+    return output.getvalue(), {
+        "colegios_total": colegios_total,
+        "alumnos_total": int(len(consolidated.index)),
+    }
 
 
 def _export_excel_masivo_estudiantes_frame(

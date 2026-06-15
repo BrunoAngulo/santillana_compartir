@@ -80,6 +80,19 @@ from santillana_format.pegasus import (
     process_excel,
 )
 from santillana_format.pegasus.alumnos import GRADOS_POR_NIVEL as PEGASUS_GRADOS_POR_NIVEL
+from santillana_format.pegasus.reportes import (
+    REPORT_LEVEL_LABELS,
+    build_alumno_clase_row,
+    build_alumno_row,
+    build_clase_row,
+    build_colegio_row,
+    build_profesor_clase_row,
+    build_profesor_row,
+    build_report_filename,
+    clean_report_rows,
+    export_report_workbook,
+    filter_report_rows,
+)
 
 APP_ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 APP_TAB_LOGO_PATH = APP_ASSETS_DIR / "tab_logo.png"
@@ -12256,9 +12269,840 @@ def _render_santillana_inclusiva_student_removal(
             _show_dataframe(result_rows_cached, use_container_width=True)
 
 
+def _load_pegasus_report_students(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+    nivel_ids: Sequence[int],
+    grado_ids: Sequence[int],
+    secciones: Sequence[str],
+) -> Tuple[List[Dict[str, object]], List[str]]:
+    errors: List[str] = []
+    rows: List[Dict[str, object]] = []
+    try:
+        raw_rows = _fetch_alumnos_censo_by_filters(
+            token=token,
+            colegio_id=int(colegio_id),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+        )
+        rows = [
+            _flatten_censo_alumno_for_auto_plan(item=item, fallback={})
+            for item in raw_rows
+            if isinstance(item, dict)
+        ]
+        return _dedupe_and_sort_censo_students(rows), errors
+    except Exception as exc:
+        errors.append(f"alumnosByFilters: {exc}")
+
+    try:
+        niveles = _fetch_niveles_grados_grupos_censo(
+            token=token,
+            colegio_id=int(colegio_id),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+        )
+    except Exception as exc:
+        errors.append(f"niveles/grados/secciones: {exc}")
+        return [], errors
+
+    selected_levels = {int(value) for value in nivel_ids}
+    selected_grades = {int(value) for value in grado_ids}
+    selected_sections = {
+        _normalize_plain_text(value)
+        for value in secciones
+        if str(value or "").strip()
+    }
+    contexts = _build_contexts_for_nivel_grado(niveles=niveles)
+    contexts = [
+        context
+        for context in contexts
+        if (
+            not selected_levels
+            or int(context.get("nivel_id") or 0) in selected_levels
+        )
+        and (
+            not selected_grades
+            or int(context.get("grado_id") or 0) in selected_grades
+        )
+        and (
+            not selected_sections
+            or _normalize_plain_text(
+                context.get("seccion_norm") or context.get("seccion")
+            )
+            in selected_sections
+        )
+    ]
+    for context in contexts:
+        try:
+            raw_rows = _fetch_alumnos_censo(
+                token=token,
+                colegio_id=int(colegio_id),
+                nivel_id=int(context.get("nivel_id") or 0),
+                grado_id=int(context.get("grado_id") or 0),
+                grupo_id=int(context.get("grupo_id") or 0),
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                timeout=int(timeout),
+            )
+        except Exception as exc:
+            errors.append(
+                "nivelId={nivel} gradoId={grado} grupoId={grupo}: {error}".format(
+                    nivel=context.get("nivel_id"),
+                    grado=context.get("grado_id"),
+                    grupo=context.get("grupo_id"),
+                    error=exc,
+                )
+            )
+            continue
+        rows.extend(
+            _flatten_censo_alumno_for_auto_plan(item=item, fallback=context)
+            for item in raw_rows
+            if isinstance(item, dict)
+        )
+    return _dedupe_and_sort_censo_students(rows), errors
+
+
+def _render_pegasus_report_builder(
+    token: str,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+) -> None:
+    colegio_rows = [
+        row
+        for row in (st.session_state.get("shared_colegios_rows") or [])
+        if isinstance(row, dict) and _safe_int(row.get("colegio_id")) is not None
+    ]
+    colegio_by_id = {
+        int(row["colegio_id"]): row
+        for row in colegio_rows
+        if row.get("colegio_id") is not None
+    }
+    colegio_ids_sorted = sorted(
+        colegio_by_id,
+        key=lambda value: str(
+            (colegio_by_id.get(int(value)) or {}).get("label")
+            or (colegio_by_id.get(int(value)) or {}).get("colegio")
+            or ""
+        ).upper(),
+    )
+
+    with st.container(border=True):
+        st.markdown("### Crear reporte personalizado")
+        st.caption(
+            "Selecciona el alcance, las hojas y las condiciones. El resultado se "
+            "genera en un solo Excel con resumen, configuracion y errores."
+        )
+
+        scope_mode = st.radio(
+            "Colegios",
+            options=["Un colegio", "Varios colegios", "Todos los colegios"],
+            horizontal=True,
+            key="reportes_custom_scope_mode",
+        )
+        selected_school_ids: List[int] = []
+        global_school_id = _safe_int(st.session_state.get("shared_colegio_id"))
+        if scope_mode == "Un colegio":
+            default_index = 0
+            if global_school_id in colegio_ids_sorted:
+                default_index = colegio_ids_sorted.index(int(global_school_id))
+            selected_one = st.selectbox(
+                "Colegio del reporte",
+                options=colegio_ids_sorted,
+                index=default_index if colegio_ids_sorted else None,
+                format_func=lambda value: str(
+                    (colegio_by_id.get(int(value)) or {}).get("label")
+                    or f"Colegio {int(value)}"
+                ),
+                placeholder="Selecciona un colegio",
+                disabled=not bool(colegio_ids_sorted),
+                key="reportes_custom_one_school",
+            )
+            if _safe_int(selected_one) is not None:
+                selected_school_ids = [int(selected_one)]
+        elif scope_mode == "Varios colegios":
+            default_many = (
+                [int(global_school_id)]
+                if global_school_id in colegio_ids_sorted
+                else []
+            )
+            selected_many = st.multiselect(
+                "Colegios del reporte",
+                options=colegio_ids_sorted,
+                default=default_many,
+                format_func=lambda value: str(
+                    (colegio_by_id.get(int(value)) or {}).get("label")
+                    or f"Colegio {int(value)}"
+                ),
+                placeholder="Busca y selecciona colegios",
+                disabled=not bool(colegio_ids_sorted),
+                key="reportes_custom_many_schools",
+            )
+            selected_school_ids = [
+                int(value)
+                for value in selected_many
+                if _safe_int(value) is not None
+            ]
+        else:
+            selected_school_ids = list(colegio_ids_sorted)
+            st.caption(f"Se consultaran {len(selected_school_ids)} colegio(s).")
+
+        entities = st.multiselect(
+            "Hojas de datos",
+            options=["Colegios", "Clases", "Profesores", "Alumnos"],
+            default=["Clases", "Profesores", "Alumnos"],
+            key="reportes_custom_entities",
+            help="Cada opcion crea una hoja independiente dentro del Excel.",
+        )
+        relations = st.multiselect(
+            "Relaciones por clase (opcional)",
+            options=["Profesores por clase", "Alumnos por clase"],
+            default=[],
+            key="reportes_custom_relations",
+            help=(
+                "Consulta cada clase seleccionada para mostrar sus profesores o "
+                "alumnos. En todos los colegios puede tardar mas."
+            ),
+        )
+
+        filter_col_1, filter_col_2, filter_col_3 = st.columns(3, gap="small")
+        level_options = sorted(REPORT_LEVEL_LABELS)
+        selected_levels = filter_col_1.multiselect(
+            "Niveles",
+            options=level_options,
+            default=[],
+            format_func=lambda value: REPORT_LEVEL_LABELS.get(
+                int(value),
+                f"Nivel {int(value)}",
+            ),
+            placeholder="Todos los niveles",
+            key="reportes_custom_levels",
+        )
+        grade_label_by_id: Dict[int, str] = {}
+        for level_id, grades in PEGASUS_GRADOS_POR_NIVEL.items():
+            for grade_id, grade_label in (grades or {}).items():
+                grade_label_by_id[int(grade_id)] = "{level} | {grade}".format(
+                    level=REPORT_LEVEL_LABELS.get(
+                        int(level_id),
+                        f"Nivel {int(level_id)}",
+                    ),
+                    grade=str(grade_label),
+                )
+        grade_options = sorted(
+            grade_label_by_id,
+            key=lambda value: (
+                next(
+                    (
+                        int(level_id)
+                        for level_id, grades in PEGASUS_GRADOS_POR_NIVEL.items()
+                        if int(value) in (grades or {})
+                    ),
+                    999,
+                ),
+                int(value),
+            ),
+        )
+        selected_grades = filter_col_2.multiselect(
+            "Grados",
+            options=grade_options,
+            default=[],
+            format_func=lambda value: grade_label_by_id.get(
+                int(value),
+                f"Grado {int(value)}",
+            ),
+            placeholder="Todos los grados",
+            key="reportes_custom_grades",
+        )
+        selected_sections = filter_col_3.multiselect(
+            "Secciones",
+            options=[*list("ABCDEFGHIJKLMNOPQRSTUVWXYZ"), "BM"],
+            default=[],
+            placeholder="Todas las secciones",
+            key="reportes_custom_sections",
+        )
+
+        condition_col_1, condition_col_2, condition_col_3 = st.columns(
+            3,
+            gap="small",
+        )
+        status_label = condition_col_1.selectbox(
+            "Estado",
+            options=["Todos", "Solo activos", "Solo inactivos"],
+            key="reportes_custom_status",
+        )
+        login_label = condition_col_2.selectbox(
+            "Login",
+            options=["Todos", "Con login", "Sin login"],
+            key="reportes_custom_login",
+        )
+        payment_label = condition_col_3.selectbox(
+            "Pago de alumnos",
+            options=["Todos", "Con pago", "Sin pago"],
+            key="reportes_custom_payment",
+        )
+
+        class_col_1, class_col_2 = st.columns(2, gap="small")
+        class_students_label = class_col_1.selectbox(
+            "Clases segun alumnos",
+            options=["Todas", "Con alumnos", "Sin alumnos"],
+            disabled="Clases" not in entities,
+            key="reportes_custom_class_students",
+        )
+        class_teachers_label = class_col_2.selectbox(
+            "Clases segun profesores",
+            options=["Todas", "Con profesores", "Sin profesores"],
+            disabled="Clases" not in entities,
+            key="reportes_custom_class_teachers",
+        )
+        search_text = st.text_input(
+            "Buscar dentro del reporte",
+            placeholder="Nombre, DNI, login, clase, colegio, codigo...",
+            key="reportes_custom_search",
+        )
+        st.caption(
+            "Los filtros de grado y seccion aplican a clases, alumnos y relaciones. "
+            "En profesores generales se aplica colegio, nivel, estado, login y busqueda."
+        )
+        run_custom_report = st.button(
+            "Generar Excel personalizado",
+            type="primary",
+            key="reportes_custom_run",
+            use_container_width=True,
+        )
+
+    status_map = {
+        "Todos": "todos",
+        "Solo activos": "activos",
+        "Solo inactivos": "inactivos",
+    }
+    login_map = {
+        "Todos": "todos",
+        "Con login": "con",
+        "Sin login": "sin",
+    }
+    payment_map = {
+        "Todos": "todos",
+        "Con pago": "con",
+        "Sin pago": "sin",
+    }
+    class_condition_map = {
+        "Todas": "todos",
+        "Con alumnos": "con",
+        "Sin alumnos": "sin",
+        "Con profesores": "con",
+        "Sin profesores": "sin",
+    }
+
+    if run_custom_report:
+        if not token:
+            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+            return
+        catalog_error = str(
+            st.session_state.get("shared_colegios_error") or ""
+        ).strip()
+        if catalog_error:
+            st.error(f"No se pudo cargar la lista de colegios: {catalog_error}")
+            return
+        if not selected_school_ids:
+            st.error("Selecciona al menos un colegio.")
+            return
+        if not entities and not relations:
+            st.error("Selecciona al menos una hoja de datos o una relacion.")
+            return
+
+        estado = status_map.get(status_label, "todos")
+        login_condition = login_map.get(login_label, "todos")
+        payment_condition = payment_map.get(payment_label, "todos")
+        class_students_condition = (
+            class_condition_map.get(class_students_label, "todos")
+            if "Clases" in entities
+            else "todos"
+        )
+        class_teachers_condition = (
+            class_condition_map.get(class_teachers_label, "todos")
+            if "Clases" in entities
+            else "todos"
+        )
+        need_student_class_detail = (
+            "Alumnos por clase" in relations
+            or class_students_condition != "todos"
+        )
+        need_teacher_class_detail = (
+            "Profesores por clase" in relations
+            or class_teachers_condition != "todos"
+        )
+        need_classes = (
+            "Clases" in entities
+            or need_student_class_detail
+            or need_teacher_class_detail
+        )
+
+        data_sheets: Dict[str, List[Dict[str, object]]] = {}
+        if "Colegios" in entities:
+            data_sheets["Colegios"] = []
+        if "Clases" in entities:
+            data_sheets["Clases"] = []
+        if "Profesores" in entities:
+            data_sheets["Profesores"] = []
+        if "Alumnos" in entities:
+            data_sheets["Alumnos"] = []
+        if "Profesores por clase" in relations:
+            data_sheets["Profesores por clase"] = []
+        if "Alumnos por clase" in relations:
+            data_sheets["Alumnos por clase"] = []
+
+        errors: List[Dict[str, object]] = []
+        progress_bar = st.progress(0.0)
+        status_box = st.empty()
+        total_schools = len(selected_school_ids)
+
+        def _add_error(
+            school_row: Dict[str, object],
+            entity: str,
+            detail: object,
+        ) -> None:
+            errors.append(
+                {
+                    "Colegio ID": _safe_int(school_row.get("colegio_id")) or "",
+                    "Colegio": str(
+                        school_row.get("colegio")
+                        or school_row.get("label")
+                        or ""
+                    ).strip(),
+                    "Entidad": entity,
+                    "Detalle": str(detail or "Error sin detalle").strip(),
+                }
+            )
+
+        for school_index, school_id in enumerate(selected_school_ids, start=1):
+            school_row = colegio_by_id.get(int(school_id)) or {
+                "colegio_id": int(school_id),
+                "colegio": f"Colegio {int(school_id)}",
+            }
+            school_name = str(
+                school_row.get("colegio")
+                or school_row.get("label")
+                or f"Colegio {int(school_id)}"
+            ).strip()
+            status_box.caption(
+                "[{current}/{total}] {school}".format(
+                    current=school_index,
+                    total=total_schools,
+                    school=school_name,
+                )
+            )
+
+            if "Colegios" in entities:
+                data_sheets["Colegios"].append(build_colegio_row(school_row))
+
+            class_rows_for_school: List[Dict[str, object]] = []
+            if need_classes:
+                try:
+                    raw_classes, _grouped_classes = listar_y_mapear_clases(
+                        token=token,
+                        colegio_id=int(school_id),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                        ordered=True,
+                    )
+                    class_rows_for_school = [
+                        build_clase_row(row, school_row)
+                        for row in raw_classes
+                        if isinstance(row, dict)
+                    ]
+                except Exception as exc:
+                    _add_error(school_row, "Clases", exc)
+                    class_rows_for_school = []
+
+                dimension_classes = filter_report_rows(
+                    class_rows_for_school,
+                    nivel_ids=selected_levels,
+                    grado_ids=selected_grades,
+                    secciones=selected_sections,
+                    estado=estado,
+                )
+                if need_student_class_detail or need_teacher_class_detail:
+                    for class_index, class_row in enumerate(
+                        dimension_classes,
+                        start=1,
+                    ):
+                        class_id = _safe_int(class_row.get("_clase_id"))
+                        if class_id is None:
+                            continue
+                        status_box.caption(
+                            "[{school_index}/{schools}] {school} | clase "
+                            "{class_index}/{classes}".format(
+                                school_index=school_index,
+                                schools=total_schools,
+                                school=school_name,
+                                class_index=class_index,
+                                classes=max(len(dimension_classes), 1),
+                            )
+                        )
+                        if need_student_class_detail:
+                            try:
+                                class_data = _fetch_alumnos_clase_gestion_escolar(
+                                    token=token,
+                                    clase_id=int(class_id),
+                                    empresa_id=int(empresa_id),
+                                    ciclo_id=int(ciclo_id),
+                                    timeout=int(timeout),
+                                )
+                                class_students = _extract_clase_alumno_rows(
+                                    class_data
+                                )
+                                class_row["_alumnos_total"] = len(class_students)
+                                class_row["Alumnos"] = len(class_students)
+                                if "Alumnos por clase" in relations:
+                                    data_sheets["Alumnos por clase"].extend(
+                                        build_alumno_clase_row(
+                                            student,
+                                            class_row,
+                                        )
+                                        for student in class_students
+                                    )
+                            except Exception as exc:
+                                _add_error(
+                                    school_row,
+                                    f"Alumnos clase {int(class_id)}",
+                                    exc,
+                                )
+                        if need_teacher_class_detail:
+                            try:
+                                class_teachers = (
+                                    _fetch_profesores_clase_gestion_escolar(
+                                        token=token,
+                                        clase_id=int(class_id),
+                                        empresa_id=int(empresa_id),
+                                        ciclo_id=int(ciclo_id),
+                                        timeout=int(timeout),
+                                    )
+                                )
+                                class_row["_profesores_total"] = len(
+                                    class_teachers
+                                )
+                                class_row["Profesores"] = len(class_teachers)
+                                if "Profesores por clase" in relations:
+                                    data_sheets["Profesores por clase"].extend(
+                                        build_profesor_clase_row(
+                                            teacher,
+                                            class_row,
+                                        )
+                                        for teacher in class_teachers
+                                    )
+                            except Exception as exc:
+                                _add_error(
+                                    school_row,
+                                    f"Profesores clase {int(class_id)}",
+                                    exc,
+                                )
+
+                if "Clases" in entities:
+                    data_sheets["Clases"].extend(
+                        filter_report_rows(
+                            class_rows_for_school,
+                            nivel_ids=selected_levels,
+                            grado_ids=selected_grades,
+                            secciones=selected_sections,
+                            estado=estado,
+                            alumnos_clase=class_students_condition,
+                            profesores_clase=class_teachers_condition,
+                            search_text=search_text,
+                        )
+                    )
+
+            if "Profesores" in entities:
+                try:
+                    teacher_rows, _teacher_summary, teacher_errors = (
+                        listar_profesores_filters_data(
+                            token=token,
+                            colegio_id=int(school_id),
+                            empresa_id=int(empresa_id),
+                            ciclo_id=int(ciclo_id),
+                            timeout=int(timeout),
+                        )
+                    )
+                    normalized_teachers = [
+                        build_profesor_row(row, school_row)
+                        for row in teacher_rows
+                        if isinstance(row, dict)
+                    ]
+                    data_sheets["Profesores"].extend(
+                        filter_report_rows(
+                            normalized_teachers,
+                            nivel_ids=selected_levels,
+                            estado=estado,
+                            login=login_condition,
+                            search_text=search_text,
+                        )
+                    )
+                    for teacher_error in teacher_errors or []:
+                        if isinstance(teacher_error, dict):
+                            _add_error(
+                                school_row,
+                                "Profesores",
+                                teacher_error.get("error")
+                                or teacher_error,
+                            )
+                except Exception as exc:
+                    _add_error(school_row, "Profesores", exc)
+
+            if "Alumnos" in entities:
+                student_rows, student_errors = _load_pegasus_report_students(
+                    token=token,
+                    colegio_id=int(school_id),
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                    nivel_ids=selected_levels,
+                    grado_ids=selected_grades,
+                    secciones=selected_sections,
+                )
+                normalized_students = [
+                    build_alumno_row(row, school_row)
+                    for row in student_rows
+                    if isinstance(row, dict)
+                ]
+                data_sheets["Alumnos"].extend(
+                    filter_report_rows(
+                        normalized_students,
+                        nivel_ids=selected_levels,
+                        grado_ids=selected_grades,
+                        secciones=selected_sections,
+                        estado=estado,
+                        login=login_condition,
+                        pago=payment_condition,
+                        search_text=search_text,
+                    )
+                )
+                for student_error in student_errors:
+                    _add_error(school_row, "Alumnos", student_error)
+
+            progress_bar.progress(
+                min(1.0, school_index / max(total_schools, 1))
+            )
+
+        if "Colegios" in data_sheets:
+            data_sheets["Colegios"] = filter_report_rows(
+                data_sheets["Colegios"],
+                search_text=search_text,
+            )
+
+        for relation_name in ("Profesores por clase", "Alumnos por clase"):
+            if relation_name not in data_sheets:
+                continue
+            data_sheets[relation_name] = filter_report_rows(
+                data_sheets[relation_name],
+                nivel_ids=selected_levels,
+                grado_ids=selected_grades,
+                secciones=selected_sections,
+                estado=estado,
+                login=login_condition,
+                pago=payment_condition,
+                search_text=search_text,
+            )
+
+        sort_keys = {
+            "Colegios": lambda row: (
+                str(row.get("Colegio") or "").upper(),
+                int(_safe_int(row.get("Colegio ID")) or 0),
+            ),
+            "Clases": lambda row: (
+                str(row.get("Colegio") or "").upper(),
+                int(_safe_int(row.get("Nivel ID")) or 0),
+                int(_safe_int(row.get("Grado ID")) or 0),
+                str(row.get("Seccion") or "").upper(),
+                str(row.get("Clase") or "").upper(),
+            ),
+            "Profesores": lambda row: (
+                str(row.get("Colegio") or "").upper(),
+                str(row.get("Apellido paterno") or "").upper(),
+                str(row.get("Apellido materno") or "").upper(),
+                str(row.get("Nombre") or "").upper(),
+            ),
+            "Alumnos": lambda row: (
+                str(row.get("Colegio") or "").upper(),
+                int(_safe_int(row.get("Nivel ID")) or 0),
+                int(_safe_int(row.get("Grado ID")) or 0),
+                str(row.get("Seccion") or "").upper(),
+                str(row.get("Alumno") or "").upper(),
+            ),
+            "Profesores por clase": lambda row: (
+                str(row.get("Colegio") or "").upper(),
+                str(row.get("Clase") or "").upper(),
+                str(row.get("Profesor") or "").upper(),
+            ),
+            "Alumnos por clase": lambda row: (
+                str(row.get("Colegio") or "").upper(),
+                str(row.get("Clase") or "").upper(),
+                str(row.get("Alumno") or "").upper(),
+            ),
+        }
+        for sheet_name, rows in data_sheets.items():
+            rows.sort(key=sort_keys[sheet_name])
+
+        summary_rows = [
+            {
+                "Entidad": sheet_name,
+                "Filas": len(rows),
+                "Colegios consultados": total_schools,
+            }
+            for sheet_name, rows in data_sheets.items()
+        ]
+        summary_rows.append(
+            {
+                "Entidad": "Errores",
+                "Filas": len(errors),
+                "Colegios consultados": total_schools,
+            }
+        )
+        config_rows = [
+            {"Campo": "Fecha", "Valor": date.today().isoformat()},
+            {"Campo": "Empresa ID", "Valor": int(empresa_id)},
+            {"Campo": "Ciclo ID", "Valor": int(ciclo_id)},
+            {"Campo": "Alcance", "Valor": scope_mode},
+            {
+                "Campo": "Colegios",
+                "Valor": ", ".join(str(value) for value in selected_school_ids),
+            },
+            {"Campo": "Hojas", "Valor": ", ".join(entities)},
+            {"Campo": "Relaciones", "Valor": ", ".join(relations) or "Ninguna"},
+            {
+                "Campo": "Niveles",
+                "Valor": ", ".join(
+                    REPORT_LEVEL_LABELS.get(int(value), str(value))
+                    for value in selected_levels
+                )
+                or "Todos",
+            },
+            {
+                "Campo": "Grados",
+                "Valor": ", ".join(
+                    grade_label_by_id.get(int(value), str(value))
+                    for value in selected_grades
+                )
+                or "Todos",
+            },
+            {
+                "Campo": "Secciones",
+                "Valor": ", ".join(selected_sections) or "Todas",
+            },
+            {"Campo": "Estado", "Valor": status_label},
+            {"Campo": "Login", "Valor": login_label},
+            {"Campo": "Pago", "Valor": payment_label},
+            {
+                "Campo": "Clases segun alumnos",
+                "Valor": class_students_label,
+            },
+            {
+                "Campo": "Clases segun profesores",
+                "Valor": class_teachers_label,
+            },
+            {"Campo": "Busqueda", "Valor": search_text or "Sin filtro"},
+        ]
+        excel_bytes = export_report_workbook(
+            data_sheets,
+            summary_rows=summary_rows,
+            errors=errors,
+            config_rows=config_rows,
+        )
+        file_name = build_report_filename(total_schools)
+        st.session_state["reportes_custom_excel"] = excel_bytes
+        st.session_state["reportes_custom_file_name"] = file_name
+        st.session_state["reportes_custom_summary"] = summary_rows
+        st.session_state["reportes_custom_errors"] = errors
+        st.session_state["reportes_custom_preview"] = {
+            sheet_name: clean_report_rows(rows[:500])
+            for sheet_name, rows in data_sheets.items()
+        }
+        st.session_state["reportes_custom_totals"] = {
+            sheet_name: len(rows)
+            for sheet_name, rows in data_sheets.items()
+        }
+        progress_bar.progress(1.0)
+        status_box.caption(
+            "Reporte terminado: {schools} colegio(s), {errors} error(es).".format(
+                schools=total_schools,
+                errors=len(errors),
+            )
+        )
+        if errors:
+            st.warning(
+                f"Excel generado con {len(errors)} observacion(es). Revisa la hoja Errores."
+            )
+        else:
+            st.success("Excel personalizado listo.")
+
+    custom_excel = st.session_state.get("reportes_custom_excel")
+    custom_summary = st.session_state.get("reportes_custom_summary") or []
+    custom_errors = st.session_state.get("reportes_custom_errors") or []
+    custom_preview = st.session_state.get("reportes_custom_preview") or {}
+    custom_totals = st.session_state.get("reportes_custom_totals") or {}
+    if custom_excel:
+        with st.container(border=True):
+            result_col, error_col, download_col = st.columns(
+                [2.2, 1, 1.4],
+                gap="small",
+            )
+            result_col.metric(
+                "Filas generadas",
+                sum(
+                    int(row.get("Filas") or 0)
+                    for row in custom_summary
+                    if str(row.get("Entidad") or "") != "Errores"
+                ),
+            )
+            error_col.metric("Errores", len(custom_errors))
+            download_col.download_button(
+                "Descargar Excel",
+                data=custom_excel,
+                file_name=str(
+                    st.session_state.get("reportes_custom_file_name")
+                    or "reporte_pegasus.xlsx"
+                ),
+                mime=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet"
+                ),
+                key="reportes_custom_download",
+                use_container_width=True,
+            )
+            _show_dataframe(custom_summary, use_container_width=True)
+            if custom_preview:
+                preview_sheet = st.selectbox(
+                    "Vista previa",
+                    options=list(custom_preview),
+                    key="reportes_custom_preview_sheet",
+                )
+                preview_rows = custom_preview.get(preview_sheet) or []
+                total_rows = int(custom_totals.get(preview_sheet) or 0)
+                if preview_rows:
+                    if total_rows > len(preview_rows):
+                        st.caption(
+                            f"Mostrando 500 de {total_rows} filas. El Excel contiene todas."
+                        )
+                    _show_dataframe(preview_rows, use_container_width=True)
+                else:
+                    st.info("La hoja seleccionada no tiene filas con esos filtros.")
+            if custom_errors:
+                with st.expander(
+                    f"Observaciones ({len(custom_errors)})",
+                    expanded=False,
+                ):
+                    _show_dataframe(custom_errors, use_container_width=True)
+
+
 def _render_pegasus_reportes_section() -> None:
     st.subheader("Reportes")
-    st.caption("Reportes directos de Pegasus para todos los colegios del token.")
+    st.caption(
+        "Crea reportes Excel configurables o ejecuta reportes especiales de Pegasus."
+    )
 
     token = _get_shared_token()
     empresa_id = DEFAULT_EMPRESA_ID
@@ -12272,6 +13116,15 @@ def _render_pegasus_reportes_section() -> None:
             ciclo_id=int(ciclo_id),
             timeout=int(timeout),
         )
+
+    _render_pegasus_report_builder(
+        token=token,
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        timeout=int(timeout),
+    )
+
+    st.markdown("### Reportes especiales")
 
     with st.container(border=True):
         st.markdown("**Reporte SantillanaInclusiva**")

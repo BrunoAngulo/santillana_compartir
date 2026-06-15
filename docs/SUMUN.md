@@ -55,6 +55,13 @@ La matriz debe contener, por encabezado o por posicion fallback, estas piezas:
   - `ANALIZAR`
   - `EVALUAR`
   - `CREAR`
+- columnas auxiliares permitidas:
+  - `EVIDENCIAS`
+  - `INSTRUMENTOS DE EVALUACION`
+  - `CRITERIOS DE EVALUACION`
+
+Tambien se mantienen como alias validos `N° ITINERARIO`, `N DE ITINERARIO`,
+`NRO ITINERARIO` y `# ITINERARIO`.
 
 El formato mas comun usa dos filas de encabezado:
 
@@ -67,6 +74,8 @@ El formato mas comun usa dos filas de encabezado:
   - `1`
   - `1.0`
   - `Itinerario 1. La celula`
+  - numero `1` y nombre `La celula` repartidos en las dos columnas del bloque `ITINERARIO`
+  - numero `1` en `N° ITINERARIO` y nombre `La celula` en `ITINERARIO`
 - Estacion:
   - `1. La celula`
   - `E1 - La celula`
@@ -76,10 +85,30 @@ El formato mas comun usa dos filas de encabezado:
 
 ### Casos soportados
 
-- Todas las filas en una sola hoja.
-- Un itinerario o hito por hoja.
+- Todos los itinerarios en una sola hoja, separados por el numero de itinerario.
+- El numero puede repetirse en cada fila o aparecer solo al inicio de cada bloque.
+- Un encabezado puede abarcar una, dos o mas columnas.
+- Los encabezados y datos pueden usar celdas combinadas horizontal o verticalmente.
+- Se mantiene compatibilidad con archivos anteriores que separaban itinerarios por hoja.
 - Celdas combinadas.
 - Hojas visibles mezcladas con hojas ocultas.
+
+### Reglas para bloques de columnas
+
+El lector interpreta cada encabezado como un bloque que empieza en su columna y
+termina antes del siguiente encabezado con texto.
+
+- Si un encabezado esta combinado en dos o mas columnas, todo el rango pertenece al mismo campo.
+- Si el encabezado esta solo en la primera columna y la siguiente esta vacia, ambas columnas pertenecen al mismo campo hasta encontrar el siguiente encabezado.
+- En campos de contexto (`COMPETENCIA`, `MACROHABILIDAD`, `MICROHABILIDAD`, `ESTACION` y `CONOCIMIENTOS`), los valores distintos del bloque se unen conservando su orden.
+- Si el dato esta en una celda combinada, se lee una sola vez aunque Excel replique visualmente el valor en varias columnas.
+- En `RECORDAR`, `COMPRENDER`, `APLICAR`, `ANALIZAR`, `EVALUAR` y `CREAR`, cada celda distinta con contenido genera microhabilidades especificas.
+- Una celda de proceso combinada genera filas una sola vez.
+- Dentro de una celda de proceso, los bloques separados por una linea en blanco generan filas diferentes.
+- `EVIDENCIAS`, `INSTRUMENTOS DE EVALUACION` y `CRITERIOS DE EVALUACION` delimitan sus propios bloques y no se confunden con `CREAR`.
+- Las tres columnas auxiliares no se exportan actualmente porque la plantilla de salida SUMUN no tiene columnas de destino para esos datos.
+- Si el numero de itinerario aparece solo al inicio de un bloque, se hereda para las filas siguientes hasta encontrar otro numero.
+- Las estaciones y otros campos combinados verticalmente conservan su valor en las filas cubiertas por la combinacion.
 
 ## Flujo general
 
@@ -162,7 +191,7 @@ Por cada hoja:
 
 Primero intenta deteccion por encabezados:
 
-- busca `ITINERARIO`, `COMPETENCIA`, `MACROHABILIDAD`, `MICROHABILIDAD`, `ESTACION`, `CONOCIMIENTOS`
+- busca el numero de itinerario, el nombre opcional `ITINERARIO`, `COMPETENCIA`, `MACROHABILIDAD`, `MICROHABILIDAD`, `ESTACION`, `CONOCIMIENTOS`
 - busca procesos cognitivos en la fila del encabezado o en las dos siguientes
 - exige al menos 2 procesos para considerar valida la matriz
 - si los encabezados estan repartidos entre las dos primeras filas, combina ambas para detectar mejor las columnas
@@ -200,7 +229,8 @@ La fila solo genera salida si tiene todo esto:
 
 Sale de:
 
-- la celda `ITINERARIO`, o
+- la columna numerica `N°/# ITINERARIO`, junto con el nombre de `ITINERARIO`, o
+- la celda heredada del bloque anterior dentro de la misma hoja, o
 - el nombre de la hoja si contiene algo como `ITI1`, `ITINERARIO 1` o `HITO 1`
 
 Regla importante:

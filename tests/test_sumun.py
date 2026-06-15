@@ -565,6 +565,262 @@ class SumunStationParsingTests(unittest.TestCase):
         self.assertEqual(rows[0][5], 1)
         self.assertEqual(rows[1][5], 1)
 
+    def test_single_sheet_is_grouped_by_itinerary_number_column(self) -> None:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Matriz SUMUN"
+        ws.append(
+            [
+                "N° DE ITINERARIO",
+                "ITINERARIO",
+                "COMPETENCIA",
+                "MACROHABILIDAD",
+                "MICROHABILIDAD",
+                "ESTACION",
+                "CONOCIMIENTOS",
+                "RECORDAR",
+                "COMPRENDER",
+                "APLICAR",
+                "ANALIZAR",
+                "EVALUAR",
+                "CREAR",
+            ]
+        )
+        ws.append(
+            [
+                1,
+                "Primera ruta",
+                "Competencia base",
+                "Macro 1",
+                "Micro 1",
+                "E1 - Estacion uno",
+                "Conocimiento 1",
+                "Skill 1",
+                None,
+                None,
+                None,
+                None,
+                None,
+            ]
+        )
+        ws.append(
+            [
+                None,
+                None,
+                "Competencia base",
+                "Macro 2",
+                "Micro 2",
+                "E2 - Estacion dos",
+                "Conocimiento 2",
+                "Skill 2",
+                None,
+                None,
+                None,
+                None,
+                None,
+            ]
+        )
+        ws.append(
+            [
+                2,
+                "Segunda ruta",
+                "Competencia base",
+                "Macro 3",
+                "Micro 3",
+                "E1 - Estacion uno",
+                "Conocimiento 3",
+                "Skill 3",
+                None,
+                None,
+                None,
+                None,
+                None,
+            ]
+        )
+        output = BytesIO()
+        wb.save(output)
+        workbook_bytes = output.getvalue()
+
+        sheets = inspect_sumun_workbook_sheets(workbook_bytes)
+        self.assertEqual(sheets[0].estimated_rows, 3)
+
+        output_bytes, summary = generate_sumun_template_from_excel(
+            workbook_bytes,
+            source_name="MA4.xlsx",
+        )
+        rows = _generated_rows(output_bytes)
+
+        self.assertEqual(summary.generated_rows, 3)
+        self.assertEqual([row[5] for row in rows], [1, 1, 2])
+        self.assertEqual(
+            [row[6] for row in rows],
+            ["Primera ruta", "Primera ruta", "Segunda ruta"],
+        )
+        self.assertEqual([row[12] for row in rows], [1, 2, 1])
+
+    def test_hash_itinerary_header_is_accepted_without_name_column(self) -> None:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Matriz SUMUN"
+        ws.append(
+            [
+                "# ITINERARIO",
+                "COMPETENCIA",
+                "MACROHABILIDAD",
+                "MICROHABILIDAD",
+                "ESTACION",
+                "CONOCIMIENTOS",
+                "RECORDAR",
+                "COMPRENDER",
+                "APLICAR",
+                "ANALIZAR",
+                "EVALUAR",
+                "CREAR",
+            ]
+        )
+        ws.append(
+            [
+                3,
+                "Competencia base",
+                "Macro base",
+                "Micro base",
+                "E1 - Estacion uno",
+                "Conocimiento base",
+                "Skill 1",
+                None,
+                None,
+                None,
+                None,
+                None,
+            ]
+        )
+        output = BytesIO()
+        wb.save(output)
+
+        output_bytes, summary = generate_sumun_template_from_excel(
+            output.getvalue(),
+            source_name="MA4.xlsx",
+        )
+        rows = _generated_rows(output_bytes)
+
+        self.assertEqual(summary.generated_rows, 1)
+        self.assertEqual(rows[0][5], 3)
+        self.assertIsNone(rows[0][6])
+
+    def test_wide_mixed_header_reads_column_blocks_without_auxiliary_fields(self) -> None:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Matriz SUMUN"
+
+        header_groups = [
+            ("ITINERARIO", 2),
+            ("ESTACION", 2),
+            ("COMPETENCIA", 2),
+            ("MACROHABILIDAD", 2),
+            ("MICROHABILIDAD", 2),
+            ("CONOCIMIENTOS", 2),
+            ("RECORDAR", 2),
+            ("COMPRENDER", 2),
+            ("APLICAR", 2),
+            ("ANALIZAR", 2),
+            ("EVALUAR", 2),
+            ("CREAR", 2),
+            ("EVIDENCIAS", 2),
+            ("INSTRUMENTOS DE EVALUACION", 2),
+            ("CRITERIOS DE EVALUACION", 2),
+        ]
+        group_columns = {}
+        current_col = 1
+        for group_index, (label, width) in enumerate(header_groups):
+            start_col = current_col
+            end_col = current_col + width - 1
+            ws.cell(1, start_col, label)
+            if group_index % 2 == 0:
+                ws.merge_cells(
+                    start_row=1,
+                    start_column=start_col,
+                    end_row=1,
+                    end_column=end_col,
+                )
+            group_columns[label] = tuple(range(start_col, end_col + 1))
+            current_col = end_col + 1
+
+        itinerary_cols = group_columns["ITINERARIO"]
+        ws.cell(2, itinerary_cols[0], 1)
+        ws.cell(2, itinerary_cols[1], "Ruta integrada")
+
+        station_cols = group_columns["ESTACION"]
+        ws.cell(2, station_cols[0], "E1")
+        ws.cell(2, station_cols[1], "Estacion inicial")
+
+        competence_cols = group_columns["COMPETENCIA"]
+        ws.cell(2, competence_cols[0], "Competencia parte A")
+        ws.cell(2, competence_cols[1], "Competencia parte B")
+
+        for label, value in (
+            ("MACROHABILIDAD", "Macro base"),
+            ("MICROHABILIDAD", "Micro base"),
+            ("CONOCIMIENTOS", "Conocimiento base"),
+            ("COMPRENDER", "Skill comprender"),
+        ):
+            start_col, end_col = group_columns[label]
+            ws.cell(2, start_col, value)
+            ws.merge_cells(
+                start_row=2,
+                start_column=start_col,
+                end_row=2,
+                end_column=end_col,
+            )
+
+        recordar_cols = group_columns["RECORDAR"]
+        ws.cell(2, recordar_cols[0], "Skill recordar A")
+        ws.cell(2, recordar_cols[1], "Skill recordar B")
+
+        for label, value in (
+            ("EVIDENCIAS", "Evidencia que no debe generar una fila"),
+            ("INSTRUMENTOS DE EVALUACION", "Rubrica"),
+            ("CRITERIOS DE EVALUACION", "Criterio auxiliar"),
+        ):
+            start_col, end_col = group_columns[label]
+            ws.cell(2, start_col, value)
+            ws.merge_cells(
+                start_row=2,
+                start_column=start_col,
+                end_row=2,
+                end_column=end_col,
+            )
+
+        output = BytesIO()
+        wb.save(output)
+        workbook_bytes = output.getvalue()
+
+        sheets = inspect_sumun_workbook_sheets(workbook_bytes)
+        self.assertEqual(sheets[0].estimated_rows, 3)
+
+        output_bytes, summary = generate_sumun_template_from_excel(
+            workbook_bytes,
+            source_name="MA4.xlsx",
+        )
+        rows = _generated_rows(output_bytes)
+
+        self.assertEqual(summary.generated_rows, 3)
+        self.assertEqual([row[5] for row in rows], [1, 1, 1])
+        self.assertEqual([row[6] for row in rows], ["Ruta integrada"] * 3)
+        self.assertEqual(
+            [row[7] for row in rows],
+            ["Competencia parte A\nCompetencia parte B"] * 3,
+        )
+        self.assertEqual([row[12] for row in rows], [1, 1, 1])
+        self.assertEqual([row[13] for row in rows], ["Estacion inicial"] * 3)
+        self.assertEqual(
+            [row[17] for row in rows],
+            ["Skill recordar A", "Skill recordar B", "Skill comprender"],
+        )
+        self.assertEqual(
+            [row[18] for row in rows],
+            ["RECORDAR", "RECORDAR", "COMPRENDER"],
+        )
+
     def test_specific_skill_cell_value_is_kept_as_one_row(self) -> None:
         for process_value in (
             "Bullet 1\nBullet 2",

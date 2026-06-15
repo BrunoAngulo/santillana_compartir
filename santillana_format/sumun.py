@@ -88,13 +88,14 @@ class MatrixLayout:
     sheet_name: str
     header_row: int
     data_start_row: int
-    itinerary_col: int
-    competence_col: int
-    macro_col: int
-    micro_col: int
-    station_col: int
-    knowledge_col: int
-    process_cols: dict[str, int]
+    itinerary_cols: tuple[int, ...]
+    itinerary_number_cols: tuple[int, ...] | None
+    competence_cols: tuple[int, ...]
+    macro_cols: tuple[int, ...]
+    micro_cols: tuple[int, ...]
+    station_cols: tuple[int, ...]
+    knowledge_cols: tuple[int, ...]
+    process_cols: dict[str, tuple[int, ...]]
 
 
 @dataclass(frozen=True)
@@ -190,8 +191,8 @@ def generate_sumun_template_from_excel(
     """Build the SUMUN load template from an uploaded matrix workbook.
 
     The reader scans every visible worksheet and processes sheets that look like
-    SUMUN matrices. It handles both cases: all itineraries in the first sheet or
-    itineraries/hitos split across multiple sheets.
+    SUMUN matrices. The current input format can keep every itinerary in one
+    sheet, separated by a numeric itinerary column.
     """
     workbook = load_workbook(BytesIO(excel_bytes), data_only=False)
     inference_sheet_names = sheet_names or workbook.sheetnames
@@ -327,12 +328,15 @@ def _build_output_rows(
 
         before_count = len(output_rows)
         sheet_itinerary = _infer_sheet_itinerary_context(values, layout, ws.title)
+        current_itinerary = sheet_itinerary
         for row_number in range(layout.data_start_row, len(values) + 1):
             row = values[row_number - 1]
-            cell_itinerary = _parse_itinerary(_cell(row, layout.itinerary_col))
+            cell_itinerary = _parse_row_itinerary(row, layout)
+            if cell_itinerary:
+                current_itinerary = cell_itinerary
             itinerary = _resolve_itinerary_context(
                 cell_itinerary,
-                sheet_itinerary,
+                current_itinerary,
                 itinerary_titles=itinerary_titles,
             )
             if not itinerary:
@@ -340,8 +344,14 @@ def _build_output_rows(
             itinerary_number, itinerary_name = itinerary
             itinerary_display_name = _itinerary_output_name(itinerary_number, itinerary_name)
 
+            station_value = _column_group_value(
+                row,
+                layout.station_cols,
+                merged_sources=merged_sources,
+                row_number=row_number,
+            )
             station_context, _station_source = _resolve_station_context(
-                _cell(row, layout.station_col),
+                station_value,
                 itinerary_number,
                 last_station_by_itinerary=last_station_by_itinerary,
                 station_aliases=station_aliases,
@@ -349,20 +359,43 @@ def _build_output_rows(
                 station_titles=station_titles,
             )
 
-            competence = _clean_text(_cell(row, layout.competence_col))
-            macro = _clean_text(_cell(row, layout.macro_col), strip_bullet=True)
-            micro = _clean_text(_cell(row, layout.micro_col), strip_bullet=True)
+            competence = _clean_text(
+                _column_group_value(
+                    row,
+                    layout.competence_cols,
+                    merged_sources=merged_sources,
+                    row_number=row_number,
+                )
+            )
+            macro = _clean_text(
+                _column_group_value(
+                    row,
+                    layout.macro_cols,
+                    merged_sources=merged_sources,
+                    row_number=row_number,
+                ),
+                strip_bullet=True,
+            )
+            micro = _clean_text(
+                _column_group_value(
+                    row,
+                    layout.micro_cols,
+                    merged_sources=merged_sources,
+                    row_number=row_number,
+                ),
+                strip_bullet=True,
+            )
             if not competence or not macro or not micro:
                 continue
 
             process_items = [
                 (process, skill)
-                for process, col in layout.process_cols.items()
-                for skill in _specific_skill_cell_values(
-                    _cell(row, col),
-                    source=_cell_source(merged_sources, row_number, col),
+                for process, cols in layout.process_cols.items()
+                for skill in _specific_skill_group_values(
+                    row,
+                    cols,
+                    merged_sources=merged_sources,
                     row_number=row_number,
-                    col=col,
                 )
             ]
             if not process_items:
@@ -378,7 +411,14 @@ def _build_output_rows(
                 micro_ids[micro] = len(micro_ids) + 1
 
             station_number, station_name = station_context
-            knowledge = _normalize_knowledge_text(_cell(row, layout.knowledge_col)) or ""
+            knowledge = _normalize_knowledge_text(
+                _column_group_value(
+                    row,
+                    layout.knowledge_cols,
+                    merged_sources=merged_sources,
+                    row_number=row_number,
+                )
+            ) or ""
 
             for process, skill in process_items:
                 specific_counters[(itinerary_number, station_number)] += 1
@@ -471,25 +511,31 @@ def _detect_matrix_layout(sheet_name: str, values: list[list[Any]]) -> MatrixLay
     max_rows = min(len(values), 40)
     for header_row in range(1, max_rows + 1):
         header_values = values[header_row - 1]
-        context_cols = _find_context_columns(header_values)
-        if not context_cols and header_row < len(values):
-            context_cols = _find_context_columns(
-                _combine_header_rows(header_values, values[header_row])
+        header_candidates = [(header_row, header_values)]
+        for row_number in range(header_row + 1, min(header_row + 3, len(values)) + 1):
+            header_candidates.append(
+                (
+                    row_number,
+                    _combine_header_rows(header_values, values[row_number - 1]),
+                )
             )
-        if not context_cols:
+
+        context_groups: dict[str, tuple[int, ...]] | None = None
+        context_header_row = header_row
+        for row_number, candidate_values in header_candidates:
+            context_groups = _find_context_column_groups(candidate_values)
+            if context_groups:
+                context_header_row = row_number
+                break
+        if not context_groups:
             continue
 
-        process_cols: dict[str, int] = {}
+        process_cols: dict[str, tuple[int, ...]] = {}
         process_header_row = header_row
-        for row_number in range(header_row, min(header_row + 3, len(values)) + 1):
-            found_this_row = False
-            for col_idx, value in enumerate(values[row_number - 1], start=1):
-                label = _label_key(value)
-                process = _process_from_label(label)
-                if process and process not in process_cols:
-                    process_cols[process] = col_idx
-                    found_this_row = True
-            if found_this_row:
+        for row_number, candidate_values in header_candidates:
+            candidate_process_cols = _find_process_column_groups(candidate_values)
+            if len(candidate_process_cols) > len(process_cols):
+                process_cols = candidate_process_cols
                 process_header_row = row_number
 
         if len(process_cols) >= 2:
@@ -501,13 +547,14 @@ def _detect_matrix_layout(sheet_name: str, values: list[list[Any]]) -> MatrixLay
             return MatrixLayout(
                 sheet_name=sheet_name,
                 header_row=header_row,
-                data_start_row=process_header_row + 1,
-                itinerary_col=context_cols["itinerary"],
-                competence_col=context_cols["competence"],
-                macro_col=context_cols["macro"],
-                micro_col=context_cols["micro"],
-                station_col=context_cols["station"],
-                knowledge_col=context_cols["knowledge"],
+                data_start_row=max(context_header_row, process_header_row) + 1,
+                itinerary_cols=context_groups["itinerary"],
+                itinerary_number_cols=context_groups.get("itinerary_number"),
+                competence_cols=context_groups["competence"],
+                macro_cols=context_groups["macro"],
+                micro_cols=context_groups["micro"],
+                station_cols=context_groups["station"],
+                knowledge_cols=context_groups["knowledge"],
                 process_cols=ordered_process_cols,
             )
 
@@ -595,26 +642,65 @@ def _scan_sheet_rows(
     next_station_number_by_itinerary: dict[int, int] = {}
     itinerary_titles: dict[int, str] = {}
     sheet_itinerary = _infer_sheet_itinerary_context(values, layout, layout.sheet_name)
+    current_itinerary = sheet_itinerary
     for row_number in range(layout.data_start_row, len(values) + 1):
         row = values[row_number - 1]
         if not _row_has_source_content(row, layout, merged_sources, row_number):
             continue
-        cell_itinerary = _parse_itinerary(_cell(row, layout.itinerary_col))
+        cell_itinerary = _parse_row_itinerary(row, layout)
+        if cell_itinerary:
+            current_itinerary = cell_itinerary
         itinerary = _resolve_itinerary_context(
             cell_itinerary,
-            sheet_itinerary,
+            current_itinerary,
             itinerary_titles=itinerary_titles,
         )
         if not itinerary:
             continue
         itinerary_number, _ = itinerary
-        competence = _clean_text(_cell(row, layout.competence_col))
-        macro = _clean_text(_cell(row, layout.macro_col), strip_bullet=True)
-        micro = _clean_text(_cell(row, layout.micro_col), strip_bullet=True)
-        station_value = _clean_text(_cell(row, layout.station_col))
-        knowledge = _normalize_knowledge_text(_cell(row, layout.knowledge_col))
+        competence = _clean_text(
+            _column_group_value(
+                row,
+                layout.competence_cols,
+                merged_sources=merged_sources,
+                row_number=row_number,
+            )
+        )
+        macro = _clean_text(
+            _column_group_value(
+                row,
+                layout.macro_cols,
+                merged_sources=merged_sources,
+                row_number=row_number,
+            ),
+            strip_bullet=True,
+        )
+        micro = _clean_text(
+            _column_group_value(
+                row,
+                layout.micro_cols,
+                merged_sources=merged_sources,
+                row_number=row_number,
+            ),
+            strip_bullet=True,
+        )
+        station_raw_value = _column_group_value(
+            row,
+            layout.station_cols,
+            merged_sources=merged_sources,
+            row_number=row_number,
+        )
+        station_value = _clean_text(station_raw_value)
+        knowledge = _normalize_knowledge_text(
+            _column_group_value(
+                row,
+                layout.knowledge_cols,
+                merged_sources=merged_sources,
+                row_number=row_number,
+            )
+        )
         station_context, _station_source = _resolve_station_context(
-            _cell(row, layout.station_col),
+            station_raw_value,
             itinerary_number,
             last_station_by_itinerary=last_station_by_itinerary,
             station_aliases=station_aliases,
@@ -622,14 +708,14 @@ def _scan_sheet_rows(
         )
         process_count = sum(
             len(
-                _specific_skill_cell_values(
-                    _cell(row, col),
-                    source=_cell_source(merged_sources, row_number, col),
+                _specific_skill_group_values(
+                    row,
+                    cols,
+                    merged_sources=merged_sources,
                     row_number=row_number,
-                    col=col,
                 )
             )
-            for col in layout.process_cols.values()
+            for cols in layout.process_cols.values()
         )
         missing_fields: list[str] = []
         if not competence:
@@ -663,7 +749,9 @@ def _scan_sheet_rows(
     )
 
 
-def _find_context_columns(header_values: list[Any]) -> dict[str, int] | None:
+def _find_context_column_groups(
+    header_values: list[Any],
+) -> dict[str, tuple[int, ...]] | None:
     normalized = {idx: _label_key(value) for idx, value in enumerate(header_values, start=1)}
 
     def find(*aliases: str, avoid_hash: bool = False, exclude: tuple[str, ...] = ()) -> int | None:
@@ -680,8 +768,28 @@ def _find_context_columns(header_values: list[Any]) -> dict[str, int] | None:
                 return idx
         return None
 
-    context = {
-        "itinerary": find("ITINERARIO"),
+    itinerary_number_col = next(
+        (
+            idx
+            for idx, label in normalized.items()
+            if _is_itinerary_number_label(label)
+        ),
+        None,
+    )
+    itinerary_col = next(
+        (
+            idx
+            for idx, label in normalized.items()
+            if idx != itinerary_number_col and _is_itinerary_name_label(label)
+        ),
+        None,
+    )
+    if itinerary_col is None:
+        itinerary_col = itinerary_number_col or find("ITINERARIO")
+
+    context_cols = {
+        "itinerary": itinerary_col,
+        "itinerary_number": itinerary_number_col,
         "competence": find("COMPETENCIA"),
         "macro": find(
             "MACROHABILIDAD",
@@ -698,9 +806,80 @@ def _find_context_columns(header_values: list[Any]) -> dict[str, int] | None:
         "station": find("ESTACION", "ESTACI\u00d3N", avoid_hash=True),
         "knowledge": find("CONOCIMIENTOS"),
     }
-    if all(context.values()):
-        return {key: int(value) for key, value in context.items() if value is not None}
+    required_context_cols = {
+        key: value
+        for key, value in context_cols.items()
+        if key != "itinerary_number"
+    }
+    if all(required_context_cols.values()):
+        return {
+            key: _header_column_group(header_values, int(value))
+            for key, value in context_cols.items()
+            if value is not None
+        }
     return None
+
+
+def _find_process_column_groups(
+    header_values: list[Any],
+) -> dict[str, tuple[int, ...]]:
+    result: dict[str, tuple[int, ...]] = {}
+    for col_idx, value in enumerate(header_values, start=1):
+        process = _process_from_label(_label_key(value))
+        if process and process not in result:
+            result[process] = _header_column_group(header_values, col_idx)
+    return result
+
+
+def _header_column_group(
+    header_values: list[Any],
+    target_col: int,
+) -> tuple[int, ...]:
+    blocks = _header_column_blocks(header_values)
+    for start_col, end_col in blocks:
+        if start_col <= target_col <= end_col:
+            return tuple(range(start_col, end_col + 1))
+    return (target_col,)
+
+
+def _header_column_blocks(header_values: list[Any]) -> list[tuple[int, int]]:
+    anchors: list[tuple[int, str]] = []
+    for col_idx, value in enumerate(header_values, start=1):
+        label = _label_key(value)
+        if not label:
+            continue
+        if anchors and anchors[-1][1] == label:
+            continue
+        anchors.append((col_idx, label))
+
+    blocks: list[tuple[int, int]] = []
+    for index, (start_col, _label) in enumerate(anchors):
+        if index + 1 < len(anchors):
+            end_col = anchors[index + 1][0] - 1
+        else:
+            end_col = len(header_values)
+        blocks.append((start_col, max(start_col, end_col)))
+    return blocks
+
+
+def _is_itinerary_number_label(label: str) -> bool:
+    clean = str(label or "").strip()
+    if not clean:
+        return False
+    return bool(
+        clean == "# ITINERARIO"
+        or re.fullmatch(
+            r"(?:N|NO|NRO|NUM|NUMERO)(?: DE)? ITINERARIO",
+            clean,
+        )
+    )
+
+
+def _is_itinerary_name_label(label: str) -> bool:
+    clean = str(label or "").strip()
+    if not clean or _is_itinerary_number_label(clean):
+        return False
+    return clean in {"ITINERARIO", "NOMBRE ITINERARIO", "NOMBRE DEL ITINERARIO"}
 
 
 def _row_has_source_content(
@@ -710,13 +889,14 @@ def _row_has_source_content(
     row_number: int,
 ) -> bool:
     relevant_cols = [
-        layout.itinerary_col,
-        layout.competence_col,
-        layout.macro_col,
-        layout.micro_col,
-        layout.station_col,
-        layout.knowledge_col,
-        *layout.process_cols.values(),
+        *layout.itinerary_cols,
+        *(layout.itinerary_number_cols or ()),
+        *layout.competence_cols,
+        *layout.macro_cols,
+        *layout.micro_cols,
+        *layout.station_cols,
+        *layout.knowledge_cols,
+        *(col for cols in layout.process_cols.values() for col in cols),
     ]
     for col in relevant_cols:
         source = _cell_source(merged_sources, row_number, col)
@@ -737,13 +917,17 @@ def _fallback_layout_from_data(sheet_name: str, values: list[list[Any]]) -> Matr
                 sheet_name=sheet_name,
                 header_row=max(1, row_number - 1),
                 data_start_row=row_number,
-                itinerary_col=1,
-                competence_col=2,
-                macro_col=3,
-                micro_col=4,
-                station_col=5,
-                knowledge_col=6,
-                process_cols={process: idx for process, idx in zip(PROCESS_NAMES, range(7, 13))},
+                itinerary_cols=(1,),
+                itinerary_number_cols=None,
+                competence_cols=(2,),
+                macro_cols=(3,),
+                micro_cols=(4,),
+                station_cols=(5,),
+                knowledge_cols=(6,),
+                process_cols={
+                    process: (idx,)
+                    for process, idx in zip(PROCESS_NAMES, range(7, 13))
+                },
             )
     return None
 
@@ -897,6 +1081,56 @@ def _cell_source(
     return row[col - 1]
 
 
+def _column_group_values(
+    row: list[Any],
+    cols: tuple[int, ...],
+    *,
+    merged_sources: list[list[tuple[int, int]]] | None = None,
+    row_number: int | None = None,
+) -> tuple[Any, ...]:
+    result: list[Any] = []
+    seen_sources: set[tuple[int, int]] = set()
+    seen_texts: set[str] = set()
+    for col in cols:
+        source = (
+            _cell_source(merged_sources, row_number, col)
+            if row_number is not None
+            else None
+        )
+        if source is not None and source in seen_sources:
+            continue
+        if source is not None:
+            seen_sources.add(source)
+
+        value = _cell(row, col)
+        clean = _clean_text(value)
+        if not clean or clean in seen_texts:
+            continue
+        seen_texts.add(clean)
+        result.append(value)
+    return tuple(result)
+
+
+def _column_group_value(
+    row: list[Any],
+    cols: tuple[int, ...],
+    *,
+    merged_sources: list[list[tuple[int, int]]] | None = None,
+    row_number: int | None = None,
+) -> Any:
+    values = _column_group_values(
+        row,
+        cols,
+        merged_sources=merged_sources,
+        row_number=row_number,
+    )
+    if not values:
+        return None
+    if len(values) == 1:
+        return values[0]
+    return "\n".join(str(value).strip() for value in values)
+
+
 def _clean_text(value: Any, *, strip_bullet: bool = False) -> str | None:
     if value is None:
         return None
@@ -1011,6 +1245,29 @@ def _specific_skill_cell_values(
     return tuple(block for block in blocks if block)
 
 
+def _specific_skill_group_values(
+    row: list[Any],
+    cols: tuple[int, ...],
+    *,
+    merged_sources: list[list[tuple[int, int]]] | None = None,
+    row_number: int,
+) -> tuple[str, ...]:
+    result: list[str] = []
+    seen_skills: set[str] = set()
+    for col in cols:
+        for skill in _specific_skill_cell_values(
+            _cell(row, col),
+            source=_cell_source(merged_sources, row_number, col),
+            row_number=row_number,
+            col=col,
+        ):
+            if skill in seen_skills:
+                continue
+            seen_skills.add(skill)
+            result.append(skill)
+    return tuple(result)
+
+
 def _parse_itinerary(value: Any) -> tuple[int, str] | None:
     text = _clean_text(value)
     if not text:
@@ -1022,6 +1279,44 @@ def _parse_itinerary(value: Any) -> tuple[int, str] | None:
     if not match:
         return None
     return int(match.group(1)), match.group(2).strip()
+
+
+def _parse_row_itinerary(
+    row: list[Any],
+    layout: MatrixLayout,
+) -> tuple[int, str] | None:
+    itinerary_values = _column_group_values(row, layout.itinerary_cols)
+    number_values = (
+        _column_group_values(row, layout.itinerary_number_cols)
+        if layout.itinerary_number_cols
+        else ()
+    )
+    parsed_values = [
+        parsed
+        for value in (*number_values, *itinerary_values)
+        if (parsed := _parse_itinerary(value)) is not None
+    ]
+    if not parsed_values:
+        return None
+
+    itinerary_number = parsed_values[0][0]
+    title_candidates: list[str | None] = [
+        parsed[1]
+        for parsed in parsed_values
+        if parsed[0] == itinerary_number
+    ]
+    for value in itinerary_values:
+        clean = _clean_text(value)
+        parsed = _parse_itinerary(value)
+        if clean and parsed is None:
+            title_candidates.append(clean)
+    return (
+        itinerary_number,
+        _best_itinerary_title(
+            itinerary_number,
+            *title_candidates,
+        ),
+    )
 
 
 def _is_meaningful_itinerary_title(number: int | None, title: str | None) -> bool:
@@ -1089,7 +1384,7 @@ def _collect_itinerary_titles(workbook, *, sheet_names: list[str] | None = None)
             )
 
         for row_number in range(layout.data_start_row, len(values) + 1):
-            parsed = _parse_itinerary(_cell(values[row_number - 1], layout.itinerary_col))
+            parsed = _parse_row_itinerary(values[row_number - 1], layout)
             if parsed:
                 _register_itinerary_title(titles_by_number, parsed[0], parsed[1])
     return titles_by_number
@@ -1133,17 +1428,22 @@ def _collect_station_titles(
             continue
 
         sheet_itinerary = _infer_sheet_itinerary_context(values, layout, ws.title)
+        current_itinerary = sheet_itinerary
         for row_number in range(layout.data_start_row, len(values) + 1):
             row = values[row_number - 1]
-            cell_itinerary = _parse_itinerary(_cell(row, layout.itinerary_col))
+            cell_itinerary = _parse_row_itinerary(row, layout)
+            if cell_itinerary:
+                current_itinerary = cell_itinerary
             itinerary = _resolve_itinerary_context(
                 cell_itinerary,
-                sheet_itinerary,
+                current_itinerary,
                 itinerary_titles=resolved_itinerary_titles,
             )
             if not itinerary:
                 continue
-            parsed_station = _parse_station(_cell(row, layout.station_col))
+            parsed_station = _parse_station(
+                _column_group_value(row, layout.station_cols)
+            )
             if not parsed_station:
                 continue
             station_number, station_name = parsed_station
@@ -1205,16 +1505,29 @@ def _infer_sheet_itinerary_context(
     sheet_name: str,
 ) -> tuple[int, str] | None:
     sheet_itinerary = _parse_itinerary_from_sheet_name(sheet_name)
-    itinerary_number = sheet_itinerary[0] if sheet_itinerary else None
-    itinerary_title = ""
+    if sheet_itinerary:
+        itinerary_number = sheet_itinerary[0]
+        itinerary_title = ""
+    else:
+        itinerary_number = None
+        itinerary_title = ""
 
+    row_itineraries: dict[int, str] = {}
     for row_number in range(layout.data_start_row, len(values) + 1):
-        parsed = _parse_itinerary(_cell(values[row_number - 1], layout.itinerary_col))
-        if parsed and itinerary_number is None:
-            itinerary_number = parsed[0]
-        if parsed and _is_meaningful_itinerary_title(parsed[0], parsed[1]):
-            itinerary_title = parsed[1]
-            break
+        parsed = _parse_row_itinerary(values[row_number - 1], layout)
+        if not parsed:
+            continue
+        current_title = row_itineraries.get(parsed[0])
+        row_itineraries[parsed[0]] = _best_itinerary_title(
+            parsed[0],
+            current_title,
+            parsed[1],
+        )
+
+    if itinerary_number is None and len(row_itineraries) == 1:
+        itinerary_number, itinerary_title = next(iter(row_itineraries.items()))
+    elif itinerary_number is not None:
+        itinerary_title = row_itineraries.get(itinerary_number, "")
 
     if not itinerary_title and sheet_itinerary and _is_meaningful_itinerary_title(
         sheet_itinerary[0], sheet_itinerary[1]

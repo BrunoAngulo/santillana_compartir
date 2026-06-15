@@ -1336,7 +1336,10 @@ def _render_sumun_template_view() -> None:
         "Excel matriz SUMUN",
         type=["xlsx"],
         key="sumun_matrix_upload",
-        help="Puede tener todos los itinerarios en la primera hoja o hitos repartidos en varias hojas.",
+        help=(
+            "Todos los itinerarios deben estar en una sola hoja. "
+            "Los encabezados y datos pueden ocupar varias columnas o usar celdas combinadas."
+        ),
     )
 
     selected_sumun_sheet_names: List[str] = []
@@ -1788,7 +1791,10 @@ if menu_option != "Richmond Studio":
             "Excel matriz SUMUN",
             type=["xlsx"],
             key="sumun_matrix_upload",
-            help="Puede tener todos los itinerarios en la primera hoja o hitos repartidos en varias hojas.",
+            help=(
+                "Todos los itinerarios deben estar en una sola hoja. "
+                "Los encabezados y datos pueden ocupar varias columnas o usar celdas combinadas."
+            ),
         )
 
         selected_sumun_sheet_names: List[str] = []

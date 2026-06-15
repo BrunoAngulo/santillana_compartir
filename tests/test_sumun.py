@@ -6,6 +6,7 @@ from openpyxl import Workbook, load_workbook
 from santillana_format.sumun import (
     generate_sumun_template_from_excel,
     inspect_sumun_workbook_sheets,
+    standardize_sumun_workbook_from_excel,
 )
 
 
@@ -820,6 +821,116 @@ class SumunStationParsingTests(unittest.TestCase):
             [row[18] for row in rows],
             ["RECORDAR", "RECORDAR", "COMPRENDER"],
         )
+
+    def test_standardization_unifies_wide_columns_before_generation(self) -> None:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Matriz original"
+
+        groups = [
+            ("ITINERARIO", 2),
+            ("ESTACION", 2),
+            ("COMPETENCIA", 2),
+            ("MACROHABILIDAD", 2),
+            ("MICROHABILIDAD", 3),
+            ("CONOCIMIENTOS", 2),
+            ("RECORDAR", 2),
+            ("COMPRENDER", 2),
+            ("APLICAR", 2),
+            ("ANALIZAR", 2),
+            ("EVALUAR", 2),
+            ("CREAR", 2),
+            ("EVIDENCIAS", 2),
+            ("INSTRUMENTOS DE EVALUACION", 2),
+            ("CRITERIOS DE EVALUACION", 2),
+        ]
+        columns = {}
+        current_col = 1
+        for label, width in groups:
+            start_col = current_col
+            end_col = start_col + width - 1
+            ws.cell(1, start_col, label)
+            ws.merge_cells(
+                start_row=1,
+                start_column=start_col,
+                end_row=1,
+                end_column=end_col,
+            )
+            columns[label] = tuple(range(start_col, end_col + 1))
+            current_col = end_col + 1
+
+        ws.cell(2, columns["ITINERARIO"][0], 1)
+        ws.cell(2, columns["ITINERARIO"][1], "Ruta uno")
+        ws.cell(2, columns["ESTACION"][0], "E1")
+        ws.cell(2, columns["ESTACION"][1], "Estacion uno")
+        ws.cell(2, columns["COMPETENCIA"][0], "Competencia base")
+        ws.cell(2, columns["MACROHABILIDAD"][0], "Macro base")
+        ws.cell(2, columns["MICROHABILIDAD"][0], "Micro base")
+        ws.cell(2, 12, "Conocimiento en L")
+        ws.cell(2, 13, "Conocimiento en M")
+        ws.cell(2, columns["RECORDAR"][0], "Skill A")
+        ws.cell(2, columns["RECORDAR"][1], "Skill B")
+        ws.cell(2, columns["EVIDENCIAS"][0], "Evidencia base")
+        ws.cell(2, columns["INSTRUMENTOS DE EVALUACION"][0], "Rubrica")
+        ws.cell(2, columns["CRITERIOS DE EVALUACION"][0], "Criterio base")
+
+        output = BytesIO()
+        wb.save(output)
+
+        standard_bytes, standard_summary = standardize_sumun_workbook_from_excel(
+            output.getvalue()
+        )
+        standard_wb = load_workbook(BytesIO(standard_bytes))
+        standard_ws = standard_wb["SUMUN_Estandar"]
+
+        self.assertEqual(standard_summary.generated_rows, 1)
+        self.assertFalse(tuple(standard_ws.merged_cells.ranges))
+        self.assertEqual(
+            [cell.value for cell in standard_ws[1]],
+            [
+                "ITINERARIO",
+                "ESTACIÓN",
+                "COMPETENCIA",
+                "MACROHABILIDAD",
+                "MICROHABILIDAD",
+                "CONOCIMIENTOS",
+                "RECORDAR",
+                "COMPRENDER",
+                "APLICAR",
+                "ANALIZAR",
+                "EVALUAR",
+                "CREAR",
+                "EVIDENCIAS",
+                "INSTRUMENTOS DE EVALUACIÓN",
+                "CRITERIOS DE EVALUACIÓN",
+            ],
+        )
+        self.assertEqual(standard_ws["A2"].value, "Itinerario 1. Ruta uno")
+        self.assertEqual(standard_ws["B2"].value, "E1 - Estacion uno")
+        self.assertEqual(
+            standard_ws["F2"].value,
+            "Conocimiento en L\nConocimiento en M",
+        )
+        self.assertEqual(standard_ws["G2"].value, "Skill A\n\nSkill B")
+        self.assertEqual(standard_ws["M2"].value, "Evidencia base")
+        self.assertEqual(standard_ws["N2"].value, "Rubrica")
+        self.assertEqual(standard_ws["O2"].value, "Criterio base")
+
+        final_bytes, final_summary = generate_sumun_template_from_excel(
+            standard_bytes,
+            source_name="MA4_estandar.xlsx",
+        )
+        final_rows = _generated_rows(final_bytes)
+
+        self.assertEqual(final_summary.generated_rows, 2)
+        self.assertEqual(
+            [row[14] for row in final_rows],
+            [
+                "Conocimiento en L. Conocimiento en M",
+                "Conocimiento en L. Conocimiento en M",
+            ],
+        )
+        self.assertEqual([row[17] for row in final_rows], ["Skill A", "Skill B"])
 
     def test_specific_skill_cell_value_is_kept_as_one_row(self) -> None:
         for process_value in (

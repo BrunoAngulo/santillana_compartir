@@ -17,6 +17,19 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 PROCESS_NAMES = ("RECORDAR", "COMPRENDER", "APLICAR", "ANALIZAR", "EVALUAR", "CREAR")
 GENERIC_ITINERARY_TITLES = {"DETALLE", "HOJA", "SHEET", "TAB", "TABLA", "MATRIZ"}
 
+STANDARD_HEADERS = [
+    "ITINERARIO",
+    "ESTACIÓN",
+    "COMPETENCIA",
+    "MACROHABILIDAD",
+    "MICROHABILIDAD",
+    "CONOCIMIENTOS",
+    *PROCESS_NAMES,
+    "EVIDENCIAS",
+    "INSTRUMENTOS DE EVALUACIÓN",
+    "CRITERIOS DE EVALUACIÓN",
+]
+
 OUTPUT_HEADERS = [
     "ID MICRO HABILIDAD ESPEC\u00cdFICA",
     "\u00c1REA",
@@ -96,6 +109,9 @@ class MatrixLayout:
     station_cols: tuple[int, ...]
     knowledge_cols: tuple[int, ...]
     process_cols: dict[str, tuple[int, ...]]
+    evidence_cols: tuple[int, ...] | None = None
+    instrument_cols: tuple[int, ...] | None = None
+    criteria_cols: tuple[int, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -128,6 +144,18 @@ class SumunSheetInspection:
     estimated_rows: int
     reason: str = ""
     empty_field_rows: tuple[tuple[int, tuple[str, ...]], ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class SumunStandardizationSummary:
+    generated_rows: int
+    processed_sheets: list[str]
+    skipped_sheets: list[str]
+    rows_by_sheet: dict[str, int]
+    output_sheet: str
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -176,6 +204,180 @@ def inspect_sumun_workbook_sheets(excel_bytes: bytes) -> list[SumunSheetInspecti
             )
         )
     return result
+
+
+def standardize_sumun_workbook_from_excel(
+    excel_bytes: bytes,
+    *,
+    sheet_names: list[str] | None = None,
+) -> tuple[bytes, SumunStandardizationSummary]:
+    """Flatten a wide SUMUN matrix into one column per standard field."""
+    workbook = load_workbook(BytesIO(excel_bytes), data_only=False)
+    selected_sheets = set(sheet_names or [])
+    itinerary_titles = _collect_itinerary_titles(workbook, sheet_names=sheet_names)
+    station_titles = _collect_station_titles(
+        workbook,
+        sheet_names=sheet_names,
+        itinerary_titles=itinerary_titles,
+    )
+    standard_rows: list[list[Any]] = []
+    processed_sheets: list[str] = []
+    skipped_sheets: list[str] = []
+    rows_by_sheet: dict[str, int] = {}
+
+    for ws in workbook.worksheets:
+        if selected_sheets and ws.title not in selected_sheets:
+            continue
+        if ws.sheet_state != "visible":
+            skipped_sheets.append(ws.title)
+            continue
+
+        values, merged_sources = _fill_merged_values_with_sources(ws)
+        layout = _detect_matrix_layout(ws.title, values)
+        if layout is None:
+            skipped_sheets.append(ws.title)
+            continue
+
+        before_count = len(standard_rows)
+        sheet_itinerary = _infer_sheet_itinerary_context(values, layout, ws.title)
+        current_itinerary = sheet_itinerary
+        last_station_by_itinerary: dict[int, tuple[int, str]] = {}
+        station_aliases: dict[tuple[int, str], tuple[int, str]] = {}
+        next_station_number_by_itinerary: dict[int, int] = {}
+
+        for row_number in range(layout.data_start_row, len(values) + 1):
+            row = values[row_number - 1]
+            if not _row_has_standardizable_content(
+                row,
+                layout,
+                merged_sources=merged_sources,
+                row_number=row_number,
+            ):
+                continue
+
+            cell_itinerary = _parse_row_itinerary(row, layout)
+            if cell_itinerary:
+                current_itinerary = cell_itinerary
+            itinerary = _resolve_itinerary_context(
+                cell_itinerary,
+                current_itinerary,
+                itinerary_titles=itinerary_titles,
+            )
+
+            itinerary_number = itinerary[0] if itinerary else None
+            itinerary_title = itinerary[1] if itinerary else None
+            itinerary_value = _standard_itinerary_value(
+                itinerary_number,
+                itinerary_title,
+            )
+
+            station_value = _column_group_value(
+                row,
+                layout.station_cols,
+                merged_sources=merged_sources,
+                row_number=row_number,
+            )
+            standard_station = _clean_text(station_value)
+            if itinerary_number is not None:
+                station_context, _station_source = _resolve_station_context(
+                    station_value,
+                    itinerary_number,
+                    last_station_by_itinerary=last_station_by_itinerary,
+                    station_aliases=station_aliases,
+                    next_station_number_by_itinerary=next_station_number_by_itinerary,
+                    station_titles=station_titles,
+                )
+                if station_context:
+                    standard_station = _standard_station_value(*station_context)
+
+            process_values = {
+                process: "\n\n".join(
+                    _specific_skill_group_values(
+                        row,
+                        layout.process_cols.get(process, ()),
+                        merged_sources=merged_sources,
+                        row_number=row_number,
+                    )
+                )
+                or None
+                for process in PROCESS_NAMES
+            }
+
+            standard_rows.append(
+                [
+                    itinerary_value,
+                    standard_station,
+                    _standard_group_value(
+                        row,
+                        layout.competence_cols,
+                        merged_sources=merged_sources,
+                        row_number=row_number,
+                    ),
+                    _standard_group_value(
+                        row,
+                        layout.macro_cols,
+                        merged_sources=merged_sources,
+                        row_number=row_number,
+                    ),
+                    _standard_group_value(
+                        row,
+                        layout.micro_cols,
+                        merged_sources=merged_sources,
+                        row_number=row_number,
+                    ),
+                    _standard_group_value(
+                        row,
+                        layout.knowledge_cols,
+                        merged_sources=merged_sources,
+                        row_number=row_number,
+                    ),
+                    *(process_values[process] for process in PROCESS_NAMES),
+                    _standard_optional_group_value(
+                        row,
+                        layout.evidence_cols,
+                        merged_sources=merged_sources,
+                        row_number=row_number,
+                    ),
+                    _standard_optional_group_value(
+                        row,
+                        layout.instrument_cols,
+                        merged_sources=merged_sources,
+                        row_number=row_number,
+                    ),
+                    _standard_optional_group_value(
+                        row,
+                        layout.criteria_cols,
+                        merged_sources=merged_sources,
+                        row_number=row_number,
+                    ),
+                ]
+            )
+
+        generated_for_sheet = len(standard_rows) - before_count
+        if generated_for_sheet:
+            processed_sheets.append(ws.title)
+            rows_by_sheet[ws.title] = generated_for_sheet
+        else:
+            skipped_sheets.append(ws.title)
+
+    if not standard_rows:
+        raise ValueError(
+            "No se encontraron filas SUMMUN para estandarizar en las hojas seleccionadas."
+        )
+
+    output_sheet = "SUMUN_Estandar"
+    output_bytes = _write_standard_workbook(
+        standard_rows,
+        output_sheet=output_sheet,
+    )
+    summary = SumunStandardizationSummary(
+        generated_rows=len(standard_rows),
+        processed_sheets=processed_sheets,
+        skipped_sheets=skipped_sheets,
+        rows_by_sheet=rows_by_sheet,
+        output_sheet=output_sheet,
+    )
+    return output_bytes, summary
 
 
 def generate_sumun_template_from_excel(
@@ -556,6 +758,9 @@ def _detect_matrix_layout(sheet_name: str, values: list[list[Any]]) -> MatrixLay
                 station_cols=context_groups["station"],
                 knowledge_cols=context_groups["knowledge"],
                 process_cols=ordered_process_cols,
+                evidence_cols=context_groups.get("evidence"),
+                instrument_cols=context_groups.get("instrument"),
+                criteria_cols=context_groups.get("criteria"),
             )
 
     return _fallback_layout_from_data(sheet_name, values)
@@ -805,11 +1010,28 @@ def _find_context_column_groups(
         ),
         "station": find("ESTACION", "ESTACI\u00d3N", avoid_hash=True),
         "knowledge": find("CONOCIMIENTOS"),
+        "evidence": find("EVIDENCIAS", "EVIDENCIA"),
+        "instrument": find(
+            "INSTRUMENTOS DE EVALUACION",
+            "INSTRUMENTO DE EVALUACION",
+            "INSTRUMENTOS",
+        ),
+        "criteria": find(
+            "CRITERIOS DE EVALUACION",
+            "CRITERIO DE EVALUACION",
+            "CRITERIOS",
+        ),
     }
     required_context_cols = {
         key: value
         for key, value in context_cols.items()
-        if key != "itinerary_number"
+        if key
+        not in {
+            "itinerary_number",
+            "evidence",
+            "instrument",
+            "criteria",
+        }
     }
     if all(required_context_cols.values()):
         return {
@@ -907,6 +1129,35 @@ def _row_has_source_content(
     return False
 
 
+def _row_has_standardizable_content(
+    row: list[Any],
+    layout: MatrixLayout,
+    *,
+    merged_sources: list[list[tuple[int, int]]] | None,
+    row_number: int,
+) -> bool:
+    relevant_cols = [
+        *layout.itinerary_cols,
+        *(layout.itinerary_number_cols or ()),
+        *layout.competence_cols,
+        *layout.macro_cols,
+        *layout.micro_cols,
+        *layout.station_cols,
+        *layout.knowledge_cols,
+        *(col for cols in layout.process_cols.values() for col in cols),
+        *(layout.evidence_cols or ()),
+        *(layout.instrument_cols or ()),
+        *(layout.criteria_cols or ()),
+    ]
+    for col in relevant_cols:
+        source = _cell_source(merged_sources, row_number, col)
+        if source is not None and source != (row_number, col):
+            continue
+        if _clean_text(_cell(row, col)) is not None:
+            return True
+    return False
+
+
 def _fallback_layout_from_data(sheet_name: str, values: list[list[Any]]) -> MatrixLayout | None:
     sheet_itinerary = _parse_itinerary_from_sheet_name(sheet_name)
     for row_number, row in enumerate(values, start=1):
@@ -930,6 +1181,65 @@ def _fallback_layout_from_data(sheet_name: str, values: list[list[Any]]) -> Matr
                 },
             )
     return None
+
+
+def _write_standard_workbook(
+    rows: list[list[Any]],
+    *,
+    output_sheet: str,
+) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = output_sheet
+    ws.append(STANDARD_HEADERS)
+    for row in rows:
+        ws.append(row)
+
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(STANDARD_HEADERS))}{ws.max_row}"
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(wrap_text=True, vertical="top")
+    for row in ws.iter_rows(min_row=2):
+        for cell in row:
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
+
+    widths = {
+        "A": 34,
+        "B": 34,
+        "C": 54,
+        "D": 48,
+        "E": 48,
+        "F": 54,
+        "G": 48,
+        "H": 48,
+        "I": 48,
+        "J": 48,
+        "K": 48,
+        "L": 48,
+        "M": 48,
+        "N": 48,
+        "O": 48,
+    }
+    for letter, width in widths.items():
+        ws.column_dimensions[letter].width = width
+    for row_idx in range(2, ws.max_row + 1):
+        ws.row_dimensions[row_idx].height = 60
+
+    table_ref = f"A1:{get_column_letter(len(STANDARD_HEADERS))}{ws.max_row}"
+    table = Table(displayName="TablaSUMUNEstandar", ref=table_ref)
+    table.tableStyleInfo = TableStyleInfo(
+        name="TableStyleMedium2",
+        showFirstColumn=False,
+        showLastColumn=False,
+        showRowStripes=True,
+        showColumnStripes=False,
+    )
+    ws.add_table(table)
+
+    output = BytesIO()
+    wb.save(output)
+    return output.getvalue()
 
 
 def _write_template_workbook(rows: list[list[Any]], *, output_sheet: str) -> bytes:
@@ -1129,6 +1439,62 @@ def _column_group_value(
     if len(values) == 1:
         return values[0]
     return "\n".join(str(value).strip() for value in values)
+
+
+def _standard_group_value(
+    row: list[Any],
+    cols: tuple[int, ...],
+    *,
+    merged_sources: list[list[tuple[int, int]]] | None,
+    row_number: int,
+) -> str | None:
+    return _clean_text(
+        _column_group_value(
+            row,
+            cols,
+            merged_sources=merged_sources,
+            row_number=row_number,
+        )
+    )
+
+
+def _standard_optional_group_value(
+    row: list[Any],
+    cols: tuple[int, ...] | None,
+    *,
+    merged_sources: list[list[tuple[int, int]]] | None,
+    row_number: int,
+) -> str | None:
+    if not cols:
+        return None
+    return _standard_group_value(
+        row,
+        cols,
+        merged_sources=merged_sources,
+        row_number=row_number,
+    )
+
+
+def _standard_itinerary_value(
+    itinerary_number: int | None,
+    itinerary_title: str | None,
+) -> str | None:
+    title = _clean_text(itinerary_title)
+    if itinerary_number is None:
+        return title
+    if _is_meaningful_itinerary_title(itinerary_number, title):
+        return f"Itinerario {itinerary_number}. {title}"
+    return str(itinerary_number)
+
+
+def _standard_station_value(
+    station_number: int,
+    station_name: str,
+) -> str:
+    name = _normalize_station_text(station_name)
+    if name:
+        return f"E{station_number} - {name}"
+    return f"E{station_number}"
 
 
 def _clean_text(value: Any, *, strip_bullet: bool = False) -> str | None:

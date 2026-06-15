@@ -110,17 +110,49 @@ termina antes del siguiente encabezado con texto.
 - Si el numero de itinerario aparece solo al inicio de un bloque, se hereda para las filas siguientes hasta encontrar otro numero.
 - Las estaciones y otros campos combinados verticalmente conservan su valor en las filas cubiertas por la combinacion.
 
+### Formato estandar
+
+Antes de generar la plantilla final, la UI crea un segundo Excel sin celdas
+combinadas y con estas 15 columnas:
+
+1. `ITINERARIO`
+2. `ESTACION`
+3. `COMPETENCIA`
+4. `MACROHABILIDAD`
+5. `MICROHABILIDAD`
+6. `CONOCIMIENTOS`
+7. `RECORDAR`
+8. `COMPRENDER`
+9. `APLICAR`
+10. `ANALIZAR`
+11. `EVALUAR`
+12. `CREAR`
+13. `EVIDENCIAS`
+14. `INSTRUMENTOS DE EVALUACION`
+15. `CRITERIOS DE EVALUACION`
+
+Reglas de normalizacion:
+
+- Los valores repartidos entre dos o mas columnas se unifican en una sola celda.
+- Por ejemplo, si `CONOCIMIENTOS` ocupa `L:M`, el contenido de ambas columnas queda en la columna `CONOCIMIENTOS` del estandar.
+- Los valores de contexto se unen con un salto de linea.
+- Los contenidos distintos de un proceso cognitivo se unen con una linea vacia para conservarlos como microhabilidades separadas.
+- Los valores repetidos por una celda combinada se escriben una sola vez.
+- El itinerario se escribe como `Itinerario N. Nombre` cuando existe numero y nombre.
+- La estacion se escribe como `EN - Nombre` cuando ambos datos estan disponibles.
+- Los contextos combinados verticalmente se repiten en las filas normalizadas que los necesitan.
+
 ## Flujo general
 
 ```text
-UI o CLI
-  -> carga bytes del .xlsx
-  -> inspeccion opcional de hojas
-  -> deteccion de layout por hoja
-  -> lectura fila por fila
+UI
+  -> subir matriz original
+  -> detectar bloques y celdas combinadas
+  -> descargar Excel SUMUN estandar
+  -> revisar y volver a subir el estandar
   -> expansion de procesos cognitivos a filas planas
   -> asignacion de IDs y contadores
-  -> escritura de nuevo .xlsx
+  -> descargar plantilla final
 ```
 
 ## Como entra por la UI
@@ -129,7 +161,7 @@ La vista SUMUN esta en `app.py`.
 
 El flujo es:
 
-1. El usuario sube un `.xlsx`.
+1. El usuario sube la matriz original `.xlsx`.
 2. La UI llama `inspect_sumun_workbook_sheets(...)`.
 3. Se muestra una tabla con:
    - indice de hoja
@@ -137,17 +169,11 @@ El flujo es:
    - si fue detectada como matriz
    - filas estimadas
    - detalle del diagnostico
-4. El usuario elige hojas a procesar:
-   - todas las detectadas
-   - todas las hojas
-   - una hoja concreta
-5. El usuario puede forzar:
-   - codigo de curso
-   - grado
-   - nivel
-   - area
-6. La UI llama `generate_sumun_template_from_excel(...)`.
-7. Se guarda el Excel generado en memoria y se habilita la descarga.
+4. La UI llama `standardize_sumun_workbook_from_excel(...)`.
+5. El usuario descarga y revisa el Excel estandar.
+6. El usuario vuelve a subir el Excel estandar revisado.
+7. La UI llama `generate_sumun_template_from_excel(...)`.
+8. Se guarda la plantilla final en memoria y se habilita la descarga.
 
 ## Como entra por CLI
 

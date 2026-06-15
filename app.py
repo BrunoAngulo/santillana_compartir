@@ -52,6 +52,7 @@ from santillana_format.rlp import render_rlp_view
 from santillana_format.sumun import (
     generate_sumun_template_from_excel,
     inspect_sumun_workbook_sheets,
+    standardize_sumun_workbook_from_excel,
 )
 from santillana_format.pegasus import (
     ALUMNOS_CICLO_ID_DEFAULT,
@@ -1330,33 +1331,137 @@ def _render_logo_with_hidden_extension_download() -> None:
 
 def _render_sumun_template_view() -> None:
     st.subheader("SUMUN")
-    st.markdown("**Generar plantilla de carga**")
-    st.caption("Sube una matriz SUMUN y genera la plantilla plana de carga.")
-    uploaded_sumun = st.file_uploader(
-        "Excel matriz SUMUN",
+    st.caption(
+        "Primero convierte la matriz original al formato estándar de una columna "
+        "por campo. Después sube ese archivo estándar para generar la plantilla final."
+    )
+
+    st.markdown("**1. Estandarizar matriz original**")
+    uploaded_source_sumun = st.file_uploader(
+        "Excel matriz SUMUN original",
         type=["xlsx"],
-        key="sumun_matrix_upload",
+        key="sumun_source_matrix_upload",
         help=(
-            "Todos los itinerarios deben estar en una sola hoja. "
-            "Los encabezados y datos pueden ocupar varias columnas o usar celdas combinadas."
+            "Puede contener encabezados y datos distribuidos entre varias columnas, "
+            "incluidas celdas combinadas."
         ),
+    )
+
+    source_sheet_names: List[str] = []
+    source_sumun_sheets = []
+    if uploaded_source_sumun is not None:
+        source_upload_bytes = uploaded_source_sumun.getvalue()
+        try:
+            source_sumun_sheets = inspect_sumun_workbook_sheets(source_upload_bytes)
+        except Exception as exc:  # pragma: no cover - UI
+            source_sumun_sheets = []
+            st.error(f"No se pudieron leer las hojas del Excel: {exc}")
+
+        if source_sumun_sheets:
+            st.dataframe(
+                [
+                    {
+                        "Indice": item.index,
+                        "Hoja": item.sheet_name,
+                        "Matriz detectada": "Si" if item.detected else "No",
+                        "Filas estimadas": item.estimated_rows,
+                        "Detalle": item.reason,
+                    }
+                    for item in source_sumun_sheets
+                ],
+                use_container_width=True,
+                hide_index=True,
+            )
+            source_sheet_names = [
+                item.sheet_name
+                for item in source_sumun_sheets
+                if item.detected
+            ]
+
+    if st.button(
+        "Generar Excel SUMMUN estándar",
+        type="primary",
+        key="sumun_standardize_btn",
+    ):
+        if uploaded_source_sumun is None:
+            st.error("Sube el Excel original de matriz SUMMUN.")
+            st.stop()
+        if not source_sheet_names:
+            st.error("No se pudieron identificar hojas para procesar.")
+            st.stop()
+
+        try:
+            standard_bytes, standard_summary = standardize_sumun_workbook_from_excel(
+                uploaded_source_sumun.getvalue(),
+                sheet_names=source_sheet_names,
+            )
+        except Exception as exc:  # pragma: no cover - UI
+            st.error(f"No se pudo estandarizar la matriz SUMMUN: {exc}")
+            st.stop()
+
+        source_stem = Path(
+            uploaded_source_sumun.name or "matriz_sumun"
+        ).stem
+        standard_name = f"sumun_estandar_{source_stem}.xlsx"
+        st.session_state["sumun_standard_bytes"] = standard_bytes
+        st.session_state["sumun_standard_name"] = standard_name
+        st.session_state["sumun_standard_summary"] = standard_summary.to_dict()
+        st.session_state.pop("sumun_output_bytes", None)
+        st.session_state.pop("sumun_output_name", None)
+        st.session_state.pop("sumun_summary", None)
+        st.success(
+            f"Excel estándar listo. Filas normalizadas: {standard_summary.generated_rows}."
+        )
+
+    standard_bytes = st.session_state.get("sumun_standard_bytes") or b""
+    standard_name = str(
+        st.session_state.get("sumun_standard_name")
+        or "sumun_estandar.xlsx"
+    )
+    standard_summary = st.session_state.get("sumun_standard_summary") or {}
+    if standard_summary:
+        st.caption(
+            "Se generó una sola hoja sin celdas combinadas y con una columna "
+            "por campo. Revisa el archivo antes de continuar."
+        )
+    if standard_bytes:
+        st.download_button(
+            label="Descargar Excel SUMMUN estándar",
+            data=standard_bytes,
+            file_name=standard_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="sumun_standard_download_btn",
+        )
+
+    st.divider()
+    st.markdown("**2. Generar plantilla desde el estándar**")
+    uploaded_sumun = st.file_uploader(
+        "Excel SUMMUN estándar revisado",
+        type=["xlsx"],
+        key="sumun_standard_matrix_upload",
+        help="Sube el archivo generado en el paso 1 después de revisarlo.",
     )
 
     selected_sumun_sheet_names: List[str] = []
     sumun_sheets = []
     if uploaded_sumun is not None:
-        sumun_upload_bytes = uploaded_sumun.getvalue()
         try:
-            sumun_sheets = inspect_sumun_workbook_sheets(sumun_upload_bytes)
+            sumun_sheets = inspect_sumun_workbook_sheets(
+                uploaded_sumun.getvalue()
+            )
         except Exception as exc:  # pragma: no cover - UI
             sumun_sheets = []
-            st.error(f"No se pudieron leer las hojas del Excel: {exc}")
+            st.error(f"No se pudo leer el Excel estándar: {exc}")
 
+        selected_sumun_sheet_names = [
+            item.sheet_name
+            for item in sumun_sheets
+            if item.detected
+        ]
         if sumun_sheets:
             st.dataframe(
                 [
                     {
-                        "Indice": item.index,
                         "Hoja": item.sheet_name,
                         "Matriz detectada": "Si" if item.detected else "No",
                         "Filas estimadas": item.estimated_rows,
@@ -1367,33 +1472,36 @@ def _render_sumun_template_view() -> None:
                 use_container_width=True,
                 hide_index=True,
             )
-            selected_sumun_sheet_names = [item.sheet_name for item in sumun_sheets]
 
-    if st.button("Generar plantilla SUMUN", type="primary", key="sumun_generate_btn"):
+    if st.button(
+        "Generar plantilla final SUMMUN",
+        type="primary",
+        key="sumun_generate_btn",
+    ):
         if uploaded_sumun is None:
-            st.error("Sube un Excel de matriz SUMUN.")
+            st.error("Sube el Excel SUMMUN estándar revisado.")
             st.stop()
         if not selected_sumun_sheet_names:
-            st.error("No se pudieron identificar hojas para procesar.")
+            st.error("El Excel estándar no contiene una matriz SUMMUN válida.")
             st.stop()
 
         try:
             output_bytes, summary = generate_sumun_template_from_excel(
                 uploaded_sumun.getvalue(),
-                source_name=uploaded_sumun.name or "matriz_sumun.xlsx",
+                source_name=uploaded_sumun.name or "sumun_estandar.xlsx",
                 sheet_names=selected_sumun_sheet_names,
             )
         except Exception as exc:  # pragma: no cover - UI
-            st.error(f"No se pudo generar la plantilla SUMUN: {exc}")
+            st.error(f"No se pudo generar la plantilla SUMMUN: {exc}")
             st.stop()
 
-        source_stem = Path(uploaded_sumun.name or "matriz_sumun").stem
+        source_stem = Path(uploaded_sumun.name or "sumun_estandar").stem
         download_name = f"plantilla_carga_matrices_sumun_{source_stem}.xlsx"
         st.session_state["sumun_output_bytes"] = output_bytes
         st.session_state["sumun_output_name"] = download_name
         st.session_state["sumun_summary"] = summary.to_dict()
         st.success(
-            "Plantilla lista. Filas: {rows}. Prefijo ID: {prefix}.".format(
+            "Plantilla final lista. Filas: {rows}. Prefijo ID: {prefix}.".format(
                 rows=summary.generated_rows,
                 prefix=summary.prefix,
             )
@@ -1417,8 +1525,8 @@ def _render_sumun_template_view() -> None:
         if unique_micro_count:
             st.caption(f"Micro unicas: {unique_micro_count}")
         st.caption(
-            "Cada celda con valor en RECORDAR/COMPRENDER/APLICAR/ANALIZAR/EVALUAR/CREAR genera una sola fila. "
-            "El texto interno de la celda no se divide."
+            "Cada contenido distinto en RECORDAR/COMPRENDER/APLICAR/ANALIZAR/EVALUAR/CREAR "
+            "genera una fila. Los bloques separados por una linea vacia se procesan por separado."
         )
         empty_field_detail_rows = [
             {

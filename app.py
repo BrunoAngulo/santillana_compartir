@@ -75,6 +75,7 @@ from santillana_format.pegasus import (
     asignar_profesores_clases,
     build_profesores_bd_filename,
     comparar_plantillas_detalle,
+    descargar_excel_masivo_estudiantes,
     descargar_plantilla_edicion_masiva,
     export_profesores_bd_excel,
     export_profesores_excel,
@@ -13944,6 +13945,179 @@ def _render_otras_funcionalidades_view() -> None:
             pending_multi = len(censo_multi_errors_cached) - 80
             if pending_multi > 0:
                 st.caption(f"... y {pending_multi} errores mas.")
+
+    with st.container(border=True):
+        st.markdown("**Excel masivo estudiantes**")
+        st.caption(
+            "Ejecuta la plantilla de edicion masiva para todos los colegios y conserva "
+            "solo NUI, Estado, Nivel, Grado, Grupo, Nombre del alumno, DNI, Login y Password."
+        )
+        run_excel_masivo_estudiantes = st.button(
+            "Generar Excel masivo estudiantes",
+            type="primary",
+            key="otras_excel_masivo_estudiantes_btn",
+            use_container_width=True,
+            disabled=not bool(row_by_id_multi),
+        )
+        if not row_by_id_multi:
+            st.caption("Guarda un token para cargar la lista completa de colegios.")
+
+    if run_excel_masivo_estudiantes:
+        if not token:
+            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+            st.stop()
+
+        colegio_ids_excel_masivo = sorted(
+            row_by_id_multi.keys(),
+            key=lambda value: str(
+                (row_by_id_multi.get(int(value)) or {}).get("colegio") or ""
+            ).upper(),
+        )
+        if not colegio_ids_excel_masivo:
+            st.error("No hay colegios disponibles para procesar.")
+            st.stop()
+
+        status_placeholder = st.empty()
+        summary_rows: List[Dict[str, object]] = []
+        errors: List[str] = []
+        successful_files = 0
+        used_file_names: Set[str] = set()
+        root_folder = _sanitize_zip_component(
+            f"excel_masivo_estudiantes_{date.today().isoformat()}",
+            "excel_masivo_estudiantes",
+        )
+        zip_name = f"{root_folder}.zip"
+        zip_buffer = BytesIO()
+
+        with ZipFile(zip_buffer, "w", ZIP_DEFLATED) as zip_file:
+            total_colegios = len(colegio_ids_excel_masivo)
+            for index, colegio_id in enumerate(
+                colegio_ids_excel_masivo,
+                start=1,
+            ):
+                colegio_row = row_by_id_multi.get(int(colegio_id)) or {}
+                colegio_name = str(
+                    colegio_row.get("colegio")
+                    or colegio_row.get("label")
+                    or f"Colegio {int(colegio_id)}"
+                ).strip()
+                crm_id = str(
+                    colegio_row.get("crm_id")
+                    or colegio_row.get("crmId")
+                    or ""
+                ).strip()
+                status_placeholder.caption(
+                    "[{index}/{total}] Descargando {colegio}".format(
+                        index=index,
+                        total=total_colegios,
+                        colegio=colegio_name,
+                    )
+                )
+                try:
+                    excel_bytes, summary = descargar_excel_masivo_estudiantes(
+                        token=token,
+                        colegio_id=int(colegio_id),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                    )
+                    file_name = build_censo_colegio_filename(
+                        colegio_row,
+                        int(colegio_id),
+                        used_names=used_file_names,
+                    )
+                    zip_path = build_flat_censo_zip_path(
+                        root_folder,
+                        file_name,
+                    )
+                    zip_file.writestr(zip_path, excel_bytes)
+                    successful_files += 1
+                    summary_rows.append(
+                        {
+                            "Colegio ID": int(colegio_id),
+                            "CRM ID": crm_id,
+                            "Colegio": colegio_name,
+                            "Estudiantes": int(summary.get("alumnos_total") or 0),
+                            "Archivo": zip_path,
+                            "Estado": "OK",
+                        }
+                    )
+                except Exception as exc:
+                    error_text = str(exc).strip() or "Error sin detalle"
+                    errors.append(
+                        f"{crm_id or colegio_id} - {colegio_name}: {error_text}"
+                    )
+                    summary_rows.append(
+                        {
+                            "Colegio ID": int(colegio_id),
+                            "CRM ID": crm_id,
+                            "Colegio": colegio_name,
+                            "Estudiantes": 0,
+                            "Archivo": "",
+                            "Estado": f"ERROR: {error_text}",
+                        }
+                    )
+
+        status_placeholder.empty()
+        zip_buffer.seek(0)
+        st.session_state["otras_excel_masivo_estudiantes_zip_bytes"] = (
+            zip_buffer.getvalue() if successful_files else b""
+        )
+        st.session_state["otras_excel_masivo_estudiantes_zip_name"] = zip_name
+        st.session_state["otras_excel_masivo_estudiantes_summary"] = summary_rows
+        st.session_state["otras_excel_masivo_estudiantes_errors"] = errors
+        if successful_files:
+            st.success(
+                "Excel masivo listo. Archivos: {files} | Colegios con error: {errors}".format(
+                    files=successful_files,
+                    errors=len(errors),
+                )
+            )
+        else:
+            st.error("No se pudo generar ningun Excel de estudiantes.")
+
+    excel_masivo_summary = (
+        st.session_state.get("otras_excel_masivo_estudiantes_summary") or []
+    )
+    excel_masivo_errors = (
+        st.session_state.get("otras_excel_masivo_estudiantes_errors") or []
+    )
+    excel_masivo_zip_bytes = (
+        st.session_state.get("otras_excel_masivo_estudiantes_zip_bytes") or b""
+    )
+    excel_masivo_zip_name = str(
+        st.session_state.get("otras_excel_masivo_estudiantes_zip_name") or ""
+    ).strip()
+    if excel_masivo_summary:
+        with st.container(border=True):
+            result_cols = st.columns([2.2, 1, 1, 1.5], gap="small")
+            result_cols[0].markdown("**Resultado Excel masivo estudiantes**")
+            result_cols[1].metric("Colegios", len(excel_masivo_summary))
+            result_cols[2].metric("Errores", len(excel_masivo_errors))
+            if excel_masivo_zip_bytes:
+                result_cols[3].download_button(
+                    label="Descargar ZIP",
+                    data=excel_masivo_zip_bytes,
+                    file_name=(
+                        excel_masivo_zip_name
+                        or f"excel_masivo_estudiantes_{date.today().isoformat()}.zip"
+                    ),
+                    mime="application/zip",
+                    key="otras_excel_masivo_estudiantes_download",
+                    use_container_width=True,
+                )
+            _show_dataframe(excel_masivo_summary, use_container_width=True)
+    if excel_masivo_errors:
+        with st.expander(
+            f"Errores de Excel masivo estudiantes ({len(excel_masivo_errors)})",
+            expanded=False,
+        ):
+            st.markdown(
+                "\n".join(f"- {item}" for item in excel_masivo_errors[:100])
+            )
+            pending_errors = len(excel_masivo_errors) - 100
+            if pending_errors > 0:
+                st.caption(f"... y {pending_errors} errores mas.")
 
 
 def _manual_move_alumno_option_label(row: Dict[str, object]) -> str:

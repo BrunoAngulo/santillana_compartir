@@ -3,6 +3,7 @@
 from .alumnos import (
     DEFAULT_CICLO_ID as ALUMNOS_CICLO_ID_DEFAULT,
     DEFAULT_EMPRESA_ID,
+    descargar_excel_masivo_estudiantes,
     descargar_plantilla_edicion_masiva,
 )
 from .alumnos_compare import (
@@ -53,6 +54,7 @@ __all__ = [
     "asignar_profesores_clases",
     "build_profesores_bd_filename",
     "comparar_plantillas_detalle",
+    "descargar_excel_masivo_estudiantes",
     "descargar_plantilla_edicion_masiva",
     "export_profesores_bd_excel",
     "export_profesores_excel",

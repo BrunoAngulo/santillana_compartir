@@ -1,7 +1,7 @@
 import re
 import unicodedata
 from io import BytesIO
-from typing import Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import pandas as pd
 import requests
@@ -106,6 +106,17 @@ PLANTILLA_ACTUALIZADA_COLUMNS = [
     "Sexo",
     "Fecha de Nacimiento",
     "NUIP",
+    "Login",
+    "Password",
+]
+EXCEL_MASIVO_ESTUDIANTES_COLUMNS = [
+    "NUI",
+    "Estado",
+    "Nivel",
+    "Grado",
+    "Grupo",
+    "Nombre del alumno",
+    "DNI",
     "Login",
     "Password",
 ]
@@ -411,6 +422,250 @@ def descargar_plantilla_edicion_masiva(
     output.seek(0)
     summary = {"alumnos_total": len(rows)}
     return output.getvalue(), summary
+
+
+def descargar_excel_masivo_estudiantes(
+    token: str,
+    colegio_id: int,
+    empresa_id: int = DEFAULT_EMPRESA_ID,
+    ciclo_id: int = DEFAULT_CICLO_ID,
+    timeout: int = 30,
+) -> Tuple[bytes, Dict[str, int]]:
+    """Download and reduce the mass-edit workbook to the student census columns."""
+    url = PLANTILLA_EDICION_URL.format(
+        empresa_id=empresa_id,
+        ciclo_id=ciclo_id,
+        colegio_id=colegio_id,
+    )
+    headers = _build_json_headers(token)
+    headers["Accept"] = (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, "
+        "application/octet-stream, application/json"
+    )
+    try:
+        response = requests.get(
+            url,
+            headers=headers,
+            params={"descargar": 1},
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        raise RuntimeError(f"Error de red: {exc}") from exc
+
+    if not response.ok:
+        message = _response_error_message(response)
+        raise RuntimeError(message or f"HTTP {response.status_code}")
+
+    content = bytes(response.content or b"")
+    if content.startswith(b"PK"):
+        return transformar_excel_masivo_estudiantes(content)
+
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        content_type = str(response.headers.get("Content-Type") or "").strip()
+        raise RuntimeError(
+            "La descarga no devolvio un Excel valido"
+            + (f" ({content_type})" if content_type else "")
+        ) from exc
+
+    if not isinstance(payload, dict) or not payload.get("success", False):
+        message = payload.get("message") if isinstance(payload, dict) else ""
+        raise RuntimeError(str(message or "Respuesta invalida").strip())
+    data = payload.get("data") or []
+    if not isinstance(data, list):
+        raise RuntimeError("Campo data no es lista")
+
+    frame = pd.DataFrame(data)
+    output_bytes, total = _export_excel_masivo_estudiantes_frame(frame)
+    return output_bytes, {"alumnos_total": total}
+
+
+def transformar_excel_masivo_estudiantes(
+    excel_bytes: bytes,
+) -> Tuple[bytes, Dict[str, int]]:
+    """Keep only the requested columns from a downloaded Pegasus workbook."""
+    try:
+        with pd.ExcelFile(BytesIO(excel_bytes), engine="openpyxl") as workbook:
+            sheet_name = _select_student_sheet(workbook.sheet_names)
+            frame = pd.read_excel(
+                workbook,
+                sheet_name=sheet_name,
+                dtype=object,
+            )
+    except Exception as exc:
+        raise RuntimeError(f"No se pudo leer el Excel descargado: {exc}") from exc
+
+    output_bytes, total = _export_excel_masivo_estudiantes_frame(frame)
+    return output_bytes, {"alumnos_total": total}
+
+
+def _export_excel_masivo_estudiantes_frame(
+    frame: pd.DataFrame,
+) -> Tuple[bytes, int]:
+    output_frame = _build_excel_masivo_estudiantes_frame(frame)
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        output_frame.to_excel(writer, index=False, sheet_name="estudiantes")
+        ws = writer.book["estudiantes"]
+        ws.freeze_panes = "A2"
+        ws.auto_filter.ref = ws.dimensions
+        for idx, column in enumerate(output_frame.columns, start=1):
+            sample = output_frame[column].astype(str).head(200).tolist()
+            max_len = max([len(str(column))] + [len(value) for value in sample])
+            ws.column_dimensions[get_column_letter(idx)].width = min(max_len + 2, 60)
+        for column_letter in ("A", "G", "H", "I"):
+            for cell in ws[column_letter]:
+                cell.number_format = "@"
+
+    output.seek(0)
+    return output.getvalue(), int(len(output_frame.index))
+
+
+def _build_excel_masivo_estudiantes_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    column_by_key: Dict[str, object] = {}
+    for column in frame.columns:
+        key = _excel_column_key(column)
+        if key and key not in column_by_key:
+            column_by_key[key] = column
+
+    rows: List[Dict[str, str]] = []
+    for _, source_row in frame.iterrows():
+        nui = _row_alias_value(
+            source_row,
+            column_by_key,
+            "nui",
+            "personaid",
+            "persona id",
+        )
+        estado = _normalize_student_status(
+            _row_alias_value(
+                source_row,
+                column_by_key,
+                "estado",
+                "activo",
+                "activa",
+            )
+        )
+        nombre_completo = _row_alias_value(
+            source_row,
+            column_by_key,
+            "nombre del alumno",
+            "nombre completo",
+            "nombrecompleto",
+        )
+        if not nombre_completo:
+            nombre_completo = " ".join(
+                part
+                for part in (
+                    _row_alias_value(source_row, column_by_key, "nombre"),
+                    _row_alias_value(
+                        source_row,
+                        column_by_key,
+                        "apellido paterno",
+                        "apellidopaterno",
+                    ),
+                    _row_alias_value(
+                        source_row,
+                        column_by_key,
+                        "apellido materno",
+                        "apellidomaterno",
+                    ),
+                )
+                if part
+            ).strip()
+
+        row = {
+            "NUI": nui,
+            "Estado": estado,
+            "Nivel": _row_alias_value(source_row, column_by_key, "nivel"),
+            "Grado": _row_alias_value(source_row, column_by_key, "grado"),
+            "Grupo": _row_alias_value(
+                source_row,
+                column_by_key,
+                "grupo",
+                "seccion",
+                "sección",
+            ),
+            "Nombre del alumno": nombre_completo,
+            "DNI": _row_alias_value(
+                source_row,
+                column_by_key,
+                "dni",
+                "nuip",
+                "id oficial",
+                "idoficial",
+            ),
+            "Login": _row_alias_value(source_row, column_by_key, "login"),
+            "Password": _row_alias_value(source_row, column_by_key, "password"),
+        }
+        if any(value for value in row.values()):
+            rows.append(row)
+
+    return pd.DataFrame(rows, columns=EXCEL_MASIVO_ESTUDIANTES_COLUMNS)
+
+
+def _select_student_sheet(sheet_names: Sequence[str]) -> str:
+    if not sheet_names:
+        raise RuntimeError("El Excel no contiene hojas")
+    by_key = {_excel_column_key(name): name for name in sheet_names}
+    for candidate in ("plantilla bd", "alumnos", "estudiantes"):
+        resolved = by_key.get(_excel_column_key(candidate))
+        if resolved:
+            return str(resolved)
+    return str(sheet_names[0])
+
+
+def _row_alias_value(
+    row: Mapping[object, Any],
+    column_by_key: Mapping[str, object],
+    *aliases: str,
+) -> str:
+    for alias in aliases:
+        column = column_by_key.get(_excel_column_key(alias))
+        if column is None:
+            continue
+        value = _clean_excel_value(row.get(column))
+        if value:
+            return value
+    return ""
+
+
+def _excel_column_key(value: object) -> str:
+    text = str(value or "").strip().lower()
+    text = unicodedata.normalize("NFD", text)
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
+    return re.sub(r"[^a-z0-9]+", "", text)
+
+
+def _clean_excel_value(value: object) -> str:
+    if value is None or pd.isna(value):
+        return ""
+    if isinstance(value, bool):
+        return "Si" if value else "No"
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
+def _normalize_student_status(value: object) -> str:
+    text = _clean_excel_value(value)
+    normalized = _excel_column_key(text)
+    if normalized in {"si", "true", "1", "activo", "activa"}:
+        return "Activo"
+    if normalized in {"no", "false", "0", "inactivo", "inactiva"}:
+        return "Inactivo"
+    return text
+
+
+def _response_error_message(response: requests.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    return str(payload.get("message") or payload.get("error") or "").strip()
 
 
 def listar_alumnos(

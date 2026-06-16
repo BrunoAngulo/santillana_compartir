@@ -8,6 +8,7 @@ import tempfile
 import threading
 import traceback
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
 from html import escape
 from io import BytesIO, StringIO
@@ -266,7 +267,9 @@ try:
     from santillana_format.pegasus.profesores_manual import (
         asignar_santillana_inclusiva_profesores,
         asignar_clases_profesor_manual,
+        build_santillana_inclusiva_sin_docente_report_rows,
         build_santillana_inclusiva_profesores_plan,
+        export_santillana_inclusiva_sin_docente_excel,
         listar_profesores_clases_panel_data,
     )
 except Exception as exc:  # pragma: no cover - arranque defensivo
@@ -277,10 +280,16 @@ except Exception as exc:  # pragma: no cover - arranque defensivo
 
     asignar_clases_profesor_manual = _raise_profesores_manual_import_error
     asignar_santillana_inclusiva_profesores = _raise_profesores_manual_import_error
+    build_santillana_inclusiva_sin_docente_report_rows = (
+        _raise_profesores_manual_import_error
+    )
     build_radartec_profesores_groups = (
         _build_radartec_profesores_groups_fallback
     )
     build_santillana_inclusiva_profesores_plan = (
+        _raise_profesores_manual_import_error
+    )
+    export_santillana_inclusiva_sin_docente_excel = (
         _raise_profesores_manual_import_error
     )
     listar_profesores_clases_panel_data = _raise_profesores_manual_import_error
@@ -312,6 +321,7 @@ GESTION_ESCOLAR_CLASE_PARTICIPANTES_URL = (
     "{empresa_id}/ciclos/{ciclo_id}/niveles/{nivel_id}/grados/{grado_id}"
     "/clases/{clase_id}/participantes"
 )
+SANTILLANA_INCLUSIVA_REPORT_DETAIL_WORKERS = 6
 CENSO_ALUMNOS_URL = (
     "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
     "/ciclos/{ciclo_id}/colegios/{colegio_id}/alumnos"
@@ -4427,6 +4437,282 @@ def _load_clase_participantes_detail(
         "profesores": profesores_rows,
         "errors": errors,
     }
+
+
+def _load_santillana_inclusiva_report_details(
+    report_rows: List[Dict[str, object]],
+    *,
+    token: str,
+    colegio_label: str,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+    max_workers: int = SANTILLANA_INCLUSIVA_REPORT_DETAIL_WORKERS,
+    on_progress: Optional[Callable[[int, int, Dict[str, object]], None]] = None,
+) -> List[str]:
+    report_errors: List[str] = []
+    pending: List[Tuple[Dict[str, object], int]] = []
+
+    for report_row in report_rows:
+        clase_id = _safe_int(report_row.pop("_clase_id", None))
+        if clase_id is None:
+            report_errors.append(
+                "{colegio}: {curso}: clase sin ID.".format(
+                    colegio=colegio_label or "Colegio",
+                    curso=str(report_row.get("Nombre curso") or "Curso"),
+                )
+            )
+            continue
+        pending.append((report_row, int(clase_id)))
+
+    total = len(pending)
+    if not pending:
+        return report_errors
+
+    workers = max(1, min(int(max_workers), total))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_map = {
+            executor.submit(
+                _load_clase_participantes_detail,
+                token=token,
+                clase_id=clase_id,
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                timeout=int(timeout),
+            ): (report_row, clase_id)
+            for report_row, clase_id in pending
+        }
+        for completed, future in enumerate(as_completed(future_map), start=1):
+            report_row, clase_id = future_map[future]
+            try:
+                detail = future.result()
+            except Exception as exc:  # pragma: no cover - defensive
+                detail = {"profesores": [], "tiene_alumnos": False, "errors": [exc]}
+
+            report_row["Profesores asignados (login)"] = _format_profesores_asignados(
+                detail.get("profesores") or []
+            )
+            report_row["Tiene alumnos"] = bool(detail.get("tiene_alumnos"))
+            for detail_error in detail.get("errors") or []:
+                report_errors.append(
+                    "{colegio}: {curso} (clase {clase_id}): {error}".format(
+                        colegio=colegio_label or "Colegio",
+                        curso=str(report_row.get("Nombre curso") or "Curso"),
+                        clase_id=int(clase_id),
+                        error=str(detail_error).strip() or "error sin detalle",
+                    )
+                )
+            if on_progress:
+                on_progress(completed, total, report_row)
+
+    return report_errors
+
+
+def _render_clases_inclusiva_sin_docente_report_section(
+    colegio_id_raw: str,
+    token: str,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+) -> None:
+    st.markdown("**Reporte Santillana Inclusiva sin docente**")
+    st.caption(
+        "Genera un Excel con las clases Santillana Inclusiva del colegio seleccionado "
+        "que no tienen ningun docente asignado. Columnas: Colegio, Clase, Grado y Seccion."
+    )
+
+    current_scope = (
+        str(colegio_id_raw or "").strip(),
+        int(empresa_id),
+        int(ciclo_id),
+    )
+    cached_scope = st.session_state.get(
+        "clases_inclusiva_sin_docente_report_scope"
+    )
+    if cached_scope != current_scope:
+        for state_key in (
+            "clases_inclusiva_sin_docente_report_rows",
+            "clases_inclusiva_sin_docente_report_errors",
+            "clases_inclusiva_sin_docente_report_summary",
+            "clases_inclusiva_sin_docente_report_excel",
+            "clases_inclusiva_sin_docente_report_file_name",
+            "clases_inclusiva_sin_docente_report_scope",
+        ):
+            st.session_state.pop(state_key, None)
+
+    run_report = st.button(
+        "Generar reporte",
+        type="primary",
+        key="clases_inclusiva_sin_docente_report_run",
+        use_container_width=True,
+    )
+
+    if run_report:
+        if not token:
+            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+            st.stop()
+        try:
+            colegio_id_int = _parse_colegio_id(colegio_id_raw)
+        except ValueError as exc:
+            st.error(str(exc))
+            st.stop()
+
+        colegio_label = _colegio_label_from_global_state(int(colegio_id_int))
+        progress = st.progress(0)
+        status_box = st.empty()
+
+        def _on_report_progress(
+            stage: str,
+            index: int,
+            total: int,
+            message: str,
+        ) -> None:
+            progress.progress(
+                min(1.0, max(0.0, index / max(total, 1))),
+                text=message or f"{stage} {index}/{total}",
+            )
+            status_box.caption(message or f"{stage} {index}/{total}")
+
+        try:
+            with st.spinner("Consultando clases y docentes asignados..."):
+                _profesores_rows, clases_rows, load_summary, load_errors = (
+                    listar_profesores_clases_panel_data(
+                        token=token,
+                        colegio_id=int(colegio_id_int),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                        on_progress=_on_report_progress,
+                    )
+                )
+        except Exception as exc:  # pragma: no cover - UI
+            progress.empty()
+            status_box.empty()
+            st.error(f"No se pudo generar el reporte: {exc}")
+            st.stop()
+
+        staff_error_class_ids = [
+            item.get("clase_id")
+            for item in load_errors
+            if isinstance(item, dict)
+            and str(item.get("tipo") or "") == "listar_staff"
+        ]
+        report_rows = build_santillana_inclusiva_sin_docente_report_rows(
+            clases_rows,
+            colegio_label=colegio_label,
+            exclude_clase_ids=staff_error_class_ids,
+        )
+        excel_bytes = export_santillana_inclusiva_sin_docente_excel(report_rows)
+        file_name = (
+            "santillana_inclusiva_sin_docente_"
+            f"{int(colegio_id_int)}_{date.today().isoformat()}.xlsx"
+        )
+        progress.progress(
+            1.0,
+            text=(
+                "Reporte listo: "
+                f"{len(report_rows)} clase(s) sin docente."
+            ),
+        )
+        status_box.caption(
+            "Reporte listo. Consultas de staff con error excluidas: "
+            f"{len(staff_error_class_ids)}."
+        )
+        st.session_state["clases_inclusiva_sin_docente_report_rows"] = report_rows
+        st.session_state["clases_inclusiva_sin_docente_report_errors"] = list(
+            load_errors
+        )
+        st.session_state["clases_inclusiva_sin_docente_report_summary"] = {
+            **dict(load_summary or {}),
+            "clases_sin_docente": len(report_rows),
+            "staff_consultas_error": len(staff_error_class_ids),
+            "colegio": colegio_label,
+            "colegio_id": int(colegio_id_int),
+        }
+        st.session_state["clases_inclusiva_sin_docente_report_excel"] = excel_bytes
+        st.session_state["clases_inclusiva_sin_docente_report_file_name"] = file_name
+        st.session_state["clases_inclusiva_sin_docente_report_scope"] = current_scope
+        if staff_error_class_ids:
+            st.warning(
+                "Reporte generado con observaciones. Se excluyeron clases donde "
+                "fallo la consulta de docentes."
+            )
+        else:
+            st.success(f"Reporte listo: {len(report_rows)} clase(s) sin docente.")
+
+    report_rows_cached = st.session_state.get(
+        "clases_inclusiva_sin_docente_report_rows"
+    )
+    if isinstance(report_rows_cached, list):
+        report_summary_cached = (
+            st.session_state.get("clases_inclusiva_sin_docente_report_summary")
+            or {}
+        )
+        report_errors_cached = (
+            st.session_state.get("clases_inclusiva_sin_docente_report_errors")
+            or []
+        )
+        excel_bytes_cached = (
+            st.session_state.get("clases_inclusiva_sin_docente_report_excel")
+            or export_santillana_inclusiva_sin_docente_excel(report_rows_cached)
+        )
+        file_name_cached = str(
+            st.session_state.get(
+                "clases_inclusiva_sin_docente_report_file_name"
+            )
+            or f"santillana_inclusiva_sin_docente_{date.today().isoformat()}.xlsx"
+        ).strip()
+
+        with st.container(border=True):
+            metric_cols = st.columns(4)
+            metric_cols[0].metric("Clases sin docente", len(report_rows_cached))
+            metric_cols[1].metric(
+                "Clases revisadas",
+                int(report_summary_cached.get("clases_total") or 0),
+            )
+            metric_cols[2].metric(
+                "Errores staff",
+                int(report_summary_cached.get("staff_consultas_error") or 0),
+            )
+            metric_cols[3].metric(
+                "Colegio",
+                str(report_summary_cached.get("colegio_id") or "-"),
+            )
+            st.download_button(
+                label="Descargar Excel",
+                data=excel_bytes_cached,
+                file_name=file_name_cached,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="clases_inclusiva_sin_docente_report_download",
+                use_container_width=True,
+            )
+            if report_rows_cached:
+                _show_dataframe(report_rows_cached, use_container_width=True)
+            else:
+                st.info(
+                    "No se encontraron clases Santillana Inclusiva sin docentes asignados."
+                )
+            if report_errors_cached:
+                with st.expander(
+                    f"Observaciones de carga ({len(report_errors_cached)})",
+                    expanded=False,
+                ):
+                    lines = []
+                    for item in report_errors_cached[:120]:
+                        if isinstance(item, dict):
+                            lines.append(
+                                "- {tipo} | clase {clase}: {error}".format(
+                                    tipo=str(item.get("tipo") or "-"),
+                                    clase=str(item.get("clase_id") or "-"),
+                                    error=str(item.get("error") or "").strip(),
+                                )
+                            )
+                        else:
+                            lines.append(f"- {item}")
+                    st.write("\n".join(lines))
+                    pending = len(report_errors_cached) - 120
+                    if pending > 0:
+                        st.caption(f"... y {pending} observaciones mas.")
 
 
 def _clase_person_label(row: Dict[str, object], id_key: str) -> str:
@@ -13359,6 +13645,9 @@ def _render_pegasus_reportes_section() -> None:
                             error=str(exc).strip() or "error sin detalle",
                         )
                     )
+                    progress_bar.progress(
+                        min(1.0, max(0.0, idx / max(total_colegios, 1)))
+                    )
                     continue
                 colegio_report_rows = _build_santillana_inclusiva_report_rows(
                     clases=clases,
@@ -13366,36 +13655,68 @@ def _render_pegasus_reportes_section() -> None:
                     colegio_id=int(colegio_id),
                     crm_id=colegio_row.get("crm_id"),
                 )
-                for report_row in colegio_report_rows:
-                    clase_id = _safe_int(report_row.pop("_clase_id", None))
-                    if clase_id is None:
-                        report_errors.append(
-                            "{colegio}: {curso}: clase sin ID.".format(
-                                colegio=colegio_label or "Colegio",
-                                curso=str(report_row.get("Nombre curso") or "Curso"),
-                            )
+
+                def _detail_progress(
+                    completed: int,
+                    total: int,
+                    detail_row: Dict[str, object],
+                ) -> None:
+                    progress_bar.progress(
+                        min(
+                            1.0,
+                            max(
+                                0.0,
+                                (
+                                    idx
+                                    - 1
+                                    + (completed / max(total, 1))
+                                )
+                                / max(total_colegios, 1),
+                            ),
                         )
-                        continue
-                    detail = _load_clase_participantes_detail(
-                        token=token,
-                        clase_id=int(clase_id),
-                        empresa_id=int(empresa_id),
-                        ciclo_id=int(ciclo_id),
-                        timeout=int(timeout),
                     )
-                    report_row["Profesores asignados (login)"] = (
-                        _format_profesores_asignados(detail.get("profesores") or [])
-                    )
-                    report_row["Tiene alumnos"] = bool(detail.get("tiene_alumnos"))
-                    for detail_error in detail.get("errors") or []:
-                        report_errors.append(
-                            "{colegio}: {curso} (clase {clase_id}): {error}".format(
-                                colegio=colegio_label or "Colegio",
-                                curso=str(report_row.get("Nombre curso") or "Curso"),
-                                clase_id=int(clase_id),
-                                error=str(detail_error).strip() or "error sin detalle",
-                            )
+                    status_box.caption(
+                        "[{idx}/{total_colegios}] {colegio} | detalle "
+                        "{completed}/{total}: {curso}".format(
+                            idx=idx,
+                            total_colegios=total_colegios,
+                            colegio=colegio_label,
+                            completed=completed,
+                            total=total,
+                            curso=str(
+                                detail_row.get("Nombre curso") or "Curso"
+                            ),
                         )
+                    )
+
+                if colegio_report_rows:
+                    status_box.caption(
+                        "[{idx}/{total}] {colegio} | {clases} clase(s) "
+                        "Santillana Inclusiva".format(
+                            idx=idx,
+                            total=total_colegios,
+                            colegio=colegio_label,
+                            clases=len(colegio_report_rows),
+                        )
+                    )
+                    report_errors.extend(
+                        _load_santillana_inclusiva_report_details(
+                            colegio_report_rows,
+                            token=token,
+                            colegio_label=colegio_label,
+                            empresa_id=int(empresa_id),
+                            ciclo_id=int(ciclo_id),
+                            timeout=int(timeout),
+                            on_progress=_detail_progress,
+                        )
+                    )
+                else:
+                    progress_bar.progress(
+                        min(1.0, max(0.0, idx / max(total_colegios, 1)))
+                    )
+                progress_bar.progress(
+                    min(1.0, max(0.0, idx / max(total_colegios, 1)))
+                )
                 report_rows.extend(colegio_report_rows)
 
         progress_bar.progress(1.0)
@@ -16684,6 +17005,11 @@ with tab_crud_clases:
                     ("crear", "Crear", "Genera clases desde Excel"),
                     ("gestion", "Gestion", "Lista, vacia o elimina clases"),
                     ("participantes", "Participantes", "Busca una clase y administra alumnos/docentes"),
+                    (
+                        "inclusiva_sin_docente",
+                        "Inclusiva sin docente",
+                        "Reporte Excel de clases Santillana Inclusiva sin docentes",
+                    ),
                     ("otros", "Asignacion de clases a usuarios", "Asignacion de clases a usuarios"),
                 ],
                 state_key="clases_crud_nav",
@@ -16767,6 +17093,14 @@ with tab_crud_clases:
             if clases_crud_view == "participantes":
                 _render_clases_participantes_section(
                     colegio_id_raw=colegio_id_raw,
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                )
+            if clases_crud_view == "inclusiva_sin_docente":
+                _render_clases_inclusiva_sin_docente_report_section(
+                    colegio_id_raw=colegio_id_raw,
+                    token=token,
                     empresa_id=int(empresa_id),
                     ciclo_id=int(ciclo_id),
                     timeout=int(timeout),

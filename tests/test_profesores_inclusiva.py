@@ -3,11 +3,87 @@ from unittest.mock import patch
 
 from santillana_format.pegasus.profesores_manual import (
     asignar_santillana_inclusiva_profesores,
+    build_santillana_inclusiva_sin_docente_report_rows,
     build_santillana_inclusiva_profesores_plan,
+    export_santillana_inclusiva_sin_docente_excel,
 )
 
 
 class ProfesoresInclusivaPlanTests(unittest.TestCase):
+    def test_reports_inclusive_classes_without_any_teacher(self) -> None:
+        clases = [
+            self._class(
+                301,
+                39,
+                1,
+                11,
+                "1 Primaria",
+                "A",
+                "Santillana Inclusiva 1PA",
+                inclusiva=True,
+                staff_count=0,
+            ),
+            self._class(
+                302,
+                39,
+                1,
+                12,
+                "1 Primaria",
+                "B",
+                "Santillana Inclusiva 1PB",
+                inclusiva=True,
+                staff_count=1,
+                staff_persona_ids=[10],
+            ),
+            self._class(101, 39, 1, 11, "1 Primaria", "A", "Matematica"),
+            self._class(
+                303,
+                39,
+                2,
+                22,
+                "2 Primaria",
+                "B",
+                "Santillana Inclusiva 2PB",
+                inclusiva=True,
+                staff_count=0,
+            ),
+        ]
+
+        rows = build_santillana_inclusiva_sin_docente_report_rows(
+            clases,
+            colegio_label="Colegio Demo",
+            exclude_clase_ids=[303],
+        )
+
+        self.assertEqual(
+            rows,
+            [
+                {
+                    "Colegio": "Colegio Demo",
+                    "Clase": "Santillana Inclusiva 1PA",
+                    "Grado": "1 Primaria",
+                    "Seccion": "A",
+                }
+            ],
+        )
+
+    def test_exports_empty_inclusive_without_teacher_report_with_headers(self) -> None:
+        output = export_santillana_inclusiva_sin_docente_excel([])
+        import pandas as pd
+        from io import BytesIO
+
+        frame = pd.read_excel(
+            BytesIO(output),
+            sheet_name="sin_docente",
+            dtype=str,
+            engine="openpyxl",
+        )
+
+        self.assertEqual(
+            list(frame.columns),
+            ["Colegio", "Clase", "Grado", "Seccion"],
+        )
+
     def test_assigns_only_matching_primary_grade_and_section(self) -> None:
         profesores = [
             {
@@ -304,6 +380,8 @@ class ProfesoresInclusivaPlanTests(unittest.TestCase):
         seccion,
         nombre,
         inclusiva=False,
+        staff_count=0,
+        staff_persona_ids=None,
     ):
         return {
             "clase_id": clase_id,
@@ -315,6 +393,8 @@ class ProfesoresInclusivaPlanTests(unittest.TestCase):
             "clase": nombre,
             "clase_label": nombre,
             "es_santillana_inclusiva": inclusiva,
+            "staff_count": staff_count,
+            "staff_persona_ids": staff_persona_ids or [],
         }
 
 

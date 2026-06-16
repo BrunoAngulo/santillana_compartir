@@ -1,8 +1,11 @@
 import re
 import unicodedata
+from io import BytesIO
 from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
+import pandas as pd
 import requests
+from openpyxl.utils import get_column_letter
 
 from .clases_api import extract_clase_fields, fetch_clases_gestion_escolar
 from .profesores import (
@@ -19,6 +22,12 @@ STAFF_PERSON_URL = f"{STAFF_URL}" + "/{persona_id}"
 ROLE_CLAVE_PROF = "PROF"
 PRIMARIA_NIVEL_ID = 39
 SANTILLANA_INCLUSIVA_PREFIX = "SANTILLANA INCLUSIVA"
+SANTILLANA_INCLUSIVA_SIN_DOCENTE_COLUMNS = [
+    "Colegio",
+    "Clase",
+    "Grado",
+    "Seccion",
+]
 ASIGNAR_NIVEL_URL = (
     "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
     "/ciclos/{ciclo_id}/colegios/{colegio_id}/profesores/{persona_id}/asignarNivel"
@@ -509,6 +518,108 @@ def build_santillana_inclusiva_profesores_plan(
         summary["asignaciones_pendientes"] + summary["retiros_pendientes"]
     )
     return plan_rows, summary
+
+
+def build_santillana_inclusiva_sin_docente_report_rows(
+    clases: Sequence[Dict[str, object]],
+    colegio_label: object = "",
+    exclude_clase_ids: Optional[Sequence[object]] = None,
+) -> List[Dict[str, object]]:
+    excluded_ids = _unique_ints(exclude_clase_ids or [])
+    rows: List[Dict[str, object]] = []
+    seen: Set[Tuple[str, str, str, str, int]] = set()
+    for raw_clase in clases:
+        if not isinstance(raw_clase, dict):
+            continue
+        clase_id = _safe_int(raw_clase.get("clase_id"))
+        if clase_id is not None and int(clase_id) in excluded_ids:
+            continue
+        if not _is_santillana_inclusiva_class_row(raw_clase):
+            continue
+
+        staff_ids = _unique_ints(raw_clase.get("staff_persona_ids") or [])
+        staff_count = _safe_int(raw_clase.get("staff_count"))
+        if staff_ids or (staff_count is not None and int(staff_count) > 0):
+            continue
+
+        colegio = str(
+            raw_clase.get("colegio")
+            or raw_clase.get("Colegio")
+            or colegio_label
+            or ""
+        ).strip()
+        clase = str(
+            raw_clase.get("clase_nombre")
+            or raw_clase.get("clase")
+            or raw_clase.get("clase_codigo")
+            or raw_clase.get("clase_label")
+            or ""
+        ).strip()
+        if not clase and clase_id is not None:
+            clase = f"Clase {int(clase_id)}"
+        grado = str(
+            raw_clase.get("grado")
+            or raw_clase.get("grado_nombre")
+            or ""
+        ).strip()
+        seccion = str(
+            raw_clase.get("seccion")
+            or raw_clase.get("grupo_clave_actual")
+            or raw_clase.get("grupo")
+            or ""
+        ).strip()
+        key = (
+            _normalize_text(colegio),
+            _normalize_text(clase),
+            _normalize_text(grado),
+            _normalize_section(seccion),
+            int(clase_id or 0),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(
+            {
+                "Colegio": colegio,
+                "Clase": clase,
+                "Grado": grado,
+                "Seccion": seccion,
+            }
+        )
+
+    rows.sort(
+        key=lambda row: (
+            _normalize_text(row.get("Colegio")),
+            _normalize_text(row.get("Grado")),
+            _normalize_section(row.get("Seccion")),
+            _normalize_text(row.get("Clase")),
+        )
+    )
+    return rows
+
+
+def export_santillana_inclusiva_sin_docente_excel(
+    rows: Sequence[Dict[str, object]],
+) -> bytes:
+    frame = pd.DataFrame(
+        list(rows),
+        columns=SANTILLANA_INCLUSIVA_SIN_DOCENTE_COLUMNS,
+    )
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        frame.to_excel(writer, index=False, sheet_name="sin_docente")
+        ws = writer.book["sin_docente"]
+        ws.freeze_panes = "A2"
+        ws.auto_filter.ref = ws.dimensions
+        for index, column in enumerate(frame.columns, start=1):
+            sample = frame[column].astype(str).head(200).tolist()
+            max_len = max([len(str(column))] + [len(value) for value in sample])
+            ws.column_dimensions[get_column_letter(index)].width = min(
+                max_len + 2,
+                60,
+            )
+    output.seek(0)
+    return output.getvalue()
 
 
 def asignar_santillana_inclusiva_profesores(

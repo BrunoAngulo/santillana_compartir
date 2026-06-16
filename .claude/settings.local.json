@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs wc -l)",
+      "Bash(python -c \"import docx; print\\(docx.__version__\\)\")",
+      "Bash(pip show *)",
+      "Bash(python _tmp_generate_doc.py)",
+      "Bash(rm _tmp_generate_doc.py)",
+      "Bash(python -c ' *)",
+      "Bash(PYTHONIOENCODING=utf-8 python -c ' *)"
+    ]
+  }
+}

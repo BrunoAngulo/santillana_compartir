@@ -134,6 +134,10 @@ RICHMONDSTUDIO_BULK_USER_EDITION_URL = (
     "https://richmondstudio.global/api/administration/users/bulk/user-edition"
 )
 
+RICHMONDSTUDIO_AUTH_URL = "https://richmondstudio.global/api/auth/token"
+
+RICHMONDSTUDIO_CODES_REDEEM_URL = "https://richmondstudio.global/api/codes/redeem"
+
 RICHMONDSTUDIO_TOKEN_BRIDGE_PENDING = "__pending__"
 
 RICHMONDSTUDIO_TOKEN_BRIDGE_COMPONENT = components.declare_component(
@@ -9780,6 +9784,423 @@ def _render_richmondstudio_excel_iread_report_panel() -> None:
                         )
 
 
+# ---------------------------------------------------------------------------
+# Activacion de codigos RS
+# ---------------------------------------------------------------------------
+
+_RS_ACTIVATION_COL_USERNAME = "Username"
+_RS_ACTIVATION_COL_TOKEN = "Token"
+_RS_ACTIVATION_COL_PASSWORD = "password"
+
+
+def _rs_authenticate(
+    identifier: str,
+    password: str,
+    timeout: int = 30,
+    max_retries: int = 2,
+) -> Tuple[str, str]:
+    """Autentica una cuenta RS. Devuelve (access_token, error_msg)."""
+    payload = {
+        "grant_type": "password",
+        "identifier": identifier.strip(),
+        "password": password,
+    }
+    last_error = ""
+    for attempt in range(max_retries + 1):
+        try:
+            resp = requests.post(
+                RICHMONDSTUDIO_AUTH_URL,
+                json=payload,
+                timeout=int(timeout),
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                token = str(data.get("access_token") or "").strip()
+                if token:
+                    return token, ""
+                return "", "Respuesta OK pero sin access_token."
+            try:
+                detail = resp.json()
+                msg = str(
+                    detail.get("message") or detail.get("error") or ""
+                ).strip()
+            except Exception:
+                msg = resp.text[:200].strip()
+            last_error = f"HTTP {resp.status_code}: {msg or 'sin detalle'}"
+            if resp.status_code < 500:
+                break  # error de cliente, no reintentar
+        except requests.Timeout:
+            last_error = f"Timeout (intento {attempt + 1}/{max_retries + 1})."
+        except requests.RequestException as exc:
+            last_error = str(exc)[:200]
+            break
+    return "", last_error
+
+
+def _rs_redeem_code(
+    access_token: str,
+    code: str,
+    timeout: int = 30,
+    max_retries: int = 2,
+) -> Tuple[bool, str]:
+    """Canjea un codigo RS. Devuelve (exito, mensaje)."""
+    headers = {"Authorization": f"Bearer {access_token}"}
+    payload = {"code": code.strip()}
+    last_error = ""
+    for attempt in range(max_retries + 1):
+        try:
+            resp = requests.post(
+                RICHMONDSTUDIO_CODES_REDEEM_URL,
+                json=payload,
+                headers=headers,
+                timeout=int(timeout),
+            )
+            if resp.status_code in (200, 201):
+                try:
+                    detail = resp.json()
+                    msg = str(detail.get("message") or "Activado correctamente.")
+                except Exception:
+                    msg = "Activado correctamente."
+                return True, msg
+            try:
+                detail = resp.json()
+                msg = str(
+                    detail.get("message") or detail.get("error") or ""
+                ).strip()
+            except Exception:
+                msg = resp.text[:200].strip()
+            last_error = f"HTTP {resp.status_code}: {msg or 'sin detalle'}"
+            if resp.status_code < 500:
+                break
+        except requests.Timeout:
+            last_error = f"Timeout (intento {attempt + 1}/{max_retries + 1})."
+        except requests.RequestException as exc:
+            last_error = str(exc)[:200]
+            break
+    return False, last_error
+
+
+def _load_rs_activation_rows(
+    file_bytes: bytes,
+    file_name: str,
+) -> Tuple[List[Dict[str, str]], str]:
+    """Lee y valida filas de activacion desde Excel o CSV. Devuelve (filas, error)."""
+    name_lower = str(file_name or "").strip().lower()
+    try:
+        if name_lower.endswith(".csv"):
+            text = file_bytes.decode("utf-8-sig", errors="replace")
+            reader = csv.DictReader(StringIO(text))
+            raw_rows: List[Dict[str, str]] = [
+                {str(k or "").strip(): str(v or "").strip() for k, v in row.items()}
+                for row in reader
+            ]
+        else:
+            df = pd.read_excel(BytesIO(file_bytes), dtype=str).fillna("")
+            raw_rows = [
+                {str(k or "").strip(): str(v or "").strip() for k, v in row.items()}
+                for row in df.to_dict("records")
+            ]
+    except Exception as exc:
+        return [], f"No se pudo leer el archivo: {exc}"
+
+    if not raw_rows:
+        return [], "El archivo esta vacio."
+
+    # Resolver columnas de forma insensible a mayusculas
+    sample_keys = list(raw_rows[0].keys())
+    col_map: Dict[str, str] = {}
+    for expected in (
+        _RS_ACTIVATION_COL_USERNAME,
+        _RS_ACTIVATION_COL_TOKEN,
+        _RS_ACTIVATION_COL_PASSWORD,
+    ):
+        match = next(
+            (k for k in sample_keys if k.lower() == expected.lower()), None
+        )
+        if match is None:
+            return [], (
+                f"Columna requerida no encontrada: '{expected}'. "
+                f"Columnas disponibles: {sample_keys}"
+            )
+        col_map[expected] = match
+
+    result: List[Dict[str, str]] = []
+    for raw in raw_rows:
+        username = str(raw.get(col_map[_RS_ACTIVATION_COL_USERNAME]) or "").strip()
+        token = str(raw.get(col_map[_RS_ACTIVATION_COL_TOKEN]) or "").strip()
+        pw = str(raw.get(col_map[_RS_ACTIVATION_COL_PASSWORD]) or "").strip()
+        if not username and not token:
+            continue
+        result.append({"username": username, "token": token, "password": pw})
+
+    if not result:
+        return [], "No se encontraron filas con datos en Username o Token."
+    return result, ""
+
+
+def _process_rs_activation_rows(
+    rows: Sequence[Dict[str, str]],
+    timeout: int = 30,
+    on_progress: Optional[Callable[[int, int, str], None]] = None,
+) -> List[Dict[str, object]]:
+    """Procesa cada fila: autentica y canjea el codigo. Devuelve filas de resultado."""
+
+    def _progress(current: int, total: int, message: str) -> None:
+        if callable(on_progress):
+            try:
+                on_progress(int(current), int(total), str(message or ""))
+            except Exception:
+                pass
+
+    results: List[Dict[str, object]] = []
+    total = len(rows)
+
+    for idx, row in enumerate(rows, start=1):
+        username = str(row.get("username") or "").strip()
+        code = str(row.get("token") or "").strip()
+        pw = str(row.get("password") or "").strip()
+
+        result: Dict[str, object] = {
+            "Email": username,
+            "Codigo": code,
+            "Login Estado": "",
+            "Login Mensaje": "",
+            "Redeem Estado": "",
+            "Redeem Mensaje": "",
+        }
+
+        if not username:
+            result.update(
+                {
+                    "Login Estado": "OMITIDO",
+                    "Login Mensaje": "Sin username.",
+                    "Redeem Estado": "OMITIDO",
+                    "Redeem Mensaje": "",
+                }
+            )
+            results.append(result)
+            _progress(idx, total, f"[{idx}/{total}] Fila sin username omitida.")
+            continue
+
+        if not pw:
+            result.update(
+                {
+                    "Login Estado": "OMITIDO",
+                    "Login Mensaje": "Sin password.",
+                    "Redeem Estado": "OMITIDO",
+                    "Redeem Mensaje": "",
+                }
+            )
+            results.append(result)
+            _progress(idx, total, f"[{idx}/{total}] {username}: sin password, omitido.")
+            continue
+
+        _progress(idx - 1, total, f"[{idx}/{total}] Autenticando {username}...")
+
+        access_token, login_error = _rs_authenticate(
+            identifier=username,
+            password=pw,
+            timeout=int(timeout),
+        )
+
+        if not access_token:
+            result.update(
+                {
+                    "Login Estado": "ERROR",
+                    "Login Mensaje": login_error,
+                    "Redeem Estado": "OMITIDO",
+                    "Redeem Mensaje": "No se pudo autenticar.",
+                }
+            )
+            results.append(result)
+            _progress(idx, total, f"[{idx}/{total}] {username}: login fallido.")
+            continue
+
+        result["Login Estado"] = "OK"
+        result["Login Mensaje"] = "Autenticado."
+
+        if not code:
+            result.update(
+                {
+                    "Redeem Estado": "OMITIDO",
+                    "Redeem Mensaje": "Token (codigo) vacio.",
+                }
+            )
+            results.append(result)
+            _progress(idx, total, f"[{idx}/{total}] {username}: sin codigo.")
+            continue
+
+        _progress(
+            idx - 1,
+            total,
+            f"[{idx}/{total}] Activando codigo para {username}...",
+        )
+        redeem_ok, redeem_msg = _rs_redeem_code(
+            access_token=access_token,
+            code=code,
+            timeout=int(timeout),
+        )
+        result["Redeem Estado"] = "OK" if redeem_ok else "ERROR"
+        result["Redeem Mensaje"] = redeem_msg
+        results.append(result)
+        estado_label = "OK" if redeem_ok else f"ERROR: {redeem_msg}"
+        _progress(idx, total, f"[{idx}/{total}] {username}: {estado_label}")
+
+    return results
+
+
+def _render_richmondstudio_activation_panel(timeout: int) -> None:
+    st.markdown("**Activacion de codigos RS**")
+    st.caption(
+        "Sube un Excel o CSV con las columnas `Username` (email), `Token` (codigo) "
+        "y `password`. La app autentica cada cuenta con sus propias credenciales y "
+        "activa el codigo correspondiente. Al finalizar genera un Excel de resultados."
+    )
+
+    uploaded_file = st.file_uploader(
+        "Archivo de activacion (Excel o CSV)",
+        type=["xlsx", "csv"],
+        key="rs_activation_upload_file",
+        help="Columnas requeridas: Username (email), Token (codigo a activar), password.",
+    )
+
+    rows_to_process: List[Dict[str, str]] = []
+    load_error = ""
+    if uploaded_file is not None:
+        try:
+            file_bytes = uploaded_file.getvalue()
+            file_name = str(uploaded_file.name or "activacion.xlsx").strip()
+            rows_to_process, load_error = _load_rs_activation_rows(
+                file_bytes, file_name
+            )
+        except Exception as exc:
+            load_error = str(exc)
+
+        if load_error:
+            st.error(f"Error al leer el archivo: {load_error}")
+        else:
+            actionable = [
+                r
+                for r in rows_to_process
+                if r.get("username") and r.get("password") and r.get("token")
+            ]
+            skipped = len(rows_to_process) - len(actionable)
+            st.caption(
+                "Filas cargadas: {total} | Listas (username+password+codigo): {ok}"
+                " | Omisiones previstas: {skip}".format(
+                    total=len(rows_to_process),
+                    ok=len(actionable),
+                    skip=skipped,
+                )
+            )
+            if rows_to_process:
+                preview = [
+                    {
+                        "Email": r.get("username", ""),
+                        "Codigo": r.get("token", ""),
+                        "Tiene password": "Si" if r.get("password") else "No",
+                    }
+                    for r in rows_to_process[:100]
+                ]
+                _show_dataframe(preview, use_container_width=True)
+                if len(rows_to_process) > 100:
+                    st.caption(
+                        f"... mostrando 100 de {len(rows_to_process)} filas."
+                    )
+
+    run_activation = st.button(
+        "Activar codigos",
+        type="primary",
+        key="rs_activation_run_btn",
+        use_container_width=True,
+        disabled=(
+            uploaded_file is None or bool(load_error) or not rows_to_process
+        ),
+    )
+
+    if run_activation:
+        if not rows_to_process:
+            st.error("No hay filas validas para procesar.")
+        else:
+            progress_bar = st.progress(0)
+            status_box = st.empty()
+            total_rows = len(rows_to_process)
+
+            def _on_progress(current: int, total: int, message: str) -> None:
+                progress_bar.progress(
+                    min(1.0, max(0.0, current / max(total, 1))),
+                    text=message,
+                )
+                status_box.caption(message)
+
+            with st.spinner(f"Procesando {total_rows} cuenta(s)..."):
+                result_rows = _process_rs_activation_rows(
+                    rows=rows_to_process,
+                    timeout=int(timeout),
+                    on_progress=_on_progress,
+                )
+
+            progress_bar.progress(1.0, text="Proceso terminado.")
+            status_box.caption(
+                f"Proceso terminado: {total_rows} cuenta(s) procesada(s)."
+            )
+
+            ok_count = sum(
+                1 for r in result_rows if r.get("Redeem Estado") == "OK"
+            )
+            error_login = sum(
+                1 for r in result_rows if r.get("Login Estado") == "ERROR"
+            )
+            error_redeem = sum(
+                1
+                for r in result_rows
+                if r.get("Redeem Estado") == "ERROR"
+            )
+            skip_count = sum(
+                1 for r in result_rows if r.get("Redeem Estado") == "OMITIDO"
+            )
+
+            if ok_count:
+                st.success(f"Codigos activados correctamente: {ok_count}")
+            if error_redeem:
+                st.warning(f"Errores en activacion de codigo: {error_redeem}")
+            if error_login:
+                st.warning(f"Errores de login: {error_login}")
+            if skip_count:
+                st.info(f"Filas omitidas: {skip_count}")
+
+            st.session_state["rs_activation_results"] = result_rows
+
+    result_rows_cached = [
+        r
+        for r in (st.session_state.get("rs_activation_results") or [])
+        if isinstance(r, dict)
+    ]
+    if result_rows_cached:
+        with st.container(border=True):
+            st.markdown("**Resultados de activacion**")
+            ok_c = sum(1 for r in result_rows_cached if r.get("Redeem Estado") == "OK")
+            err_c = sum(1 for r in result_rows_cached if r.get("Redeem Estado") == "ERROR")
+            metric_cols = st.columns(3)
+            metric_cols[0].metric("Total", len(result_rows_cached))
+            metric_cols[1].metric("OK", ok_c)
+            metric_cols[2].metric("ERROR", err_c)
+            _show_dataframe(result_rows_cached, use_container_width=True)
+            st.download_button(
+                "Descargar resultados",
+                data=_export_simple_excel(
+                    result_rows_cached,
+                    sheet_name="activacion_rs",
+                ),
+                file_name=f"activacion_rs_{date.today().isoformat()}.xlsx",
+                mime=(
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                ),
+                key="rs_activation_download_btn",
+                use_container_width=True,
+            )
+
+
 def render_richmond_studio_view() -> None:
     timeout = 30
     st.session_state["rs_timeout"] = int(timeout)
@@ -9950,6 +10371,7 @@ def render_richmond_studio_view() -> None:
         if str(st.session_state.get("rs_users_nav") or "").strip() not in {
             "crear",
             "sincronizar",
+            "activacion",
         }:
             st.session_state["rs_users_nav"] = "crear"
 
@@ -9968,6 +10390,11 @@ def render_richmond_studio_view() -> None:
                         "Sincronizar",
                         "Sincroniza clases y refresh Pegasus -> RS",
                     ),
+                    (
+                        "activacion",
+                        "Activacion users",
+                        "Activa codigos RS desde un Excel con credenciales por cuenta",
+                    ),
                 ],
                 state_key="rs_users_nav",
             )
@@ -9980,6 +10407,10 @@ def render_richmond_studio_view() -> None:
             if rs_users_view == "sincronizar":
                 _render_richmondstudio_class_sync_section(
                     rs_token=rs_token,
+                    timeout=int(timeout),
+                )
+            if rs_users_view == "activacion":
+                _render_richmondstudio_activation_panel(
                     timeout=int(timeout),
                 )
     with tab_rs_docentes:

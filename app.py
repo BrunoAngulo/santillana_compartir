@@ -5274,13 +5274,13 @@ def _render_clases_inclusiva_alumnos_assignment_section(
 ) -> None:
     st.markdown("**Asignar alumnos en Santillana Inclusiva**")
     st.caption(
-        "Busca clases cuyo nombre comienza con `Santillana Inclusiva`, compara "
-        "contra los alumnos activos del mismo grado y seccion, y agrega solo los "
-        "alumnos faltantes."
+        "Busca clases cuyo nombre comienza con `Santillana Inclusiva` en todos los "
+        "colegios, compara contra los alumnos activos del mismo grado y seccion, y "
+        "agrega solo los alumnos faltantes."
     )
 
     current_scope = (
-        str(colegio_id_raw or "").strip(),
+        "_todos_",
         int(empresa_id),
         int(ciclo_id),
     )
@@ -5291,7 +5291,7 @@ def _render_clases_inclusiva_alumnos_assignment_section(
 
     action_cols = st.columns([2, 1], gap="small")
     run_load = action_cols[0].button(
-        "Buscar pendientes",
+        "Buscar pendientes (todos los colegios)",
         type="primary",
         key="clases_inclusiva_alumnos_load",
         use_container_width=True,
@@ -5310,66 +5310,128 @@ def _render_clases_inclusiva_alumnos_assignment_section(
         if not token:
             st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
             st.stop()
-        try:
-            colegio_id_int = _parse_colegio_id(colegio_id_raw)
-        except ValueError as exc:
-            st.error(str(exc))
+
+        colegio_rows_all = [
+            row
+            for row in (st.session_state.get("shared_colegios_rows") or [])
+            if isinstance(row, dict) and _safe_int(row.get("colegio_id")) is not None
+        ]
+        colegio_catalog_error = str(
+            st.session_state.get("shared_colegios_error") or ""
+        ).strip()
+        if colegio_catalog_error:
+            st.error(
+                f"No se pudo cargar la lista de colegios: {colegio_catalog_error}"
+            )
+            st.stop()
+        if not colegio_rows_all:
+            st.error("No se encontraron colegios para este token.")
             st.stop()
 
-        colegio_label = _colegio_label_from_global_state(int(colegio_id_int))
+        total_colegios = len(colegio_rows_all)
         progress = st.progress(0)
         status_box = st.empty()
 
-        def _load_progress(current: int, total: int, message: str) -> None:
-            progress.progress(
-                min(1.0, max(0.0, current / max(total, 1))),
-                text=message,
-            )
-            status_box.caption(message)
+        all_plan_rows: List[Dict[str, object]] = []
+        all_all_rows: List[Dict[str, object]] = []
+        all_errors: List[str] = []
+        aggregate_summary: Dict[str, object] = {
+            "clases_inclusivas": 0,
+            "clases_con_pendientes": 0,
+            "clases_completas": 0,
+            "alumnos_objetivo": 0,
+            "alumnos_actuales": 0,
+            "alumnos_faltantes": 0,
+            "grupos_consultados": 0,
+            "errores": 0,
+            "colegios_consultados": 0,
+            "colegios_con_pendientes": 0,
+        }
 
-        try:
-            with st.spinner("Buscando alumnos faltantes..."):
-                plan = _build_santillana_inclusiva_students_assignment_plan(
-                    token=token,
-                    colegio_id=int(colegio_id_int),
-                    colegio_label=colegio_label,
-                    empresa_id=int(empresa_id),
-                    ciclo_id=int(ciclo_id),
-                    timeout=int(timeout),
-                    on_progress=_load_progress,
+        with st.spinner("Buscando alumnos faltantes en todos los colegios..."):
+            for idx, colegio_row in enumerate(colegio_rows_all, start=1):
+                colegio_id_iter = _safe_int(colegio_row.get("colegio_id"))
+                if colegio_id_iter is None:
+                    continue
+                colegio_label_iter = str(
+                    colegio_row.get("colegio")
+                    or colegio_row.get("label")
+                    or f"Colegio {int(colegio_id_iter)}"
+                ).strip()
+                progress.progress(
+                    min(1.0, max(0.0, (idx - 1) / max(total_colegios, 1))),
+                    text=f"[{idx}/{total_colegios}] {colegio_label_iter}",
                 )
-        except Exception as exc:  # pragma: no cover - UI
-            progress.empty()
-            status_box.empty()
-            st.error(f"No se pudo buscar pendientes: {exc}")
-            st.stop()
+                status_box.caption(
+                    f"[{idx}/{total_colegios}] {colegio_label_iter}"
+                )
+                try:
+                    plan = _build_santillana_inclusiva_students_assignment_plan(
+                        token=token,
+                        colegio_id=int(colegio_id_iter),
+                        colegio_label=colegio_label_iter,
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                    )
+                except Exception as exc:  # pragma: no cover - UI
+                    all_errors.append(
+                        f"{colegio_label_iter} ({colegio_id_iter}): {exc}"
+                    )
+                    continue
+
+                plan_summary = dict(plan.get("summary") or {})
+                all_plan_rows.extend(plan.get("rows") or [])
+                all_all_rows.extend(plan.get("all_rows") or [])
+                all_errors.extend(plan.get("errors") or [])
+                for key in (
+                    "clases_inclusivas",
+                    "clases_con_pendientes",
+                    "clases_completas",
+                    "alumnos_objetivo",
+                    "alumnos_actuales",
+                    "alumnos_faltantes",
+                    "grupos_consultados",
+                    "errores",
+                ):
+                    aggregate_summary[key] = int(
+                        aggregate_summary[key]
+                    ) + int(plan_summary.get(key) or 0)
+                aggregate_summary["colegios_consultados"] = (
+                    int(aggregate_summary["colegios_consultados"]) + 1
+                )
+                if plan_summary.get("clases_con_pendientes", 0):
+                    aggregate_summary["colegios_con_pendientes"] = (
+                        int(aggregate_summary["colegios_con_pendientes"]) + 1
+                    )
 
         progress.progress(1.0, text="Busqueda terminada.")
-        status_box.caption("Busqueda terminada.")
-        st.session_state["clases_inclusiva_alumnos_rows"] = list(
-            plan.get("rows") or []
+        status_box.caption(
+            "Busqueda terminada: {colegios} colegio(s) consultado(s), "
+            "{alumnos} alumno(s) faltante(s).".format(
+                colegios=aggregate_summary["colegios_consultados"],
+                alumnos=aggregate_summary["alumnos_faltantes"],
+            )
         )
-        st.session_state["clases_inclusiva_alumnos_all_rows"] = list(
-            plan.get("all_rows") or []
-        )
-        st.session_state["clases_inclusiva_alumnos_summary"] = dict(
-            plan.get("summary") or {}
-        )
-        st.session_state["clases_inclusiva_alumnos_errors"] = list(
-            plan.get("errors") or []
-        )
+        st.session_state["clases_inclusiva_alumnos_rows"] = all_plan_rows
+        st.session_state["clases_inclusiva_alumnos_all_rows"] = all_all_rows
+        st.session_state["clases_inclusiva_alumnos_summary"] = aggregate_summary
+        st.session_state["clases_inclusiva_alumnos_errors"] = all_errors
         st.session_state["clases_inclusiva_alumnos_results"] = []
         st.session_state["clases_inclusiva_alumnos_scope"] = current_scope
-        summary = dict(plan.get("summary") or {})
-        if summary.get("alumnos_faltantes", 0):
+        if aggregate_summary.get("alumnos_faltantes", 0):
             st.warning(
-                "Pendientes encontrados: {alumnos} alumno(s) en {clases} clase(s).".format(
-                    alumnos=summary.get("alumnos_faltantes", 0),
-                    clases=summary.get("clases_con_pendientes", 0),
+                "Pendientes encontrados: {alumnos} alumno(s) en {clases} clase(s) "
+                "de {colegios} colegio(s).".format(
+                    alumnos=aggregate_summary.get("alumnos_faltantes", 0),
+                    clases=aggregate_summary.get("clases_con_pendientes", 0),
+                    colegios=aggregate_summary.get("colegios_con_pendientes", 0),
                 )
             )
         else:
-            st.success("No hay alumnos pendientes para Santillana Inclusiva.")
+            st.success(
+                "No hay alumnos pendientes para Santillana Inclusiva en ningun colegio."
+            )
 
     rows_cached = [
         row
@@ -5392,7 +5454,7 @@ def _render_clases_inclusiva_alumnos_assignment_section(
 
     if summary_cached:
         with st.container(border=True):
-            metric_cols = st.columns(5)
+            metric_cols = st.columns(6)
             metric_cols[0].metric(
                 "Alumnos faltantes",
                 int(summary_cached.get("alumnos_faltantes") or 0),
@@ -5409,20 +5471,17 @@ def _render_clases_inclusiva_alumnos_assignment_section(
                 "Grupos consultados",
                 int(summary_cached.get("grupos_consultados") or 0),
             )
-            metric_cols[4].metric("Errores", len(errors_cached))
-            st.caption(
-                "Colegio: {colegio} ({colegio_id})".format(
-                    colegio=str(summary_cached.get("colegio") or "").strip()
-                    or "Colegio",
-                    colegio_id=summary_cached.get("colegio_id") or "-",
-                )
+            metric_cols[4].metric(
+                "Colegios",
+                int(summary_cached.get("colegios_consultados") or 0),
             )
+            metric_cols[5].metric("Errores", len(errors_cached))
 
     if rows_cached:
         preview_rows = _santillana_inclusiva_assignment_visible_rows(rows_cached)
         with st.container(border=True):
             top_cols = st.columns([2, 1], gap="small")
-            top_cols[0].markdown("**Clases con alumnos faltantes**")
+            top_cols[0].markdown("**Clases con alumnos faltantes (todos los colegios)**")
             top_cols[1].download_button(
                 "Descargar pendientes",
                 data=_export_simple_excel(
@@ -5442,15 +5501,15 @@ def _render_clases_inclusiva_alumnos_assignment_section(
             )
 
             def _run_apply(selected_rows: Sequence[Dict[str, object]]) -> None:
-                progress = st.progress(0)
-                status_box = st.empty()
+                apply_progress_bar = st.progress(0)
+                apply_status_box = st.empty()
 
                 def _apply_progress(current: int, total: int, message: str) -> None:
-                    progress.progress(
+                    apply_progress_bar.progress(
                         min(1.0, max(0.0, current / max(total, 1))),
                         text=message,
                     )
-                    status_box.caption(message)
+                    apply_status_box.caption(message)
 
                 with st.spinner("Asignando alumnos faltantes..."):
                     apply_summary, result_rows = (
@@ -5463,8 +5522,8 @@ def _render_clases_inclusiva_alumnos_assignment_section(
                             on_progress=_apply_progress,
                         )
                     )
-                progress.progress(1.0, text="Asignacion terminada.")
-                status_box.caption("Asignacion terminada.")
+                apply_progress_bar.progress(1.0, text="Asignacion terminada.")
+                apply_status_box.caption("Asignacion terminada.")
                 st.session_state["clases_inclusiva_alumnos_last_apply_summary"] = (
                     apply_summary
                 )
@@ -5472,7 +5531,7 @@ def _render_clases_inclusiva_alumnos_assignment_section(
                 _update_santillana_inclusiva_assignment_cached_rows(result_rows)
 
             run_apply_all = st.button(
-                "Asignar todos los faltantes",
+                "Asignar todos los faltantes (todos los colegios)",
                 type="primary",
                 key="clases_inclusiva_alumnos_apply_all",
                 use_container_width=True,
@@ -5483,87 +5542,151 @@ def _render_clases_inclusiva_alumnos_assignment_section(
                 st.rerun()
 
             search_text = st.text_input(
-                "Buscar clase",
+                "Buscar colegio o clase",
                 key="clases_inclusiva_alumnos_search",
-                placeholder="Clase, grado, seccion...",
+                placeholder="Colegio, clase, grado, seccion...",
             )
             search_norm = _normalize_compare_text(search_text)
-            visible_rows = []
-            for row in rows_cached:
-                haystack = _normalize_compare_text(
-                    " ".join(
-                        str(row.get(key) or "")
-                        for key in ("clase", "grado", "seccion", "nivel")
-                    )
-                )
-                if not search_norm or search_norm in haystack:
-                    visible_rows.append(row)
 
-            if not visible_rows:
-                st.info("No hay clases pendientes con ese filtro.")
-            for row in visible_rows:
-                clase_id = _safe_int(row.get("clase_id"))
-                missing_students = [
-                    item
-                    for item in (row.get("missing_students") or [])
-                    if isinstance(item, dict)
+            # Group rows by colegio preserving encounter order
+            colegios_order: List[int] = []
+            colegios_map: Dict[int, Dict[str, object]] = {}
+            for row in rows_cached:
+                cid = _safe_int(row.get("colegio_id"))
+                cid_key = int(cid) if cid is not None else -1
+                if cid_key not in colegios_map:
+                    colegios_order.append(cid_key)
+                    colegios_map[cid_key] = {
+                        "colegio": str(
+                            row.get("colegio") or f"Colegio {cid_key}"
+                        ).strip(),
+                        "rows": [],
+                    }
+                colegios_map[cid_key]["rows"].append(row)
+
+            any_visible = False
+            for cid_key in colegios_order:
+                colegio_info = colegios_map[cid_key]
+                colegio_name = str(colegio_info["colegio"])
+                colegio_rows_filtered = [
+                    row
+                    for row in colegio_info["rows"]
+                    if not search_norm
+                    or search_norm
+                    in _normalize_compare_text(
+                        " ".join(
+                            str(row.get(k) or "")
+                            for k in ("colegio", "clase", "grado", "seccion", "nivel")
+                        )
+                    )
                 ]
+                if not colegio_rows_filtered:
+                    continue
+                any_visible = True
+
                 with st.container(border=True):
-                    header_cols = st.columns([3, 1, 1], gap="small")
-                    header_cols[0].markdown(
-                        "**{clase}**".format(
-                            clase=str(row.get("clase") or "Clase").strip()
+                    colegio_header_cols = st.columns([3, 1], gap="small")
+                    colegio_header_cols[0].markdown(f"**{colegio_name}**")
+                    colegio_header_cols[0].caption(
+                        "{clases} clase(s) | {alumnos} alumno(s) faltante(s)".format(
+                            clases=len(colegio_rows_filtered),
+                            alumnos=sum(
+                                int(r.get("missing_count") or 0)
+                                for r in colegio_rows_filtered
+                            ),
                         )
                     )
-                    header_cols[0].caption(
-                        "{grado} | Seccion {seccion} | Clase ID {clase_id}".format(
-                            grado=str(row.get("grado") or "-"),
-                            seccion=str(row.get("seccion") or "-"),
-                            clase_id=clase_id or "-",
-                        )
-                    )
-                    header_cols[1].metric(
-                        "Faltan",
-                        int(row.get("missing_count") or len(missing_students)),
-                    )
-                    run_single = header_cols[2].button(
-                        "Asignar clase",
-                        key=f"clases_inclusiva_alumnos_apply_{clase_id}",
+                    run_colegio = colegio_header_cols[1].button(
+                        "Asignar colegio",
+                        key=f"clases_inclusiva_alumnos_apply_colegio_{cid_key}",
                         use_container_width=True,
-                        disabled=not confirm_apply or not missing_students,
+                        disabled=not confirm_apply,
                     )
-                    if run_single:
-                        _run_apply([row])
+                    if run_colegio:
+                        _run_apply(colegio_rows_filtered)
                         st.rerun()
-                    with st.expander(
-                        f"Alumnos faltantes ({len(missing_students)})",
-                        expanded=False,
-                    ):
-                        _show_dataframe(
-                            [
-                                {
-                                    "Alumno ID": student.get("alumno_id", ""),
-                                    "Alumno": (
-                                        student.get("nombre_completo")
-                                        or " ".join(
-                                            part
-                                            for part in (
-                                                str(student.get("apellido_paterno") or "").strip(),
-                                                str(student.get("apellido_materno") or "").strip(),
-                                                str(student.get("nombre") or "").strip(),
-                                            )
-                                            if part
-                                        ).strip()
-                                    ),
-                                    "DNI": student.get("id_oficial", ""),
-                                    "Login": student.get("login", ""),
-                                }
-                                for student in missing_students
-                            ],
-                            use_container_width=True,
-                        )
+
+                    for row in colegio_rows_filtered:
+                        clase_id = _safe_int(row.get("clase_id"))
+                        missing_students = [
+                            item
+                            for item in (row.get("missing_students") or [])
+                            if isinstance(item, dict)
+                        ]
+                        with st.container(border=True):
+                            header_cols = st.columns([3, 1, 1], gap="small")
+                            header_cols[0].markdown(
+                                "**{clase}**".format(
+                                    clase=str(row.get("clase") or "Clase").strip()
+                                )
+                            )
+                            header_cols[0].caption(
+                                "{grado} | Seccion {seccion} | Clase ID {clase_id}".format(
+                                    grado=str(row.get("grado") or "-"),
+                                    seccion=str(row.get("seccion") or "-"),
+                                    clase_id=clase_id or "-",
+                                )
+                            )
+                            header_cols[1].metric(
+                                "Faltan",
+                                int(row.get("missing_count") or len(missing_students)),
+                            )
+                            run_single = header_cols[2].button(
+                                "Asignar clase",
+                                key=f"clases_inclusiva_alumnos_apply_{clase_id}",
+                                use_container_width=True,
+                                disabled=not confirm_apply or not missing_students,
+                            )
+                            if run_single:
+                                _run_apply([row])
+                                st.rerun()
+                            with st.expander(
+                                f"Alumnos faltantes ({len(missing_students)})",
+                                expanded=False,
+                            ):
+                                _show_dataframe(
+                                    [
+                                        {
+                                            "Alumno ID": student.get("alumno_id", ""),
+                                            "Alumno": (
+                                                student.get("nombre_completo")
+                                                or " ".join(
+                                                    part
+                                                    for part in (
+                                                        str(
+                                                            student.get(
+                                                                "apellido_paterno"
+                                                            )
+                                                            or ""
+                                                        ).strip(),
+                                                        str(
+                                                            student.get(
+                                                                "apellido_materno"
+                                                            )
+                                                            or ""
+                                                        ).strip(),
+                                                        str(
+                                                            student.get("nombre") or ""
+                                                        ).strip(),
+                                                    )
+                                                    if part
+                                                ).strip()
+                                            ),
+                                            "DNI": student.get("id_oficial", ""),
+                                            "Login": student.get("login", ""),
+                                        }
+                                        for student in missing_students
+                                    ],
+                                    use_container_width=True,
+                                )
+
+            if not any_visible:
+                st.info("No hay clases pendientes con ese filtro.")
+
     elif summary_cached:
-        st.info("No hay clases Santillana Inclusiva con alumnos faltantes.")
+        st.info(
+            "No hay clases Santillana Inclusiva con alumnos faltantes en ningun colegio."
+        )
 
     if errors_cached:
         with st.expander(

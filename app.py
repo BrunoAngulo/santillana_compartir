@@ -5410,6 +5410,9 @@ def _render_clases_inclusiva_alumnos_assignment_section(
 
         progress_bar = st.progress(0)
         status_box = st.empty()
+        # Capturar offset ANTES del loop: current_processed crece dentro del loop
+        # y causaria numeros incorrectos si se lee len() en cada iteracion.
+        _progress_offset = len(current_processed)
 
         with st.spinner(f"Procesando {len(colegio_rows_to_process)} colegio(s)..."):
             for idx, colegio_row in enumerate(colegio_rows_to_process, start=1):
@@ -5423,13 +5426,13 @@ def _render_clases_inclusiva_alumnos_assignment_section(
                     or f"Colegio {colegio_id_iter}"
                 ).strip()
 
-                done_so_far = len(current_processed) + idx - 1
+                display_pos = _progress_offset + idx
                 progress_bar.progress(
-                    min(1.0, max(0.0, done_so_far / max(total_colegios, 1))),
-                    text=f"[{done_so_far + 1}/{total_colegios}] {colegio_label_iter}",
+                    min(1.0, max(0.0, (display_pos - 1) / max(total_colegios, 1))),
+                    text=f"[{display_pos}/{total_colegios}] {colegio_label_iter}",
                 )
                 status_box.caption(
-                    f"[{done_so_far + 1}/{total_colegios}] {colegio_label_iter}"
+                    f"[{display_pos}/{total_colegios}] {colegio_label_iter}"
                 )
 
                 try:

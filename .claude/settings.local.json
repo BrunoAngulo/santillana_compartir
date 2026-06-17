@@ -7,7 +7,9 @@
       "Bash(python _tmp_generate_doc.py)",
       "Bash(rm _tmp_generate_doc.py)",
       "Bash(python -c ' *)",
-      "Bash(PYTHONIOENCODING=utf-8 python -c ' *)"
+      "Bash(PYTHONIOENCODING=utf-8 python -c ' *)",
+      "Bash(python -c \"import ast, sys; src=open\\('app.py','r',encoding='utf-8'\\).read\\(\\); ast.parse\\(src\\); print\\('OK - sin errores de sintaxis'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('app.py','r',encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")"
     ]
   }
 }

@@ -5299,19 +5299,19 @@ def _render_clases_inclusiva_alumnos_assignment_section(
     total_colegios = len(colegio_rows_all)
 
     # ── Calcular rangos de los 3 lotes ─────────────────────────────────────────
-    def _three_batch_ranges(n: int) -> List[Tuple[int, int]]:
+    def _eight_batch_ranges(n: int) -> List[Tuple[int, int]]:
         if n == 0:
-            return [(0, 0), (0, 0), (0, 0)]
-        base, rem = divmod(n, 3)
+            return [(0, 0)] * 8
+        base, rem = divmod(n, 8)
         ranges: List[Tuple[int, int]] = []
         start = 0
-        for i in range(3):
+        for i in range(8):
             size = base + (1 if i < rem else 0)
             ranges.append((start, start + size))
             start += size
         return ranges
 
-    batch_ranges = _three_batch_ranges(total_colegios)
+    batch_ranges = _eight_batch_ranges(total_colegios)
 
     # ── Estado por colegio ──────────────────────────────────────────────────────
     per_colegio: Dict[int, Dict[str, object]] = dict(
@@ -5392,8 +5392,8 @@ def _render_clases_inclusiva_alumnos_assignment_section(
             active_batch = None
 
     # ── Botones de 3 lotes + Limpiar ───────────────────────────────────────────
-    btn_cols = st.columns(4, gap="small")
-    run_clear = btn_cols[3].button(
+    btn_cols = st.columns(9, gap="small")
+    run_clear = btn_cols[8].button(
         "Limpiar",
         key="clases_inclusiva_alumnos_clear",
         use_container_width=True,

@@ -4508,6 +4508,556 @@ def _load_santillana_inclusiva_report_details(
     return report_errors
 
 
+def _clear_santillana_inclusiva_students_assignment_state() -> None:
+    for state_key in list(st.session_state.keys()):
+        if str(state_key).startswith("clases_inclusiva_alumnos_"):
+            st.session_state.pop(state_key, None)
+
+
+def _santillana_inclusiva_assignment_class_row(
+    item: Dict[str, object],
+    colegio_label: object,
+    colegio_id: int,
+) -> Optional[Dict[str, object]]:
+    if not _is_santillana_inclusiva_named_class(item):
+        return None
+    if bool(item.get("baja", False)):
+        return None
+
+    meta = _extract_clase_base_meta(item) or {}
+    clase_id = _safe_int(meta.get("clase_id"))
+    nivel_id = _safe_int(meta.get("nivel_id"))
+    grado_id = _safe_int(meta.get("grado_id"))
+    if clase_id is None or nivel_id is None or grado_id is None:
+        return None
+
+    grado_nombre = _pegasus_grado_label(
+        grado_id,
+        nivel_id=nivel_id,
+        fallback=meta.get("grado_nombre"),
+    )
+    colegio_nombre = _colegio_label_from_clase(item, fallback=colegio_label)
+    return {
+        "colegio_id": int(colegio_id),
+        "colegio": colegio_nombre or str(colegio_label or "").strip(),
+        "clase_id": int(clase_id),
+        "clase": _santillana_inclusiva_course_name(item)
+        or f"Clase {int(clase_id)}",
+        "nivel_id": int(nivel_id),
+        "nivel": str(meta.get("nivel_nombre") or "").strip(),
+        "grado_id": int(grado_id),
+        "grado": grado_nombre,
+        "grupo_id": _safe_int(meta.get("grupo_id_actual")),
+        "seccion": str(meta.get("grupo_clave_actual") or "").strip(),
+        "activo": bool(item.get("activo", True)),
+    }
+
+
+def _resolve_santillana_inclusiva_assignment_context(
+    class_row: Dict[str, object],
+    contexts: Sequence[Dict[str, object]],
+) -> Tuple[Optional[Dict[str, object]], str]:
+    nivel_id = _safe_int(class_row.get("nivel_id"))
+    grado_id = _safe_int(class_row.get("grado_id"))
+    if nivel_id is None or grado_id is None:
+        return None, "Clase sin nivel/grado."
+
+    grupo_id = _safe_int(class_row.get("grupo_id"))
+    if grupo_id is not None:
+        for context in contexts:
+            if (
+                _safe_int(context.get("nivel_id")) == int(nivel_id)
+                and _safe_int(context.get("grado_id")) == int(grado_id)
+                and _safe_int(context.get("grupo_id")) == int(grupo_id)
+            ):
+                return dict(context), ""
+        return {
+            "nivel_id": int(nivel_id),
+            "grado_id": int(grado_id),
+            "grupo_id": int(grupo_id),
+            "nivel": str(class_row.get("nivel") or "").strip(),
+            "grado": str(class_row.get("grado") or "").strip(),
+            "seccion": str(class_row.get("seccion") or "").strip(),
+            "seccion_norm": _normalize_seccion_key(class_row.get("seccion")),
+        }, ""
+
+    seccion_key = _normalize_seccion_key(class_row.get("seccion"))
+    if not seccion_key:
+        return None, "Clase sin grupoId ni seccion."
+
+    matches = [
+        dict(context)
+        for context in contexts
+        if _safe_int(context.get("nivel_id")) == int(nivel_id)
+        and _safe_int(context.get("grado_id")) == int(grado_id)
+        and _normalize_seccion_key(
+            context.get("seccion_norm") or context.get("seccion")
+        )
+        == seccion_key
+    ]
+    if len(matches) == 1:
+        return matches[0], ""
+    if not matches:
+        return None, f"No se encontro grupo para seccion {seccion_key}."
+    return None, f"Seccion {seccion_key} ambigua en el censo."
+
+
+def _sort_santillana_inclusiva_students(
+    rows: Sequence[Dict[str, object]],
+) -> List[Dict[str, object]]:
+    return sorted(
+        [row for row in rows if isinstance(row, dict)],
+        key=lambda row: (
+            str(row.get("apellido_paterno") or "").upper(),
+            str(row.get("apellido_materno") or "").upper(),
+            str(row.get("nombre") or row.get("nombre_completo") or "").upper(),
+            int(_safe_int(row.get("alumno_id")) or 0),
+        ),
+    )
+
+
+def _student_preview_names(
+    rows: Sequence[Dict[str, object]],
+    limit: int = 5,
+) -> str:
+    values: List[str] = []
+    for row in rows[: max(0, int(limit))]:
+        label = str(row.get("nombre_completo") or "").strip()
+        if not label:
+            label = " ".join(
+                part
+                for part in (
+                    str(row.get("apellido_paterno") or "").strip(),
+                    str(row.get("apellido_materno") or "").strip(),
+                    str(row.get("nombre") or "").strip(),
+                )
+                if part
+            ).strip()
+        if label:
+            values.append(label)
+    pending = len(rows) - len(values)
+    if pending > 0:
+        values.append(f"... y {pending} mas")
+    return "; ".join(values)
+
+
+def _santillana_inclusiva_assignment_visible_rows(
+    rows: Sequence[Dict[str, object]],
+) -> List[Dict[str, object]]:
+    visible_rows: List[Dict[str, object]] = []
+    for row in rows:
+        missing_students = [
+            item
+            for item in (row.get("missing_students") or [])
+            if isinstance(item, dict)
+        ]
+        visible_rows.append(
+            {
+                "Colegio": row.get("colegio", ""),
+                "Colegio ID": row.get("colegio_id", ""),
+                "Clase ID": row.get("clase_id", ""),
+                "Clase": row.get("clase", ""),
+                "Nivel": row.get("nivel", ""),
+                "Grado": row.get("grado", ""),
+                "Seccion": row.get("seccion", ""),
+                "Alumnos del grado/seccion": row.get("target_count", 0),
+                "Ya asignados": row.get("assigned_count", 0),
+                "Faltan asignar": row.get("missing_count", 0),
+                "Primeros alumnos faltantes": _student_preview_names(
+                    missing_students
+                ),
+            }
+        )
+    return visible_rows
+
+
+def _build_santillana_inclusiva_students_assignment_plan(
+    token: str,
+    colegio_id: int,
+    colegio_label: str,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+    on_progress: Optional[Callable[[int, int, str], None]] = None,
+) -> Dict[str, object]:
+    def _progress(current: int, total: int, message: str) -> None:
+        if callable(on_progress):
+            try:
+                on_progress(int(current), int(total), str(message or ""))
+            except Exception:
+                pass
+
+    errors: List[str] = []
+    plan_rows: List[Dict[str, object]] = []
+    all_rows: List[Dict[str, object]] = []
+    summary = {
+        "colegio_id": int(colegio_id),
+        "colegio": str(colegio_label or "").strip(),
+        "clases_inclusivas": 0,
+        "clases_con_pendientes": 0,
+        "clases_completas": 0,
+        "alumnos_objetivo": 0,
+        "alumnos_actuales": 0,
+        "alumnos_faltantes": 0,
+        "grupos_consultados": 0,
+        "errores": 0,
+    }
+
+    _progress(0, 1, "Listando clases del colegio...")
+    raw_clases = _fetch_clases_gestion_escolar(
+        token=token,
+        colegio_id=int(colegio_id),
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        timeout=int(timeout),
+        ordered=True,
+    )
+    class_rows = [
+        row
+        for row in (
+            _santillana_inclusiva_assignment_class_row(
+                item,
+                colegio_label=colegio_label,
+                colegio_id=int(colegio_id),
+            )
+            for item in raw_clases
+            if isinstance(item, dict)
+        )
+        if isinstance(row, dict)
+    ]
+    seen_class_ids: Set[int] = set()
+    unique_class_rows: List[Dict[str, object]] = []
+    for row in class_rows:
+        clase_id = _safe_int(row.get("clase_id"))
+        if clase_id is None or int(clase_id) in seen_class_ids:
+            continue
+        seen_class_ids.add(int(clase_id))
+        unique_class_rows.append(row)
+    unique_class_rows.sort(
+        key=lambda row: (
+            str(row.get("colegio") or "").upper(),
+            _participantes_grado_sort_rank(row.get("grado")),
+            _grupo_sort_key(
+                str(row.get("seccion") or ""),
+                str(row.get("seccion") or ""),
+            ),
+            str(row.get("clase") or "").upper(),
+            int(row.get("clase_id") or 0),
+        )
+    )
+    summary["clases_inclusivas"] = len(unique_class_rows)
+    if not unique_class_rows:
+        return {"rows": [], "all_rows": [], "summary": summary, "errors": errors}
+
+    _progress(0, len(unique_class_rows), "Listando secciones del colegio...")
+    niveles_data = _fetch_niveles_grados_grupos_censo(
+        token=token,
+        colegio_id=int(colegio_id),
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        timeout=int(timeout),
+    )
+    contexts = _build_contexts_for_nivel_grado(niveles_data)
+    active_students_by_context: Dict[
+        Tuple[int, int, int],
+        Dict[int, Dict[str, object]],
+    ] = {}
+
+    for idx, class_row in enumerate(unique_class_rows, start=1):
+        clase_id = int(class_row.get("clase_id") or 0)
+        clase_label = str(class_row.get("clase") or f"Clase {clase_id}")
+        _progress(
+            idx,
+            len(unique_class_rows),
+            f"Revisando {idx}/{len(unique_class_rows)}: {clase_label}",
+        )
+        context, context_error = _resolve_santillana_inclusiva_assignment_context(
+            class_row,
+            contexts,
+        )
+        if context is None:
+            errors.append(f"{clase_label}: {context_error}")
+            continue
+
+        nivel_id = _safe_int(context.get("nivel_id"))
+        grado_id = _safe_int(context.get("grado_id"))
+        grupo_id = _safe_int(context.get("grupo_id"))
+        if nivel_id is None or grado_id is None or grupo_id is None:
+            errors.append(f"{clase_label}: contexto incompleto.")
+            continue
+
+        context_key = (int(nivel_id), int(grado_id), int(grupo_id))
+        if context_key not in active_students_by_context:
+            try:
+                alumnos_ctx = _fetch_alumnos_censo(
+                    token=token,
+                    colegio_id=int(colegio_id),
+                    nivel_id=int(nivel_id),
+                    grado_id=int(grado_id),
+                    grupo_id=int(grupo_id),
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                )
+            except Exception as exc:
+                errors.append(f"{clase_label}: alumnos del grupo: {exc}")
+                continue
+            active_students: Dict[int, Dict[str, object]] = {}
+            for item in alumnos_ctx:
+                if not isinstance(item, dict):
+                    continue
+                if not _censo_alumno_matches_context(item=item, context=context):
+                    continue
+                flat = _flatten_censo_alumno_for_auto_plan(
+                    item=item,
+                    fallback=context,
+                )
+                if not _to_bool(flat.get("activo")):
+                    continue
+                alumno_id = _safe_int(flat.get("alumno_id"))
+                if alumno_id is None:
+                    continue
+                active_students[int(alumno_id)] = flat
+            active_students_by_context[context_key] = active_students
+            summary["grupos_consultados"] += 1
+
+        try:
+            clase_data = _fetch_alumnos_clase_gestion_escolar(
+                token=token,
+                clase_id=int(clase_id),
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                timeout=int(timeout),
+            )
+        except Exception as exc:
+            errors.append(f"{clase_label}: alumnos de la clase: {exc}")
+            continue
+
+        target_students = active_students_by_context.get(context_key) or {}
+        current_ids = _extract_alumno_ids_from_clase_data(clase_data)
+        missing_ids = sorted(set(target_students) - set(current_ids))
+        missing_students = _sort_santillana_inclusiva_students(
+            [
+                target_students[int(alumno_id)]
+                for alumno_id in missing_ids
+                if int(alumno_id) in target_students
+            ]
+        )
+
+        resolved_seccion = str(
+            context.get("seccion_norm") or context.get("seccion") or ""
+        ).strip()
+        plan_row = {
+            **class_row,
+            "grupo_id": int(grupo_id),
+            "seccion": resolved_seccion
+            or str(class_row.get("seccion") or "").strip(),
+            "target_count": len(target_students),
+            "assigned_count": len(current_ids & set(target_students)),
+            "current_count": len(current_ids),
+            "missing_count": len(missing_students),
+            "missing_students": missing_students,
+        }
+        all_rows.append(plan_row)
+        summary["alumnos_objetivo"] += len(target_students)
+        summary["alumnos_actuales"] += len(current_ids & set(target_students))
+        summary["alumnos_faltantes"] += len(missing_students)
+        if missing_students:
+            plan_rows.append(plan_row)
+
+    summary["clases_con_pendientes"] = len(plan_rows)
+    summary["clases_completas"] = max(0, len(all_rows) - len(plan_rows))
+    summary["errores"] = len(errors)
+    return {
+        "rows": plan_rows,
+        "all_rows": all_rows,
+        "summary": summary,
+        "errors": errors,
+    }
+
+
+def _apply_santillana_inclusiva_students_assignment(
+    token: str,
+    rows: Sequence[Dict[str, object]],
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+    on_progress: Optional[Callable[[int, int, str], None]] = None,
+) -> Tuple[Dict[str, int], List[Dict[str, object]]]:
+    def _progress(current: int, total: int, message: str) -> None:
+        if callable(on_progress):
+            try:
+                on_progress(int(current), int(total), str(message or ""))
+            except Exception:
+                pass
+
+    selected_rows = [row for row in rows if isinstance(row, dict)]
+    total_students = sum(
+        len([item for item in (row.get("missing_students") or []) if isinstance(item, dict)])
+        for row in selected_rows
+    )
+    summary = {
+        "clases_total": len(selected_rows),
+        "alumnos_pendientes": int(total_students),
+        "asignados_ok": 0,
+        "asignados_error": 0,
+        "clases_ok": 0,
+        "clases_error": 0,
+        "clases_sin_cambios": 0,
+    }
+    result_rows: List[Dict[str, object]] = []
+    processed_students = 0
+    for class_index, row in enumerate(selected_rows, start=1):
+        clase_id = _safe_int(row.get("clase_id"))
+        missing_students = [
+            item
+            for item in (row.get("missing_students") or [])
+            if isinstance(item, dict) and _safe_int(item.get("alumno_id")) is not None
+        ]
+        if clase_id is None:
+            summary["clases_error"] += 1
+            result_rows.append(
+                {
+                    "Clase ID": "",
+                    "Clase": row.get("clase", ""),
+                    "Faltantes": len(missing_students),
+                    "Asignados": 0,
+                    "Errores": len(missing_students),
+                    "Resultado": "Error",
+                    "Detalle": "Clase sin ID.",
+                    "_failed_students": missing_students,
+                }
+            )
+            continue
+        if not missing_students:
+            summary["clases_sin_cambios"] += 1
+            result_rows.append(
+                {
+                    "Clase ID": int(clase_id),
+                    "Clase": row.get("clase", ""),
+                    "Faltantes": 0,
+                    "Asignados": 0,
+                    "Errores": 0,
+                    "Resultado": "Sin cambios",
+                    "Detalle": "No habia alumnos pendientes.",
+                    "_failed_students": [],
+                }
+            )
+            continue
+
+        assigned_ok = 0
+        assign_errors: List[str] = []
+        failed_students: List[Dict[str, object]] = []
+        for student in missing_students:
+            alumno_id = _safe_int(student.get("alumno_id"))
+            if alumno_id is None:
+                continue
+            processed_students += 1
+            _progress(
+                processed_students,
+                max(total_students, 1),
+                "Clase {class_index}/{classes}: asignando alumno {current}/{total}".format(
+                    class_index=class_index,
+                    classes=max(len(selected_rows), 1),
+                    current=processed_students,
+                    total=max(total_students, 1),
+                ),
+            )
+            ok_assign, msg_assign = _asignar_alumno_a_clase_web(
+                token=token,
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                clase_id=int(clase_id),
+                alumno_id=int(alumno_id),
+                timeout=int(timeout),
+            )
+            if ok_assign:
+                assigned_ok += 1
+                summary["asignados_ok"] += 1
+            else:
+                summary["asignados_error"] += 1
+                failed_students.append(student)
+                assign_errors.append(f"{int(alumno_id)}: {msg_assign}")
+
+        if assign_errors:
+            summary["clases_error"] += 1
+            result_status = "Parcial" if assigned_ok else "Error"
+            detail = " | ".join(assign_errors[:5])
+            if len(assign_errors) > 5:
+                detail += f" | ... y {len(assign_errors) - 5} errores mas"
+        else:
+            summary["clases_ok"] += 1
+            result_status = "OK"
+            detail = "Asignacion aplicada."
+
+        result_rows.append(
+            {
+                "Clase ID": int(clase_id),
+                "Clase": row.get("clase", ""),
+                "Grado": row.get("grado", ""),
+                "Seccion": row.get("seccion", ""),
+                "Faltantes": len(missing_students),
+                "Asignados": int(assigned_ok),
+                "Errores": len(assign_errors),
+                "Resultado": result_status,
+                "Detalle": detail,
+                "_failed_students": failed_students,
+            }
+        )
+
+    return summary, result_rows
+
+
+def _update_santillana_inclusiva_assignment_cached_rows(
+    result_rows: Sequence[Dict[str, object]],
+) -> None:
+    cached_rows = [
+        row
+        for row in (
+            st.session_state.get("clases_inclusiva_alumnos_rows") or []
+        )
+        if isinstance(row, dict)
+    ]
+    failed_by_class: Dict[int, List[Dict[str, object]]] = {}
+    applied_class_ids: Set[int] = set()
+    for result in result_rows:
+        if not isinstance(result, dict):
+            continue
+        clase_id = _safe_int(result.get("Clase ID"))
+        if clase_id is None:
+            continue
+        applied_class_ids.add(int(clase_id))
+        failed_by_class[int(clase_id)] = [
+            item
+            for item in (result.get("_failed_students") or [])
+            if isinstance(item, dict)
+        ]
+
+    updated_rows: List[Dict[str, object]] = []
+    for row in cached_rows:
+        clase_id = _safe_int(row.get("clase_id"))
+        if clase_id is None or int(clase_id) not in applied_class_ids:
+            updated_rows.append(row)
+            continue
+        failed_students = failed_by_class.get(int(clase_id), [])
+        if not failed_students:
+            continue
+        new_row = dict(row)
+        new_row["missing_students"] = failed_students
+        new_row["missing_count"] = len(failed_students)
+        updated_rows.append(new_row)
+
+    summary = dict(st.session_state.get("clases_inclusiva_alumnos_summary") or {})
+    summary["clases_con_pendientes"] = len(updated_rows)
+    summary["alumnos_faltantes"] = sum(
+        int(row.get("missing_count") or 0)
+        for row in updated_rows
+        if isinstance(row, dict)
+    )
+    st.session_state["clases_inclusiva_alumnos_rows"] = updated_rows
+    st.session_state["clases_inclusiva_alumnos_summary"] = summary
+
+
 def _render_clases_inclusiva_sin_docente_report_section(
     colegio_id_raw: str,
     token: str,
@@ -4713,6 +5263,337 @@ def _render_clases_inclusiva_sin_docente_report_section(
                     pending = len(report_errors_cached) - 120
                     if pending > 0:
                         st.caption(f"... y {pending} observaciones mas.")
+
+
+def _render_clases_inclusiva_alumnos_assignment_section(
+    colegio_id_raw: str,
+    token: str,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+) -> None:
+    st.markdown("**Asignar alumnos en Santillana Inclusiva**")
+    st.caption(
+        "Busca clases cuyo nombre comienza con `Santillana Inclusiva`, compara "
+        "contra los alumnos activos del mismo grado y seccion, y agrega solo los "
+        "alumnos faltantes."
+    )
+
+    current_scope = (
+        str(colegio_id_raw or "").strip(),
+        int(empresa_id),
+        int(ciclo_id),
+    )
+    cached_scope = st.session_state.get("clases_inclusiva_alumnos_scope")
+    if cached_scope != current_scope:
+        _clear_santillana_inclusiva_students_assignment_state()
+        st.session_state["clases_inclusiva_alumnos_scope"] = current_scope
+
+    action_cols = st.columns([2, 1], gap="small")
+    run_load = action_cols[0].button(
+        "Buscar pendientes",
+        type="primary",
+        key="clases_inclusiva_alumnos_load",
+        use_container_width=True,
+    )
+    run_clear = action_cols[1].button(
+        "Limpiar",
+        key="clases_inclusiva_alumnos_clear",
+        use_container_width=True,
+    )
+    if run_clear:
+        _clear_santillana_inclusiva_students_assignment_state()
+        st.session_state["clases_inclusiva_alumnos_scope"] = current_scope
+        st.rerun()
+
+    if run_load:
+        if not token:
+            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+            st.stop()
+        try:
+            colegio_id_int = _parse_colegio_id(colegio_id_raw)
+        except ValueError as exc:
+            st.error(str(exc))
+            st.stop()
+
+        colegio_label = _colegio_label_from_global_state(int(colegio_id_int))
+        progress = st.progress(0)
+        status_box = st.empty()
+
+        def _load_progress(current: int, total: int, message: str) -> None:
+            progress.progress(
+                min(1.0, max(0.0, current / max(total, 1))),
+                text=message,
+            )
+            status_box.caption(message)
+
+        try:
+            with st.spinner("Buscando alumnos faltantes..."):
+                plan = _build_santillana_inclusiva_students_assignment_plan(
+                    token=token,
+                    colegio_id=int(colegio_id_int),
+                    colegio_label=colegio_label,
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                    on_progress=_load_progress,
+                )
+        except Exception as exc:  # pragma: no cover - UI
+            progress.empty()
+            status_box.empty()
+            st.error(f"No se pudo buscar pendientes: {exc}")
+            st.stop()
+
+        progress.progress(1.0, text="Busqueda terminada.")
+        status_box.caption("Busqueda terminada.")
+        st.session_state["clases_inclusiva_alumnos_rows"] = list(
+            plan.get("rows") or []
+        )
+        st.session_state["clases_inclusiva_alumnos_all_rows"] = list(
+            plan.get("all_rows") or []
+        )
+        st.session_state["clases_inclusiva_alumnos_summary"] = dict(
+            plan.get("summary") or {}
+        )
+        st.session_state["clases_inclusiva_alumnos_errors"] = list(
+            plan.get("errors") or []
+        )
+        st.session_state["clases_inclusiva_alumnos_results"] = []
+        st.session_state["clases_inclusiva_alumnos_scope"] = current_scope
+        summary = dict(plan.get("summary") or {})
+        if summary.get("alumnos_faltantes", 0):
+            st.warning(
+                "Pendientes encontrados: {alumnos} alumno(s) en {clases} clase(s).".format(
+                    alumnos=summary.get("alumnos_faltantes", 0),
+                    clases=summary.get("clases_con_pendientes", 0),
+                )
+            )
+        else:
+            st.success("No hay alumnos pendientes para Santillana Inclusiva.")
+
+    rows_cached = [
+        row
+        for row in (st.session_state.get("clases_inclusiva_alumnos_rows") or [])
+        if isinstance(row, dict)
+    ]
+    summary_cached = dict(
+        st.session_state.get("clases_inclusiva_alumnos_summary") or {}
+    )
+    errors_cached = [
+        str(item).strip()
+        for item in (st.session_state.get("clases_inclusiva_alumnos_errors") or [])
+        if str(item).strip()
+    ]
+    results_cached = [
+        row
+        for row in (st.session_state.get("clases_inclusiva_alumnos_results") or [])
+        if isinstance(row, dict)
+    ]
+
+    if summary_cached:
+        with st.container(border=True):
+            metric_cols = st.columns(5)
+            metric_cols[0].metric(
+                "Alumnos faltantes",
+                int(summary_cached.get("alumnos_faltantes") or 0),
+            )
+            metric_cols[1].metric(
+                "Clases pendientes",
+                int(summary_cached.get("clases_con_pendientes") or 0),
+            )
+            metric_cols[2].metric(
+                "Clases SI",
+                int(summary_cached.get("clases_inclusivas") or 0),
+            )
+            metric_cols[3].metric(
+                "Grupos consultados",
+                int(summary_cached.get("grupos_consultados") or 0),
+            )
+            metric_cols[4].metric("Errores", len(errors_cached))
+            st.caption(
+                "Colegio: {colegio} ({colegio_id})".format(
+                    colegio=str(summary_cached.get("colegio") or "").strip()
+                    or "Colegio",
+                    colegio_id=summary_cached.get("colegio_id") or "-",
+                )
+            )
+
+    if rows_cached:
+        preview_rows = _santillana_inclusiva_assignment_visible_rows(rows_cached)
+        with st.container(border=True):
+            top_cols = st.columns([2, 1], gap="small")
+            top_cols[0].markdown("**Clases con alumnos faltantes**")
+            top_cols[1].download_button(
+                "Descargar pendientes",
+                data=_export_simple_excel(
+                    preview_rows,
+                    sheet_name="pendientes_si",
+                ),
+                file_name="pendientes_santillana_inclusiva.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="clases_inclusiva_alumnos_pending_download",
+                use_container_width=True,
+            )
+            _show_dataframe(preview_rows, use_container_width=True)
+
+            confirm_apply = st.checkbox(
+                "Confirmo agregar los alumnos faltantes a Santillana Inclusiva.",
+                key="clases_inclusiva_alumnos_confirm",
+            )
+
+            def _run_apply(selected_rows: Sequence[Dict[str, object]]) -> None:
+                progress = st.progress(0)
+                status_box = st.empty()
+
+                def _apply_progress(current: int, total: int, message: str) -> None:
+                    progress.progress(
+                        min(1.0, max(0.0, current / max(total, 1))),
+                        text=message,
+                    )
+                    status_box.caption(message)
+
+                with st.spinner("Asignando alumnos faltantes..."):
+                    apply_summary, result_rows = (
+                        _apply_santillana_inclusiva_students_assignment(
+                            token=token,
+                            rows=selected_rows,
+                            empresa_id=int(empresa_id),
+                            ciclo_id=int(ciclo_id),
+                            timeout=int(timeout),
+                            on_progress=_apply_progress,
+                        )
+                    )
+                progress.progress(1.0, text="Asignacion terminada.")
+                status_box.caption("Asignacion terminada.")
+                st.session_state["clases_inclusiva_alumnos_last_apply_summary"] = (
+                    apply_summary
+                )
+                st.session_state["clases_inclusiva_alumnos_results"] = result_rows
+                _update_santillana_inclusiva_assignment_cached_rows(result_rows)
+
+            run_apply_all = st.button(
+                "Asignar todos los faltantes",
+                type="primary",
+                key="clases_inclusiva_alumnos_apply_all",
+                use_container_width=True,
+                disabled=not confirm_apply,
+            )
+            if run_apply_all:
+                _run_apply(rows_cached)
+                st.rerun()
+
+            search_text = st.text_input(
+                "Buscar clase",
+                key="clases_inclusiva_alumnos_search",
+                placeholder="Clase, grado, seccion...",
+            )
+            search_norm = _normalize_compare_text(search_text)
+            visible_rows = []
+            for row in rows_cached:
+                haystack = _normalize_compare_text(
+                    " ".join(
+                        str(row.get(key) or "")
+                        for key in ("clase", "grado", "seccion", "nivel")
+                    )
+                )
+                if not search_norm or search_norm in haystack:
+                    visible_rows.append(row)
+
+            if not visible_rows:
+                st.info("No hay clases pendientes con ese filtro.")
+            for row in visible_rows:
+                clase_id = _safe_int(row.get("clase_id"))
+                missing_students = [
+                    item
+                    for item in (row.get("missing_students") or [])
+                    if isinstance(item, dict)
+                ]
+                with st.container(border=True):
+                    header_cols = st.columns([3, 1, 1], gap="small")
+                    header_cols[0].markdown(
+                        "**{clase}**".format(
+                            clase=str(row.get("clase") or "Clase").strip()
+                        )
+                    )
+                    header_cols[0].caption(
+                        "{grado} | Seccion {seccion} | Clase ID {clase_id}".format(
+                            grado=str(row.get("grado") or "-"),
+                            seccion=str(row.get("seccion") or "-"),
+                            clase_id=clase_id or "-",
+                        )
+                    )
+                    header_cols[1].metric(
+                        "Faltan",
+                        int(row.get("missing_count") or len(missing_students)),
+                    )
+                    run_single = header_cols[2].button(
+                        "Asignar clase",
+                        key=f"clases_inclusiva_alumnos_apply_{clase_id}",
+                        use_container_width=True,
+                        disabled=not confirm_apply or not missing_students,
+                    )
+                    if run_single:
+                        _run_apply([row])
+                        st.rerun()
+                    with st.expander(
+                        f"Alumnos faltantes ({len(missing_students)})",
+                        expanded=False,
+                    ):
+                        _show_dataframe(
+                            [
+                                {
+                                    "Alumno ID": student.get("alumno_id", ""),
+                                    "Alumno": (
+                                        student.get("nombre_completo")
+                                        or " ".join(
+                                            part
+                                            for part in (
+                                                str(student.get("apellido_paterno") or "").strip(),
+                                                str(student.get("apellido_materno") or "").strip(),
+                                                str(student.get("nombre") or "").strip(),
+                                            )
+                                            if part
+                                        ).strip()
+                                    ),
+                                    "DNI": student.get("id_oficial", ""),
+                                    "Login": student.get("login", ""),
+                                }
+                                for student in missing_students
+                            ],
+                            use_container_width=True,
+                        )
+    elif summary_cached:
+        st.info("No hay clases Santillana Inclusiva con alumnos faltantes.")
+
+    if errors_cached:
+        with st.expander(
+            f"Observaciones ({len(errors_cached)})",
+            expanded=False,
+        ):
+            st.write("\n".join(f"- {item}" for item in errors_cached[:120]))
+            pending = len(errors_cached) - 120
+            if pending > 0:
+                st.caption(f"... y {pending} observaciones mas.")
+
+    if results_cached:
+        visible_results = [
+            {key: value for key, value in row.items() if not str(key).startswith("_")}
+            for row in results_cached
+        ]
+        with st.container(border=True):
+            st.markdown("**Ultimo resultado de asignacion**")
+            _show_dataframe(visible_results, use_container_width=True)
+            st.download_button(
+                "Descargar resultado",
+                data=_export_simple_excel(
+                    visible_results,
+                    sheet_name="resultado_si",
+                ),
+                file_name="resultado_asignacion_santillana_inclusiva.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="clases_inclusiva_alumnos_result_download",
+                use_container_width=True,
+            )
 
 
 def _clase_person_label(row: Dict[str, object], id_key: str) -> str:
@@ -17010,6 +17891,11 @@ with tab_crud_clases:
                         "Inclusiva sin docente",
                         "Reporte Excel de clases Santillana Inclusiva sin docentes",
                     ),
+                    (
+                        "inclusiva_alumnos",
+                        "Asignar alumnos en Santillana Inclusiva",
+                        "Agrega alumnos faltantes por grado y seccion",
+                    ),
                     ("otros", "Asignacion de clases a usuarios", "Asignacion de clases a usuarios"),
                 ],
                 state_key="clases_crud_nav",
@@ -17099,6 +17985,14 @@ with tab_crud_clases:
                 )
             if clases_crud_view == "inclusiva_sin_docente":
                 _render_clases_inclusiva_sin_docente_report_section(
+                    colegio_id_raw=colegio_id_raw,
+                    token=token,
+                    empresa_id=int(empresa_id),
+                    ciclo_id=int(ciclo_id),
+                    timeout=int(timeout),
+                )
+            if clases_crud_view == "inclusiva_alumnos":
+                _render_clases_inclusiva_alumnos_assignment_section(
                     colegio_id_raw=colegio_id_raw,
                     token=token,
                     empresa_id=int(empresa_id),

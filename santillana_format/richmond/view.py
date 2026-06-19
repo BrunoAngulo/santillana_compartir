@@ -8572,6 +8572,137 @@ def _process_rs_activation_rows(
     return results
 
 
+def _render_richmondstudio_change_account_password_panel(
+    rs_token: str, timeout: int
+) -> None:
+    with st.container(border=True):
+        st.markdown("**Cambiar password de una cuenta RS**")
+        st.caption(
+            "Ingresa el email (Username) y la nueva password. "
+            "La app construye el CSV de una fila y lo envia al endpoint bulk de RS."
+        )
+
+        notice = st.session_state.pop("rs_change_pw_notice", None)
+        if isinstance(notice, dict):
+            notice_type = str(notice.get("type") or "").strip().lower()
+            notice_msg = str(notice.get("message") or "").strip()
+            if notice_msg:
+                if notice_type == "success":
+                    st.success(notice_msg)
+                elif notice_type == "error":
+                    st.error(notice_msg)
+                else:
+                    st.info(notice_msg)
+
+        with st.form("rs_change_account_password_form", clear_on_submit=False):
+            email_input = st.text_input(
+                "Email / Username de la cuenta RS",
+                key="rs_change_pw_email",
+                placeholder="usuario@colegio.edu.pe",
+            )
+            password_input = st.text_input(
+                "Nueva password",
+                key="rs_change_pw_password",
+                type="password",
+            )
+            submitted = st.form_submit_button(
+                "Cambiar password",
+                type="primary",
+                use_container_width=True,
+            )
+
+        if submitted:
+            email_val = str(email_input or "").strip()
+            password_val = str(password_input or "")
+            if not rs_token:
+                st.session_state["rs_change_pw_notice"] = {
+                    "type": "error",
+                    "message": "Ingresa el bearer token de Richmond Studio.",
+                }
+                st.rerun()
+            elif not email_val:
+                st.session_state["rs_change_pw_notice"] = {
+                    "type": "error",
+                    "message": "Ingresa el email / username de la cuenta RS.",
+                }
+                st.rerun()
+            elif not password_val:
+                st.session_state["rs_change_pw_notice"] = {
+                    "type": "error",
+                    "message": "Ingresa la nueva password.",
+                }
+                st.rerun()
+            else:
+                csv_bytes = _build_richmondstudio_bulk_user_csv_bytes(
+                    [{"Username": email_val, "New password": password_val, "Keep in class": "yes"}]
+                )
+                try:
+                    with st.spinner("Actualizando password RS..."):
+                        response = requests.post(
+                            RICHMONDSTUDIO_BULK_USER_EDITION_URL,
+                            headers=_richmondstudio_bulk_user_headers(rs_token),
+                            files={
+                                "csv_file": (
+                                    "cambio_password_rs.csv",
+                                    csv_bytes,
+                                    "text/csv",
+                                )
+                            },
+                            timeout=max(60, int(timeout)),
+                        )
+                    parsed_body: object = None
+                    if response.content:
+                        try:
+                            parsed_body = response.json()
+                        except ValueError:
+                            parsed_body = str(response.text or "").strip()
+                    if not response.ok:
+                        raise RuntimeError(
+                            _richmondstudio_response_error(
+                                response, response.status_code, parsed_body
+                            )
+                        )
+                    message = ""
+                    if isinstance(parsed_body, str) and parsed_body.strip():
+                        message = parsed_body.strip()
+                    elif isinstance(parsed_body, dict):
+                        message = str(
+                            parsed_body.get("message")
+                            or parsed_body.get("detail")
+                            or parsed_body.get("status")
+                            or ""
+                        ).strip()
+                    st.session_state["rs_change_pw_notice"] = {
+                        "type": "success",
+                        "message": "Password actualizada para {email}. Respuesta: {resp}".format(
+                            email=email_val,
+                            resp=message or str(response.text or "").strip() or "ok",
+                        ),
+                    }
+                    st.session_state["rs_change_pw_last_csv"] = csv_bytes
+                    st.session_state["rs_change_pw_last_email"] = email_val
+                except Exception as exc:
+                    st.session_state["rs_change_pw_notice"] = {
+                        "type": "error",
+                        "message": "No se pudo actualizar la password RS: {err}".format(
+                            err=str(exc).strip() or "sin detalle"
+                        ),
+                    }
+                st.rerun()
+
+        last_csv = bytes(st.session_state.get("rs_change_pw_last_csv") or b"")
+        last_email = str(st.session_state.get("rs_change_pw_last_email") or "").strip()
+        if last_csv:
+            st.download_button(
+                "Descargar CSV enviado ({email})".format(email=last_email or "-"),
+                data=last_csv,
+                file_name="cambio_password_rs.csv",
+                mime="text/csv",
+                key="rs_change_pw_download_btn",
+                use_container_width=True,
+            )
+
+
 def _render_richmondstudio_bulk_user_edition_panel(rs_token: str, timeout: int) -> None:
     with st.container(border=True):
         st.markdown("**Edicion masiva de usuarios RS**")
@@ -9098,6 +9229,7 @@ def render_richmond_studio_view() -> None:
         if str(st.session_state.get("rs_users_nav") or "").strip() not in {
             "crear",
             "activacion",
+            "cambiar_password",
             "edicion_masiva",
         }:
             st.session_state["rs_users_nav"] = "crear"
@@ -9118,6 +9250,11 @@ def render_richmond_studio_view() -> None:
                         "Activa codigos RS desde un Excel con credenciales por cuenta",
                     ),
                     (
+                        "cambiar_password",
+                        "Cambiar password cuenta",
+                        "Cambia la password de una sola cuenta RS",
+                    ),
+                    (
                         "edicion_masiva",
                         "Edicion masiva",
                         "Actualiza password, nombre o clase de usuarios en bloque via CSV",
@@ -9133,6 +9270,11 @@ def render_richmond_studio_view() -> None:
                 )
             if rs_users_view == "activacion":
                 _render_richmondstudio_activation_panel(
+                    rs_token=rs_token,
+                    timeout=int(timeout),
+                )
+            if rs_users_view == "cambiar_password":
+                _render_richmondstudio_change_account_password_panel(
                     rs_token=rs_token,
                     timeout=int(timeout),
                 )

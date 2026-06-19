@@ -2221,7 +2221,6 @@ if menu_option != "Richmond Studio":
         tab_crud_clases,
         tab_crud_profesores,
         tab_crud_alumnos,
-        tab_radartec,
         tab_reportes,
         tab_otras_funcionalidades,
     ) = st.tabs(
@@ -2229,7 +2228,6 @@ if menu_option != "Richmond Studio":
             "CRUD Clases",
             "CRUD Profesores",
             "CRUD Alumnos",
-            "RADARTEC",
             "Reportes",
             "Otras funcionalidades",
         ]
@@ -12759,9 +12757,11 @@ def _render_alumnos_global_login_search_section(
     timeout: int,
 ) -> None:
     with st.container(border=True):
-        st.markdown("**Buscar alumno por login en colegios**")
+        st.markdown("**Buscar alumno por login, apellido o nombres en colegios**")
         st.caption(
-            "Consulta el catalogo de colegios del token global y busca coincidencias de login."
+            "Consulta el catalogo de colegios del token global y busca coincidencias por "
+            "login, apellido y/o nombres. Llena uno o varios campos; se devuelven los "
+            "alumnos que cumplan todos los datos ingresados."
         )
 
         token_for_catalog = _get_shared_token()
@@ -12793,12 +12793,23 @@ def _render_alumnos_global_login_search_section(
             colegio_rows.append(manual_row)
             row_by_id[int(current_colegio_id)] = manual_row
 
-        login_col, mode_col, scope_col = st.columns([2.1, 1.1, 1.4], gap="small")
+        login_col, apellido_col, nombres_col = st.columns(3, gap="small")
         login_value = login_col.text_input(
             "Login",
             key="alumnos_global_login_value",
             placeholder="Ejemplo: lnjmf90942147",
         )
+        apellido_value = apellido_col.text_input(
+            "Apellidos",
+            key="alumnos_global_login_apellido",
+            placeholder="Ejemplo: PEREZ GARCIA",
+        )
+        nombres_value = nombres_col.text_input(
+            "Nombres",
+            key="alumnos_global_login_nombres",
+            placeholder="Ejemplo: MARIA JOSE",
+        )
+        mode_col, scope_col = st.columns([1.1, 1.4], gap="small")
         match_mode = mode_col.selectbox(
             "Coincidencia",
             options=["exact", "contains"],
@@ -12850,7 +12861,7 @@ def _render_alumnos_global_login_search_section(
 
         run_col, clear_col = st.columns([2, 1], gap="small")
         run_search = run_col.button(
-            "Buscar login",
+            "Buscar",
             type="primary",
             key="alumnos_global_login_run_btn",
             use_container_width=True,
@@ -12905,6 +12916,13 @@ def _render_alumnos_global_login_search_section(
             st.error("Selecciona al menos un colegio.")
             st.stop()
 
+        if not any(
+            str(value or "").strip()
+            for value in (login_value, apellido_value, nombres_value)
+        ):
+            st.error("Ingresa un login, apellido o nombres para buscar.")
+            st.stop()
+
         progress_bar = st.progress(0)
         status_box = st.empty()
 
@@ -12913,10 +12931,12 @@ def _render_alumnos_global_login_search_section(
             status_box.caption(f"[{idx}/{total}] {message}")
 
         try:
-            with st.spinner("Buscando login en colegios..."):
+            with st.spinner("Buscando alumnos en colegios..."):
                 result = _search_alumno_login_global(
                     token=token,
                     login=str(login_value or "").strip(),
+                    apellido=str(apellido_value or "").strip(),
+                    nombres=str(nombres_value or "").strip(),
                     colegio_rows=colegio_rows,
                     colegio_ids=selected_ids,
                     match_mode=str(match_mode or "exact"),
@@ -12930,7 +12950,7 @@ def _render_alumnos_global_login_search_section(
             st.session_state["alumnos_global_login_error"] = str(exc)
             progress_bar.empty()
             status_box.empty()
-            st.error(f"No se pudo buscar el login: {exc}")
+            st.error(f"No se pudo completar la busqueda: {exc}")
             st.stop()
 
         progress_bar.empty()
@@ -12976,7 +12996,7 @@ def _render_alumnos_global_login_search_section(
                 )
                 _show_dataframe(matches_cached, use_container_width=True)
             else:
-                st.info("No se encontraron alumnos con ese login.")
+                st.info("No se encontraron alumnos con esos datos.")
 
             if errors_cached:
                 with st.expander(
@@ -14429,26 +14449,6 @@ def _render_pegasus_reportes_section() -> None:
             use_container_width=True,
         )
 
-    _render_santillana_inclusiva_student_removal(
-        token=token,
-        empresa_id=int(empresa_id),
-        ciclo_id=int(ciclo_id),
-        timeout=int(timeout),
-    )
-
-    with st.container(border=True):
-        st.markdown("**Reporte Compartir Evidencias (IPA)**")
-        st.caption(
-            "Recorre todos los colegios, consulta articulos/aplicaciones y exporta "
-            "solo los colegios donde el aplicativo esta activo."
-        )
-        run_aplicativo_ipa_report = st.button(
-            "Generar reporte Compartir Evidencias (IPA)",
-            type="primary",
-            key="reportes_aplicativo_ipa_run",
-            use_container_width=True,
-        )
-
     if run_report:
         if not token:
             st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
@@ -14665,153 +14665,6 @@ def _render_pegasus_reportes_section() -> None:
                     if pending > 0:
                         st.caption(f"... y {pending} errores mas.")
 
-    if run_aplicativo_ipa_report:
-        if not token:
-            st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-            st.stop()
-        colegio_rows = [
-            row
-            for row in (st.session_state.get("shared_colegios_rows") or [])
-            if isinstance(row, dict) and _safe_int(row.get("colegio_id")) is not None
-        ]
-        colegio_catalog_error = str(
-            st.session_state.get("shared_colegios_error") or ""
-        ).strip()
-        if colegio_catalog_error:
-            st.error(f"No se pudo cargar la lista de colegios: {colegio_catalog_error}")
-            st.stop()
-        if not colegio_rows:
-            st.error("No se encontraron colegios para este token.")
-            st.stop()
-
-        progress_bar = st.progress(0)
-        status_box = st.empty()
-        report_rows: List[Dict[str, object]] = []
-        report_errors: List[str] = []
-        total_colegios = len(colegio_rows)
-        with st.spinner("Buscando Compartir Evidencias (IPA) en todos los colegios..."):
-            for idx, colegio_row in enumerate(colegio_rows, start=1):
-                colegio_id = _safe_int(colegio_row.get("colegio_id"))
-                if colegio_id is None:
-                    continue
-                colegio_label = str(
-                    colegio_row.get("colegio")
-                    or colegio_row.get("label")
-                    or f"Colegio {int(colegio_id)}"
-                ).strip()
-                progress_bar.progress(
-                    min(1.0, max(0.0, (idx - 1) / max(total_colegios, 1)))
-                )
-                status_box.caption(
-                    "[{idx}/{total}] {colegio}".format(
-                        idx=idx,
-                        total=total_colegios,
-                        colegio=colegio_label,
-                    )
-                )
-                try:
-                    aplicaciones = fetch_aplicaciones_articulos(
-                        token=token,
-                        colegio_id=int(colegio_id),
-                        empresa_id=int(empresa_id),
-                        ciclo_id=int(ciclo_id),
-                        timeout=int(timeout),
-                        filtrar_activo=0,
-                    )
-                except Exception as exc:  # pragma: no cover - UI
-                    report_errors.append(
-                        "{colegio} ({colegio_id}): {error}".format(
-                            colegio=colegio_label or "Colegio",
-                            colegio_id=int(colegio_id),
-                            error=str(exc).strip() or "error sin detalle",
-                        )
-                    )
-                    continue
-                if has_active_articulo_aplicacion(
-                    aplicaciones,
-                    articulo_nombre=APLICATIVO_COMPARTIR_EVIDENCIAS_IPA,
-                ):
-                    report_rows.append(
-                        {
-                            "Nombre colegio": colegio_label,
-                            "Estado del aplicativo": "Activo",
-                        }
-                    )
-
-        progress_bar.progress(1.0)
-        status_box.caption(
-            "Reporte terminado: {colegios} colegio(s), {errores} colegio(s) con error.".format(
-                colegios=len(report_rows),
-                errores=len(report_errors),
-            )
-        )
-        report_rows.sort(key=lambda row: str(row.get("Nombre colegio") or "").upper())
-
-        st.session_state["reportes_aplicativo_ipa_rows"] = report_rows
-        st.session_state["reportes_aplicativo_ipa_errors"] = report_errors
-        st.session_state["reportes_aplicativo_ipa_error"] = ""
-        st.session_state["reportes_aplicativo_ipa_scope"] = {
-            "colegios_total": int(total_colegios),
-            "colegios_error": len(report_errors),
-            "articulo": APLICATIVO_COMPARTIR_EVIDENCIAS_IPA,
-        }
-        if report_errors:
-            st.warning(
-                "Reporte generado con observaciones. Colegios encontrados: {colegios} | "
-                "Colegios con error: {errores}.".format(
-                    colegios=len(report_rows),
-                    errores=len(report_errors),
-                )
-            )
-        else:
-            st.success(f"Reporte listo. Colegios encontrados: {len(report_rows)}.")
-
-    app_report_error = str(
-        st.session_state.get("reportes_aplicativo_ipa_error") or ""
-    ).strip()
-    if app_report_error:
-        st.error(app_report_error)
-
-    app_report_rows_cached = st.session_state.get("reportes_aplicativo_ipa_rows")
-    if isinstance(app_report_rows_cached, list):
-        scope = st.session_state.get("reportes_aplicativo_ipa_scope") or {}
-        errors_cached = list(st.session_state.get("reportes_aplicativo_ipa_errors") or [])
-        with st.container(border=True):
-            metric_cols = st.columns(4)
-            metric_cols[0].metric("Colegios", len(app_report_rows_cached))
-            metric_cols[1].metric("Aplicativo", "IPA")
-            metric_cols[2].metric(
-                "Consultados",
-                int(scope.get("colegios_total") or 0),
-            )
-            metric_cols[3].metric("Errores", len(errors_cached))
-            if app_report_rows_cached:
-                st.download_button(
-                    label="Descargar reporte IPA",
-                    data=_export_simple_excel(
-                        app_report_rows_cached,
-                        sheet_name="CompartirEvidenciasIPA",
-                    ),
-                    file_name="reporte_compartir_evidencias_ipa_colegios_activos.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="reportes_aplicativo_ipa_download",
-                    use_container_width=True,
-                )
-                _show_dataframe(app_report_rows_cached, use_container_width=True)
-            else:
-                st.info(
-                    "No se encontraron colegios con Compartir Evidencias (IPA) activo."
-                )
-
-            if errors_cached:
-                with st.expander(
-                    f"Colegios con error ({len(errors_cached)})",
-                    expanded=False,
-                ):
-                    st.write("\n".join(f"- {item}" for item in errors_cached[:120]))
-                    pending = len(errors_cached) - 120
-                    if pending > 0:
-                        st.caption(f"... y {pending} errores mas.")
 
 
 def _render_otras_funcionalidades_view() -> None:
@@ -14832,6 +14685,9 @@ def _render_otras_funcionalidades_view() -> None:
             ciclo_id=int(ciclo_id),
             timeout=int(timeout),
         )
+
+    with st.expander("RADARTEC", expanded=False):
+        _render_radartec_section()
 
     _render_alumnos_global_login_search_section(
         colegio_id_raw=colegio_id_raw,
@@ -15695,6 +15551,53 @@ def _alumno_login_matches_search(
     return candidate_key == target_key
 
 
+def _alumno_text_matches_search(
+    value: object,
+    target_key: str,
+    match_mode: str,
+) -> bool:
+    candidate_key = _normalize_plain_text(value)
+    if not candidate_key or not target_key:
+        return False
+    if str(match_mode or "").strip().lower() == "contains":
+        return target_key in candidate_key
+    return candidate_key == target_key
+
+
+def _alumno_matches_search_criteria(
+    flat: Dict[str, object],
+    login_key: str,
+    apellido_key: str,
+    nombres_key: str,
+    match_mode: str,
+) -> bool:
+    """Un alumno coincide si cumple TODOS los criterios proporcionados.
+
+    Los criterios vacios se ignoran. Debe haber al menos uno no vacio (validado
+    aguas arriba).
+    """
+    if login_key and not _alumno_login_matches_search(
+        flat.get("login"), login_key, match_mode
+    ):
+        return False
+    if apellido_key:
+        apellidos = " ".join(
+            part
+            for part in (
+                str(flat.get("apellido_paterno") or "").strip(),
+                str(flat.get("apellido_materno") or "").strip(),
+            )
+            if part
+        )
+        if not _alumno_text_matches_search(apellidos, apellido_key, match_mode):
+            return False
+    if nombres_key and not _alumno_text_matches_search(
+        flat.get("nombre"), nombres_key, match_mode
+    ):
+        return False
+    return True
+
+
 def _format_global_alumno_match(
     student: Dict[str, object],
     colegio_row: Dict[str, object],
@@ -15736,6 +15639,8 @@ def _search_alumno_login_in_colegio(
     token: str,
     colegio_row: Dict[str, object],
     login_key: str,
+    apellido_key: str,
+    nombres_key: str,
     match_mode: str,
     empresa_id: int,
     ciclo_id: int,
@@ -15792,7 +15697,9 @@ def _search_alumno_login_in_colegio(
                 flat["login"] = login_txt
             if password_txt and not str(flat.get("password") or "").strip():
                 flat["password"] = password_txt
-            if _alumno_login_matches_search(flat.get("login"), login_key, match_mode):
+            if _alumno_matches_search_criteria(
+                flat, login_key, apellido_key, nombres_key, match_mode
+            ):
                 matches.append(_format_global_alumno_match(flat, colegio_row))
         return matches, errors, scanned
     except Exception as exc:
@@ -15821,7 +15728,9 @@ def _search_alumno_login_in_colegio(
         if str(item or "").strip():
             errors.append(f"{colegio_label}: {item}")
     for flat in students:
-        if _alumno_login_matches_search(flat.get("login"), login_key, match_mode):
+        if _alumno_matches_search_criteria(
+            flat, login_key, apellido_key, nombres_key, match_mode
+        ):
             matches.append(_format_global_alumno_match(flat, colegio_row))
     return matches, errors, scanned
 
@@ -15835,12 +15744,16 @@ def _search_alumno_login_global(
     empresa_id: int,
     ciclo_id: int,
     timeout: int,
+    apellido: str = "",
+    nombres: str = "",
     use_fallback: bool = False,
     on_status: Optional[Callable[[int, int, str], None]] = None,
 ) -> Dict[str, object]:
     login_key = _normalize_login_search_key(login)
-    if not login_key:
-        raise ValueError("Ingresa un login para buscar.")
+    apellido_key = _normalize_plain_text(apellido)
+    nombres_key = _normalize_plain_text(nombres)
+    if not login_key and not apellido_key and not nombres_key:
+        raise ValueError("Ingresa un login, apellido o nombres para buscar.")
 
     wanted_ids = {int(value) for value in colegio_ids if _safe_int(value) is not None}
     rows_by_id = {
@@ -15876,6 +15789,8 @@ def _search_alumno_login_global(
             token=token,
             colegio_row=colegio_row,
             login_key=login_key,
+            apellido_key=apellido_key,
+            nombres_key=nombres_key,
             match_mode=match_mode,
             empresa_id=int(empresa_id),
             ciclo_id=int(ciclo_id),
@@ -15899,6 +15814,8 @@ def _search_alumno_login_global(
         "colegios_consultados": total,
         "alumnos_revisados": scanned_students,
         "login_buscado": str(login or "").strip(),
+        "apellido_buscado": str(apellido or "").strip(),
+        "nombres_buscado": str(nombres or "").strip(),
         "match_mode": str(match_mode or "exact"),
     }
 
@@ -17871,16 +17788,6 @@ with tab_crud_clases:
                     ("crear", "Crear", "Genera clases desde Excel"),
                     ("gestion", "Gestion", "Lista, vacia o elimina clases"),
                     ("participantes", "Participantes", "Busca una clase y administra alumnos/docentes"),
-                    (
-                        "inclusiva_sin_docente",
-                        "Inclusiva sin docente",
-                        "Reporte Excel de clases Santillana Inclusiva sin docentes",
-                    ),
-                    (
-                        "inclusiva_alumnos",
-                        "Asignar alumnos en Santillana Inclusiva",
-                        "Agrega alumnos faltantes por grado y seccion",
-                    ),
                     ("otros", "Asignacion de clases a usuarios", "Asignacion de clases a usuarios"),
                 ],
                 state_key="clases_crud_nav",
@@ -17968,22 +17875,6 @@ with tab_crud_clases:
                     ciclo_id=int(ciclo_id),
                     timeout=int(timeout),
                 )
-            if clases_crud_view == "inclusiva_sin_docente":
-                _render_clases_inclusiva_sin_docente_report_section(
-                    colegio_id_raw=colegio_id_raw,
-                    token=token,
-                    empresa_id=int(empresa_id),
-                    ciclo_id=int(ciclo_id),
-                    timeout=int(timeout),
-                )
-            if clases_crud_view == "inclusiva_alumnos":
-                _render_clases_inclusiva_alumnos_assignment_section(
-                    colegio_id_raw=colegio_id_raw,
-                    token=token,
-                    empresa_id=int(empresa_id),
-                    ciclo_id=int(ciclo_id),
-                    timeout=int(timeout),
-                )
             if clases_crud_view == "otros":
                 _render_asignacion_clases_usuarios_section()
 with tab_crud_profesores:
@@ -18046,11 +17937,6 @@ with tab_crud_profesores:
                 "Funciones de profesores",
                 [
                     ("manual", "Manual", "Asigna clases por docente"),
-                    (
-                        "inclusiva",
-                        "Santillana Inclusiva",
-                        "Asigna automaticamente por grado y seccion",
-                    ),
                     ("editar", "Editar", "Edita datos, estado, login, password y clases"),
                 ],
                 state_key="profesores_crud_nav",
@@ -18655,350 +18541,6 @@ with tab_crud_profesores:
                         st.caption(
                             "No hay profesores para crear. Si quieres forzar uno, desmarca 'Usar referencia sistema'."
                         )
-            if profesores_crud_view == "inclusiva":
-                st.subheader("Asignar Santillana Inclusiva")
-                st.caption(
-                    "Detecta los grados y secciones donde enseña cada docente de Primaria "
-                    "y sincroniza las clases Santillana Inclusiva equivalentes."
-                )
-                st.info(
-                    "Agrega la clase inclusiva cuando el docente enseña otro curso en el "
-                    "mismo grado y seccion. La retira cuando es su unico curso en ese "
-                    "grado y seccion. No modifica clases de otros niveles."
-                )
-                if PROFESORES_MANUAL_IMPORT_ERROR:
-                    st.error(
-                        "La asignacion de Santillana Inclusiva no esta disponible: "
-                        f"{PROFESORES_MANUAL_IMPORT_ERROR}"
-                    )
-
-                col_load_inclusiva, col_clear_inclusiva = st.columns(
-                    [2, 1], gap="small"
-                )
-                run_inclusiva_load = col_load_inclusiva.button(
-                    "Cargar docentes de Primaria",
-                    type="primary",
-                    key="profesores_inclusiva_load",
-                    use_container_width=True,
-                    disabled=bool(PROFESORES_MANUAL_IMPORT_ERROR),
-                )
-                clear_inclusiva = col_clear_inclusiva.button(
-                    "Limpiar",
-                    key="profesores_inclusiva_clear",
-                    use_container_width=True,
-                )
-
-                if clear_inclusiva:
-                    _clear_profesores_inclusiva_state()
-                    st.rerun()
-
-                if run_inclusiva_load:
-                    token = _get_shared_token()
-                    if not token:
-                        st.error(
-                            "Falta el token. Configura el token global o PEGASUS_TOKEN."
-                        )
-                        st.stop()
-                    try:
-                        colegio_id_int = _parse_colegio_id(colegio_id_raw)
-                    except ValueError as exc:
-                        st.error(f"Error: {exc}")
-                        st.stop()
-
-                    progress = st.progress(0)
-                    status = st.empty()
-
-                    def _inclusiva_load_progress(
-                        phase: str, current: int, total: int, message: str
-                    ) -> None:
-                        percent = int((current / total) * 100) if total else 0
-                        progress.progress(percent)
-                        status.write(f"{phase}: {message} ({current}/{total})")
-
-                    try:
-                        (
-                            inclusiva_rows,
-                            inclusiva_clases,
-                            inclusiva_load_summary,
-                            inclusiva_errors,
-                        ) = listar_profesores_clases_panel_data(
-                            token=token,
-                            colegio_id=colegio_id_int,
-                            empresa_id=DEFAULT_EMPRESA_ID,
-                            ciclo_id=int(ciclo_id),
-                            timeout=int(timeout),
-                            on_progress=_inclusiva_load_progress,
-                        )
-                    except Exception as exc:  # pragma: no cover - UI
-                        st.error(f"Error: {exc}")
-                        st.stop()
-                    finally:
-                        progress.empty()
-                        status.empty()
-
-                    st.session_state["profesores_inclusiva_rows"] = inclusiva_rows
-                    st.session_state["profesores_inclusiva_clases"] = inclusiva_clases
-                    st.session_state["profesores_inclusiva_load_summary"] = (
-                        inclusiva_load_summary
-                    )
-                    st.session_state["profesores_inclusiva_errors"] = inclusiva_errors
-                    st.session_state["profesores_inclusiva_colegio_id"] = int(
-                        colegio_id_int
-                    )
-                    st.session_state.pop("profesores_inclusiva_last_summary", None)
-                    st.session_state.pop("profesores_inclusiva_last_results", None)
-
-                inclusiva_rows_cached = (
-                    st.session_state.get("profesores_inclusiva_rows") or []
-                )
-                inclusiva_clases_cached = (
-                    st.session_state.get("profesores_inclusiva_clases") or []
-                )
-                inclusiva_errors_cached = (
-                    st.session_state.get("profesores_inclusiva_errors") or []
-                )
-                inclusiva_load_summary_cached = (
-                    st.session_state.get("profesores_inclusiva_load_summary") or {}
-                )
-                inclusiva_last_summary = (
-                    st.session_state.get("profesores_inclusiva_last_summary") or {}
-                )
-                inclusiva_last_results = (
-                    st.session_state.get("profesores_inclusiva_last_results") or []
-                )
-
-                if inclusiva_load_summary_cached:
-                    st.caption(
-                        "Carga general: {profesores_total} docentes | {clases_total} clases "
-                        "| {staff_consultas_error} consultas de staff con error.".format(
-                            **inclusiva_load_summary_cached
-                        )
-                    )
-                if inclusiva_errors_cached:
-                    with st.expander(
-                        f"Errores de carga ({len(inclusiva_errors_cached)})"
-                    ):
-                        _show_dataframe(
-                            inclusiva_errors_cached,
-                            use_container_width=True,
-                        )
-
-                if inclusiva_rows_cached or inclusiva_clases_cached:
-                    inclusiva_plan, inclusiva_summary = (
-                        build_santillana_inclusiva_profesores_plan(
-                            inclusiva_rows_cached,
-                            inclusiva_clases_cached,
-                            primaria_nivel_id=PEGASUS_PRIMARIA_NIVEL_ID,
-                        )
-                    )
-                    metric_cols = st.columns(5)
-                    metric_cols[0].metric(
-                        "Docentes de Primaria",
-                        inclusiva_summary.get("docentes_primaria", 0),
-                    )
-                    metric_cols[1].metric(
-                        "Con grado y seccion",
-                        inclusiva_summary.get("docentes_con_contexto", 0),
-                    )
-                    metric_cols[2].metric(
-                        "Docentes con cambios",
-                        inclusiva_summary.get("docentes_con_cambios", 0),
-                    )
-                    metric_cols[3].metric(
-                        "Asignaciones pendientes",
-                        inclusiva_summary.get("asignaciones_pendientes", 0),
-                    )
-                    metric_cols[4].metric(
-                        "Retiros pendientes",
-                        inclusiva_summary.get("retiros_pendientes", 0),
-                    )
-                    st.caption(
-                        "Clases Santillana Inclusiva detectadas en Primaria: "
-                        f"{inclusiva_summary.get('clases_inclusivas_primaria', 0)}."
-                    )
-
-                    if inclusiva_last_summary:
-                        st.success(
-                            "Ultima ejecucion: asignadas {asignadas} | retiradas "
-                            "{retiradas} | ya resueltas {already} | errores {errors}.".format(
-                                asignadas=inclusiva_last_summary.get("asignadas", 0),
-                                retiradas=inclusiva_last_summary.get("retiradas", 0),
-                                already=(
-                                    inclusiva_last_summary.get("ya_asignadas", 0)
-                                    + inclusiva_last_summary.get("ya_retiradas", 0)
-                                ),
-                                errors=inclusiva_last_summary.get("errores_api", 0),
-                            )
-                        )
-
-                    confirm_inclusiva = st.checkbox(
-                        "Confirmo que deseo aplicar las asignaciones y retiros mostrados en la consola.",
-                        key="profesores_inclusiva_confirm",
-                    )
-
-                    def _run_inclusiva_assignment(
-                        selected_plan_rows: Sequence[Dict[str, object]],
-                    ) -> None:
-                        token_apply = _get_shared_token()
-                        if not token_apply:
-                            st.error(
-                                "Falta el token. Configura el token global o PEGASUS_TOKEN."
-                            )
-                            return
-                        progress_apply = st.progress(0)
-                        status_apply = st.empty()
-
-                        def _inclusiva_assign_progress(
-                            current: int, total: int, message: str
-                        ) -> None:
-                            percent = int((current / total) * 100) if total else 0
-                            progress_apply.progress(percent)
-                            status_apply.write(
-                                f"Procesando {message} ({current}/{total})"
-                            )
-
-                        try:
-                            apply_summary, apply_results = (
-                                asignar_santillana_inclusiva_profesores(
-                                    token=token_apply,
-                                    plan_rows=selected_plan_rows,
-                                    empresa_id=DEFAULT_EMPRESA_ID,
-                                    ciclo_id=int(ciclo_id),
-                                    timeout=int(timeout),
-                                    on_progress=_inclusiva_assign_progress,
-                                )
-                            )
-                        except Exception as exc:  # pragma: no cover - UI
-                            st.error(f"Error: {exc}")
-                            return
-                        finally:
-                            progress_apply.empty()
-                            status_apply.empty()
-
-                        st.session_state["profesores_inclusiva_last_summary"] = (
-                            apply_summary
-                        )
-                        st.session_state["profesores_inclusiva_last_results"] = (
-                            apply_results
-                        )
-                        _update_profesores_inclusiva_cached_assignments(apply_results)
-                        st.rerun()
-
-                    bulk_col, pending_col = st.columns([2, 3], gap="small")
-                    run_inclusiva_all = bulk_col.button(
-                        "Aplicar a todos",
-                        type="primary",
-                        key="profesores_inclusiva_apply_all",
-                        use_container_width=True,
-                        disabled=(
-                            not confirm_inclusiva
-                            or inclusiva_summary.get("cambios_pendientes", 0) == 0
-                        ),
-                    )
-                    pending_col.info(
-                        "{docentes} docente(s), {asignaciones} asignacion(es) y "
-                        "{retiros} retiro(s) por aplicar.".format(
-                            docentes=inclusiva_summary.get(
-                                "docentes_con_cambios", 0
-                            ),
-                            asignaciones=inclusiva_summary.get(
-                                "asignaciones_pendientes", 0
-                            ),
-                            retiros=inclusiva_summary.get(
-                                "retiros_pendientes", 0
-                            ),
-                        )
-                    )
-                    if run_inclusiva_all:
-                        _run_inclusiva_assignment(inclusiva_plan)
-
-                    search_inclusiva = st.text_input(
-                        "Buscar docente de Primaria",
-                        key="profesores_inclusiva_search",
-                        placeholder="Nombre, login, DNI o persona ID",
-                    )
-                    search_inclusiva_norm = _normalize_plain_text(search_inclusiva)
-                    visible_inclusiva_plan = []
-                    for plan in inclusiva_plan:
-                        haystack = " ".join(
-                            [
-                                str(plan.get("nombre") or ""),
-                                str(plan.get("login") or ""),
-                                str(plan.get("dni") or ""),
-                                str(plan.get("persona_id") or ""),
-                            ]
-                        )
-                        if (
-                            not search_inclusiva_norm
-                            or search_inclusiva_norm
-                            in _normalize_plain_text(haystack)
-                        ):
-                            visible_inclusiva_plan.append(plan)
-
-                    st.markdown("**Docentes de Primaria**")
-                    if not visible_inclusiva_plan:
-                        st.caption("No hay docentes para ese filtro.")
-                    for plan in visible_inclusiva_plan:
-                        persona_id = int(plan["persona_id"])
-                        assignment_count = len(plan.get("clases_pendientes") or [])
-                        removal_count = len(plan.get("clases_a_retirar") or [])
-                        pending_count = assignment_count + removal_count
-                        contextos = ", ".join(
-                            str(value)
-                            for value in (plan.get("contextos_labels") or [])
-                        )
-                        with st.container(border=True):
-                            info_col, context_col, status_col, action_col = st.columns(
-                                [2.7, 2.2, 1.2, 1.5],
-                                gap="small",
-                                vertical_alignment="center",
-                            )
-                            info_col.markdown(
-                                f"**{str(plan.get('nombre') or 'Docente').strip()}**"
-                            )
-                            info_col.caption(
-                                "ID {persona_id}{login}".format(
-                                    persona_id=persona_id,
-                                    login=(
-                                        f" | {str(plan.get('login')).strip()}"
-                                        if str(plan.get("login") or "").strip()
-                                        else ""
-                                    ),
-                                )
-                            )
-                            context_col.markdown(contextos or "Sin clases base")
-                            context_col.caption("Grados y secciones detectados")
-                            if pending_count:
-                                status_col.warning(
-                                    f"{assignment_count} asignar | {removal_count} retirar"
-                                )
-                            elif plan.get("clases_destino"):
-                                status_col.success("Al dia")
-                            else:
-                                status_col.caption("Sin coincidencias")
-                            run_single_inclusiva = action_col.button(
-                                "Aplicar",
-                                key=f"profesores_inclusiva_apply_{persona_id}",
-                                use_container_width=True,
-                                disabled=not confirm_inclusiva or pending_count == 0,
-                            )
-                            if run_single_inclusiva:
-                                _run_inclusiva_assignment([plan])
-
-                    st.markdown("**Consola de cambios**")
-                    st.code(
-                        "\n".join(
-                            _profesores_inclusiva_console_lines(
-                                inclusiva_plan,
-                                result_rows=inclusiva_last_results,
-                            )
-                        ),
-                        language="text",
-                    )
-                elif run_inclusiva_load:
-                    st.warning(
-                        "No se encontraron docentes o clases para construir el plan."
-                    )
             if profesores_crud_view == "manual":
                 st.subheader("Asignacion manual de clases")
                 if PROFESORES_MANUAL_IMPORT_ERROR:
@@ -20620,16 +20162,13 @@ with tab_crud_alumnos:
     ):
         _clear_alumnos_edit_state()
     alumnos_nav_current = str(st.session_state.get("alumnos_crud_nav") or "").strip()
-    if alumnos_nav_current == "mover":
+    if alumnos_nav_current in {"mover", "comparar", "otros", "buscar_login"}:
         st.session_state["alumnos_crud_nav"] = "editar"
-    elif alumnos_nav_current in {"otros", "buscar_login"}:
-        st.session_state["alumnos_crud_nav"] = "comparar"
     alumnos_nav_col, alumnos_body_col = st.columns([1.15, 4.85], gap="large")
     with alumnos_nav_col:
         alumnos_crud_view = _render_crud_menu(
             "Funciones de alumnos",
             [
-                ("comparar", "Comparar", "Compara BD vs actualizada y descarga plantilla"),
                 ("editar", "Editar", "Edita datos y mueve de seccion"),
                 ("crear", "Crear", "Crea alumno nuevo"),
                 ("payments", "Actualizar users Payments", "Prepara y aplica cambios de users payments"),
@@ -21185,728 +20724,6 @@ with tab_crud_alumnos:
                     if pending_multi > 0:
                         st.caption(f"... y {pending_multi} errores mas.")
 
-        if alumnos_crud_view == "comparar":
-            current_compare_colegio_id = _safe_int(colegio_id_raw)
-            cached_template_colegio_id = _safe_int(
-                st.session_state.get("alumnos_plantilla_edicion_colegio_id")
-            )
-            if (
-                current_compare_colegio_id is not None
-                and cached_template_colegio_id is not None
-                and current_compare_colegio_id != cached_template_colegio_id
-            ):
-                for state_key in (
-                    "alumnos_plantilla_edicion_bytes",
-                    "alumnos_plantilla_edicion_name",
-                    "alumnos_plantilla_edicion_summary",
-                    "alumnos_plantilla_edicion_colegio_id",
-                ):
-                    st.session_state.pop(state_key, None)
-
-            plantilla_bytes_cached = (
-                st.session_state.get("alumnos_plantilla_edicion_bytes") or b""
-            )
-            plantilla_file_name_cached = str(
-                st.session_state.get("alumnos_plantilla_edicion_name") or ""
-            ).strip()
-            plantilla_summary_cached = (
-                st.session_state.get("alumnos_plantilla_edicion_summary") or {}
-            )
-
-            with st.container(border=True):
-                st.markdown("**2) Comparar Plantilla_BD vs Plantilla_Actualizada**")
-                st.caption("Genera altas, match e inactivados.")
-                if not (plantilla_bytes_cached and plantilla_file_name_cached):
-                    token = _get_shared_token()
-                    if token:
-                        try:
-                            colegio_id_int = _parse_colegio_id(colegio_id_raw)
-                        except ValueError as exc:
-                            st.warning(f"No se puede preparar la plantilla: {exc}")
-                        else:
-                            try:
-                                with st.spinner("Preparando plantilla para descarga..."):
-                                    output_bytes, summary = (
-                                        descargar_plantilla_edicion_masiva(
-                                            token=token,
-                                            colegio_id=colegio_id_int,
-                                            empresa_id=int(empresa_id),
-                                            ciclo_id=int(ciclo_id),
-                                            timeout=int(timeout),
-                                        )
-                                    )
-                            except Exception as exc:  # pragma: no cover - UI
-                                st.warning(f"No se pudo preparar la plantilla: {exc}")
-                            else:
-                                file_name = (
-                                    f"plantilla_edicion_alumnos_{colegio_id_int}.xlsx"
-                                )
-                                st.session_state["alumnos_plantilla_edicion_bytes"] = (
-                                    output_bytes
-                                )
-                                st.session_state["alumnos_plantilla_edicion_name"] = (
-                                    file_name
-                                )
-                                st.session_state["alumnos_plantilla_edicion_summary"] = (
-                                    dict(summary)
-                                )
-                                st.session_state[
-                                    "alumnos_plantilla_edicion_colegio_id"
-                                ] = int(colegio_id_int)
-                                plantilla_bytes_cached = output_bytes
-                                plantilla_file_name_cached = file_name
-                                plantilla_summary_cached = dict(summary)
-                    else:
-                        st.caption(
-                            "Configura el token global para habilitar la descarga de plantilla."
-                        )
-
-                compare_top_cols = st.columns([1.4, 2.6], gap="small")
-                compare_top_cols[0].download_button(
-                    label="Descargar plantilla",
-                    data=plantilla_bytes_cached,
-                    file_name=plantilla_file_name_cached or "plantilla_edicion_alumnos.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="alumnos_plantilla_edicion_download",
-                    use_container_width=True,
-                    disabled=not bool(plantilla_bytes_cached and plantilla_file_name_cached),
-                )
-                if plantilla_bytes_cached and plantilla_file_name_cached:
-                    compare_top_cols[1].caption(
-                        "Plantilla lista para descargar: {total} alumno(s).".format(
-                            total=int(
-                                plantilla_summary_cached.get("alumnos_total", 0)
-                            )
-                        )
-                    )
-
-                uploaded_compare = st.file_uploader(
-                    "Archivo .xlsx",
-                    type=["xlsx"],
-                    key="alumnos_compare_excel",
-                )
-                compare_mode_options = {
-                    "Por DNI": COMPARE_MODE_DNI,
-                    "Por apellido paterno + materno": COMPARE_MODE_APELLIDOS,
-                    "Por apellidos y luego DNI": COMPARE_MODE_AMBOS,
-                }
-                compare_mode_label = st.selectbox(
-                    "Criterio de comparacion",
-                    options=list(compare_mode_options.keys()),
-                    index=2,
-                    key="alumnos_compare_mode",
-                )
-                run_alumnos_compare = st.button(
-                    "Generar resultado",
-                    type="primary",
-                    key="alumnos_compare",
-                )
-                if run_alumnos_compare:
-                    for state_key in (
-                        "alumnos_compare_summary",
-                        "alumnos_compare_resultado_bytes",
-                        "alumnos_compare_actualizacion_bytes",
-                        "alumnos_compare_alta_bytes",
-                        "alumnos_compare_coincidencias_rows",
-                        "alumnos_compare_sin_referencia_rows",
-                        "alumnos_compare_source_name",
-                    ):
-                        st.session_state.pop(state_key, None)
-                    if not uploaded_compare:
-                        st.error("Sube un Excel .xlsx con Plantilla_BD y Plantilla_Actualizada.")
-                        st.stop()
-                    suffix = Path(uploaded_compare.name).suffix or ".xlsx"
-                    tmp_path = None
-                    try:
-                        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                            tmp.write(uploaded_compare.read())
-                            tmp_path = Path(tmp.name)
-                        compare_result = comparar_plantillas_detalle(
-                            excel_path=tmp_path,
-                            compare_mode=compare_mode_options.get(compare_mode_label, COMPARE_MODE_AMBOS),
-                        )
-                    except Exception as exc:  # pragma: no cover - UI
-                        st.error(f"Error: {exc}")
-                        st.stop()
-                    finally:
-                        if tmp_path:
-                            try:
-                                tmp_path.unlink()
-                            except OSError:
-                                pass
-
-                    st.session_state["alumnos_compare_summary"] = dict(
-                        compare_result.get("summary") or {}
-                    )
-                    st.session_state["alumnos_compare_resultado_bytes"] = (
-                        compare_result.get("resultado_bytes") or b""
-                    )
-                    st.session_state["alumnos_compare_actualizacion_bytes"] = (
-                        compare_result.get("actualizacion_bytes") or b""
-                    )
-                    st.session_state["alumnos_compare_alta_bytes"] = (
-                        compare_result.get("alta_bytes") or b""
-                    )
-                    st.session_state["alumnos_compare_coincidencias_rows"] = list(
-                        compare_result.get("coincidencias_rows") or []
-                    )
-                    st.session_state["alumnos_compare_sin_referencia_rows"] = list(
-                        compare_result.get("sin_referencia_rows") or []
-                    )
-                    st.session_state["alumnos_compare_source_name"] = str(
-                        uploaded_compare.name or "alumnos.xlsx"
-                    )
-                    summary = st.session_state["alumnos_compare_summary"]
-                    st.success(
-                        "Listo. Base: {base_total}, Actualizada: {actualizados_total}, "
-                        "Match: {match_total}, Nuevos: {nuevos_total}, "
-                        "Inactivados: {inactivados_total}.".format(**summary)
-                    )
-
-                alumnos_compare_summary_cached = (
-                    st.session_state.get("alumnos_compare_summary") or {}
-                )
-                alumnos_compare_source_name_cached = str(
-                    st.session_state.get("alumnos_compare_source_name") or "alumnos.xlsx"
-                )
-                alumnos_compare_resultado_bytes_cached = (
-                    st.session_state.get("alumnos_compare_resultado_bytes") or b""
-                )
-                alumnos_compare_actualizacion_bytes_cached = (
-                    st.session_state.get("alumnos_compare_actualizacion_bytes") or b""
-                )
-                alumnos_compare_alta_bytes_cached = (
-                    st.session_state.get("alumnos_compare_alta_bytes") or b""
-                )
-                alumnos_compare_coincidencias_cached = (
-                    st.session_state.get("alumnos_compare_coincidencias_rows") or []
-                )
-                alumnos_compare_sin_referencia_cached = (
-                    st.session_state.get("alumnos_compare_sin_referencia_rows") or []
-                )
-
-                if alumnos_compare_summary_cached:
-                    st.info(
-                        "Referencias BD: {match_total} | Sin referencia BD: {nuevos_total} | "
-                        "Inactivados BD: {inactivados_total}".format(
-                            **alumnos_compare_summary_cached
-                        )
-                    )
-
-                    st.markdown("**Alumnos con referencia BD**")
-                    if alumnos_compare_coincidencias_cached:
-                        _show_dataframe(
-                            alumnos_compare_coincidencias_cached,
-                            use_container_width=True,
-                        )
-                    else:
-                        st.caption("No se encontraron alumnos de Plantilla_Actualizada con referencia en BD.")
-
-                    st.markdown("**Alumnos sin referencia BD**")
-                    if alumnos_compare_sin_referencia_cached:
-                        _show_dataframe(
-                            alumnos_compare_sin_referencia_cached,
-                            use_container_width=True,
-                        )
-                    else:
-                        st.caption("Todos los alumnos de Plantilla_Actualizada tienen referencia en BD.")
-
-                    compare_source_stem = Path(alumnos_compare_source_name_cached).stem
-                    download_cols = st.columns(3)
-                    with download_cols[0]:
-                        st.download_button(
-                            label="Descargar actualizacion masiva",
-                            data=alumnos_compare_actualizacion_bytes_cached,
-                            file_name=f"alumnos_actualizacion_masiva_{compare_source_stem}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            disabled=not bool(alumnos_compare_actualizacion_bytes_cached),
-                            key="alumnos_compare_download_actualizacion",
-                        )
-                    with download_cols[1]:
-                        st.download_button(
-                            label="Descargar alta",
-                            data=alumnos_compare_alta_bytes_cached,
-                            file_name=f"alumnos_alta_{compare_source_stem}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            disabled=not bool(alumnos_compare_alta_bytes_cached),
-                            key="alumnos_compare_download_alta",
-                        )
-                    with download_cols[2]:
-                        st.download_button(
-                            label="Descargar resultado completo",
-                            data=alumnos_compare_resultado_bytes_cached,
-                            file_name=f"alumnos_resultados_{compare_source_stem}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            disabled=not bool(alumnos_compare_resultado_bytes_cached),
-                            key="alumnos_compare_download_completo",
-                        )
-
-        if alumnos_crud_view == "mover":
-            with st.container(border=True):
-                title_cols = st.columns([10, 1], gap="small")
-                with title_cols[1]:
-                    run_load_students = st.button(
-                        "↻",
-                        key="alumnos_manual_move_load_btn",
-                        help="Actualizar listado de alumnos",
-                        type="tertiary",
-                        use_container_width=False,
-                    )
-            loaded_students = st.session_state.get("alumnos_manual_move_students") or []
-            loaded_niveles = st.session_state.get("alumnos_manual_move_niveles") or []
-            loaded_errors = st.session_state.get("alumnos_manual_move_errors") or []
-            loaded_colegio_id = _safe_int(st.session_state.get("alumnos_manual_move_colegio_id"))
-            current_colegio_id = _safe_int(colegio_id_raw)
-            should_auto_load_students = (
-                current_colegio_id is not None
-                and (
-                    loaded_colegio_id is None
-                    or int(loaded_colegio_id) != int(current_colegio_id)
-                    or not loaded_students
-                )
-            )
-
-            if run_load_students or should_auto_load_students:
-                token = _get_shared_token()
-                if not token:
-                    st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-                else:
-                    try:
-                        colegio_id_int = _parse_colegio_id(colegio_id_raw)
-                    except ValueError as exc:
-                        st.error(f"Error: {exc}")
-                    else:
-                        try:
-                            status_box = st.empty()
-    
-                            def _on_status_load(message: str) -> None:
-                                msg = str(message or "").strip()
-                                if not msg:
-                                    return
-                                status_box.info(msg)
-    
-                            with st.spinner("Listando alumnos del colegio..."):
-                                manual_catalog = _fetch_alumnos_catalog_for_manual_move(
-                                    token=token,
-                                    colegio_id=int(colegio_id_int),
-                                    empresa_id=int(empresa_id),
-                                    ciclo_id=int(ciclo_id),
-                                    timeout=int(timeout),
-                                    on_status=_on_status_load,
-                                )
-                            status_box.empty()
-                        except Exception as exc:  # pragma: no cover - UI
-                            st.error(f"Error listando alumnos: {exc}")
-                        else:
-                            students_loaded = manual_catalog.get("students") or []
-                            niveles_loaded = manual_catalog.get("niveles") or []
-                            errors_loaded = manual_catalog.get("errors") or []
-                            st.session_state["alumnos_manual_move_students"] = students_loaded
-                            st.session_state["alumnos_manual_move_niveles"] = niveles_loaded
-                            st.session_state["alumnos_manual_move_errors"] = errors_loaded
-                            st.session_state["alumnos_manual_move_colegio_id"] = int(colegio_id_int)
-                            for state_key in list(st.session_state.keys()):
-                                if str(state_key).startswith("alumnos_manual_move_dest_"):
-                                    st.session_state.pop(state_key, None)
-                            if run_load_students:
-                                st.success(
-                                    "Listado actualizado. Alumnos: {students} | Errores de consulta: {errors}".format(
-                                        students=len(students_loaded),
-                                        errors=len(errors_loaded),
-                                    )
-                                )
-
-            loaded_students = st.session_state.get("alumnos_manual_move_students") or []
-            loaded_niveles = st.session_state.get("alumnos_manual_move_niveles") or []
-            loaded_errors = st.session_state.get("alumnos_manual_move_errors") or []
-            loaded_colegio_id = _safe_int(st.session_state.get("alumnos_manual_move_colegio_id"))
-            current_colegio_id = _safe_int(colegio_id_raw)
-            pending_reset_keys = st.session_state.pop("alumnos_manual_move_pending_reset_keys", [])
-            if isinstance(pending_reset_keys, list):
-                for state_key in pending_reset_keys:
-                    if state_key:
-                        st.session_state.pop(str(state_key), None)
-    
-            if loaded_errors:
-                st.caption(f"Advertencia: hubo {len(loaded_errors)} errores al listar algunas secciones.")
-    
-            if loaded_colegio_id is not None and current_colegio_id is not None and int(loaded_colegio_id) != int(current_colegio_id):
-                st.warning("No se pudo sincronizar el listado con el colegio actual.")
-            elif not loaded_students:
-                st.caption("No hay alumnos disponibles para mostrar.")
-            else:
-                search_text = st_keyup(
-                    "Buscar alumno (login, nombre, apellido o DNI)",
-                    value=str(st.session_state.get("alumnos_manual_move_search", "") or ""),
-                    key="alumnos_manual_move_search",
-                    placeholder="Ejemplo: lnjmf90942147, CHERO o 91092564",
-                    debounce=150,
-                ).strip()
-                filtered_students: List[Dict[str, object]] = []
-                for row in loaded_students:
-                    if _manual_move_alumno_matches_filter(row, search_text):
-                        filtered_students.append(row)
-    
-                st.caption(f"Resultados del filtro: {len(filtered_students)} alumno(s).")
-                manual_move_notice = st.session_state.pop("alumnos_manual_move_notice", None)
-                if isinstance(manual_move_notice, dict):
-                    notice_type = str(manual_move_notice.get("type") or "").strip().lower()
-                    notice_message = str(manual_move_notice.get("message") or "").strip()
-                    if notice_message:
-                        if notice_type == "success":
-                            st.success(notice_message)
-                        elif notice_type == "warning":
-                            st.warning(notice_message)
-                        else:
-                            st.info(notice_message)
-                if not filtered_students:
-                    st.info("No hay alumnos con ese filtro.")
-                else:
-                    valid_students = [
-                        row for row in filtered_students if _safe_int(row.get("alumno_id")) is not None
-                    ]
-                    destination_catalog = _build_manual_move_destination_catalog(loaded_niveles)
-                    nivel_ids = destination_catalog.get("nivel_ids") or []
-                    nivel_name_by_id = destination_catalog.get("nivel_name_by_id") or {}
-                    grado_payload_by_id = destination_catalog.get("grado_payload_by_id") or {}
-                    grado_ids_by_nivel = destination_catalog.get("grado_ids_by_nivel") or {}
-                    seccion_options = destination_catalog.get("seccion_options") or []
-                    grupo_payload_by_grado_seccion = (
-                        destination_catalog.get("grupo_payload_by_grado_seccion") or {}
-                    )
-    
-                    if not valid_students:
-                        st.warning("No hay alumnos validos para mover.")
-                    elif not nivel_ids:
-                        st.warning("No hay grados/secciones disponibles para destino.")
-                    else:
-                        valid_students = sorted(
-                            valid_students,
-                            key=lambda row: (
-                                int(_safe_int(row.get("nivel_id")) or 0),
-                                int(_safe_int(row.get("grado_id")) or 0),
-                                _grupo_sort_key(
-                                    str(row.get("seccion_norm") or ""),
-                                    str(row.get("seccion") or ""),
-                                ),
-                                str(row.get("apellido_paterno") or "").upper(),
-                                str(row.get("apellido_materno") or "").upper(),
-                                str(row.get("nombre") or "").upper(),
-                            ),
-                        )
-
-                        secciones_by_grado: Dict[int, List[str]] = {}
-                        for (grado_id_tmp, seccion), payload in grupo_payload_by_grado_seccion.items():
-                            grado_id_int = _safe_int(grado_id_tmp)
-                            if grado_id_int is None or not isinstance(payload, dict) or not payload:
-                                continue
-                            secciones_by_grado.setdefault(int(grado_id_int), []).append(str(seccion))
-                        for grado_id_int, secciones in list(secciones_by_grado.items()):
-                            secciones_by_grado[grado_id_int] = sorted(
-                                list(dict.fromkeys(secciones)),
-                                key=lambda value: _grupo_sort_key(str(value), str(value)),
-                            )
-
-                        total_valid_students = len(valid_students)
-                        visible_students = valid_students
-                        st.caption(f"Mostrando {total_valid_students} alumno(s).")
-                        st.markdown(
-                            """
-                            <style>
-                            div[data-testid="stSelectbox"] div[data-baseweb="select"] > div {
-                                min-height: 2.1rem;
-                                padding-top: 0;
-                                padding-bottom: 0;
-                            }
-                            div[data-testid="stButton"] > button {
-                                min-height: 2.1rem;
-                                padding-top: 0.2rem;
-                                padding-bottom: 0.2rem;
-                            }
-                            </style>
-                            """,
-                            unsafe_allow_html=True,
-                        )
-
-                        current_group_key: Optional[Tuple[str, str, str]] = None
-                        for row in visible_students:
-                            alumno_id = _safe_int(row.get("alumno_id"))
-                            if alumno_id is None:
-                                continue
-                            alumno_id_int = int(alumno_id)
-    
-                            nivel_key = f"alumnos_manual_move_dest_nivel_{alumno_id_int}"
-                            grado_key = f"alumnos_manual_move_dest_grado_{alumno_id_int}"
-                            grupo_key = f"alumnos_manual_move_dest_seccion_{alumno_id_int}"
-                            alumno_seccion = _normalize_seccion_key(
-                                row.get("seccion_norm") or row.get("seccion") or ""
-                            )
-                            alumno_header = _manual_move_alumno_option_label(row)
-                            group_key = (
-                                str(row.get("nivel") or "").strip(),
-                                str(row.get("grado") or "").strip(),
-                                alumno_seccion or "-",
-                            )
-                            if group_key != current_group_key:
-                                current_group_key = group_key
-                                st.caption(
-                                    "{nivel} | {grado} | Seccion {seccion}".format(
-                                        nivel=group_key[0] or "-",
-                                        grado=group_key[1] or "-",
-                                        seccion=group_key[2] or "-",
-                                    )
-                                )
-                                header_cols = st.columns([4.2, 1.4, 2.2, 1.0, 1.0], gap="small")
-                                header_cols[0].markdown("**Alumno**")
-                                header_cols[1].markdown("**Nuevo nivel**")
-                                header_cols[2].markdown("**Nuevo grado**")
-                                header_cols[3].markdown("**Seccion**")
-                                header_cols[4].markdown("**Guardar**")
-    
-                            if nivel_key not in st.session_state:
-                                st.session_state[nivel_key] = None
-                            if grado_key not in st.session_state:
-                                st.session_state[grado_key] = None
-                            if grupo_key not in st.session_state:
-                                st.session_state[grupo_key] = None
-    
-                            selected_nivel_id = _safe_int(st.session_state.get(nivel_key))
-                            if selected_nivel_id not in nivel_ids:
-                                st.session_state[nivel_key] = None
-                                selected_nivel_id = None
-    
-                            grado_options = []
-                            if selected_nivel_id is not None:
-                                grado_options = [
-                                    int(value)
-                                    for value in (grado_ids_by_nivel.get(int(selected_nivel_id)) or [])
-                                ]
-    
-                            selected_grado_id = _safe_int(st.session_state.get(grado_key))
-                            if selected_grado_id not in grado_options:
-                                st.session_state[grado_key] = None
-                                selected_grado_id = None
-    
-                            secciones_grado = (
-                                secciones_by_grado.get(int(selected_grado_id), [])
-                                if selected_grado_id is not None
-                                else []
-                            )
-    
-                            selected_seccion = _normalize_seccion_key(st.session_state.get(grupo_key) or "")
-                            if not selected_seccion or selected_seccion not in secciones_grado:
-                                st.session_state[grupo_key] = None
-                                selected_seccion = ""
-    
-                            row_cols = st.columns([4.2, 1.4, 2.2, 1.0, 1.0], gap="small")
-                            row_cols[0].caption(alumno_header)
-    
-                            with row_cols[1]:
-                                st.selectbox(
-                                    "Nuevo nivel",
-                                    options=nivel_ids,
-                                    index=None,
-                                    placeholder="Nivel",
-                                    format_func=lambda value: str(
-                                        nivel_name_by_id.get(int(value), value)
-                                    ).strip(),
-                                    key=nivel_key,
-                                    on_change=_clear_manual_move_selection,
-                                    args=(grado_key, grupo_key),
-                                    label_visibility="collapsed",
-                                )
-    
-                            selected_nivel_id = _safe_int(st.session_state.get(nivel_key))
-                            grado_options = []
-                            if selected_nivel_id is not None:
-                                grado_options = [
-                                    int(value)
-                                    for value in (grado_ids_by_nivel.get(int(selected_nivel_id)) or [])
-                                ]
-    
-                            with row_cols[2]:
-                                st.selectbox(
-                                    "Nuevo grado",
-                                    options=grado_options,
-                                    index=None,
-                                    placeholder="Grado",
-                                    format_func=lambda value: str(
-                                        (
-                                            grado_payload_by_id.get(int(value), {}) or {}
-                                        ).get("grado")
-                                        or value
-                                    ).strip(),
-                                    key=grado_key,
-                                    on_change=_clear_manual_move_selection,
-                                    args=(grupo_key,),
-                                    disabled=not grado_options,
-                                    label_visibility="collapsed",
-                                )
-    
-                            selected_grado_id = _safe_int(st.session_state.get(grado_key))
-                            secciones_grado = (
-                                secciones_by_grado.get(int(selected_grado_id), [])
-                                if selected_grado_id is not None
-                                else []
-                            )
-    
-                            with row_cols[3]:
-                                st.selectbox(
-                                    "Seccion",
-                                    options=secciones_grado,
-                                    index=None,
-                                    placeholder="Seccion",
-                                    key=grupo_key,
-                                    disabled=not secciones_grado,
-                                    label_visibility="collapsed",
-                                )
-    
-                            save_clicked = row_cols[4].button(
-                                "Guardar",
-                                key=f"alumnos_manual_move_save_btn_{alumno_id_int}",
-                                type="primary",
-                                use_container_width=True,
-                            )
-    
-                            if save_clicked:
-                                token = _get_shared_token()
-                                if not token:
-                                    st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
-                                    st.stop()
-                                try:
-                                    colegio_id_int = _parse_colegio_id(colegio_id_raw)
-                                except ValueError as exc:
-                                    st.error(f"Error: {exc}")
-                                    st.stop()
-                                if (
-                                    loaded_colegio_id is not None
-                                    and int(loaded_colegio_id) != int(colegio_id_int)
-                                ):
-                                    st.error("El colegio global cambio. Vuelve a listar alumnos.")
-                                    st.stop()
-    
-                                selected_nivel_id = _safe_int(st.session_state.get(nivel_key))
-                                selected_grado_id = _safe_int(st.session_state.get(grado_key))
-                                selected_seccion = _normalize_seccion_key(
-                                    st.session_state.get(grupo_key) or ""
-                                )
-                                if (
-                                    selected_nivel_id is None
-                                    or selected_grado_id is None
-                                    or not selected_seccion
-                                ):
-                                    st.session_state["alumnos_manual_move_notice"] = {
-                                        "type": "warning",
-                                        "message": (
-                                            f"Completa nivel, grado y seccion antes de guardar "
-                                            f"el alumno {alumno_id_int}."
-                                        ),
-                                    }
-                                    st.rerun()
-    
-                                grado_payload = grado_payload_by_id.get(int(selected_grado_id), {})
-                                grado_nivel_id = _safe_int(grado_payload.get("nivel_id"))
-                                if grado_nivel_id is None:
-                                    st.session_state["alumnos_manual_move_notice"] = {
-                                        "type": "warning",
-                                        "message": f"No se pudo resolver el grado del alumno {alumno_id_int}.",
-                                    }
-                                    st.rerun()
-                                if int(grado_nivel_id) != int(selected_nivel_id):
-                                    st.session_state["alumnos_manual_move_notice"] = {
-                                        "type": "warning",
-                                        "message": (
-                                            f"El nivel seleccionado no corresponde al grado elegido "
-                                            f"para el alumno {alumno_id_int}."
-                                        ),
-                                    }
-                                    st.rerun()
-    
-                                destino_payload = grupo_payload_by_grado_seccion.get(
-                                    (int(selected_grado_id), selected_seccion)
-                                )
-                                if not isinstance(destino_payload, dict):
-                                    st.session_state["alumnos_manual_move_notice"] = {
-                                        "type": "warning",
-                                        "message": (
-                                            f"La seccion {selected_seccion} no esta disponible para el grado "
-                                            f"seleccionado del alumno {alumno_id_int}."
-                                        ),
-                                    }
-                                    st.rerun()
-    
-                                status_box = st.empty()
-
-                                def _on_status_move(message: str) -> None:
-                                    msg = str(message or "").strip()
-                                    if not msg:
-                                        return
-                                    status_box.info(f"Alumno {alumno_id_int}: {msg}")
-
-                                try:
-                                    with st.spinner(f"Moviendo alumno {alumno_id_int}..."):
-                                        result = _apply_single_alumno_move_and_reassign(
-                                            token=token,
-                                            colegio_id=int(colegio_id_int),
-                                            empresa_id=int(empresa_id),
-                                            ciclo_id=int(ciclo_id),
-                                            timeout=int(timeout),
-                                            alumno_row=row,
-                                            nuevo_nivel_id=int(destino_payload.get("nivel_id") or 0),
-                                            nuevo_grado_id=int(destino_payload.get("grado_id") or 0),
-                                            nuevo_grupo_id=int(destino_payload.get("grupo_id") or 0),
-                                            nueva_seccion=str(destino_payload.get("seccion") or ""),
-                                            on_status=_on_status_move,
-                                        )
-                                except Exception as exc:  # pragma: no cover - UI
-                                    status_box.error(f"Alumno {alumno_id_int}: error durante el proceso.")
-                                    st.session_state["alumnos_manual_move_notice"] = {
-                                        "type": "warning",
-                                        "message": f"No se pudo mover el alumno {alumno_id_int}: {exc}",
-                                    }
-                                    st.rerun()
-    
-                                if not _to_bool(result.get("move_ok")):
-                                    status_box.warning(f"Alumno {alumno_id_int}: no se pudo completar el movimiento.")
-                                    st.session_state["alumnos_manual_move_notice"] = {
-                                        "type": "warning",
-                                        "message": (
-                                            f"No se pudo mover el alumno {alumno_id_int}: "
-                                            f"{str(result.get('move_msg') or 'sin detalle')}"
-                                        ),
-                                    }
-                                    st.rerun()
-    
-                                cached_students = st.session_state.get("alumnos_manual_move_students") or []
-                                _update_manual_move_cached_student(
-                                    students=cached_students,
-                                    alumno_id=alumno_id_int,
-                                    destino_payload=destino_payload,
-                                )
-                                st.session_state["alumnos_manual_move_students"] = cached_students
-                                _queue_manual_move_reset(nivel_key, grado_key, grupo_key)
-                                status_box.success(
-                                    "Alumno {alumno}: movimiento OK | clases quitadas={quitadas} | clases asignadas={asignadas}".format(
-                                        alumno=alumno_id_int,
-                                        quitadas=int(result.get("removed_ok") or 0),
-                                        asignadas=int(result.get("assigned_ok") or 0),
-                                    )
-                                )
-                                st.session_state["alumnos_manual_move_notice"] = {
-                                    "type": "success",
-                                    "message": (
-                                        "Alumno actualizado: {alumno} -> {nivel} | {grado} ({seccion})".format(
-                                            alumno=alumno_header,
-                                            nivel=str(destino_payload.get("nivel") or "").strip(),
-                                            grado=str(destino_payload.get("grado") or "").strip(),
-                                            seccion=str(destino_payload.get("seccion") or "").strip() or "-",
-                                        )
-                                    ),
-                                }
-                                st.rerun()
-    
-                            st.divider()
-    
         if alumnos_crud_view == "editar":
             with st.container(border=True):
                 st.markdown("**3) Editar alumno**")
@@ -23117,9 +21934,6 @@ with tab_crud_alumnos:
                         ).strip(),
                     }
                     st.rerun()
-
-with tab_radartec:
-    _render_radartec_section()
 
 with tab_reportes:
     _render_pegasus_reportes_section()

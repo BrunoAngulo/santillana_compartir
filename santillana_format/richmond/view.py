@@ -8572,6 +8572,179 @@ def _process_rs_activation_rows(
     return results
 
 
+def _render_richmondstudio_bulk_user_edition_panel(rs_token: str, timeout: int) -> None:
+    with st.container(border=True):
+        st.markdown("**Edicion masiva de usuarios RS**")
+        st.caption(
+            "Sube un CSV o Excel con las columnas del bulk endpoint y aplica cambios masivos "
+            "(password, nombre, clase) sin necesidad de listar alumnos previamente. "
+            "Solo se requiere `Username(Email)` por fila; el resto es opcional."
+        )
+
+        template_csv_bytes = _build_richmondstudio_bulk_user_csv_bytes([])
+        st.download_button(
+            "Descargar plantilla CSV",
+            data=template_csv_bytes,
+            file_name="plantilla_edicion_masiva_rs.csv",
+            mime="text/csv",
+            key="rs_bulk_edition_template_download",
+            use_container_width=True,
+        )
+
+        run_bulk_edition_confirmed = _consume_richmondstudio_confirmed_action(
+            "rs_bulk_user_edition"
+        )
+
+        uploaded_bulk_edition = st.file_uploader(
+            "Archivo de edicion masiva (CSV o Excel)",
+            type=["xlsx", "csv", "txt"],
+            key="rs_bulk_edition_upload_file",
+            help=(
+                "Columnas: Username(Email), New last name(optional), "
+                "New first name(optional), New class code(optional), "
+                "New password(optional), Keep in classes(optional)."
+            ),
+        )
+
+        bulk_edition_bytes = b""
+        bulk_edition_name = ""
+        bulk_edition_rows: List[Dict[str, str]] = []
+        bulk_edition_error = ""
+        actionable_count = 0
+
+        if uploaded_bulk_edition is not None:
+            bulk_edition_bytes = uploaded_bulk_edition.getvalue()
+            bulk_edition_name = str(
+                uploaded_bulk_edition.name or "edicion_masiva_rs.csv"
+            ).strip()
+            try:
+                bulk_edition_rows = _load_richmondstudio_bulk_user_update_rows(
+                    bulk_edition_bytes,
+                    bulk_edition_name,
+                )
+            except Exception as exc:
+                bulk_edition_error = str(exc)
+                st.error(f"Error en archivo RS: {exc}")
+            else:
+                actionable_count = sum(
+                    1
+                    for row in bulk_edition_rows
+                    if str(row.get("Username") or "").strip()
+                )
+                preview_rows = _build_richmondstudio_bulk_user_update_preview_rows(
+                    bulk_edition_rows
+                )
+                st.caption(
+                    "Filas cargadas: {total} | Con Username: {actionable}".format(
+                        total=len(bulk_edition_rows),
+                        actionable=actionable_count,
+                    )
+                )
+                if preview_rows:
+                    _show_dataframe(preview_rows[:200], use_container_width=True)
+
+        run_bulk_edition = st.button(
+            "Aplicar edicion masiva RS",
+            type="primary",
+            key="rs_bulk_edition_run_btn",
+            use_container_width=True,
+        )
+        if run_bulk_edition:
+            if not rs_token:
+                st.error("Ingresa el bearer token de Richmond Studio.")
+            elif uploaded_bulk_edition is None:
+                st.error("Sube el archivo de edicion masiva RS.")
+            elif bulk_edition_error:
+                st.error(f"Corrige el archivo antes de continuar: {bulk_edition_error}")
+            elif not actionable_count:
+                st.error("No hay filas con Username para procesar.")
+            else:
+                st.session_state["rs_bulk_edition_upload_bytes"] = bulk_edition_bytes
+                st.session_state["rs_bulk_edition_upload_name"] = bulk_edition_name
+                _request_richmondstudio_confirmation(
+                    "rs_bulk_user_edition",
+                    f"aplicar edicion masiva en {actionable_count} usuarios RS",
+                )
+
+        if run_bulk_edition_confirmed:
+            stored_bytes = bytes(
+                st.session_state.get("rs_bulk_edition_upload_bytes") or b""
+            )
+            stored_name = str(
+                st.session_state.get("rs_bulk_edition_upload_name") or ""
+            ).strip()
+            if not rs_token:
+                st.error("Ingresa el bearer token de Richmond Studio.")
+            elif not stored_bytes:
+                st.error("No se encontro el archivo cargado para procesar.")
+            else:
+                try:
+                    rows_to_send = _load_richmondstudio_bulk_user_update_rows(
+                        stored_bytes,
+                        stored_name or "edicion_masiva_rs.csv",
+                    )
+                    actionable_rows = [
+                        row
+                        for row in rows_to_send
+                        if str(row.get("Username") or "").strip()
+                    ]
+                    csv_bytes_to_send = _build_richmondstudio_bulk_user_csv_bytes(
+                        actionable_rows
+                    )
+                    response = requests.post(
+                        RICHMONDSTUDIO_BULK_USER_EDITION_URL,
+                        headers=_richmondstudio_bulk_user_headers(rs_token),
+                        files={
+                            "csv_file": (
+                                "rs_bulk_user_edition.csv",
+                                csv_bytes_to_send,
+                                "text/csv",
+                            )
+                        },
+                        timeout=max(120, int(timeout)),
+                    )
+                    response_text = str(response.text or "").strip()
+                    parsed_body: object = None
+                    if response.content:
+                        try:
+                            parsed_body = response.json()
+                        except ValueError:
+                            parsed_body = response_text
+                    if not response.ok:
+                        raise RuntimeError(
+                            _richmondstudio_response_error(
+                                response, response.status_code, parsed_body
+                            )
+                        )
+                    message = ""
+                    if isinstance(parsed_body, str) and parsed_body.strip():
+                        message = parsed_body.strip()
+                    elif isinstance(parsed_body, dict):
+                        message = str(
+                            parsed_body.get("message")
+                            or parsed_body.get("detail")
+                            or parsed_body.get("status")
+                            or ""
+                        ).strip()
+                    st.success(
+                        "Edicion masiva RS enviada. "
+                        "Filas procesadas: {count} | Respuesta: {resp}".format(
+                            count=len(actionable_rows),
+                            resp=message or response_text or "ok",
+                        )
+                    )
+                    st.download_button(
+                        "Descargar CSV enviado",
+                        data=csv_bytes_to_send,
+                        file_name="edicion_masiva_enviada_rs.csv",
+                        mime="text/csv",
+                        key="rs_bulk_edition_download_sent_csv",
+                        use_container_width=True,
+                    )
+                except Exception as exc:
+                    st.error(f"No se pudo aplicar la edicion masiva RS: {exc}")
+
+
 def _render_richmondstudio_activation_panel(rs_token: str, timeout: int) -> None:
     st.markdown("**Activacion de codigos RS (por impersonate)**")
     st.caption(
@@ -8877,7 +9050,6 @@ def render_richmond_studio_view() -> None:
     (
         tab_rs_clases,
         tab_rs_usuarios,
-        tab_rs_alumnos,
         tab_rs_docentes,
         tab_rs_gradelevels,
         tab_rs_excel,
@@ -8885,7 +9057,6 @@ def render_richmond_studio_view() -> None:
         [
             "Clases RS",
             "Usuarios RS",
-            "CRUD Alumnos RS",
             "Asignar clases a docentes",
             "Reportes RS",
             "Herramientas RS",
@@ -8927,6 +9098,7 @@ def render_richmond_studio_view() -> None:
         if str(st.session_state.get("rs_users_nav") or "").strip() not in {
             "crear",
             "activacion",
+            "edicion_masiva",
         }:
             st.session_state["rs_users_nav"] = "crear"
 
@@ -8945,6 +9117,11 @@ def render_richmond_studio_view() -> None:
                         "Activacion users",
                         "Activa codigos RS desde un Excel con credenciales por cuenta",
                     ),
+                    (
+                        "edicion_masiva",
+                        "Edicion masiva",
+                        "Actualiza password, nombre o clase de usuarios en bloque via CSV",
+                    ),
                 ],
                 state_key="rs_users_nav",
             )
@@ -8956,6 +9133,11 @@ def render_richmond_studio_view() -> None:
                 )
             if rs_users_view == "activacion":
                 _render_richmondstudio_activation_panel(
+                    rs_token=rs_token,
+                    timeout=int(timeout),
+                )
+            if rs_users_view == "edicion_masiva":
+                _render_richmondstudio_bulk_user_edition_panel(
                     rs_token=rs_token,
                     timeout=int(timeout),
                 )
@@ -8995,31 +9177,6 @@ def render_richmond_studio_view() -> None:
                     rs_token=rs_token,
                     timeout=int(timeout),
                 )
-    with tab_rs_alumnos:
-        if str(st.session_state.get("rs_students_crud_nav") or "").strip() not in {
-            "password",
-        }:
-            st.session_state["rs_students_crud_nav"] = "password"
-        rs_alumnos_nav_col, rs_alumnos_body_col = st.columns([1.15, 4.85], gap="large")
-        with rs_alumnos_nav_col:
-            rs_alumnos_view = _render_crud_menu(
-                "Funciones alumnos RS",
-                [
-                    (
-                        "password",
-                        "Password",
-                        "Busca alumnos RS y actualiza password",
-                    ),
-                ],
-                state_key="rs_students_crud_nav",
-            )
-        with rs_alumnos_body_col:
-            if rs_alumnos_view == "password":
-                _render_richmondstudio_students_password_panel(
-                    rs_token=rs_token,
-                    timeout=int(timeout),
-                )
-
     with tab_rs_gradelevels:
         _render_richmondstudio_gradelevels_report_panel(
             rs_token=rs_token,

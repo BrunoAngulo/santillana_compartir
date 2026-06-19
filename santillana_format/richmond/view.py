@@ -128,7 +128,7 @@ RICHMONDSTUDIO_BULK_USER_EDITION_URL = (
     "https://richmondstudio.global/api/administration/users/bulk/user-edition"
 )
 
-RICHMONDSTUDIO_AUTH_URL = "https://richmondstudio.global/api/auth/token"
+RICHMONDSTUDIO_LOGIN_AS_URL = "https://richmondstudio.global/api/auth/login_as"
 
 RICHMONDSTUDIO_CODES_REDEEM_URL = "https://richmondstudio.global/api/codes/redeem"
 
@@ -8283,30 +8283,49 @@ def _render_richmondstudio_excel_iread_report_panel() -> None:
 
 _RS_ACTIVATION_COL_USERNAME = "Username"
 _RS_ACTIVATION_COL_TOKEN = "Token"
-_RS_ACTIVATION_COL_PASSWORD = "password"
 
 
-def _rs_authenticate(
-    identifier: str,
-    password: str,
+def _build_rs_users_index(users: Sequence[Dict[str, object]]) -> Dict[str, str]:
+    """Construye un indice email/identifier (minusculas) -> user_id desde /api/users."""
+    index: Dict[str, str] = {}
+    for user in users:
+        if not isinstance(user, dict):
+            continue
+        user_id = str(user.get("id") or "").strip()
+        if not user_id:
+            continue
+        attributes = user.get("attributes")
+        if not isinstance(attributes, dict):
+            attributes = {}
+        for key_field in ("email", "identifier"):
+            value = str(attributes.get(key_field) or "").strip().lower()
+            if value and value not in index:
+                index[value] = user_id
+    return index
+
+
+def _rs_login_as(
+    admin_token: str,
+    user_id: str,
     timeout: int = 30,
     max_retries: int = 2,
 ) -> Tuple[str, str]:
-    """Autentica una cuenta RS. Devuelve (access_token, error_msg)."""
-    payload = {
-        "grant_type": "password",
-        "identifier": identifier.strip(),
-        "password": password,
+    """Impersona una cuenta RS via login_as. Devuelve (access_token, error_msg)."""
+    headers = {
+        "Authorization": f"Bearer {admin_token}",
+        "Accept": "application/json",
     }
+    params = {"user_id": str(user_id).strip()}
     last_error = ""
     for attempt in range(max_retries + 1):
         try:
             resp = requests.post(
-                RICHMONDSTUDIO_AUTH_URL,
-                json=payload,
+                RICHMONDSTUDIO_LOGIN_AS_URL,
+                params=params,
+                headers=headers,
                 timeout=int(timeout),
             )
-            if resp.status_code == 200:
+            if resp.status_code in (200, 201):
                 data = resp.json()
                 token = str(data.get("access_token") or "").strip()
                 if token:
@@ -8405,7 +8424,6 @@ def _load_rs_activation_rows(
     for expected in (
         _RS_ACTIVATION_COL_USERNAME,
         _RS_ACTIVATION_COL_TOKEN,
-        _RS_ACTIVATION_COL_PASSWORD,
     ):
         match = next(
             (k for k in sample_keys if k.lower() == expected.lower()), None
@@ -8421,10 +8439,9 @@ def _load_rs_activation_rows(
     for raw in raw_rows:
         username = str(raw.get(col_map[_RS_ACTIVATION_COL_USERNAME]) or "").strip()
         token = str(raw.get(col_map[_RS_ACTIVATION_COL_TOKEN]) or "").strip()
-        pw = str(raw.get(col_map[_RS_ACTIVATION_COL_PASSWORD]) or "").strip()
         if not username and not token:
             continue
-        result.append({"username": username, "token": token, "password": pw})
+        result.append({"username": username, "token": token})
 
     if not result:
         return [], "No se encontraron filas con datos en Username o Token."
@@ -8433,10 +8450,18 @@ def _load_rs_activation_rows(
 
 def _process_rs_activation_rows(
     rows: Sequence[Dict[str, str]],
+    admin_token: str,
+    users_index: Dict[str, str],
     timeout: int = 30,
     on_progress: Optional[Callable[[int, int, str], None]] = None,
 ) -> List[Dict[str, object]]:
-    """Procesa cada fila: autentica y canjea el codigo. Devuelve filas de resultado."""
+    """Procesa cada fila por impersonate y canjea el codigo.
+
+    Para cada fila: hace match del Username (email/identifier) contra las cuentas
+    ya mapeadas en Richmond Studio para obtener el user_id, impersona la cuenta via
+    login_as con el token del administrador y canjea el codigo con el token de la
+    propia cuenta. Devuelve filas de resultado.
+    """
 
     def _progress(current: int, total: int, message: str) -> None:
         if callable(on_progress):
@@ -8451,13 +8476,14 @@ def _process_rs_activation_rows(
     for idx, row in enumerate(rows, start=1):
         username = str(row.get("username") or "").strip()
         code = str(row.get("token") or "").strip()
-        pw = str(row.get("password") or "").strip()
 
         result: Dict[str, object] = {
             "Email": username,
             "Codigo": code,
-            "Login Estado": "",
-            "Login Mensaje": "",
+            "User ID": "",
+            "Match Estado": "",
+            "Impersonate Estado": "",
+            "Impersonate Mensaje": "",
             "Redeem Estado": "",
             "Redeem Mensaje": "",
         }
@@ -8465,52 +8491,56 @@ def _process_rs_activation_rows(
         if not username:
             result.update(
                 {
-                    "Login Estado": "OMITIDO",
-                    "Login Mensaje": "Sin username.",
+                    "Match Estado": "OMITIDO",
+                    "Impersonate Estado": "OMITIDO",
+                    "Impersonate Mensaje": "Sin username.",
                     "Redeem Estado": "OMITIDO",
-                    "Redeem Mensaje": "",
                 }
             )
             results.append(result)
             _progress(idx, total, f"[{idx}/{total}] Fila sin username omitida.")
             continue
 
-        if not pw:
+        user_id = users_index.get(username.lower(), "")
+        if not user_id:
             result.update(
                 {
-                    "Login Estado": "OMITIDO",
-                    "Login Mensaje": "Sin password.",
+                    "Match Estado": "ERROR",
+                    "Impersonate Estado": "OMITIDO",
+                    "Impersonate Mensaje": "No se encontro la cuenta en Richmond Studio.",
                     "Redeem Estado": "OMITIDO",
-                    "Redeem Mensaje": "",
                 }
             )
             results.append(result)
-            _progress(idx, total, f"[{idx}/{total}] {username}: sin password, omitido.")
+            _progress(idx, total, f"[{idx}/{total}] {username}: sin coincidencia.")
             continue
 
-        _progress(idx - 1, total, f"[{idx}/{total}] Autenticando {username}...")
+        result["User ID"] = user_id
+        result["Match Estado"] = "OK"
 
-        access_token, login_error = _rs_authenticate(
-            identifier=username,
-            password=pw,
+        _progress(idx - 1, total, f"[{idx}/{total}] Impersonando {username}...")
+
+        access_token, login_error = _rs_login_as(
+            admin_token=admin_token,
+            user_id=user_id,
             timeout=int(timeout),
         )
 
         if not access_token:
             result.update(
                 {
-                    "Login Estado": "ERROR",
-                    "Login Mensaje": login_error,
+                    "Impersonate Estado": "ERROR",
+                    "Impersonate Mensaje": login_error,
                     "Redeem Estado": "OMITIDO",
-                    "Redeem Mensaje": "No se pudo autenticar.",
+                    "Redeem Mensaje": "No se pudo impersonar la cuenta.",
                 }
             )
             results.append(result)
-            _progress(idx, total, f"[{idx}/{total}] {username}: login fallido.")
+            _progress(idx, total, f"[{idx}/{total}] {username}: impersonate fallido.")
             continue
 
-        result["Login Estado"] = "OK"
-        result["Login Mensaje"] = "Autenticado."
+        result["Impersonate Estado"] = "OK"
+        result["Impersonate Mensaje"] = "Impersonado."
 
         if not code:
             result.update(
@@ -8542,19 +8572,21 @@ def _process_rs_activation_rows(
     return results
 
 
-def _render_richmondstudio_activation_panel(timeout: int) -> None:
-    st.markdown("**Activacion de codigos RS**")
+def _render_richmondstudio_activation_panel(rs_token: str, timeout: int) -> None:
+    st.markdown("**Activacion de codigos RS (por impersonate)**")
     st.caption(
-        "Sube un Excel o CSV con las columnas `Username` (email), `Token` (codigo) "
-        "y `password`. La app autentica cada cuenta con sus propias credenciales y "
-        "activa el codigo correspondiente. Al finalizar genera un Excel de resultados."
+        "Sube un Excel o CSV con las columnas `Username` (email/identifier) y "
+        "`Token` (codigo). La app trae las cuentas ya mapeadas en Richmond Studio, "
+        "hace match para obtener el id, impersona cada cuenta (login_as con el token "
+        "del administrador) y canjea el codigo con el token de la propia cuenta. "
+        "Ya no se necesita el password en el Excel."
     )
 
     uploaded_file = st.file_uploader(
         "Archivo de activacion (Excel o CSV)",
         type=["xlsx", "csv"],
         key="rs_activation_upload_file",
-        help="Columnas requeridas: Username (email), Token (codigo a activar), password.",
+        help="Columnas requeridas: Username (email/identifier) y Token (codigo a activar).",
     )
 
     rows_to_process: List[Dict[str, str]] = []
@@ -8575,11 +8607,11 @@ def _render_richmondstudio_activation_panel(timeout: int) -> None:
             actionable = [
                 r
                 for r in rows_to_process
-                if r.get("username") and r.get("password") and r.get("token")
+                if r.get("username") and r.get("token")
             ]
             skipped = len(rows_to_process) - len(actionable)
             st.caption(
-                "Filas cargadas: {total} | Listas (username+password+codigo): {ok}"
+                "Filas cargadas: {total} | Listas (username+codigo): {ok}"
                 " | Omisiones previstas: {skip}".format(
                     total=len(rows_to_process),
                     ok=len(actionable),
@@ -8591,7 +8623,6 @@ def _render_richmondstudio_activation_panel(timeout: int) -> None:
                     {
                         "Email": r.get("username", ""),
                         "Codigo": r.get("token", ""),
-                        "Tiene password": "Si" if r.get("password") else "No",
                     }
                     for r in rows_to_process[:100]
                 ]
@@ -8614,55 +8645,87 @@ def _render_richmondstudio_activation_panel(timeout: int) -> None:
     if run_activation:
         if not rows_to_process:
             st.error("No hay filas validas para procesar.")
+        elif not str(rs_token or "").strip():
+            st.error(
+                "Falta el bearer token del administrador de Richmond Studio."
+            )
         else:
-            progress_bar = st.progress(0)
-            status_box = st.empty()
-            total_rows = len(rows_to_process)
+            try:
+                with st.spinner("Trayendo cuentas de Richmond Studio..."):
+                    rs_users = _fetch_richmondstudio_users(
+                        str(rs_token).strip(),
+                        timeout=int(timeout),
+                    )
+            except Exception as exc:
+                st.error(f"No se pudieron traer las cuentas: {exc}")
+                rs_users = None
 
-            def _on_progress(current: int, total: int, message: str) -> None:
-                progress_bar.progress(
-                    min(1.0, max(0.0, current / max(total, 1))),
-                    text=message,
+            if rs_users is not None:
+                users_index = _build_rs_users_index(rs_users)
+                st.caption(
+                    "Cuentas traidas: {users} | Identificadores indexados: {idx}".format(
+                        users=len(rs_users),
+                        idx=len(users_index),
+                    )
                 )
-                status_box.caption(message)
 
-            with st.spinner(f"Procesando {total_rows} cuenta(s)..."):
-                result_rows = _process_rs_activation_rows(
-                    rows=rows_to_process,
-                    timeout=int(timeout),
-                    on_progress=_on_progress,
+                progress_bar = st.progress(0)
+                status_box = st.empty()
+                total_rows = len(rows_to_process)
+
+                def _on_progress(current: int, total: int, message: str) -> None:
+                    progress_bar.progress(
+                        min(1.0, max(0.0, current / max(total, 1))),
+                        text=message,
+                    )
+                    status_box.caption(message)
+
+                with st.spinner(f"Procesando {total_rows} cuenta(s)..."):
+                    result_rows = _process_rs_activation_rows(
+                        rows=rows_to_process,
+                        admin_token=str(rs_token).strip(),
+                        users_index=users_index,
+                        timeout=int(timeout),
+                        on_progress=_on_progress,
+                    )
+
+                progress_bar.progress(1.0, text="Proceso terminado.")
+                status_box.caption(
+                    f"Proceso terminado: {total_rows} cuenta(s) procesada(s)."
                 )
 
-            progress_bar.progress(1.0, text="Proceso terminado.")
-            status_box.caption(
-                f"Proceso terminado: {total_rows} cuenta(s) procesada(s)."
-            )
+                ok_count = sum(
+                    1 for r in result_rows if r.get("Redeem Estado") == "OK"
+                )
+                error_match = sum(
+                    1 for r in result_rows if r.get("Match Estado") == "ERROR"
+                )
+                error_impersonate = sum(
+                    1
+                    for r in result_rows
+                    if r.get("Impersonate Estado") == "ERROR"
+                )
+                error_redeem = sum(
+                    1
+                    for r in result_rows
+                    if r.get("Redeem Estado") == "ERROR"
+                )
+                skip_count = sum(
+                    1 for r in result_rows if r.get("Redeem Estado") == "OMITIDO"
+                )
 
-            ok_count = sum(
-                1 for r in result_rows if r.get("Redeem Estado") == "OK"
-            )
-            error_login = sum(
-                1 for r in result_rows if r.get("Login Estado") == "ERROR"
-            )
-            error_redeem = sum(
-                1
-                for r in result_rows
-                if r.get("Redeem Estado") == "ERROR"
-            )
-            skip_count = sum(
-                1 for r in result_rows if r.get("Redeem Estado") == "OMITIDO"
-            )
+                if ok_count:
+                    st.success(f"Codigos activados correctamente: {ok_count}")
+                if error_redeem:
+                    st.warning(f"Errores en activacion de codigo: {error_redeem}")
+                if error_impersonate:
+                    st.warning(f"Errores de impersonate: {error_impersonate}")
+                if error_match:
+                    st.warning(f"Cuentas sin coincidencia: {error_match}")
+                if skip_count:
+                    st.info(f"Filas omitidas: {skip_count}")
 
-            if ok_count:
-                st.success(f"Codigos activados correctamente: {ok_count}")
-            if error_redeem:
-                st.warning(f"Errores en activacion de codigo: {error_redeem}")
-            if error_login:
-                st.warning(f"Errores de login: {error_login}")
-            if skip_count:
-                st.info(f"Filas omitidas: {skip_count}")
-
-            st.session_state["rs_activation_results"] = result_rows
+                st.session_state["rs_activation_results"] = result_rows
 
     result_rows_cached = [
         r
@@ -8893,6 +8956,7 @@ def render_richmond_studio_view() -> None:
                 )
             if rs_users_view == "activacion":
                 _render_richmondstudio_activation_panel(
+                    rs_token=rs_token,
                     timeout=int(timeout),
                 )
     with tab_rs_docentes:

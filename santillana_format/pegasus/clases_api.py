@@ -181,9 +181,6 @@ def extract_clase_fields(item: Dict[str, object]) -> Optional[Dict[str, object]]
         grupo_txt = str(grupo.get("grupo") or "").strip()
         grupo_clave = grupo_txt.split()[-1].strip() if grupo_txt else ""
 
-    if nivel_id is None or grado_id is None:
-        return None
-
     return {
         "clase_id": clase_id,
         "clase": clase_nombre,

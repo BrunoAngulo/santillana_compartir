@@ -10073,7 +10073,7 @@ def _auto_crear_cuentas_colegio(
             apellido_paterno=login_prefix,
             apellido_materno=str(colegio_id),
             sexo="M",
-            fecha_nacimiento="2000-01-01T00:00:00.000Z",
+            fecha_nacimiento=date(2000, 1, 1),
             id_oficial="",
             extranjero=True,
             timeout=int(timeout),
@@ -10198,7 +10198,7 @@ def _export_auto_cuentas_excel(
     ws = wb.active
     ws.title = "Cuentas"
 
-    headers = ["Colegio ID", "Tipo", "Login", "Password", "Nombre"]
+    headers = ["Colegio ID", "Nombre del colegio", "Tipo", "Login", "Password", "Nombre cuenta"]
     header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
     header_font = Font(color="FFFFFF", bold=True)
 
@@ -10210,17 +10210,25 @@ def _export_auto_cuentas_excel(
 
     for row_idx, row in enumerate(rows, start=2):
         ws.cell(row=row_idx, column=1, value=row.get("colegio_id"))
-        ws.cell(row=row_idx, column=2, value=row.get("tipo"))
-        login_cell = ws.cell(row=row_idx, column=3, value=row.get("login"))
+        ws.cell(row=row_idx, column=2, value=row.get("colegio_nombre") or "")
+        ws.cell(row=row_idx, column=3, value=row.get("tipo"))
+        login_cell = ws.cell(row=row_idx, column=4, value=row.get("login"))
         login_cell.number_format = "@"
-        pwd_cell = ws.cell(row=row_idx, column=4, value=row.get("password"))
+        pwd_cell = ws.cell(row=row_idx, column=5, value=row.get("password"))
         pwd_cell.number_format = "@"
-        ws.cell(row=row_idx, column=5, value=row.get("nombre"))
+        ws.cell(row=row_idx, column=6, value=row.get("nombre"))
 
     for col_idx, header in enumerate(headers, start=1):
         max_len = len(str(header))
         for row_obj in rows:
-            vals = [row_obj.get("colegio_id"), row_obj.get("tipo"), row_obj.get("login"), row_obj.get("password"), row_obj.get("nombre")]
+            vals = [
+                row_obj.get("colegio_id"),
+                row_obj.get("colegio_nombre") or "",
+                row_obj.get("tipo"),
+                row_obj.get("login"),
+                row_obj.get("password"),
+                row_obj.get("nombre"),
+            ]
             cell_val = str(vals[col_idx - 1] or "")
             if len(cell_val) > max_len:
                 max_len = len(cell_val)
@@ -20445,11 +20453,11 @@ with tab_crud_alumnos:
 
         if alumnos_crud_view == "auto_crear":
             with st.container(border=True):
-                st.markdown("**Generar cuentas demo para este colegio**")
+                st.markdown("**Generar cuentas demo para todos los colegios**")
                 st.caption(
-                    "Crea un alumno de Primaria (AP-ID), un alumno de Secundaria (AS-ID) "
-                    "y un profesor (PC-ID) con login y password predefinidos, luego exporta "
-                    "un Excel con las cuentas generadas."
+                    f"Itera sobre los {len(AUTO_MOVE_MULTI_DEFAULT_SCHOOLS)} colegios de la lista, "
+                    "crea un alumno Primaria (AP-ID), un alumno Secundaria (AS-ID) y un profesor "
+                    "(PC-ID) en cada uno, y exporta un Excel consolidado con todas las cuentas."
                 )
 
             auto_crear_notice = st.session_state.pop("auto_crear_notice", None)
@@ -20467,25 +20475,14 @@ with tab_crud_alumnos:
                         st.info(notice_msg)
 
             auto_crear_result_rows = st.session_state.get("auto_crear_result_rows") or []
-            auto_crear_result_colegio = _safe_int(
-                st.session_state.get("auto_crear_result_colegio_id")
-            )
-            if (
-                auto_crear_result_colegio is not None
-                and current_colegio_id is not None
-                and int(auto_crear_result_colegio) != int(current_colegio_id)
-            ):
-                st.session_state.pop("auto_crear_result_rows", None)
-                st.session_state.pop("auto_crear_result_colegio_id", None)
-                auto_crear_result_rows = []
+            auto_crear_all_errors = st.session_state.get("auto_crear_all_errors") or []
 
             btn_col, dl_col = st.columns([2, 2], gap="small")
             run_auto_crear = btn_col.button(
-                "Crear cuentas demo y generar Excel",
+                f"Crear cuentas en {len(AUTO_MOVE_MULTI_DEFAULT_SCHOOLS)} colegios y generar Excel",
                 type="primary",
                 key="auto_crear_run_btn",
                 use_container_width=True,
-                disabled=not bool(colegio_id_raw),
             )
 
             if auto_crear_result_rows:
@@ -20493,73 +20490,99 @@ with tab_crud_alumnos:
                 dl_col.download_button(
                     label="Descargar Excel de cuentas",
                     data=excel_bytes,
-                    file_name=f"cuentas_demo_{auto_crear_result_colegio or colegio_id_raw}.xlsx",
+                    file_name="cuentas_demo_todos_colegios.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="auto_crear_download_btn",
                     use_container_width=True,
                 )
 
             if run_auto_crear:
-                if not colegio_id_raw:
-                    st.error("Ingresa un ID de colegio antes de continuar.")
-                    st.stop()
                 token = _get_shared_token()
                 if not token:
                     st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
                     st.stop()
-                try:
-                    colegio_id_int = _parse_colegio_id(colegio_id_raw)
-                except ValueError as exc:
-                    st.error(f"Error: {exc}")
-                    st.stop()
 
+                all_created: List[Dict[str, object]] = []
+                all_errors: List[Dict[str, object]] = []
+                schools = AUTO_MOVE_MULTI_DEFAULT_SCHOOLS
+                total_schools = len(schools)
+
+                progress_bar = st.progress(0)
                 status_placeholder = st.empty()
 
-                def _auto_crear_on_status(msg: str) -> None:
-                    status_placeholder.caption(msg)
+                for school_idx, school in enumerate(schools):
+                    school_colegio_id = int(school["Clave ID"])
+                    school_name = str(school["Nombre del colegio"] or "").strip()
+                    status_placeholder.caption(
+                        f"[{school_idx + 1}/{total_schools}] {school_name} (ID {school_colegio_id})..."
+                    )
+                    progress_bar.progress(int(school_idx / total_schools * 100))
 
-                with st.spinner("Creando cuentas demo..."):
+                    def _make_status_fn(s_name: str, s_idx: int, s_total: int) -> Callable[[str], None]:
+                        def _fn(msg: str) -> None:
+                            status_placeholder.caption(
+                                f"[{s_idx + 1}/{s_total}] {s_name}: {msg}"
+                            )
+                        return _fn
+
                     created_rows, create_errors = _auto_crear_cuentas_colegio(
                         token=token,
-                        colegio_id=int(colegio_id_int),
+                        colegio_id=school_colegio_id,
                         empresa_id=int(empresa_id),
                         ciclo_id=int(ciclo_id),
                         timeout=int(timeout),
-                        on_status=_auto_crear_on_status,
+                        on_status=_make_status_fn(school_name, school_idx, total_schools),
                     )
 
-                status_placeholder.empty()
-                st.session_state["auto_crear_result_rows"] = created_rows
-                st.session_state["auto_crear_result_colegio_id"] = int(colegio_id_int)
+                    for row in created_rows:
+                        row["colegio_nombre"] = school_name
+                    for err in create_errors:
+                        err["colegio_id"] = school_colegio_id
+                        err["colegio_nombre"] = school_name
 
-                if create_errors:
-                    error_lines = [
-                        f"- {e.get('tipo', '?')}: {e.get('error', '?')}"
-                        for e in create_errors
-                    ]
-                    st.session_state["auto_crear_notice"] = {
-                        "type": "warning" if created_rows else "error",
-                        "message": "Errores:\n" + "\n".join(error_lines),
-                    }
-                if created_rows:
-                    st.session_state["auto_crear_notice"] = {
-                        "type": "success",
-                        "message": (
-                            f"Se crearon {len(created_rows)} cuenta(s). "
-                            "Descarga el Excel con el boton de arriba."
-                            + (
-                                f" Errores: {len(create_errors)}"
-                                if create_errors
-                                else ""
-                            )
-                        ),
-                    }
+                    all_created.extend(created_rows)
+                    all_errors.extend(create_errors)
+
+                progress_bar.progress(100)
+                status_placeholder.empty()
+                progress_bar.empty()
+
+                st.session_state["auto_crear_result_rows"] = all_created
+                st.session_state["auto_crear_all_errors"] = all_errors
+
+                total_ok = len(all_created)
+                total_err = len(all_errors)
+                if total_ok > 0 and total_err == 0:
+                    notice_type_val = "success"
+                    notice_msg_val = (
+                        f"Se crearon {total_ok} cuenta(s) en {total_schools} colegios. "
+                        "Descarga el Excel con el boton de arriba."
+                    )
+                elif total_ok > 0:
+                    notice_type_val = "warning"
+                    notice_msg_val = (
+                        f"Se crearon {total_ok} cuenta(s) con {total_err} error(es). "
+                        "Descarga el Excel con el boton de arriba."
+                    )
+                else:
+                    notice_type_val = "error"
+                    notice_msg_val = f"No se pudo crear ninguna cuenta. Errores: {total_err}"
+
+                st.session_state["auto_crear_notice"] = {
+                    "type": notice_type_val,
+                    "message": notice_msg_val,
+                }
                 st.rerun()
 
             if auto_crear_result_rows:
+                st.caption(
+                    f"{len(auto_crear_result_rows)} cuenta(s) creada(s)"
+                    + (f" | {len(auto_crear_all_errors)} error(es)" if auto_crear_all_errors else "")
+                )
                 df_preview = pd.DataFrame(
                     [
                         {
+                            "Colegio": r.get("colegio_nombre") or r.get("colegio_id"),
                             "Tipo": r.get("tipo"),
                             "Login": r.get("login"),
                             "Password": r.get("password"),
@@ -20569,6 +20592,21 @@ with tab_crud_alumnos:
                     ]
                 )
                 st.dataframe(df_preview, use_container_width=True, hide_index=True)
+
+            if auto_crear_all_errors:
+                with st.expander(f"Errores ({len(auto_crear_all_errors)})", expanded=False):
+                    df_errors = pd.DataFrame(
+                        [
+                            {
+                                "Colegio": e.get("colegio_nombre") or e.get("colegio_id"),
+                                "Tipo": e.get("tipo"),
+                                "Login": e.get("login", "-"),
+                                "Error": e.get("error"),
+                            }
+                            for e in auto_crear_all_errors
+                        ]
+                    )
+                    st.dataframe(df_errors, use_container_width=True, hide_index=True)
 
 with tab_reportes:
     _render_pegasus_reportes_section()

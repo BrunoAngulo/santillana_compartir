@@ -367,6 +367,17 @@ DASHBOARD_COLEGIOS_URL = (
     "https://www.uno-internacional.com/pegasus-api/dashboard/empresas/{empresa_id}"
     "/ciclos/{ciclo_id}/colegios"
 )
+CENSO_PROFESOR_CREATE_URL = (
+    "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
+    "/ciclos/{ciclo_id}/colegios/{colegio_id}/niveles/{nivel_id}/profesores"
+)
+CENSO_PROFESOR_ASIGNAR_NIVEL_URL = (
+    "https://www.uno-internacional.com/pegasus-api/censo/empresas/{empresa_id}"
+    "/ciclos/{ciclo_id}/colegios/{colegio_id}/profesores/{persona_id}/asignarNivel"
+)
+AUTO_CREAR_NIVEL_ID_INICIAL = 38
+AUTO_CREAR_NIVEL_ID_PRIMARIA = 39
+AUTO_CREAR_NIVEL_ID_SECUNDARIA = 40
 GESTION_ESCOLAR_CICLO_ID_DEFAULT = 207
 AUTO_MOVE_SECCION_ORIGEN = "Y"
 AUTO_MOVE_MULTI_DEFAULT_SCHOOLS: List[Dict[str, object]] = [
@@ -9886,6 +9897,343 @@ def _update_login_profesor_web(
     return True, data, ""
 
 
+def _crear_profesor_web(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    nivel_id: int,
+    nombre: str,
+    apellido_paterno: str,
+    apellido_materno: str,
+    sexo: str,
+    email: str,
+    id_oficial: str,
+    timeout: int,
+) -> Tuple[bool, Dict[str, object], str]:
+    url = CENSO_PROFESOR_CREATE_URL.format(
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        colegio_id=int(colegio_id),
+        nivel_id=int(nivel_id),
+    )
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    payload: Dict[str, object] = {
+        "nombre": str(nombre or "").strip(),
+        "apellidoPaterno": str(apellido_paterno or "").strip(),
+        "apellidoMaterno": str(apellido_materno or "").strip(),
+        "sexo": str(sexo or "").strip(),
+        "email": str(email or "").strip(),
+        "idOficial": str(id_oficial or "").strip(),
+    }
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=int(timeout))
+    except requests.RequestException as exc:
+        return False, {}, f"Error de red: {exc}"
+
+    status_code = response.status_code
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+
+    if not response.ok:
+        message = str(body.get("message") or "").strip() if isinstance(body, dict) else ""
+        return False, {}, message or f"HTTP {status_code}"
+    if isinstance(body, dict) and body.get("success", True) is False:
+        message = str(body.get("message") or "Respuesta invalida").strip()
+        return False, {}, message
+    data = body.get("data") if isinstance(body, dict) else {}
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        return False, {}, "Respuesta invalida"
+    return True, data, ""
+
+
+def _asignar_niveles_profesor_web(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    persona_id: int,
+    nivel_ids: List[int],
+    timeout: int,
+) -> Tuple[bool, Dict[str, object], str]:
+    url = CENSO_PROFESOR_ASIGNAR_NIVEL_URL.format(
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        colegio_id=int(colegio_id),
+        persona_id=int(persona_id),
+    )
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    payload = {"niveles": [{"nivelId": int(nid)} for nid in nivel_ids]}
+    try:
+        response = requests.post(url, headers=headers, json=payload, timeout=int(timeout))
+    except requests.RequestException as exc:
+        return False, {}, f"Error de red: {exc}"
+
+    status_code = response.status_code
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+
+    if not response.ok:
+        message = str(body.get("message") or "").strip() if isinstance(body, dict) else ""
+        return False, {}, message or f"HTTP {status_code}"
+    if isinstance(body, dict) and body.get("success", True) is False:
+        message = str(body.get("message") or "Respuesta invalida").strip()
+        return False, {}, message
+    data = body.get("data") if isinstance(body, dict) else {}
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        return False, {}, "Respuesta invalida"
+    return True, data, ""
+
+
+def _auto_crear_cuentas_colegio(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+    on_status: Optional[Callable[[str], None]] = None,
+) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
+    """Create demo Primaria student, Secundaria student, and teacher for a school.
+
+    Returns (created_rows, errors) where each row has: tipo, login, password, nombre, colegio_id.
+    """
+    def _status(msg: str) -> None:
+        if callable(on_status):
+            on_status(msg)
+
+    created: List[Dict[str, object]] = []
+    errors: List[Dict[str, object]] = []
+
+    _status("Cargando estructura de niveles/grados/secciones...")
+    try:
+        niveles_data = _fetch_niveles_grados_grupos_censo(
+            token=token,
+            colegio_id=int(colegio_id),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+        )
+    except Exception as exc:
+        errors.append({"tipo": "general", "error": f"No se pudo cargar estructura: {exc}"})
+        return created, errors
+
+    catalog = _build_manual_move_destination_catalog(niveles_data)
+    grado_ids_by_nivel: Dict[int, List[int]] = catalog.get("grado_ids_by_nivel") or {}
+    grupo_ids_by_grade: Dict[Tuple[int, int], List[int]] = catalog.get("grupo_ids_by_grade") or {}
+    nivel_name_by_id: Dict[int, str] = catalog.get("nivel_name_by_id") or {}
+
+    alumno_niveles = [
+        (AUTO_CREAR_NIVEL_ID_PRIMARIA, "AP"),
+        (AUTO_CREAR_NIVEL_ID_SECUNDARIA, "AS"),
+    ]
+    for nivel_id, login_prefix in alumno_niveles:
+        nivel_name = nivel_name_by_id.get(nivel_id, str(nivel_id))
+        login = f"{login_prefix}-{colegio_id}"
+        password = f"{login_prefix}{colegio_id}"
+
+        grado_ids = grado_ids_by_nivel.get(nivel_id, [])
+        if not grado_ids:
+            errors.append({
+                "tipo": f"Alumno {nivel_name}",
+                "login": login,
+                "error": f"El colegio no tiene nivel {nivel_name} disponible",
+            })
+            continue
+
+        grado_id = grado_ids[0]
+        grupo_ids = grupo_ids_by_grade.get((nivel_id, grado_id), [])
+        if not grupo_ids:
+            errors.append({
+                "tipo": f"Alumno {nivel_name}",
+                "login": login,
+                "error": f"El nivel {nivel_name} no tiene secciones disponibles",
+            })
+            continue
+
+        grupo_id = grupo_ids[0]
+
+        _status(f"Creando alumno {nivel_name} (login: {login})...")
+        ok, data, msg = _crear_alumno_web(
+            token=token,
+            colegio_id=int(colegio_id),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            nivel_id=int(nivel_id),
+            grado_id=int(grado_id),
+            grupo_id=int(grupo_id),
+            nombre="DEMO",
+            apellido_paterno=login_prefix,
+            apellido_materno=str(colegio_id),
+            sexo="M",
+            fecha_nacimiento="2000-01-01T00:00:00.000Z",
+            id_oficial="",
+            extranjero=True,
+            timeout=int(timeout),
+        )
+        if not ok:
+            errors.append({
+                "tipo": f"Alumno {nivel_name}",
+                "login": login,
+                "error": f"Error al crear: {msg}",
+            })
+            continue
+
+        alumno_id = _safe_int(data.get("alumnoId"))
+        persona = data.get("persona") if isinstance(data.get("persona"), dict) else {}
+        nombre_completo = str(persona.get("nombreCompleto") or "").strip() or login
+
+        if alumno_id is not None:
+            _status(f"Actualizando login/password del alumno {nivel_name}...")
+            _update_login_alumno_web(
+                token=token,
+                colegio_id=int(colegio_id),
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                nivel_id=int(nivel_id),
+                grado_id=int(grado_id),
+                grupo_id=int(grupo_id),
+                alumno_id=int(alumno_id),
+                login=login,
+                password=password,
+                timeout=int(timeout),
+            )
+
+        created.append({
+            "tipo": f"Alumno {nivel_name}",
+            "login": login,
+            "password": password,
+            "nombre": nombre_completo,
+            "colegio_id": int(colegio_id),
+        })
+
+    # Create teacher
+    login_prof = f"PC-{colegio_id}"
+    password_prof = f"PC{colegio_id}"
+    _status(f"Creando profesor (login: {login_prof})...")
+
+    nivel_ids_disponibles = sorted(nivel_name_by_id.keys())
+    nivel_id_crear = (
+        nivel_ids_disponibles[0]
+        if nivel_ids_disponibles
+        else AUTO_CREAR_NIVEL_ID_INICIAL
+    )
+
+    ok_prof, data_prof, msg_prof = _crear_profesor_web(
+        token=token,
+        colegio_id=int(colegio_id),
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        nivel_id=int(nivel_id_crear),
+        nombre="DEMO",
+        apellido_paterno="PC",
+        apellido_materno=str(colegio_id),
+        sexo="M",
+        email="",
+        id_oficial="",
+        timeout=int(timeout),
+    )
+    if not ok_prof:
+        errors.append({
+            "tipo": "Profesor",
+            "login": login_prof,
+            "error": f"Error al crear profesor: {msg_prof}",
+        })
+    else:
+        persona_id = _safe_int(data_prof.get("personaId"))
+        nombre_completo_prof = str(data_prof.get("nombreCompleto") or "").strip() or login_prof
+
+        if persona_id is not None and len(nivel_ids_disponibles) > 1:
+            _status("Asignando niveles al profesor...")
+            _asignar_niveles_profesor_web(
+                token=token,
+                colegio_id=int(colegio_id),
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                persona_id=int(persona_id),
+                nivel_ids=nivel_ids_disponibles,
+                timeout=int(timeout),
+            )
+
+        if persona_id is not None:
+            _status("Actualizando login/password del profesor...")
+            _update_login_profesor_web(
+                token=token,
+                colegio_id=int(colegio_id),
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                nivel_id=int(nivel_id_crear),
+                persona_id=int(persona_id),
+                login=login_prof,
+                password=password_prof,
+                timeout=int(timeout),
+            )
+
+        created.append({
+            "tipo": "Profesor",
+            "login": login_prof,
+            "password": password_prof,
+            "nombre": nombre_completo_prof,
+            "colegio_id": int(colegio_id),
+        })
+
+    return created, errors
+
+
+def _export_auto_cuentas_excel(
+    rows: List[Dict[str, object]],
+) -> bytes:
+    from io import BytesIO
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Cuentas"
+
+    headers = ["Colegio ID", "Tipo", "Login", "Password", "Nombre"]
+    header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+    header_font = Font(color="FFFFFF", bold=True)
+
+    for col_idx, header in enumerate(headers, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=header)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center")
+
+    for row_idx, row in enumerate(rows, start=2):
+        ws.cell(row=row_idx, column=1, value=row.get("colegio_id"))
+        ws.cell(row=row_idx, column=2, value=row.get("tipo"))
+        login_cell = ws.cell(row=row_idx, column=3, value=row.get("login"))
+        login_cell.number_format = "@"
+        pwd_cell = ws.cell(row=row_idx, column=4, value=row.get("password"))
+        pwd_cell.number_format = "@"
+        ws.cell(row=row_idx, column=5, value=row.get("nombre"))
+
+    for col_idx, header in enumerate(headers, start=1):
+        max_len = len(str(header))
+        for row_obj in rows:
+            vals = [row_obj.get("colegio_id"), row_obj.get("tipo"), row_obj.get("login"), row_obj.get("password"), row_obj.get("nombre")]
+            cell_val = str(vals[col_idx - 1] or "")
+            if len(cell_val) > max_len:
+                max_len = len(cell_val)
+        ws.column_dimensions[ws.cell(row=1, column=col_idx).column_letter].width = max_len + 4
+
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = ws.dimensions
+
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 def _update_profesor_edit_estado_web(
     token: str,
     colegio_id: int,
@@ -18330,6 +18678,7 @@ with tab_crud_alumnos:
             [
                 ("editar", "Editar", "Edita datos y mueve de seccion"),
                 ("crear", "Crear", "Crea alumno nuevo"),
+                ("auto_crear", "Generar cuentas demo", "Crea 2 alumnos y 1 profesor demo y exporta Excel"),
                 ("payments", "Actualizar users Payments", "Prepara y aplica cambios de users payments"),
             ],
             state_key="alumnos_crud_nav",
@@ -20093,6 +20442,133 @@ with tab_crud_alumnos:
                         ).strip(),
                     }
                     st.rerun()
+
+        if alumnos_crud_view == "auto_crear":
+            with st.container(border=True):
+                st.markdown("**Generar cuentas demo para este colegio**")
+                st.caption(
+                    "Crea un alumno de Primaria (AP-ID), un alumno de Secundaria (AS-ID) "
+                    "y un profesor (PC-ID) con login y password predefinidos, luego exporta "
+                    "un Excel con las cuentas generadas."
+                )
+
+            auto_crear_notice = st.session_state.pop("auto_crear_notice", None)
+            if isinstance(auto_crear_notice, dict):
+                notice_type = str(auto_crear_notice.get("type") or "info").lower()
+                notice_msg = str(auto_crear_notice.get("message") or "").strip()
+                if notice_msg:
+                    if notice_type == "success":
+                        st.success(notice_msg)
+                    elif notice_type == "warning":
+                        st.warning(notice_msg)
+                    elif notice_type == "error":
+                        st.error(notice_msg)
+                    else:
+                        st.info(notice_msg)
+
+            auto_crear_result_rows = st.session_state.get("auto_crear_result_rows") or []
+            auto_crear_result_colegio = _safe_int(
+                st.session_state.get("auto_crear_result_colegio_id")
+            )
+            if (
+                auto_crear_result_colegio is not None
+                and current_colegio_id is not None
+                and int(auto_crear_result_colegio) != int(current_colegio_id)
+            ):
+                st.session_state.pop("auto_crear_result_rows", None)
+                st.session_state.pop("auto_crear_result_colegio_id", None)
+                auto_crear_result_rows = []
+
+            btn_col, dl_col = st.columns([2, 2], gap="small")
+            run_auto_crear = btn_col.button(
+                "Crear cuentas demo y generar Excel",
+                type="primary",
+                key="auto_crear_run_btn",
+                use_container_width=True,
+                disabled=not bool(colegio_id_raw),
+            )
+
+            if auto_crear_result_rows:
+                excel_bytes = _export_auto_cuentas_excel(auto_crear_result_rows)
+                dl_col.download_button(
+                    label="Descargar Excel de cuentas",
+                    data=excel_bytes,
+                    file_name=f"cuentas_demo_{auto_crear_result_colegio or colegio_id_raw}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="auto_crear_download_btn",
+                    use_container_width=True,
+                )
+
+            if run_auto_crear:
+                if not colegio_id_raw:
+                    st.error("Ingresa un ID de colegio antes de continuar.")
+                    st.stop()
+                token = _get_shared_token()
+                if not token:
+                    st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                    st.stop()
+                try:
+                    colegio_id_int = _parse_colegio_id(colegio_id_raw)
+                except ValueError as exc:
+                    st.error(f"Error: {exc}")
+                    st.stop()
+
+                status_placeholder = st.empty()
+
+                def _auto_crear_on_status(msg: str) -> None:
+                    status_placeholder.caption(msg)
+
+                with st.spinner("Creando cuentas demo..."):
+                    created_rows, create_errors = _auto_crear_cuentas_colegio(
+                        token=token,
+                        colegio_id=int(colegio_id_int),
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                        on_status=_auto_crear_on_status,
+                    )
+
+                status_placeholder.empty()
+                st.session_state["auto_crear_result_rows"] = created_rows
+                st.session_state["auto_crear_result_colegio_id"] = int(colegio_id_int)
+
+                if create_errors:
+                    error_lines = [
+                        f"- {e.get('tipo', '?')}: {e.get('error', '?')}"
+                        for e in create_errors
+                    ]
+                    st.session_state["auto_crear_notice"] = {
+                        "type": "warning" if created_rows else "error",
+                        "message": "Errores:\n" + "\n".join(error_lines),
+                    }
+                if created_rows:
+                    st.session_state["auto_crear_notice"] = {
+                        "type": "success",
+                        "message": (
+                            f"Se crearon {len(created_rows)} cuenta(s). "
+                            "Descarga el Excel con el boton de arriba."
+                            + (
+                                f" Errores: {len(create_errors)}"
+                                if create_errors
+                                else ""
+                            )
+                        ),
+                    }
+                st.rerun()
+
+            if auto_crear_result_rows:
+                df_preview = pd.DataFrame(
+                    [
+                        {
+                            "Tipo": r.get("tipo"),
+                            "Login": r.get("login"),
+                            "Password": r.get("password"),
+                            "Nombre": r.get("nombre"),
+                        }
+                        for r in auto_crear_result_rows
+                    ]
+                )
+                st.dataframe(df_preview, use_container_width=True, hide_index=True)
 
 with tab_reportes:
     _render_pegasus_reportes_section()

@@ -9993,6 +9993,120 @@ def _asignar_niveles_profesor_web(
     return True, data, ""
 
 
+def _buscar_y_actualizar_alumno_existente(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    nivel_id: int,
+    login: str,
+    password: str,
+    timeout: int,
+    on_status: Optional[Callable[[str], None]] = None,
+) -> Tuple[bool, Dict[str, object], str]:
+    """Find an existing alumno by login and update their password. Returns (found, row, msg)."""
+    def _st(msg: str) -> None:
+        if callable(on_status):
+            on_status(str(msg))
+
+    _st(f"Buscando alumno existente con login '{login}'...")
+    try:
+        rows = _fetch_alumnos_censo(
+            token=token,
+            colegio_id=int(colegio_id),
+            nivel_id=int(nivel_id),
+            grado_id=None,
+            grupo_id=None,
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+        )
+    except Exception as exc:
+        return False, {}, f"Error buscando alumno: {exc}"
+
+    login_norm = str(login or "").strip().lower()
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        item_login = str(item.get("login") or "").strip().lower()
+        if item_login != login_norm:
+            continue
+
+        alumno_id = _safe_int(item.get("alumnoId"))
+        nivel_obj = item.get("nivel") or {}
+        grado_obj = item.get("grado") or {}
+        grupo_obj = item.get("grupo") or {}
+        persona_obj = item.get("persona") or {}
+        item_nivel_id = _safe_int(nivel_obj.get("nivelId")) if isinstance(nivel_obj, dict) else None
+        item_grado_id = _safe_int(grado_obj.get("gradoId")) if isinstance(grado_obj, dict) else None
+        item_grupo_id = _safe_int(grupo_obj.get("grupoId")) if isinstance(grupo_obj, dict) else None
+        nombre_completo = str(persona_obj.get("nombreCompleto") or "").strip() if isinstance(persona_obj, dict) else ""
+
+        if alumno_id is None or item_nivel_id is None or item_grado_id is None or item_grupo_id is None:
+            return False, {}, f"Alumno encontrado pero datos incompletos (id={alumno_id})"
+
+        _st(f"Alumno encontrado (id={alumno_id}). Actualizando password...")
+        _update_login_alumno_web(
+            token=token,
+            colegio_id=int(colegio_id),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            nivel_id=int(item_nivel_id),
+            grado_id=int(item_grado_id),
+            grupo_id=int(item_grupo_id),
+            alumno_id=int(alumno_id),
+            login=login,
+            password=password,
+            timeout=int(timeout),
+        )
+        return True, {"nombre_completo": nombre_completo}, ""
+
+    return False, {}, f"No se encontro alumno existente con login '{login}'"
+
+
+def _buscar_y_actualizar_profesor_existente(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    nivel_id: int,
+    login: str,
+    password: str,
+    timeout: int,
+    on_status: Optional[Callable[[str], None]] = None,
+) -> Tuple[bool, Dict[str, object], str]:
+    """Find an existing profesor by login and update their password. Returns (found, row, msg)."""
+    def _st(msg: str) -> None:
+        if callable(on_status):
+            on_status(str(msg))
+
+    _st(f"Buscando profesor existente con login '{login}'...")
+    persona_id, find_msg = _fetch_profesor_id_by_login(
+        token=token,
+        colegio_id=int(colegio_id),
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        login=login,
+        timeout=int(timeout),
+    )
+    if persona_id is None:
+        return False, {}, find_msg
+
+    _st(f"Profesor encontrado (id={persona_id}). Actualizando password...")
+    _update_login_profesor_web(
+        token=token,
+        colegio_id=int(colegio_id),
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        nivel_id=int(nivel_id),
+        persona_id=int(persona_id),
+        login=login,
+        password=password,
+        timeout=int(timeout),
+    )
+    return True, {}, ""
+
+
 def _auto_crear_cuentas_colegio(
     token: str,
     colegio_id: int,
@@ -10079,10 +10193,33 @@ def _auto_crear_cuentas_colegio(
             timeout=int(timeout),
         )
         if not ok:
-            errors.append({
+            _status(f"Creacion fallo ({msg}). Buscando cuenta existente...")
+            found, existing_data, find_msg = _buscar_y_actualizar_alumno_existente(
+                token=token,
+                colegio_id=int(colegio_id),
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                nivel_id=int(nivel_id),
+                login=login,
+                password=password,
+                timeout=int(timeout),
+                on_status=_status,
+            )
+            if not found:
+                errors.append({
+                    "tipo": f"Alumno {nivel_name}",
+                    "login": login,
+                    "error": f"Creacion: {msg} | Busqueda: {find_msg}",
+                })
+                continue
+            nombre_completo = str(existing_data.get("nombre_completo") or login).strip()
+            created.append({
                 "tipo": f"Alumno {nivel_name}",
                 "login": login,
-                "error": f"Error al crear: {msg}",
+                "password": password,
+                "nombre": nombre_completo,
+                "colegio_id": int(colegio_id),
+                "actualizado": True,
             })
             continue
 
@@ -10112,6 +10249,7 @@ def _auto_crear_cuentas_colegio(
             "password": password,
             "nombre": nombre_completo,
             "colegio_id": int(colegio_id),
+            "actualizado": False,
         })
 
     # Create teacher
@@ -10141,11 +10279,34 @@ def _auto_crear_cuentas_colegio(
         timeout=int(timeout),
     )
     if not ok_prof:
-        errors.append({
-            "tipo": "Profesor",
-            "login": login_prof,
-            "error": f"Error al crear profesor: {msg_prof}",
-        })
+        _status(f"Creacion de profesor fallo ({msg_prof}). Buscando cuenta existente...")
+        found_prof, existing_prof, find_prof_msg = _buscar_y_actualizar_profesor_existente(
+            token=token,
+            colegio_id=int(colegio_id),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            nivel_id=int(nivel_id_crear),
+            login=login_prof,
+            password=password_prof,
+            timeout=int(timeout),
+            on_status=_status,
+        )
+        if not found_prof:
+            errors.append({
+                "tipo": "Profesor",
+                "login": login_prof,
+                "error": f"Creacion: {msg_prof} | Busqueda: {find_prof_msg}",
+            })
+        else:
+            nombre_completo_prof = str(existing_prof.get("nombre_completo") or login_prof).strip()
+            created.append({
+                "tipo": "Profesor",
+                "login": login_prof,
+                "password": password_prof,
+                "nombre": nombre_completo_prof,
+                "colegio_id": int(colegio_id),
+                "actualizado": True,
+            })
     else:
         persona_id = _safe_int(data_prof.get("personaId"))
         nombre_completo_prof = str(data_prof.get("nombreCompleto") or "").strip() or login_prof
@@ -10182,6 +10343,7 @@ def _auto_crear_cuentas_colegio(
             "password": password_prof,
             "nombre": nombre_completo_prof,
             "colegio_id": int(colegio_id),
+            "actualizado": False,
         })
 
     return created, errors
@@ -10198,7 +10360,7 @@ def _export_auto_cuentas_excel(
     ws = wb.active
     ws.title = "Cuentas"
 
-    headers = ["Colegio ID", "Nombre del colegio", "Tipo", "Login", "Password", "Nombre cuenta"]
+    headers = ["Colegio ID", "Nombre del colegio", "Tipo", "Login", "Password", "Nombre cuenta", "Estado"]
     header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
     header_font = Font(color="FFFFFF", bold=True)
 
@@ -10217,6 +10379,10 @@ def _export_auto_cuentas_excel(
         pwd_cell = ws.cell(row=row_idx, column=5, value=row.get("password"))
         pwd_cell.number_format = "@"
         ws.cell(row=row_idx, column=6, value=row.get("nombre"))
+        estado = "Actualizado" if row.get("actualizado") else "Creado"
+        estado_cell = ws.cell(row=row_idx, column=7, value=estado)
+        if row.get("actualizado"):
+            estado_cell.font = Font(color="FF8C00", bold=True)
 
     for col_idx, header in enumerate(headers, start=1):
         max_len = len(str(header))
@@ -10228,6 +10394,7 @@ def _export_auto_cuentas_excel(
                 row_obj.get("login"),
                 row_obj.get("password"),
                 row_obj.get("nombre"),
+                "Actualizado" if row_obj.get("actualizado") else "Creado",
             ]
             cell_val = str(vals[col_idx - 1] or "")
             if len(cell_val) > max_len:

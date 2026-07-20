@@ -9993,6 +9993,120 @@ def _asignar_niveles_profesor_web(
     return True, data, ""
 
 
+def _buscar_y_actualizar_alumno_existente(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    nivel_id: int,
+    login: str,
+    password: str,
+    timeout: int,
+    on_status: Optional[Callable[[str], None]] = None,
+) -> Tuple[bool, Dict[str, object], str]:
+    """Find an existing alumno by login and update their password. Returns (found, row, msg)."""
+    def _st(msg: str) -> None:
+        if callable(on_status):
+            on_status(str(msg))
+
+    _st(f"Buscando alumno existente con login '{login}'...")
+    try:
+        rows = _fetch_alumnos_censo(
+            token=token,
+            colegio_id=int(colegio_id),
+            nivel_id=int(nivel_id),
+            grado_id=None,
+            grupo_id=None,
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+        )
+    except Exception as exc:
+        return False, {}, f"Error buscando alumno: {exc}"
+
+    login_norm = str(login or "").strip().lower()
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        item_login = str(item.get("login") or "").strip().lower()
+        if item_login != login_norm:
+            continue
+
+        alumno_id = _safe_int(item.get("alumnoId"))
+        nivel_obj = item.get("nivel") or {}
+        grado_obj = item.get("grado") or {}
+        grupo_obj = item.get("grupo") or {}
+        persona_obj = item.get("persona") or {}
+        item_nivel_id = _safe_int(nivel_obj.get("nivelId")) if isinstance(nivel_obj, dict) else None
+        item_grado_id = _safe_int(grado_obj.get("gradoId")) if isinstance(grado_obj, dict) else None
+        item_grupo_id = _safe_int(grupo_obj.get("grupoId")) if isinstance(grupo_obj, dict) else None
+        nombre_completo = str(persona_obj.get("nombreCompleto") or "").strip() if isinstance(persona_obj, dict) else ""
+
+        if alumno_id is None or item_nivel_id is None or item_grado_id is None or item_grupo_id is None:
+            return False, {}, f"Alumno encontrado pero datos incompletos (id={alumno_id})"
+
+        _st(f"Alumno encontrado (id={alumno_id}). Actualizando password...")
+        _update_login_alumno_web(
+            token=token,
+            colegio_id=int(colegio_id),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            nivel_id=int(item_nivel_id),
+            grado_id=int(item_grado_id),
+            grupo_id=int(item_grupo_id),
+            alumno_id=int(alumno_id),
+            login=login,
+            password=password,
+            timeout=int(timeout),
+        )
+        return True, {"nombre_completo": nombre_completo}, ""
+
+    return False, {}, f"No se encontro alumno existente con login '{login}'"
+
+
+def _buscar_y_actualizar_profesor_existente(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    nivel_id: int,
+    login: str,
+    password: str,
+    timeout: int,
+    on_status: Optional[Callable[[str], None]] = None,
+) -> Tuple[bool, Dict[str, object], str]:
+    """Find an existing profesor by login and update their password. Returns (found, row, msg)."""
+    def _st(msg: str) -> None:
+        if callable(on_status):
+            on_status(str(msg))
+
+    _st(f"Buscando profesor existente con login '{login}'...")
+    persona_id, find_msg = _fetch_profesor_id_by_login(
+        token=token,
+        colegio_id=int(colegio_id),
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        login=login,
+        timeout=int(timeout),
+    )
+    if persona_id is None:
+        return False, {}, find_msg
+
+    _st(f"Profesor encontrado (id={persona_id}). Actualizando password...")
+    _update_login_profesor_web(
+        token=token,
+        colegio_id=int(colegio_id),
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        nivel_id=int(nivel_id),
+        persona_id=int(persona_id),
+        login=login,
+        password=password,
+        timeout=int(timeout),
+    )
+    return True, {}, ""
+
+
 def _auto_crear_cuentas_colegio(
     token: str,
     colegio_id: int,
@@ -10079,10 +10193,33 @@ def _auto_crear_cuentas_colegio(
             timeout=int(timeout),
         )
         if not ok:
-            errors.append({
+            _status(f"Creacion fallo ({msg}). Buscando cuenta existente...")
+            found, existing_data, find_msg = _buscar_y_actualizar_alumno_existente(
+                token=token,
+                colegio_id=int(colegio_id),
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                nivel_id=int(nivel_id),
+                login=login,
+                password=password,
+                timeout=int(timeout),
+                on_status=_status,
+            )
+            if not found:
+                errors.append({
+                    "tipo": f"Alumno {nivel_name}",
+                    "login": login,
+                    "error": f"Creacion: {msg} | Busqueda: {find_msg}",
+                })
+                continue
+            nombre_completo = str(existing_data.get("nombre_completo") or login).strip()
+            created.append({
                 "tipo": f"Alumno {nivel_name}",
                 "login": login,
-                "error": f"Error al crear: {msg}",
+                "password": password,
+                "nombre": nombre_completo,
+                "colegio_id": int(colegio_id),
+                "actualizado": True,
             })
             continue
 
@@ -10112,6 +10249,7 @@ def _auto_crear_cuentas_colegio(
             "password": password,
             "nombre": nombre_completo,
             "colegio_id": int(colegio_id),
+            "actualizado": False,
         })
 
     # Create teacher
@@ -10141,11 +10279,34 @@ def _auto_crear_cuentas_colegio(
         timeout=int(timeout),
     )
     if not ok_prof:
-        errors.append({
-            "tipo": "Profesor",
-            "login": login_prof,
-            "error": f"Error al crear profesor: {msg_prof}",
-        })
+        _status(f"Creacion de profesor fallo ({msg_prof}). Buscando cuenta existente...")
+        found_prof, existing_prof, find_prof_msg = _buscar_y_actualizar_profesor_existente(
+            token=token,
+            colegio_id=int(colegio_id),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            nivel_id=int(nivel_id_crear),
+            login=login_prof,
+            password=password_prof,
+            timeout=int(timeout),
+            on_status=_status,
+        )
+        if not found_prof:
+            errors.append({
+                "tipo": "Profesor",
+                "login": login_prof,
+                "error": f"Creacion: {msg_prof} | Busqueda: {find_prof_msg}",
+            })
+        else:
+            nombre_completo_prof = str(existing_prof.get("nombre_completo") or login_prof).strip()
+            created.append({
+                "tipo": "Profesor",
+                "login": login_prof,
+                "password": password_prof,
+                "nombre": nombre_completo_prof,
+                "colegio_id": int(colegio_id),
+                "actualizado": True,
+            })
     else:
         persona_id = _safe_int(data_prof.get("personaId"))
         nombre_completo_prof = str(data_prof.get("nombreCompleto") or "").strip() or login_prof
@@ -10182,6 +10343,7 @@ def _auto_crear_cuentas_colegio(
             "password": password_prof,
             "nombre": nombre_completo_prof,
             "colegio_id": int(colegio_id),
+            "actualizado": False,
         })
 
     return created, errors
@@ -10198,7 +10360,7 @@ def _export_auto_cuentas_excel(
     ws = wb.active
     ws.title = "Cuentas"
 
-    headers = ["Colegio ID", "Nombre del colegio", "Tipo", "Login", "Password", "Nombre cuenta"]
+    headers = ["Colegio ID", "Nombre del colegio", "Tipo", "Login", "Password", "Nombre cuenta", "Estado"]
     header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
     header_font = Font(color="FFFFFF", bold=True)
 
@@ -10217,6 +10379,10 @@ def _export_auto_cuentas_excel(
         pwd_cell = ws.cell(row=row_idx, column=5, value=row.get("password"))
         pwd_cell.number_format = "@"
         ws.cell(row=row_idx, column=6, value=row.get("nombre"))
+        estado = "Actualizado" if row.get("actualizado") else "Creado"
+        estado_cell = ws.cell(row=row_idx, column=7, value=estado)
+        if row.get("actualizado"):
+            estado_cell.font = Font(color="FF8C00", bold=True)
 
     for col_idx, header in enumerate(headers, start=1):
         max_len = len(str(header))
@@ -10228,6 +10394,7 @@ def _export_auto_cuentas_excel(
                 row_obj.get("login"),
                 row_obj.get("password"),
                 row_obj.get("nombre"),
+                "Actualizado" if row_obj.get("actualizado") else "Creado",
             ]
             cell_val = str(vals[col_idx - 1] or "")
             if len(cell_val) > max_len:
@@ -10508,6 +10675,372 @@ def _assign_alumno_to_matching_classes_for_context(
         "assigned_error": int(assign_err),
         "assigned_errors": assign_errors,
     }
+
+
+def _fetch_alumno_id_by_login(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    nivel_id: int,
+    login: str,
+    timeout: int,
+) -> Tuple[Optional[int], str]:
+    try:
+        rows = _fetch_alumnos_censo(
+            token=token,
+            colegio_id=int(colegio_id),
+            nivel_id=int(nivel_id),
+            grado_id=None,
+            grupo_id=None,
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+        )
+    except Exception as exc:
+        return None, f"Error listando alumnos: {exc}"
+
+    login_norm = str(login or "").strip().lower()
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        item_login = str(item.get("login") or "").strip().lower()
+        if item_login == login_norm:
+            alumno_id = _safe_int(item.get("alumnoId"))
+            if alumno_id is not None:
+                return int(alumno_id), ""
+    return None, f"No se encontro alumno con login '{login}' en nivel {nivel_id}"
+
+
+def _fetch_profesor_id_by_login(
+    token: str,
+    colegio_id: int,
+    empresa_id: int,
+    ciclo_id: int,
+    login: str,
+    timeout: int,
+) -> Tuple[Optional[int], str]:
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    url = CENSO_ALUMNOS_BY_FILTERS_URL.replace(
+        "/alumnosByFilters", "/profesoresByFilters"
+    ).format(
+        empresa_id=int(empresa_id),
+        ciclo_id=int(ciclo_id),
+        colegio_id=int(colegio_id),
+    )
+    try:
+        response = requests.get(url, headers=headers, timeout=int(timeout))
+    except requests.RequestException as exc:
+        return None, f"Error de red: {exc}"
+
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+
+    if not response.ok:
+        msg = str(body.get("message") or "").strip() if isinstance(body, dict) else ""
+        return None, msg or f"HTTP {response.status_code}"
+
+    data = body.get("data") if isinstance(body, dict) else None
+    rows: List[Dict[str, object]] = []
+    if isinstance(data, list):
+        rows = [r for r in data if isinstance(r, dict)]
+    elif isinstance(data, dict):
+        for key in ("profesores", "items", "data"):
+            val = data.get(key)
+            if isinstance(val, list):
+                rows = [r for r in val if isinstance(r, dict)]
+                break
+
+    login_norm = str(login or "").strip().lower()
+    for item in rows:
+        persona_login = item.get("personaLogin")
+        item_login = ""
+        if isinstance(persona_login, dict):
+            item_login = str(persona_login.get("login") or "").strip().lower()
+        elif isinstance(persona_login, str):
+            item_login = persona_login.strip().lower()
+        if not item_login:
+            item_login = str(item.get("login") or "").strip().lower()
+        if item_login == login_norm:
+            persona_id = _safe_int(item.get("personaId"))
+            if persona_id is not None:
+                return int(persona_id), ""
+
+    return None, f"No se encontro profesor con login '{login}'"
+
+
+def _asignar_todas_las_clases_alumno(
+    token: str,
+    empresa_id: int,
+    ciclo_id: int,
+    colegio_id: int,
+    nivel_id: int,
+    alumno_id: int,
+    timeout: int,
+    on_status: Optional[Callable[[str], None]] = None,
+) -> Tuple[int, int, List[str]]:
+    def _status(msg: str) -> None:
+        if callable(on_status):
+            on_status(str(msg))
+
+    _status(f"Listando clases nivel {nivel_id}...")
+    try:
+        raw_clases = _fetch_clases_gestion_escolar(
+            token=token,
+            colegio_id=int(colegio_id),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+            nivel_id=int(nivel_id),
+        )
+    except Exception as exc:
+        return 0, 0, [f"Error listando clases: {exc}"]
+
+    clase_ids: List[int] = []
+    seen: Set[int] = set()
+    for item in raw_clases:
+        if not isinstance(item, dict):
+            continue
+        cid = _safe_int(item.get("geClaseId") or item.get("clase_id") or item.get("claseId"))
+        if cid is not None and int(cid) not in seen:
+            seen.add(int(cid))
+            clase_ids.append(int(cid))
+
+    ok_count = 0
+    err_count = 0
+    errors: List[str] = []
+    total = len(clase_ids)
+    for idx, clase_id in enumerate(clase_ids, start=1):
+        _status(f"Asignando alumno a clase {idx}/{total}...")
+        ok, msg = _asignar_alumno_a_clase_web(
+            token=token,
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            clase_id=int(clase_id),
+            alumno_id=int(alumno_id),
+            timeout=int(timeout),
+        )
+        if ok:
+            ok_count += 1
+        else:
+            err_count += 1
+            errors.append(f"clase {clase_id}: {msg}")
+
+    return ok_count, err_count, errors
+
+
+def _asignar_todas_las_clases_profesor(
+    token: str,
+    empresa_id: int,
+    ciclo_id: int,
+    colegio_id: int,
+    nivel_ids: List[int],
+    persona_id: int,
+    timeout: int,
+    on_status: Optional[Callable[[str], None]] = None,
+) -> Tuple[int, int, List[str]]:
+    def _status(msg: str) -> None:
+        if callable(on_status):
+            on_status(str(msg))
+
+    clase_ids: List[int] = []
+    seen: Set[int] = set()
+    for nivel_id in nivel_ids:
+        _status(f"Listando clases nivel {nivel_id}...")
+        try:
+            raw_clases = _fetch_clases_gestion_escolar(
+                token=token,
+                colegio_id=int(colegio_id),
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                timeout=int(timeout),
+                nivel_id=int(nivel_id),
+            )
+        except Exception as exc:
+            _status(f"Error listando clases nivel {nivel_id}: {exc}")
+            continue
+
+        for item in raw_clases:
+            if not isinstance(item, dict):
+                continue
+            cid = _safe_int(item.get("geClaseId") or item.get("clase_id") or item.get("claseId"))
+            if cid is not None and int(cid) not in seen:
+                seen.add(int(cid))
+                clase_ids.append(int(cid))
+
+    ok_count = 0
+    err_count = 0
+    errors: List[str] = []
+    total = len(clase_ids)
+    for idx, clase_id in enumerate(clase_ids, start=1):
+        _status(f"Asignando profesor a clase {idx}/{total}...")
+        ok, msg = _assign_profesor_to_clase_web(
+            token=token,
+            clase_id=int(clase_id),
+            persona_id=int(persona_id),
+            empresa_id=int(empresa_id),
+            ciclo_id=int(ciclo_id),
+            timeout=int(timeout),
+        )
+        if ok:
+            ok_count += 1
+        else:
+            err_count += 1
+            errors.append(f"clase {clase_id}: {msg}")
+
+    return ok_count, err_count, errors
+
+
+def _procesar_excel_asignar_clases(
+    token: str,
+    empresa_id: int,
+    ciclo_id: int,
+    timeout: int,
+    excel_bytes: bytes,
+    on_status: Optional[Callable[[str], None]] = None,
+) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
+    from io import BytesIO
+    import openpyxl
+
+    def _status(msg: str) -> None:
+        if callable(on_status):
+            on_status(str(msg))
+
+    results: List[Dict[str, object]] = []
+    errors: List[Dict[str, object]] = []
+
+    try:
+        wb = openpyxl.load_workbook(BytesIO(excel_bytes), read_only=True, data_only=True)
+        ws = wb.active
+        rows_iter = iter(ws.iter_rows(values_only=True))
+        header_row = next(rows_iter, None)
+        if header_row is None:
+            errors.append({"error": "El archivo esta vacio"})
+            return results, errors
+        headers_norm = [str(h or "").strip().lower() for h in header_row]
+
+        def _col(name: str) -> int:
+            try:
+                return headers_norm.index(name.lower())
+            except ValueError:
+                return -1
+
+        col_colegio_id = _col("colegio id")
+        col_tipo = _col("tipo")
+        col_login = _col("login")
+
+        if col_colegio_id < 0 or col_tipo < 0 or col_login < 0:
+            errors.append({"error": f"Columnas requeridas no encontradas. Encabezados: {list(header_row)}"})
+            return results, errors
+
+        data_rows = [row for row in rows_iter if any(v is not None for v in row)]
+    except Exception as exc:
+        errors.append({"error": f"No se pudo leer el Excel: {exc}"})
+        return results, errors
+
+    for row in data_rows:
+        colegio_id = _safe_int(row[col_colegio_id] if col_colegio_id >= 0 else None)
+        tipo = str(row[col_tipo] if col_tipo >= 0 else "").strip().lower()
+        login = str(row[col_login] if col_login >= 0 else "").strip()
+
+        if colegio_id is None or not tipo or not login:
+            continue
+
+        colegio_nombre = ""
+        col_nombre_colegio = _col("nombre del colegio")
+        if col_nombre_colegio >= 0:
+            colegio_nombre = str(row[col_nombre_colegio] or "").strip()
+        label = colegio_nombre or str(colegio_id)
+
+        if "primaria" in tipo and "alumno" in tipo:
+            _status(f"{label}: buscando alumno Primaria ({login})...")
+            alumno_id, msg = _fetch_alumno_id_by_login(
+                token=token,
+                colegio_id=int(colegio_id),
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                nivel_id=AUTO_CREAR_NIVEL_ID_PRIMARIA,
+                login=login,
+                timeout=int(timeout),
+            )
+            if alumno_id is None:
+                errors.append({"colegio": label, "tipo": tipo, "login": login, "error": msg})
+                continue
+            _status(f"{label}: asignando {login} a clases Primaria...")
+            ok_c, err_c, errs = _asignar_todas_las_clases_alumno(
+                token=token,
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                colegio_id=int(colegio_id),
+                nivel_id=AUTO_CREAR_NIVEL_ID_PRIMARIA,
+                alumno_id=int(alumno_id),
+                timeout=int(timeout),
+                on_status=on_status,
+            )
+            results.append({"colegio": label, "tipo": tipo, "login": login, "clases_ok": ok_c, "clases_error": err_c})
+            for e in errs:
+                errors.append({"colegio": label, "tipo": tipo, "login": login, "error": e})
+
+        elif "secundaria" in tipo and "alumno" in tipo:
+            _status(f"{label}: buscando alumno Secundaria ({login})...")
+            alumno_id, msg = _fetch_alumno_id_by_login(
+                token=token,
+                colegio_id=int(colegio_id),
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                nivel_id=AUTO_CREAR_NIVEL_ID_SECUNDARIA,
+                login=login,
+                timeout=int(timeout),
+            )
+            if alumno_id is None:
+                errors.append({"colegio": label, "tipo": tipo, "login": login, "error": msg})
+                continue
+            _status(f"{label}: asignando {login} a clases Secundaria...")
+            ok_c, err_c, errs = _asignar_todas_las_clases_alumno(
+                token=token,
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                colegio_id=int(colegio_id),
+                nivel_id=AUTO_CREAR_NIVEL_ID_SECUNDARIA,
+                alumno_id=int(alumno_id),
+                timeout=int(timeout),
+                on_status=on_status,
+            )
+            results.append({"colegio": label, "tipo": tipo, "login": login, "clases_ok": ok_c, "clases_error": err_c})
+            for e in errs:
+                errors.append({"colegio": label, "tipo": tipo, "login": login, "error": e})
+
+        elif "profesor" in tipo:
+            _status(f"{label}: buscando profesor ({login})...")
+            persona_id, msg = _fetch_profesor_id_by_login(
+                token=token,
+                colegio_id=int(colegio_id),
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                login=login,
+                timeout=int(timeout),
+            )
+            if persona_id is None:
+                errors.append({"colegio": label, "tipo": tipo, "login": login, "error": msg})
+                continue
+            _status(f"{label}: asignando {login} a clases Primaria + Secundaria...")
+            ok_c, err_c, errs = _asignar_todas_las_clases_profesor(
+                token=token,
+                empresa_id=int(empresa_id),
+                ciclo_id=int(ciclo_id),
+                colegio_id=int(colegio_id),
+                nivel_ids=[AUTO_CREAR_NIVEL_ID_PRIMARIA, AUTO_CREAR_NIVEL_ID_SECUNDARIA],
+                persona_id=int(persona_id),
+                timeout=int(timeout),
+                on_status=on_status,
+            )
+            results.append({"colegio": label, "tipo": tipo, "login": login, "clases_ok": ok_c, "clases_error": err_c})
+            for e in errs:
+                errors.append({"colegio": label, "tipo": tipo, "login": login, "error": e})
+
+    return results, errors
 
 
 def _apply_auto_move_changes(
@@ -20619,6 +21152,114 @@ with tab_crud_alumnos:
                         ]
                     )
                     st.dataframe(df_errors, use_container_width=True, hide_index=True)
+
+            st.divider()
+            st.markdown("**Asignar clases desde Excel de cuentas**")
+            st.caption(
+                "Sube el Excel generado arriba. Por cada fila asigna el alumno a todas las "
+                "clases de su nivel (Primaria o Secundaria), y el profesor a todas las "
+                "clases de Primaria y Secundaria."
+            )
+
+            asignar_notice = st.session_state.pop("asignar_clases_notice", None)
+            if isinstance(asignar_notice, dict):
+                a_type = str(asignar_notice.get("type") or "info").lower()
+                a_msg = str(asignar_notice.get("message") or "").strip()
+                if a_msg:
+                    if a_type == "success":
+                        st.success(a_msg)
+                    elif a_type == "warning":
+                        st.warning(a_msg)
+                    elif a_type == "error":
+                        st.error(a_msg)
+                    else:
+                        st.info(a_msg)
+
+            asignar_result_rows = st.session_state.get("asignar_clases_result_rows") or []
+            asignar_result_errors = st.session_state.get("asignar_clases_result_errors") or []
+
+            uploaded_cuentas_excel = st.file_uploader(
+                "Excel de cuentas demo (.xlsx)",
+                type=["xlsx"],
+                key="asignar_clases_upload",
+            )
+
+            run_asignar = st.button(
+                "Asignar clases a todas las cuentas del Excel",
+                type="primary",
+                key="asignar_clases_run_btn",
+                disabled=uploaded_cuentas_excel is None,
+            )
+
+            if run_asignar and uploaded_cuentas_excel is not None:
+                token = _get_shared_token()
+                if not token:
+                    st.error("Falta el token. Configura el token global o PEGASUS_TOKEN.")
+                    st.stop()
+
+                asignar_status_ph = st.empty()
+
+                def _asignar_on_status(msg: str) -> None:
+                    asignar_status_ph.caption(msg)
+
+                with st.spinner("Asignando clases..."):
+                    asignar_rows, asignar_errs = _procesar_excel_asignar_clases(
+                        token=token,
+                        empresa_id=int(empresa_id),
+                        ciclo_id=int(ciclo_id),
+                        timeout=int(timeout),
+                        excel_bytes=uploaded_cuentas_excel.read(),
+                        on_status=_asignar_on_status,
+                    )
+
+                asignar_status_ph.empty()
+                st.session_state["asignar_clases_result_rows"] = asignar_rows
+                st.session_state["asignar_clases_result_errors"] = asignar_errs
+
+                total_ok_r = sum(int(r.get("clases_ok") or 0) for r in asignar_rows)
+                total_err_r = sum(int(r.get("clases_error") or 0) for r in asignar_rows) + len(asignar_errs)
+                if asignar_rows and total_err_r == 0:
+                    notice_t = "success"
+                    notice_m = f"Se asignaron {total_ok_r} clases en {len(asignar_rows)} cuenta(s)."
+                elif asignar_rows:
+                    notice_t = "warning"
+                    notice_m = f"Se asignaron {total_ok_r} clases. Errores: {total_err_r}."
+                else:
+                    notice_t = "error"
+                    notice_m = f"No se pudo asignar ninguna clase. Errores: {len(asignar_errs)}."
+
+                st.session_state["asignar_clases_notice"] = {"type": notice_t, "message": notice_m}
+                st.rerun()
+
+            if asignar_result_rows:
+                df_asignar = pd.DataFrame(
+                    [
+                        {
+                            "Colegio": r.get("colegio"),
+                            "Tipo": r.get("tipo"),
+                            "Login": r.get("login"),
+                            "Clases OK": r.get("clases_ok"),
+                            "Clases con error": r.get("clases_error"),
+                        }
+                        for r in asignar_result_rows
+                    ]
+                )
+                st.dataframe(df_asignar, use_container_width=True, hide_index=True)
+
+            if asignar_result_errors:
+                with st.expander(f"Errores de asignacion ({len(asignar_result_errors)})", expanded=False):
+                    df_asignar_err = pd.DataFrame(
+                        [
+                            {
+                                "Colegio": e.get("colegio"),
+                                "Tipo": e.get("tipo"),
+                                "Login": e.get("login", "-"),
+                                "Error": e.get("error"),
+                            }
+                            for e in asignar_result_errors
+                        ]
+                    )
+                    st.dataframe(df_asignar_err, use_container_width=True, hide_index=True)
 
 with tab_reportes:
     _render_pegasus_reportes_section()

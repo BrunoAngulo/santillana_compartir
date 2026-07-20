@@ -20452,13 +20452,24 @@ with tab_crud_alumnos:
                     st.rerun()
 
         if alumnos_crud_view == "auto_crear":
+            auto_crear_colegios_rows: List[Dict[str, object]] = (
+                st.session_state.get("shared_colegios_rows") or []
+            )
+            total_auto_colegios = len(auto_crear_colegios_rows)
+
             with st.container(border=True):
-                st.markdown("**Generar cuentas demo para todos los colegios**")
-                st.caption(
-                    f"Itera sobre los {len(AUTO_MOVE_MULTI_DEFAULT_SCHOOLS)} colegios de la lista, "
-                    "crea un alumno Primaria (AP-ID), un alumno Secundaria (AS-ID) y un profesor "
-                    "(PC-ID) en cada uno, y exporta un Excel consolidado con todas las cuentas."
-                )
+                st.markdown("**Generar cuentas demo para todos los colegios del combo**")
+                if total_auto_colegios:
+                    st.caption(
+                        f"Itera sobre los {total_auto_colegios} colegios cargados en el selector global, "
+                        "crea un alumno Primaria (AP-ID), un alumno Secundaria (AS-ID) y un profesor "
+                        "(PC-ID) en cada uno, y exporta un Excel consolidado con todas las cuentas."
+                    )
+                else:
+                    st.warning(
+                        "No hay colegios cargados en el selector global. "
+                        "Asegurate de tener el token configurado para que se cargue la lista."
+                    )
 
             auto_crear_notice = st.session_state.pop("auto_crear_notice", None)
             if isinstance(auto_crear_notice, dict):
@@ -20479,10 +20490,11 @@ with tab_crud_alumnos:
 
             btn_col, dl_col = st.columns([2, 2], gap="small")
             run_auto_crear = btn_col.button(
-                f"Crear cuentas en {len(AUTO_MOVE_MULTI_DEFAULT_SCHOOLS)} colegios y generar Excel",
+                f"Crear cuentas en {total_auto_colegios} colegios y generar Excel",
                 type="primary",
                 key="auto_crear_run_btn",
                 use_container_width=True,
+                disabled=not bool(total_auto_colegios),
             )
 
             if auto_crear_result_rows:
@@ -20504,15 +20516,15 @@ with tab_crud_alumnos:
 
                 all_created: List[Dict[str, object]] = []
                 all_errors: List[Dict[str, object]] = []
-                schools = AUTO_MOVE_MULTI_DEFAULT_SCHOOLS
+                schools = auto_crear_colegios_rows
                 total_schools = len(schools)
 
                 progress_bar = st.progress(0)
                 status_placeholder = st.empty()
 
                 for school_idx, school in enumerate(schools):
-                    school_colegio_id = int(school["Clave ID"])
-                    school_name = str(school["Nombre del colegio"] or "").strip()
+                    school_colegio_id = int(school["colegio_id"])
+                    school_name = str(school.get("colegio") or "").strip() or str(school_colegio_id)
                     status_placeholder.caption(
                         f"[{school_idx + 1}/{total_schools}] {school_name} (ID {school_colegio_id})..."
                     )

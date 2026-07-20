@@ -10073,7 +10073,7 @@ def _auto_crear_cuentas_colegio(
             apellido_paterno=login_prefix,
             apellido_materno=str(colegio_id),
             sexo="M",
-            fecha_nacimiento="2000-01-01T00:00:00.000Z",
+            fecha_nacimiento=date(2000, 1, 1),
             id_oficial="",
             extranjero=True,
             timeout=int(timeout),

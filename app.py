@@ -13235,7 +13235,7 @@ def _render_otras_funcionalidades_view() -> None:
                     colegio_id=int(colegio_id),
                     empresa_id=int(empresa_id),
                     ciclo_id=int(ciclo_id),
-                    timeout=int(timeout),
+                    timeout=120,
                 )
                 file_name = build_censo_colegio_filename(
                     colegio_row,
@@ -13352,6 +13352,23 @@ def _render_otras_funcionalidades_view() -> None:
                     errors=len(errors),
                 )
             )
+            if download_bytes:
+                st.download_button(
+                    label=download_label,
+                    data=download_bytes,
+                    file_name=download_name,
+                    mime=download_mime,
+                    key="otras_excel_masivo_estudiantes_download_inline",
+                    type="primary",
+                    use_container_width=True,
+                )
+                _b64 = base64.b64encode(download_bytes).decode()
+                components.html(
+                    f"""<a id="auto-dl" href="data:{download_mime};base64,{_b64}"
+                        download="{download_name}" style="display:none">dl</a>
+                    <script>document.getElementById('auto-dl').click();</script>""",
+                    height=0,
+                )
         else:
             st.error("No se pudo generar ningun Excel de estudiantes.")
 

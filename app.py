@@ -10033,14 +10033,7 @@ def _buscar_y_actualizar_alumno_existente(
     except Exception as exc:
         return False, {}, f"Error buscando alumno: {exc}"
 
-    login_norm = str(login or "").strip().lower()
-    for item in rows:
-        if not isinstance(item, dict):
-            continue
-        item_login = str(item.get("login") or "").strip().lower()
-        if item_login != login_norm:
-            continue
-
+    def _extract_alumno_fields(item: Dict[str, object]) -> Optional[Dict[str, object]]:
         alumno_id = _safe_int(item.get("alumnoId"))
         nivel_obj = item.get("nivel") or {}
         grado_obj = item.get("grado") or {}
@@ -10050,27 +10043,69 @@ def _buscar_y_actualizar_alumno_existente(
         item_grado_id = _safe_int(grado_obj.get("gradoId")) if isinstance(grado_obj, dict) else None
         item_grupo_id = _safe_int(grupo_obj.get("grupoId")) if isinstance(grupo_obj, dict) else None
         nombre_completo = str(persona_obj.get("nombreCompleto") or "").strip() if isinstance(persona_obj, dict) else ""
-
         if alumno_id is None or item_nivel_id is None or item_grado_id is None or item_grupo_id is None:
-            return False, {}, f"Alumno encontrado pero datos incompletos (id={alumno_id})"
+            return None
+        return {
+            "alumno_id": alumno_id,
+            "nivel_id": item_nivel_id,
+            "grado_id": item_grado_id,
+            "grupo_id": item_grupo_id,
+            "nombre_completo": nombre_completo,
+        }
 
-        _st(f"Alumno encontrado (id={alumno_id}). Actualizando password...")
+    def _actualizar_y_retornar(fields: Dict[str, object]) -> Tuple[bool, Dict[str, object], str]:
+        _st(f"Alumno encontrado (id={fields['alumno_id']}). Actualizando login/password...")
         _update_login_alumno_web(
             token=token,
             colegio_id=int(colegio_id),
             empresa_id=int(empresa_id),
             ciclo_id=int(ciclo_id),
-            nivel_id=int(item_nivel_id),
-            grado_id=int(item_grado_id),
-            grupo_id=int(item_grupo_id),
-            alumno_id=int(alumno_id),
+            nivel_id=int(fields["nivel_id"]),
+            grado_id=int(fields["grado_id"]),
+            grupo_id=int(fields["grupo_id"]),
+            alumno_id=int(fields["alumno_id"]),
             login=login,
             password=password,
             timeout=int(timeout),
         )
-        return True, {"nombre_completo": nombre_completo}, ""
+        return True, {"nombre_completo": str(fields.get("nombre_completo") or "")}, ""
 
-    return False, {}, f"No se encontro alumno existente con login '{login}'"
+    # Intento 1: buscar por login exacto
+    login_norm = str(login or "").strip().lower()
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        item_login = str(item.get("login") or "").strip().lower()
+        if item_login != login_norm:
+            continue
+        fields = _extract_alumno_fields(item)
+        if fields is None:
+            return False, {}, f"Alumno encontrado por login pero datos incompletos"
+        return _actualizar_y_retornar(fields)
+
+    # Intento 2: buscar cuenta DEMO por apellidoPaterno + apellidoMaterno (cuando el login no fue asignado)
+    # El alumno demo se crea con apellidoPaterno=login_prefix, apellidoMaterno=str(colegio_id), nombre="DEMO"
+    login_prefix = str(login or "").split("-")[0].upper()
+    colegio_id_str = str(colegio_id)
+    _st(f"No encontrado por login. Buscando cuenta DEMO (apellidoPaterno={login_prefix}, apellidoMaterno={colegio_id_str})...")
+    for item in rows:
+        if not isinstance(item, dict):
+            continue
+        persona_obj = item.get("persona") or {}
+        if not isinstance(persona_obj, dict):
+            continue
+        ap = str(persona_obj.get("apellidoPaterno") or "").strip().upper()
+        am = str(persona_obj.get("apellidoMaterno") or "").strip()
+        nb = str(persona_obj.get("nombre") or "").strip().upper()
+        if ap == login_prefix and am == colegio_id_str and nb == "DEMO":
+            fields = _extract_alumno_fields(item)
+            if fields is None:
+                continue
+            logger.info("[colegio_id=%d] Alumno DEMO encontrado por nombre/apellido (id=%s), actualizando login a '%s'",
+                        colegio_id, fields["alumno_id"], login)
+            return _actualizar_y_retornar(fields)
+
+    return False, {}, f"No se encontro alumno existente con login '{login}' ni cuenta DEMO previa"
 
 
 def _buscar_y_actualizar_profesor_existente(
@@ -10158,11 +10193,24 @@ def _auto_crear_cuentas_colegio(
     grupo_ids_by_grade: Dict[Tuple[int, int], List[int]] = catalog.get("grupo_ids_by_grade") or {}
     nivel_name_by_id: Dict[int, str] = catalog.get("nivel_name_by_id") or {}
 
-    logger.info("%s Niveles disponibles: %s", tag, list(nivel_name_by_id.values()))
+    logger.info("%s Niveles disponibles: %s", tag, {k: v for k, v in nivel_name_by_id.items()})
+
+    def _find_nivel_id_by_keyword(keyword: str) -> Optional[int]:
+        """Busca el nivel cuyo nombre contiene la keyword (case-insensitive)."""
+        kw = keyword.upper()
+        for nid, nname in nivel_name_by_id.items():
+            if kw in nname.upper():
+                return nid
+        return None
+
+    primaria_id = _find_nivel_id_by_keyword("PRIMARIA") or AUTO_CREAR_NIVEL_ID_PRIMARIA
+    secundaria_id = _find_nivel_id_by_keyword("SECUNDARIA") or AUTO_CREAR_NIVEL_ID_SECUNDARIA
+
+    logger.info("%s nivel Primaria resuelto: id=%s | nivel Secundaria resuelto: id=%s", tag, primaria_id, secundaria_id)
 
     alumno_niveles = [
-        (AUTO_CREAR_NIVEL_ID_PRIMARIA, "AP"),
-        (AUTO_CREAR_NIVEL_ID_SECUNDARIA, "AS"),
+        (primaria_id, "AP"),
+        (secundaria_id, "AS"),
     ]
     for nivel_id, login_prefix in alumno_niveles:
         nivel_name = nivel_name_by_id.get(nivel_id, str(nivel_id))

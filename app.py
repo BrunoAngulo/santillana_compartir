@@ -10158,11 +10158,24 @@ def _auto_crear_cuentas_colegio(
     grupo_ids_by_grade: Dict[Tuple[int, int], List[int]] = catalog.get("grupo_ids_by_grade") or {}
     nivel_name_by_id: Dict[int, str] = catalog.get("nivel_name_by_id") or {}
 
-    logger.info("%s Niveles disponibles: %s", tag, list(nivel_name_by_id.values()))
+    logger.info("%s Niveles disponibles: %s", tag, {k: v for k, v in nivel_name_by_id.items()})
+
+    def _find_nivel_id_by_keyword(keyword: str) -> Optional[int]:
+        """Busca el nivel cuyo nombre contiene la keyword (case-insensitive)."""
+        kw = keyword.upper()
+        for nid, nname in nivel_name_by_id.items():
+            if kw in nname.upper():
+                return nid
+        return None
+
+    primaria_id = _find_nivel_id_by_keyword("PRIMARIA") or AUTO_CREAR_NIVEL_ID_PRIMARIA
+    secundaria_id = _find_nivel_id_by_keyword("SECUNDARIA") or AUTO_CREAR_NIVEL_ID_SECUNDARIA
+
+    logger.info("%s nivel Primaria resuelto: id=%s | nivel Secundaria resuelto: id=%s", tag, primaria_id, secundaria_id)
 
     alumno_niveles = [
-        (AUTO_CREAR_NIVEL_ID_PRIMARIA, "AP"),
-        (AUTO_CREAR_NIVEL_ID_SECUNDARIA, "AS"),
+        (primaria_id, "AP"),
+        (secundaria_id, "AS"),
     ]
     for nivel_id, login_prefix in alumno_niveles:
         nivel_name = nivel_name_by_id.get(nivel_id, str(nivel_id))

@@ -1,3 +1,4 @@
+import logging
 import os
 import base64
 import json
@@ -5,6 +6,7 @@ import re
 import csv
 import tempfile
 import threading
+import time
 import traceback
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -16,6 +18,13 @@ from typing import Callable, Dict, Iterable, List, Optional, Sequence, Set, Tupl
 from urllib.parse import unquote, urljoin
 from uuid import uuid4
 from zipfile import ZIP_DEFLATED, ZipFile
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger("auto_crear")
 
 import pandas as pd
 import requests
@@ -10114,12 +10123,16 @@ def _auto_crear_cuentas_colegio(
     ciclo_id: int,
     timeout: int,
     on_status: Optional[Callable[[str], None]] = None,
+    colegio_nombre: str = "",
 ) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
     """Create demo Primaria student, Secundaria student, and teacher for a school.
 
     Returns (created_rows, errors) where each row has: tipo, login, password, nombre, colegio_id.
     """
+    tag = f"[colegio_id={colegio_id}{f' {colegio_nombre}' if colegio_nombre else ''}]"
+
     def _status(msg: str) -> None:
+        logger.info("%s %s", tag, msg)
         if callable(on_status):
             on_status(msg)
 
@@ -10136,6 +10149,7 @@ def _auto_crear_cuentas_colegio(
             timeout=int(timeout),
         )
     except Exception as exc:
+        logger.error("%s Error cargando estructura: %s", tag, exc)
         errors.append({"tipo": "general", "error": f"No se pudo cargar estructura: {exc}"})
         return created, errors
 
@@ -10143,6 +10157,8 @@ def _auto_crear_cuentas_colegio(
     grado_ids_by_nivel: Dict[int, List[int]] = catalog.get("grado_ids_by_nivel") or {}
     grupo_ids_by_grade: Dict[Tuple[int, int], List[int]] = catalog.get("grupo_ids_by_grade") or {}
     nivel_name_by_id: Dict[int, str] = catalog.get("nivel_name_by_id") or {}
+
+    logger.info("%s Niveles disponibles: %s", tag, list(nivel_name_by_id.values()))
 
     alumno_niveles = [
         (AUTO_CREAR_NIVEL_ID_PRIMARIA, "AP"),
@@ -10155,6 +10171,7 @@ def _auto_crear_cuentas_colegio(
 
         grado_ids = grado_ids_by_nivel.get(nivel_id, [])
         if not grado_ids:
+            logger.warning("%s Sin grados para nivel %s (id=%s)", tag, nivel_name, nivel_id)
             errors.append({
                 "tipo": f"Alumno {nivel_name}",
                 "login": login,
@@ -10165,6 +10182,7 @@ def _auto_crear_cuentas_colegio(
         grado_id = grado_ids[0]
         grupo_ids = grupo_ids_by_grade.get((nivel_id, grado_id), [])
         if not grupo_ids:
+            logger.warning("%s Sin secciones para nivel %s grado %s", tag, nivel_name, grado_id)
             errors.append({
                 "tipo": f"Alumno {nivel_name}",
                 "login": login,
@@ -10193,6 +10211,7 @@ def _auto_crear_cuentas_colegio(
             timeout=int(timeout),
         )
         if not ok:
+            logger.warning("%s Creacion alumno %s fallo: %s. Buscando existente...", tag, login, msg)
             _status(f"Creacion fallo ({msg}). Buscando cuenta existente...")
             found, existing_data, find_msg = _buscar_y_actualizar_alumno_existente(
                 token=token,
@@ -10206,6 +10225,7 @@ def _auto_crear_cuentas_colegio(
                 on_status=_status,
             )
             if not found:
+                logger.error("%s Alumno %s no creado ni encontrado: creacion=%s busqueda=%s", tag, login, msg, find_msg)
                 errors.append({
                     "tipo": f"Alumno {nivel_name}",
                     "login": login,
@@ -10213,6 +10233,7 @@ def _auto_crear_cuentas_colegio(
                 })
                 continue
             nombre_completo = str(existing_data.get("nombre_completo") or login).strip()
+            logger.info("%s Alumno %s actualizado (existente)", tag, login)
             created.append({
                 "tipo": f"Alumno {nivel_name}",
                 "login": login,
@@ -10243,6 +10264,7 @@ def _auto_crear_cuentas_colegio(
                 timeout=int(timeout),
             )
 
+        logger.info("%s Alumno %s creado (id=%s)", tag, login, alumno_id)
         created.append({
             "tipo": f"Alumno {nivel_name}",
             "login": login,
@@ -10279,6 +10301,7 @@ def _auto_crear_cuentas_colegio(
         timeout=int(timeout),
     )
     if not ok_prof:
+        logger.warning("%s Creacion profesor %s fallo: %s. Buscando existente...", tag, login_prof, msg_prof)
         _status(f"Creacion de profesor fallo ({msg_prof}). Buscando cuenta existente...")
         found_prof, existing_prof, find_prof_msg = _buscar_y_actualizar_profesor_existente(
             token=token,
@@ -10292,6 +10315,7 @@ def _auto_crear_cuentas_colegio(
             on_status=_status,
         )
         if not found_prof:
+            logger.error("%s Profesor %s no creado ni encontrado: creacion=%s busqueda=%s", tag, login_prof, msg_prof, find_prof_msg)
             errors.append({
                 "tipo": "Profesor",
                 "login": login_prof,
@@ -10299,6 +10323,7 @@ def _auto_crear_cuentas_colegio(
             })
         else:
             nombre_completo_prof = str(existing_prof.get("nombre_completo") or login_prof).strip()
+            logger.info("%s Profesor %s actualizado (existente)", tag, login_prof)
             created.append({
                 "tipo": "Profesor",
                 "login": login_prof,
@@ -10337,6 +10362,7 @@ def _auto_crear_cuentas_colegio(
                 timeout=int(timeout),
             )
 
+        logger.info("%s Profesor %s creado (id=%s)", tag, login_prof, persona_id)
         created.append({
             "tipo": "Profesor",
             "login": login_prof,
@@ -10346,6 +10372,7 @@ def _auto_crear_cuentas_colegio(
             "actualizado": False,
         })
 
+    logger.info("%s Finalizado: %d creados, %d errores", tag, len(created), len(errors))
     return created, errors
 
 
@@ -21052,16 +21079,26 @@ with tab_crud_alumnos:
                 schools = auto_crear_colegios_rows
                 total_schools = len(schools)
 
+                # Limpiar resultados parciales anteriores
+                st.session_state["auto_crear_result_rows"] = []
+                st.session_state["auto_crear_all_errors"] = []
+
                 progress_bar = st.progress(0)
                 status_placeholder = st.empty()
+                partial_placeholder = st.empty()
+
+                logger.info("=== AUTO CREAR CUENTAS DEMO: %d colegios ===", total_schools)
 
                 for school_idx, school in enumerate(schools):
                     school_colegio_id = int(school["colegio_id"])
                     school_name = str(school.get("colegio") or "").strip() or str(school_colegio_id)
+                    pct = int(school_idx / total_schools * 100)
                     status_placeholder.caption(
-                        f"[{school_idx + 1}/{total_schools}] {school_name} (ID {school_colegio_id})..."
+                        f"[{school_idx + 1}/{total_schools}] ({pct}%) {school_name} (ID {school_colegio_id})..."
                     )
-                    progress_bar.progress(int(school_idx / total_schools * 100))
+                    progress_bar.progress(pct)
+
+                    logger.info("--- Colegio %d/%d: %s (id=%d) ---", school_idx + 1, total_schools, school_name, school_colegio_id)
 
                     def _make_status_fn(s_name: str, s_idx: int, s_total: int) -> Callable[[str], None]:
                         def _fn(msg: str) -> None:
@@ -21070,14 +21107,20 @@ with tab_crud_alumnos:
                             )
                         return _fn
 
-                    created_rows, create_errors = _auto_crear_cuentas_colegio(
-                        token=token,
-                        colegio_id=school_colegio_id,
-                        empresa_id=int(empresa_id),
-                        ciclo_id=int(ciclo_id),
-                        timeout=int(timeout),
-                        on_status=_make_status_fn(school_name, school_idx, total_schools),
-                    )
+                    try:
+                        created_rows, create_errors = _auto_crear_cuentas_colegio(
+                            token=token,
+                            colegio_id=school_colegio_id,
+                            empresa_id=int(empresa_id),
+                            ciclo_id=int(ciclo_id),
+                            timeout=int(timeout),
+                            on_status=_make_status_fn(school_name, school_idx, total_schools),
+                            colegio_nombre=school_name,
+                        )
+                    except Exception as exc:
+                        logger.error("EXCEPCION inesperada en colegio %s (id=%d): %s", school_name, school_colegio_id, exc, exc_info=True)
+                        create_errors = [{"tipo": "general", "error": f"Excepcion inesperada: {exc}"}]
+                        created_rows = []
 
                     for row in created_rows:
                         row["colegio_nombre"] = school_name
@@ -21088,8 +21131,22 @@ with tab_crud_alumnos:
                     all_created.extend(created_rows)
                     all_errors.extend(create_errors)
 
+                    # Guardar progreso parcial en session_state tras cada colegio
+                    st.session_state["auto_crear_result_rows"] = list(all_created)
+                    st.session_state["auto_crear_all_errors"] = list(all_errors)
+
+                    partial_placeholder.caption(
+                        f"Progreso parcial: {len(all_created)} cuenta(s) creadas, {len(all_errors)} error(es) — colegio {school_idx + 1}/{total_schools}"
+                    )
+
+                    # Pausa breve para evitar rate-limiting de la API
+                    time.sleep(0.15)
+
+                logger.info("=== FIN AUTO CREAR: %d cuentas, %d errores ===", len(all_created), len(all_errors))
+
                 progress_bar.progress(100)
                 status_placeholder.empty()
+                partial_placeholder.empty()
                 progress_bar.empty()
 
                 st.session_state["auto_crear_result_rows"] = all_created
